@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sccp.chain.block import check_proof
-from sccp.chain.state import State
+from sccp.chain.state import State, epoch_end_height
 from sccp.chain.tx import apply_transaction, tx_size, txid, validate_transaction
 from sccp.chess.openings import OpeningBook
 from sccp.config import NetworkParams
@@ -61,11 +61,21 @@ class Mempool:
         """Number of pending transactions plus pending proofs."""
         return len(self.transactions) + len(self.proofs)
 
+    @property
+    def next_height(self) -> int:
+        """The height of the block these transactions would enter.
+
+        Admission uses it rather than the tip height because epoch windows,
+        maturity and median-time-past are judged against the block a transaction
+        lands in; at an epoch boundary the two differ by one epoch.
+        """
+        return self.tip_state.height + 1
+
     # -- transactions -------------------------------------------------------
 
     def add_transaction(self, tx: Transaction, *, height: int | None = None) -> str:
         """Admit a transaction and return its txid."""
-        height = self.tip_state.height if height is None else height
+        height = self.next_height if height is None else height
         digest = txid(tx)
         if digest in self.transactions:
             raise MempoolError(f"transaction {digest} is already in the mempool")
@@ -109,8 +119,12 @@ class Mempool:
         state = self.tip_state
         if proof.network != self.params.network_id:
             raise MempoolError(f"proof is for {proof.network!r}")
-        if proof.epoch >= state.current_epoch():
-            raise MempoolError(f"proof references epoch {proof.epoch}, which has not ended")
+        ended = epoch_end_height(proof.epoch, self.params)
+        if state.height < ended:
+            raise MempoolError(
+                f"proof references epoch {proof.epoch}, which ends at height {ended}; "
+                f"the tip is {state.height}"
+            )
         next_height = state.height + 1
         synthetic = BlockHeader(
             version=1,
@@ -241,7 +255,7 @@ class Mempool:
         self._projection = tip_state.copy()
         for tx in survivors:
             try:
-                self.add_transaction(tx, height=tip_state.height)
+                self.add_transaction(tx, height=self.next_height)
             except MempoolError:
                 continue
 
@@ -272,14 +286,13 @@ class Mempool:
 
     def _reproject(self) -> None:
         projection = self.tip_state.copy()
+        height = self.next_height
         for entry in sorted(
             self.transactions.values(), key=lambda item: (item.tx.sender, item.tx.nonce)
         ):
             try:
-                validate_transaction(
-                    entry.tx, self.params, projection, height=self.tip_state.height
-                )
-                apply_transaction(projection, entry.tx, height=self.tip_state.height)
+                validate_transaction(entry.tx, self.params, projection, height=height)
+                apply_transaction(projection, entry.tx, height=height)
             except TxValidationError:
                 self.transactions.pop(entry.txid, None)
         self._projection = projection

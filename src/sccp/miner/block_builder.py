@@ -20,6 +20,7 @@ from sccp.chain.block import (
     block_subsidy,
     epoch_beacon,
     merkle_root_of,
+    required_proofs,
 )
 from sccp.chain.chain import Chain, Reorg
 from sccp.chain.difficulty import Difficulty, next_difficulty, seal_valid
@@ -102,8 +103,9 @@ class BlockBuilder:
         miner = self.miner
         difficulty = self.next_difficulty(height)
 
-        proofs = tuple(self.mempool.select_proofs(miner, difficulty.wins_required, height=height))
-        if len(proofs) < difficulty.wins_required:
+        needed = required_proofs(params, height, difficulty.wins_required)
+        proofs = tuple(self.mempool.select_proofs(miner, needed, height=height))
+        if len(proofs) < needed:
             return None
         transactions = tuple(self.mempool.select_transactions(height=height))
 
@@ -130,10 +132,12 @@ class BlockBuilder:
         work = self.chain.state.copy()
         work.height = height
         work.timestamps = [*work.timestamps, timestamp][-MAX_RECENT_TIMESTAMPS:]
-        fees = apply_block_body(work, params, provisional, transactions, proofs)
+        fees = apply_block_body(
+            work, params, provisional, transactions, proofs, book=self.chain.book
+        )
         subsidy = block_subsidy(params, height, self.chain.state.minted)
         value = subsidy + fees
-        coinbase = make_coinbase(miner, value).model_copy(update={"network": params.network_id})
+        coinbase = make_coinbase(miner, value, params.network_id)
         work.credit_coinbase(miner, value, height)
 
         draft = Block(

@@ -1,0 +1,13 @@
+{
+  "allocations": [
+    {
+      "address": "sccpt1qpx0f6emtm5cpj3g8m0g0urxuuqnu4v5tumjdksu",
+      "amount": 100000000000000,
+      "public_key": "64ab68f005dd54da9ce2553e5383c8cc9c38dba29d5aec9db18866e484cafdd7"
+    }
+  ],
+  "hash": "20a9487445db5639b3711b7a8714ebcd1b07c00564222f1153c85d789a448d6d",
+  "network": "devnet",
+  "timestamp": 1700000000,
+  "version": 1
+}

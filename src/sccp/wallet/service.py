@@ -128,6 +128,16 @@ class WalletService:
             raise WalletServiceError(f"{sender} must use nonce {expected}, not {nonce}")
         return nonce
 
+    def _epoch_of_next_block(self) -> int:
+        """The epoch a transaction built now will be included in.
+
+        Epoch windows are checked against the block a transaction lands in, not
+        the tip it was built against, and the two differ in the last block of an
+        epoch. A transaction built against the tip would be one epoch early
+        exactly when it matters most (boundary blocks).
+        """
+        return epoch_of(self.state.height + 1, self.params)
+
     def _require_address(self, address: str) -> None:
         if not validate_address(address, self.params):
             raise WalletServiceError(f"{address!r} is not a valid {self.params.network_id} address")
@@ -222,7 +232,7 @@ class WalletService:
         from sccp.protocol.beacon import commitment
 
         sender = self.address_for(keypair)
-        target = epoch_of(self.state.height, self.params) + self.params.availability_lead
+        target = self._epoch_of_next_block() + self.params.availability_lead
         if epoch is not None and epoch != target:
             raise WalletServiceError(
                 f"availability must be committed for epoch {target}, not {epoch}"
@@ -253,7 +263,7 @@ class WalletService:
     ) -> Transaction:
         """Build and sign the reveal matching an availability commitment."""
         sender = self.address_for(keypair)
-        target = epoch_of(self.state.height, self.params) + 1 if epoch is None else epoch
+        target = self._epoch_of_next_block() + 1 if epoch is None else epoch
         tx = Transaction(
             network=self.params.network_id,
             type=TxType.REVEAL,

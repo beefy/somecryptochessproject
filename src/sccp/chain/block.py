@@ -167,6 +167,36 @@ def block_subsidy(params: NetworkParams, height: int, minted: int) -> int:
     return amount
 
 
+def bootstrap_end_height(params: NetworkParams) -> int:
+    """Last height at which a block may carry no proofs at all.
+
+    Availability is committed two epochs ahead (plan 5.5.8), so epoch 2 is the
+    first nominal matchable epoch but no availability transaction for it can
+    exist: epoch 0 has no antecedent. Nothing is lost -- the reveal for epoch 2
+    would have to be committed in epoch 0 as well -- so the first epoch that can
+    actually hold a roster is ``first_matchable_epoch + 1``.
+
+    Proofs additionally may only reference an epoch that has *ended*
+    (plan 5.10), so the first block that can carry a proof is the first block of
+    the epoch after that. Both facts collapse into this one bound: up to and
+    including the last block of the first realizable matchable epoch ``k`` cannot
+    be met by anybody, and demanding it would deadlock a fresh chain forever.
+    "The protocol stalls rather than lowering ``k``" (plan 5.10) is about roster
+    depth; it cannot mean a chain that can never leave genesis.
+
+    The exemption is a pure function of the parameters and height, so every node
+    derives the same answer and no miner can extend it.
+    """
+    return epoch_end_height(first_matchable_epoch(params) + 1, params)
+
+
+def required_proofs(params: NetworkParams, height: int, wins_required: int) -> int:
+    """How many proofs a block at ``height`` must carry (zero during bootstrap)."""
+    if height <= bootstrap_end_height(params):
+        return 0
+    return wins_required
+
+
 @dataclass(frozen=True, slots=True)
 class ConnectedBlock:
     """A block that passed every check, with the state it produces."""
@@ -445,10 +475,11 @@ def _check_body(work: State, params: NetworkParams, block: Block) -> None:
         _fail(BlockFailure.COINBASE, "the coinbase must name the chain's network")
     if block.coinbase.payload.get("to") != header.miner:
         _fail(BlockFailure.COINBASE, "the coinbase must pay the block miner")
-    if len(block.proofs) != header.wins_required:
+    if len(block.proofs) != required_proofs(params, header.height, header.wins_required):
         _fail(
             BlockFailure.PROOFS,
-            f"block carries {len(block.proofs)} proofs, header requires {header.wins_required}",
+            f"block carries {len(block.proofs)} proofs, height {header.height} requires "
+            f"{required_proofs(params, header.height, header.wins_required)}",
         )
     size = block_size(block)
     if size > params.max_block_bytes:
@@ -622,9 +653,11 @@ __all__ = [
     "block_size",
     "block_subsidy",
     "body_root",
+    "bootstrap_end_height",
     "check_proof",
     "connect_block",
     "epoch_beacon",
     "header_payload",
     "merkle_root_of",
+    "required_proofs",
 ]

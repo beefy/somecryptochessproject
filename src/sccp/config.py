@@ -184,6 +184,7 @@ TESTNET: Final = NetworkParams(
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
     max_tx_bytes=65_536,
+    genesis_hash="491b3938f6099b4ae8a787a8e8d9c79bc00139fb04992facc0b50fe9aa266101",
 )
 
 MAINNET: Final = NetworkParams(
@@ -227,6 +228,7 @@ MAINNET: Final = NetworkParams(
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
     max_tx_bytes=65_536,
+    genesis_hash="2e53fce3d03bbba749511129839f1138aaf391f4c8f80f3819f1980a6acfc008",
 )
 
 DEVNET: Final = NetworkParams.model_validate(
@@ -240,6 +242,7 @@ DEVNET: Final = NetworkParams.model_validate(
         "wins_required": 1,
         "min_bond": 0,
         "genesis_timestamp": 1_700_000_000,
+        "genesis_hash": "20a9487445db5639b3711b7a8714ebcd1b07c00564222f1153c85d789a448d6d",
     }
 )
 """In-process network for tests and CI: mock engines, zero seal difficulty."""

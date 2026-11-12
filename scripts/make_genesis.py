@@ -21,25 +21,18 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from hashlib import sha256
 from pathlib import Path
 
-from sccp.chain.genesis import GenesisAllocation, build_genesis, genesis_document
-from sccp.config import DEVNET, MAINNET, NETWORKS, TESTNET, NetworkParams
-from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed
+from sccp.chain.genesis import (
+    FAUCET_SEEDS,
+    GenesisAllocation,
+    faucet_allocation,
+    genesis_document,
+)
+from sccp.config import DEVNET, NETWORKS
 
 ROOT = Path(__file__).resolve().parent.parent
 GENESIS_DIR = ROOT / "genesis"
-
-FAUCET_SEEDS = {
-    "testnet": b"sccp/testnet/faucet/v1",
-    "devnet": b"sccp/devnet/faucet/v1",
-}
-"""Public, documented seeds for the test-network faucets. Never use on mainnet."""
-
-FAUCET_BALANCE = 1_000_000 * 100_000_000
-"""One million coins, in base units, for each test-network faucet."""
 
 TIMESTAMPS = {
     "testnet": 1_700_000_000,
@@ -48,27 +41,18 @@ TIMESTAMPS = {
 }
 
 
-def faucet_allocation(network: str, params: NetworkParams) -> GenesisAllocation:
-    """The deterministic faucet allocation for a test network."""
-    seed = sha256(FAUCET_SEEDS[network]).digest()
-    keypair = keypair_from_seed(seed)
-    return GenesisAllocation(
-        address=encode_address(keypair.public_key_bytes, params),
-        public_key=keypair.public_key_hex,
-        amount=FAUCET_BALANCE,
-    )
+def allocations_for(network: str) -> tuple[GenesisAllocation, ...]:
+    """The allocations a genesis document for ``network`` carries."""
+    params = NETWORKS[network]
+    return (faucet_allocation(network, params),) if network in FAUCET_SEEDS else ()
 
 
 def document_for(network: str) -> dict[str, object]:
     """The genesis document for one network."""
-    params = NETWORKS[network]
-    allocations = (
-        (faucet_allocation(network, params),) if network in FAUCET_SEEDS else ()
-    )
     return genesis_document(
-        params,
+        NETWORKS[network],
         timestamp=TIMESTAMPS[network],
-        allocations=allocations,
+        allocations=allocations_for(network),
     )
 
 
@@ -99,19 +83,8 @@ def main(argv: list[str] | None = None) -> int:
                 failures += 1
             continue
         path.write_text(text, encoding="utf-8")
-        block, _ = build_genesis(
-            NETWORKS[network],
-            timestamp=TIMESTAMPS[network],
-            allocations=document_allocations(network),
-        )
-        print(f"{network:8s} {document['hash']}  ({len(block.header.miner)}-byte miner)")
+        print(f"{network:8s} {document['hash']}  -> {path}")
     return 1 if failures else 0
-
-
-def document_allocations(network: str) -> tuple[GenesisAllocation, ...]:
-    """The allocations a document for ``network`` carries, as objects."""
-    params = NETWORKS[network]
-    return (faucet_allocation(network, params),) if network in FAUCET_SEEDS else ()
 
 
 if __name__ == "__main__":

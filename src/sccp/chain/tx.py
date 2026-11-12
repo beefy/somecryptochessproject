@@ -85,7 +85,7 @@ def sign_transaction(keypair: Keypair, tx: Transaction) -> Transaction:
     return unsigned.model_copy(update={"signature": sign(keypair, digest).hex()})
 
 
-def make_coinbase(miner: str, amount: int) -> Transaction:
+def make_coinbase(miner: str, amount: int, network: str) -> Transaction:
     """The single coinbase transaction of a block.
 
     A coinbase is an unsigned ``transfer`` from the miner to itself: its
@@ -95,7 +95,7 @@ def make_coinbase(miner: str, amount: int) -> Transaction:
     if amount < 0:
         _fail(TxFailure.TYPE, "coinbase amount must be non-negative")
     return Transaction(
-        network="",
+        network=network,
         type=TxType.TRANSFER,
         sender=miner,
         nonce=0,
@@ -106,8 +106,8 @@ def make_coinbase(miner: str, amount: int) -> Transaction:
 
 
 def coinbase_id(miner: str, amount: int, network: str) -> str:
-    """The txid of a coinbase, with the network filled in canonically."""
-    return txid(make_coinbase(miner, amount).model_copy(update={"network": network}))
+    """The txid of a coinbase."""
+    return txid(make_coinbase(miner, amount, network))
 
 
 def resolve_public_key(state: State, tx: Transaction) -> str:
@@ -391,6 +391,7 @@ def _apply_transfer(state: State, tx: Transaction, height: int) -> None:
     to = tx.payload.get("to")
     if not isinstance(to, str):
         _fail(TxFailure.SCHEMA, "payload field 'to' must be an address")
+    state.ensure(tx.sender).balance -= amount
     state.ensure(to).balance += amount
 
 

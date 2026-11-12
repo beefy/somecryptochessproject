@@ -215,10 +215,21 @@ class WitnessRecord:
 
 
 def _as_int(value: object, name: str) -> int:
-    """Coerce a snapshot field to ``int`` or raise :class:`StateError`."""
-    if not isinstance(value, int) or isinstance(value, bool):
+    """Coerce a snapshot field to ``int`` or raise :class:`StateError`.
+
+    Snapshots round-trip through JSON, whose object keys are always strings, so a
+    decimal ``str`` is accepted where the in-memory form holds an ``int``.
+    """
+    if isinstance(value, bool):
         raise StateError(f"{name} must be an integer in a state snapshot")
-    return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    raise StateError(f"{name} must be an integer in a state snapshot")
 
 
 @dataclass(slots=True)

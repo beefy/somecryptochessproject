@@ -77,14 +77,15 @@ def initial_difficulty(params: NetworkParams) -> Difficulty:
     return Difficulty(wins_required=params.wins_required, seal_bits=params.seal_bits)
 
 
-def expected_interval_ms(params: NetworkParams) -> int:
-    """Expected wall-clock span of one full retarget interval, in milliseconds.
+def expected_interval_seconds(params: NetworkParams) -> int:
+    """Expected wall-clock span of one full retarget interval, in seconds.
 
-    The interval's *first to last* spacing is ``target_block_seconds *
+    Block timestamps are Unix seconds, so the comparison window is in seconds
+    too. The interval's *first to last* spacing is ``target_block_seconds *
     (retarget_interval - 1)``; comparing against that (rather than
     ``retarget_interval``) is what makes the steady state a no-op.
     """
-    return params.target_block_seconds * 1000 * (params.retarget_interval - 1)
+    return params.target_block_seconds * (params.retarget_interval - 1)
 
 
 def next_difficulty(
@@ -114,7 +115,7 @@ def next_difficulty(
         return current
 
     window = list(timestamps)[-params.retarget_interval :]
-    expected = expected_interval_ms(params)
+    expected = expected_interval_seconds(params)
     actual = window[-1] - window[0]
     if actual < 0:
         raise StateError("block timestamps are not monotonic over the retarget window")
@@ -177,7 +178,7 @@ __all__ = [
     "WIN_UNIT",
     "Difficulty",
     "block_work",
-    "expected_interval_ms",
+    "expected_interval_seconds",
     "initial_difficulty",
     "next_difficulty",
     "seal_valid",

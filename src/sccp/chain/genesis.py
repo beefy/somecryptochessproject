@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Final
 
@@ -31,12 +32,46 @@ from sccp.chain.difficulty import initial_difficulty
 from sccp.chain.state import ZERO_HASH, Account, State
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address, validate_address
+from sccp.crypto.keys import Keypair, keypair_from_seed
 from sccp.errors import GenesisError, KeyEncodingError
 from sccp.protocol.models import Block, BlockHeader
 from sccp.serialization import merkle_root_hex
 
 GENESIS_DOCUMENT_VERSION: Final = 1
 """The only genesis document version this implementation accepts."""
+
+FAUCET_SEEDS: Final[dict[str, bytes]] = {
+    "testnet": b"sccp/testnet/faucet/v1",
+    "devnet": b"sccp/devnet/faucet/v1",
+}
+"""Documented seeds for the test-network faucets.
+
+These networks have no value, and a published key is what makes a test wallet
+possible without a coordination step. Mainnet has no faucet and no premine, so
+it must never gain an entry here.
+"""
+
+FAUCET_BALANCE: Final = 1_000_000 * 100_000_000
+"""One million coins, in base units, allocated to each test-network faucet."""
+
+
+def faucet_keypair(network: str) -> Keypair:
+    """The deterministic, public faucet keypair of a test network."""
+    try:
+        seed = FAUCET_SEEDS[network]
+    except KeyError:
+        raise GenesisError(f"{network} has no faucet; only test networks do") from None
+    return keypair_from_seed(sha256(seed).digest())
+
+
+def faucet_allocation(network: str, params: NetworkParams) -> GenesisAllocation:
+    """The faucet allocation a generated genesis document carries."""
+    keypair = faucet_keypair(network)
+    return GenesisAllocation(
+        address=encode_address(keypair.public_key_bytes, params),
+        public_key=keypair.public_key_hex,
+        amount=FAUCET_BALANCE,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +133,30 @@ def _parse_allocations(params: NetworkParams, raw: object) -> tuple[GenesisAlloc
     return tuple(allocations)
 
 
+def _check_allocation(entry: GenesisAllocation, params: NetworkParams, seen: set[str]) -> None:
+    """Every invariant an allocation must satisfy, whoever built it.
+
+    The public key must derive the declared address: Ed25519 is not
+    key-recoverable, so a mismatched pair would make the premine permanently
+    unspendable and silently so.
+    """
+    if not validate_address(entry.address, params):
+        raise GenesisError(f"{entry.address!r} is not a {params.network_id} address")
+    try:
+        derived = encode_address(bytes.fromhex(entry.public_key), params)
+    except (KeyEncodingError, ValueError) as exc:
+        raise GenesisError(f"allocation public key for {entry.address} is invalid: {exc}") from None
+    if derived != entry.address:
+        raise GenesisError(
+            f"allocation public key derives {derived}, not the declared address {entry.address}"
+        )
+    if not isinstance(entry.amount, int) or isinstance(entry.amount, bool) or entry.amount <= 0:
+        raise GenesisError(f"allocation for {entry.address} needs a positive integer amount")
+    if entry.address in seen:
+        raise GenesisError(f"duplicate genesis allocation for {entry.address}")
+    seen.add(entry.address)
+
+
 def build_genesis(
     network: str | NetworkParams,
     *,
@@ -110,6 +169,9 @@ def build_genesis(
     if timestamp < 0:
         raise GenesisError("genesis timestamp must be non-negative")
     entries = tuple(allocations)
+    seen: set[str] = set()
+    for entry in entries:
+        _check_allocation(entry, params, seen)
     total = sum(entry.amount for entry in entries)
     cap = params.max_money
     if cap is not None and total > cap:
@@ -219,9 +281,13 @@ def load_genesis(path: str | Path, network: str | NetworkParams) -> tuple[Block,
 
 
 __all__ = [
+    "FAUCET_BALANCE",
+    "FAUCET_SEEDS",
     "GENESIS_DOCUMENT_VERSION",
     "GenesisAllocation",
     "build_genesis",
+    "faucet_allocation",
+    "faucet_keypair",
     "genesis_document",
     "load_genesis",
     "parse_genesis_document",
