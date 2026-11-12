@@ -7,6 +7,14 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-12
+
+A minor release: the wallet now answers in coins. `wallet send` and
+`wallet balance` print amounts in coins rather than base units, so a refused
+transfer reads as the amount you typed, and both commands name the one cause they
+cannot see for themselves -- a `--data-dir` holding a chain with no blocks, whose
+balances are all zero however much the node reports.
+
 ### Changed
 
 - `wallet send` and `wallet balance` print amounts in coins, not base units: a
