@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 summarised in the M0–M2 rows of the README roadmap.
 
+## [Unreleased]
+
+Milestone M4: the node, P2P gossip, the miner daemon, relay-tracked clocks and
+the `chain`, `miner` and `devnet` CLI commands. Nothing has landed yet; 0.3.0 is
+the M3 baseline.
+
 ## [0.3.0] - 2026-11-12
 
 Milestone M3: the chain, the wallet service and the block builder.
