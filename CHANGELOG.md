@@ -25,6 +25,11 @@ summarised in the M0–M2 rows of the README roadmap.
   before the exported block, and warns when it exports genesis because the node
   it reached serves no games. This makes the common `--network`/`--data-dir`
   mismatch (or an old node still holding port 8645) visible in the output.
+- `docs/PLAY_AND_EXPORT.md`: a step-by-step guide for playing a game with
+  `scripts/play_miner.py --on-chain`, starting a node on the resulting chain and
+  exporting the block's PGN and manifest with
+  `scripts/export_block_games.py`, including resume/multi-game and wrong-node
+  troubleshooting.
 
 ## [0.6.1] - 2026-11-12
 

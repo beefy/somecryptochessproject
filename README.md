@@ -265,6 +265,7 @@ target layout for later milestones.
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # this project's plan
+│   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
 │   ├── PROTOCOL.md               # normative wire formats (M1–M4)
 │   ├── RUN_A_TESTNET_MINER.md    # operator guide (written in M6)
 │   └── THREAT_MODEL.md           # security analysis (written in M5)
@@ -406,6 +407,11 @@ python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 python scripts/export_block_games.py --node http://127.0.0.1:8645 --out ./games
 python scripts/export_block_games.py --block 5 --out ./games   # game 2 on a resumed chain
 ```
+
+For a step-by-step walkthrough — including the settlement report, resuming the
+chain, starting the node on the right data directory and troubleshooting a
+`block 0 (0 games)` export — see
+[`docs/PLAY_AND_EXPORT.md`](docs/PLAY_AND_EXPORT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws
 for the match and hands you the position after it, so the script opens by
