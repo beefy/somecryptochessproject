@@ -101,6 +101,12 @@ class NetworkParams(BaseModel):
     max_pgn_bytes: int = Field(gt=0)
     max_tx_bytes: int = Field(gt=0)
 
+    # Ledger: pinned genesis and storage policy (M3)
+    genesis_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    mempool_ttl_blocks: int = Field(default=64, ge=1)
+    snapshot_interval: int = Field(default=100, ge=1)
+    reorg_depth: int = Field(default=10, ge=1)
+
     @property
     def max_money(self) -> int | None:
         """Supply cap in base units, or ``None`` when the network is uncapped."""

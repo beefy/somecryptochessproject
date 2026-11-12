@@ -13,6 +13,7 @@ report a typed failure reason.
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -53,6 +54,43 @@ class ProtocolModel(BaseModel):
     """Base class: immutable, strict about unknown fields, JSON-friendly."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class TxType(StrEnum):
+    """The transaction vocabulary of plan section 5.4."""
+
+    TRANSFER = "transfer"
+    REGISTER = "register"
+    REGISTER_WITNESS = "register_witness"
+    UPDATE_REGISTRATION = "update_registration"
+    UNREGISTER = "unregister"
+    WITHDRAW_BOND = "withdraw_bond"
+    AVAILABILITY = "availability"
+    REVEAL = "reveal"
+    TIMEOUT_CLAIM = "timeout_claim"
+    TIMEOUT_DISPUTE = "timeout_dispute"
+    CHALLENGE = "challenge"
+    SLASH_EVIDENCE = "slash_evidence"
+
+
+class Transaction(ProtocolModel):
+    """A signed ledger transaction (plan section 5.4).
+
+    ``payload`` is an untyped mapping on the wire: its shape depends on ``type``
+    and is validated by :mod:`sccp.chain.tx`, which keeps one canonical envelope
+    and one place to audit per-type rules. The ``sender`` field serializes as
+    ``"from"`` because that is the wire spelling; ``from`` is a Python keyword.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    network: str = Field(min_length=1, max_length=32)
+    type: TxType
+    sender: AddressText = Field(validation_alias="from", serialization_alias="from")
+    nonce: int = Field(ge=0)
+    fee: int = Field(ge=0)
+    payload: dict[str, object] = Field(default_factory=dict)
+    signature: SignatureHex | None = None
 
 
 class TimeControl(ProtocolModel):
@@ -296,6 +334,39 @@ class WinProof(ProtocolModel):
     quality_summary: QualitySummary | None = None
 
 
+class BlockHeader(ProtocolModel):
+    """The sealed header of plan section 5.11, in wire order."""
+
+    version: int = Field(ge=1)
+    network: str = Field(min_length=1, max_length=32)
+    height: int = Field(ge=0)
+    prev_hash: DigestHex
+    merkle_root: DigestHex
+    state_root: DigestHex
+    roster_root: DigestHex
+    timestamp: int = Field(ge=0)
+    epoch: int = Field(ge=0)
+    beacon_hash: DigestHex
+    wins_required: int = Field(ge=1)
+    seal_bits: int = Field(ge=0, le=32)
+    seal_nonce: int = Field(ge=0)
+    miner: AddressText
+
+
+class Block(ProtocolModel):
+    """A header plus its body: coinbase, transactions and win proofs.
+
+    Genesis carries neither a coinbase nor proofs (plan section 5.11); every
+    other block has exactly one coinbase and exactly ``header.wins_required``
+    proofs.
+    """
+
+    header: BlockHeader
+    coinbase: Transaction | None = None
+    transactions: tuple[Transaction, ...] = ()
+    proofs: tuple[WinProof, ...] = ()
+
+
 class Transcript(ProtocolModel):
     """A stored match: certificate, co-signed result and full PGN."""
 
@@ -323,6 +394,8 @@ __all__ = [
     "Availability",
     "Beacon",
     "BeaconReveal",
+    "Block",
+    "BlockHeader",
     "ClockEvidence",
     "ClockWitnessSignature",
     "Color",
@@ -347,6 +420,8 @@ __all__ = [
     "TimeControl",
     "TimeoutClaim",
     "Transcript",
+    "TxType",
+    "Transaction",
     "Verdict",
     "WinProof",
 ]
