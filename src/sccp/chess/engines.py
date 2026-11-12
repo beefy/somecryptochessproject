@@ -215,7 +215,11 @@ class EngineProfile:
 
     name: str
     kind: EngineKind = "uci"
-    options: Mapping[str, chess.engine.ConfigValue] = _DEFAULT_OPTIONS
+    # ``default_factory`` rather than a ``MappingProxyType`` default: Python 3.11
+    # rejects mappingproxy defaults as "mutable" (3.12+ allows them).
+    options: Mapping[str, chess.engine.ConfigValue] = field(
+        default_factory=lambda: _DEFAULT_OPTIONS
+    )
 
 
 ENGINE_PROFILES: Final[Mapping[str, EngineProfile]] = MappingProxyType(
