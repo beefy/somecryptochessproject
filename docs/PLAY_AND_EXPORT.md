@@ -1,6 +1,6 @@
 # Play a game on-chain and export it
 
-There are three commands in this workflow:
+There are four commands in this workflow:
 
 | Step | Command | What it does |
 | --- | --- | --- |
