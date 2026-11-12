@@ -7,6 +7,14 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- The testnet deploy workflow now targets the public DNS name
+  (`sccp@testnet.somecryptochessproject.com`) and verifies
+  `http://testnet.somecryptochessproject.com:8645/v1/status` after each deploy.
+  The README and operator docs publish that endpoint instead of an IP-shaped
+  example.
+
 ## [0.9.1] - 2026-11-12
 
 A patch release: documentation and source comments now describe the shipped

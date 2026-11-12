@@ -22,6 +22,11 @@ reward.
 > parameters exist, but no mainnet has launched or been audited; testnet and
 > devnet coins have no value.
 
+> **Public testnet:** <http://testnet.somecryptochessproject.com:8645>. The
+> `GET /v1/status` endpoint is the health check. The chain is reset on every
+> deployment, so wallets, balances and faucet grants do not survive a redeploy.
+> This endpoint is plain HTTP and carries worthless test coins only.
+
 > **The relay runs timed sessions.** Every session is a real **30+0** clock game:
 > the second start signature starts both clocks, the relay's monotonic clock is
 > authoritative (a move's `clock_ms` is display data, never trusted), each
@@ -324,6 +329,11 @@ responsibility rather than a construction phase.
 Every step below is a thin wrapper over a library call, so the CLI, tests and
 services exercise the same code path.
 
+The hosted two-miner testnet is available at
+`http://testnet.somecryptochessproject.com:8645`. The quickstart below starts
+local processes so you can change code without depending on it; use the hosted
+URL as `--node` or `SCCP_NODE` when you want the shared deployment instead.
+
 ```bash
 git clone git@github.com:beefy/somecryptochessproject.git
 cd somecryptochessproject
@@ -433,7 +443,10 @@ The wallet and miner guides are separate:
   an engine miner, register on chain and commit/reveal availability.
 
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
-[`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md).
+[`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current
+deployment is published at
+`http://testnet.somecryptochessproject.com:8645`; the workflow connects to the
+same name over SSH (`sccp@testnet.somecryptochessproject.com`).
 
 A session never starts at move 1: the relay plays the book line the beacon draws
 for the match and hands you the position after it, so the script opens by

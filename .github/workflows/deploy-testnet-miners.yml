@@ -5,9 +5,11 @@ name: deploy-testnet-miners
 #
 # Required repository configuration:
 #   vars.TESTNET_DEPLOY_HOST     user@host of the deployment VM
+#                                current deployment: sccp@testnet.somecryptochessproject.com
 #   secrets.TESTNET_SSH_KEY      private key with docker access on that host
 #   vars.TESTNET_DEPLOY_DIR      optional; defaults to /opt/sccp-testnet
 #   vars.TESTNET_DEPLOY_PORT     optional; defaults to 22
+#   vars.TESTNET_PUBLIC_URL      optional; defaults to the current testnet URL
 #   secrets.TESTNET_KNOWN_HOSTS  optional pinned host key; without it the
 #                                workflow learns the key with ssh-keyscan
 #
@@ -73,6 +75,7 @@ jobs:
       TARGET: ${{ vars.TESTNET_DEPLOY_HOST }}
       DEPLOY_DIR: ${{ vars.TESTNET_DEPLOY_DIR || '/opt/sccp-testnet' }}
       DEPLOY_PORT: ${{ vars.TESTNET_DEPLOY_PORT || '22' }}
+      PUBLIC_URL: ${{ vars.TESTNET_PUBLIC_URL || 'http://testnet.somecryptochessproject.com:8645' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -139,6 +142,12 @@ jobs:
                 --node http://127.0.0.1:8645 \
                 --relay http://relay:8646 \
                 --wait-seconds 300"
+
+      - name: Verify the public testnet endpoint
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 12 --retry-delay 5 --retry-connrefused --max-time 20 \
+            "$PUBLIC_URL/v1/status" | jq -e '.network == "testnet"'
 
       - name: Show service state
         if: always()

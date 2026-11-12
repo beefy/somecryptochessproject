@@ -32,7 +32,7 @@ coins moved.
 | --- | --- |
 | A keyfile | `wallet send` signs with it and refuses a keyfile from another network. |
 | A chain database under `--data-dir` | The command reads your nonce and spendable balance from the local chain. |
-| A running node | The signed transaction is POSTed to `--node` (default `http://127.0.0.1:8645`). |
+| A running node | The signed transaction is POSTed to `--node` (default `http://127.0.0.1:8645`). Use `http://testnet.somecryptochessproject.com:8645` for the hosted testnet. |
 | A recipient address | A `sccpt1...` address on testnet/devnet, `sccp1...` on mainnet. |
 | Spendable coins | `amount + fee` must be **spendable**; `bonded` and `immature` coins cannot be spent. |
 

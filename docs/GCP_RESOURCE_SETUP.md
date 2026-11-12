@@ -269,15 +269,43 @@ the first command and export it before continuing:
 export STATIC_IP="203.0.113.10"   # the natIP from the describe output
 ```
 
-The rest of this guide (SSH test, GitHub variables, smoke checks) uses
-`$STATIC_IP`.
+For the current deployment, the public name and Cloud DNS zone are:
 
-### Optional DNS
+```bash
+export TESTNET_HOST="testnet.somecryptochessproject.com"
+export DNS_ZONE="somecryptochessproject-com"
+```
 
-Create an `A` record such as `testnet.example.org` pointing at the static IP,
-then use that name in `TESTNET_DEPLOY_HOST`. There is no GCP load balancer or
-managed certificate in this setup, and the node still speaks plain HTTP on
-`8645`.
+The GCP commands use `$STATIC_IP`; the deploy workflow and public smoke checks
+use `$TESTNET_HOST`.
+
+### DNS
+
+The current deployment publishes the node under
+`testnet.somecryptochessproject.com` in the public
+`somecryptochessproject.com` Cloud DNS zone. Create the `A` record after the
+static IP exists:
+
+```bash
+gcloud dns record-sets create "$TESTNET_HOST." \
+    --zone="$DNS_ZONE" \
+    --type=A \
+    --ttl=60 \
+    --rrdatas="$STATIC_IP" \
+    --project="$PROJECT_ID"
+```
+
+If the record already exists, use `gcloud dns record-sets update` with the same
+arguments. Verify before wiring GitHub:
+
+```bash
+dig +short "$TESTNET_HOST" A
+curl -sS "http://$TESTNET_HOST:8645/v1/status" \
+    | jq '{network, height, tip_hash, mempool}'
+```
+
+There is no GCP load balancer or managed certificate in this setup, and the node
+still speaks plain HTTP on `8645`.
 
 
 ---
@@ -369,7 +397,7 @@ gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT_ID" --command \
 Test the exact login the workflow will use, from your workstation:
 
 ```bash
-ssh -i ~/.ssh/sccp_testnet_deploy sccp@"$STATIC_IP" \
+ssh -i ~/.ssh/sccp_testnet_deploy sccp@"$TESTNET_HOST" \
     'id && docker version --format "{{.Server.Version}}" && \
      docker compose version && ls -ld /opt/sccp-testnet'
 ```
@@ -388,11 +416,12 @@ then SSHes to the VM and runs Compose there. Configure the repository (or the
 
 | Kind | Name | Value |
 | --- | --- | --- |
-| variable | `TESTNET_DEPLOY_HOST` | `sccp@<static-ip-or-dns>` |
+| variable | `TESTNET_DEPLOY_HOST` | `sccp@testnet.somecryptochessproject.com` |
 | variable | `TESTNET_DEPLOY_DIR` | `/opt/sccp-testnet` |
 | variable | `TESTNET_DEPLOY_PORT` | `22` (optional, defaults to 22) |
+| variable | `TESTNET_PUBLIC_URL` | `http://testnet.somecryptochessproject.com:8645` (optional; workflow default) |
 | secret | `TESTNET_SSH_KEY` | contents of `~/.ssh/sccp_testnet_deploy` |
-| secret | `TESTNET_KNOWN_HOSTS` | `ssh-keyscan -H <host>` output (optional) |
+| secret | `TESTNET_KNOWN_HOSTS` | `ssh-keyscan -H testnet.somecryptochessproject.com` output (optional) |
 
 Create an environment named `testnet` in **Settings → Environments**. No
 protection rules are needed for a demonstration; add them if a human should
@@ -402,11 +431,12 @@ approve every deploy. The remote deploy job stays skipped until
 Using the GitHub CLI from the repository root:
 
 ```bash
-gh variable set TESTNET_DEPLOY_HOST --body "sccp@$STATIC_IP"
+gh variable set TESTNET_DEPLOY_HOST --body "sccp@$TESTNET_HOST"
 gh variable set TESTNET_DEPLOY_DIR  --body "/opt/sccp-testnet"
+gh variable set TESTNET_PUBLIC_URL  --body "http://$TESTNET_HOST:8645"  # optional
 gh secret set TESTNET_SSH_KEY < ~/.ssh/sccp_testnet_deploy
 
-ssh-keyscan -H "$STATIC_IP" > /tmp/sccp-known-hosts 2>/dev/null
+ssh-keyscan -H "$TESTNET_HOST" > /tmp/sccp-known-hosts 2>/dev/null
 gh secret set TESTNET_KNOWN_HOSTS < /tmp/sccp-known-hosts
 ```
 
@@ -439,23 +469,25 @@ Or push a commit to `main`; the workflow is configured for both.
 When it finishes, check the host:
 
 ```bash
-ssh -i ~/.ssh/sccp_testnet_deploy sccp@"$STATIC_IP" \
+ssh -i ~/.ssh/sccp_testnet_deploy sccp@"$TESTNET_HOST" \
     'cd /opt/sccp-testnet && docker compose ps'
 ```
 
 Check the API from your workstation:
 
 ```bash
-curl -sS "http://$STATIC_IP:8645/v1/status" \
+curl -sS "http://$TESTNET_HOST:8645/v1/status" \
     | jq '{network, height, tip_hash, mempool}'
 
-curl -sS "http://$STATIC_IP:8645/v1/faucet" | jq
+curl -sS "http://$TESTNET_HOST:8645/v1/faucet" | jq
 ```
 
 Expected after a successful deploy: network `testnet`, height `19` after
 bootstrap, and a faucet policy response. The workflow also runs
-`deploy/check_testnet_stack.py` against the node and relay, so a green deploy job
-already proves the internal Compose network works.
+`deploy/check_testnet_stack.py` against the node and relay, then checks
+`http://testnet.somecryptochessproject.com:8645/v1/status` from the runner, so a
+green deploy job proves both the internal Compose network and the public DNS
+path work.
 
 The deployment resets the chain on every run (`docker compose down -v`). All
 wallets, balances and faucet grants from a previous deploy are discarded. This
@@ -463,7 +495,7 @@ is intentional for the deterministic demonstrator.
 
 To fund a wallet against this host, follow
 [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) with
-`SCCP_NODE="http://$STATIC_IP:8645"`.
+`SCCP_NODE="http://$TESTNET_HOST:8645"`.
 
 
 ---

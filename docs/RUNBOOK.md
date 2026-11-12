@@ -8,12 +8,21 @@ checklist, see [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md).
 
 ## Health checks
 
+From the VM or a local Compose stack:
+
 ```bash
 curl -fsS http://127.0.0.1:8645/v1/status   # node height, tip, mempool
 curl -fsS http://127.0.0.1:8646/v1/status   # beacon epoch, matches, round
 curl -fsS http://127.0.0.1:8646/v1/matches  # per-game status and ply count
 docker compose ps
 docker compose logs --tail=100 node bootstrap relay miner-1 miner-2
+```
+
+From anywhere, check the public node endpoint:
+
+```bash
+curl -fsS http://testnet.somecryptochessproject.com:8645/v1/status
+curl -fsS http://testnet.somecryptochessproject.com:8646/v1/status
 ```
 
 Healthy after a deploy means:

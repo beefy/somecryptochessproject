@@ -18,6 +18,11 @@ There are three ways to see a miner run:
 > runs the whole loop with two Stockfish miners, and
 > [`RUNBOOK.md`](RUNBOOK.md) covers operating it. Use `sccp devnet up` for the
 > fast in-process demo, and the relay flow below for a miner you run yourself.
+>
+> The current public node is at
+> `http://testnet.somecryptochessproject.com:8645`. Its relay is exposed on
+> `8646`, but the deployed two-miner stack is a demonstration, not a shared
+> mining pool; run your own relay while developing a miner.
 
 ---
 

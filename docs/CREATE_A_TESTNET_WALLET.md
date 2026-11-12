@@ -98,11 +98,15 @@ The faucet and balance endpoints are served by the node on port `8645`:
 export SCCP_NODE="http://127.0.0.1:8645"
 ```
 
-For the hosted two-miner deployment, replace that with the deployment host:
+For the hosted two-miner deployment, use the public testnet host:
 
 ```bash
-export SCCP_NODE="http://203.0.113.10:8645"
+export SCCP_NODE="http://testnet.somecryptochessproject.com:8645"
 ```
+
+The hosted chain is reset on every deployment, so addresses and balances from
+an earlier deploy are gone. Use `http://127.0.0.1:8645` when running the stack
+locally from source.
 
 The testnet deployment does **not** terminate TLS. If the node is behind a reverse
 proxy, use its HTTPS URL instead. Check that the node is alive and on testnet:

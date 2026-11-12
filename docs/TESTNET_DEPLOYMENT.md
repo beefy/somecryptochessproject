@@ -10,10 +10,31 @@ Every merge to `main` runs
    node, bootstrap, relay and two miners;
 4. run `deploy/check_testnet_stack.py` inside the node container and fail the
    workflow if the node has not reached the bootstrap height or the relay has no
-   match.
+   match;
+5. request `/v1/status` from the public URL and fail if the node is not serving
+   `testnet` through DNS.
 
 The deploy job is skipped until a host is configured, so the image build is
 still useful on a repository without a testnet VM.
+
+## Public endpoint
+
+The current deployment is published at:
+
+```text
+http://testnet.somecryptochessproject.com:8645
+```
+
+Check it from any host:
+
+```bash
+curl -sS http://testnet.somecryptochessproject.com:8645/v1/status \
+  | jq '{network, height, tip_hash, mempool}'
+```
+
+The endpoint is plain HTTP and the chain is reset on every deploy. Do not use it
+for anything of value. The deploy workflow connects to the same name over SSH
+(`sccp@testnet.somecryptochessproject.com`); clients only need the node port.
 
 ## One-time setup
 
@@ -24,17 +45,19 @@ Create a GitHub Environment named `testnet` and set:
 
 | Kind | Name | Meaning |
 | --- | --- | --- |
-| variable | `TESTNET_DEPLOY_HOST` | `user@host`, for example `sccp@testnet.example.org` |
+| variable | `TESTNET_DEPLOY_HOST` | `user@host`, for example `sccp@testnet.somecryptochessproject.com` |
 | variable | `TESTNET_DEPLOY_DIR` | optional checkout directory; default `/opt/sccp-testnet` |
 | variable | `TESTNET_DEPLOY_PORT` | optional SSH port; default `22` |
+| variable | `TESTNET_PUBLIC_URL` | optional public node URL; default `http://testnet.somecryptochessproject.com:8645` |
 | secret | `TESTNET_SSH_KEY` | private key for that user (ed25519, no passphrase) |
 | secret | `TESTNET_KNOWN_HOSTS` | optional pinned host key; without it the workflow runs `ssh-keyscan` |
 
 The host needs Docker Engine with the Compose plugin and ports 8645/8646
-reachable from wherever clients will connect. The workflow authenticates to
-GHCR with its job-scoped `GITHUB_TOKEN`; either make the package visible to the
-VM or keep the package private and let that token pull it (the job requests
-`packages: read`).
+reachable from wherever clients will connect. For the current deployment those
+are exposed through `testnet.somecryptochessproject.com`; port 8645 is the node
+API and 8646 is the relay. The workflow authenticates to GHCR with its
+job-scoped `GITHUB_TOKEN`; either make the package visible to the VM or keep the
+package private and let that token pull it (the job requests `packages: read`).
 
 Neither service terminates TLS. If the node and relay are public, put a reverse
 proxy or load balancer in front and firewall 8645/8646 so only that proxy can
@@ -63,8 +86,9 @@ works with a little less headroom.
 
 That is the mainstream-cloud estimate. A budget VPS with equivalent resources
 (Hetzner, OVH, a small provider) is commonly **$10–$20/month**, and a
-reserved/committed instance can cut the compute line by 30–40%. Add a domain and
-managed TLS if the node and relay are exposed under names rather than IPs.
+reserved/committed instance can cut the compute line by 30–40%. The current
+deployment uses a Cloud DNS `A` record for
+`testnet.somecryptochessproject.com`; managed TLS is not included.
 
 What is not included: a public RPC/load balancer, DDoS protection, a managed
 database, or long-term log storage. The node uses one SQLite file and the relay a

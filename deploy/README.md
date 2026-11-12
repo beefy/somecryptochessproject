@@ -9,6 +9,10 @@ this stack exercises the real multi-process, HTTP and SQLite path. The merge-to-
 deploy workflow and its monthly cost are in
 [`docs/TESTNET_DEPLOYMENT.md`](../docs/TESTNET_DEPLOYMENT.md).
 
+The current hosted deployment is at
+`http://testnet.somecryptochessproject.com:8645`; the commands below use
+`127.0.0.1` because they are for a local Compose stack.
+
 ```bash
 docker compose up --build
 curl http://127.0.0.1:8645/v1/status    # node: height, mempool, peers
