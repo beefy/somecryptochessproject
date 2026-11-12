@@ -2,7 +2,7 @@
 
 ## Chess as proof of work
 
-**Whitepaper for protocol v1 · reference implementation 0.9.2 · November 2026**
+**Whitepaper for protocol v1 · reference implementation 0.9.3 · November 2026**
 
 > **Scope.** This document explains how the current reference implementation
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,

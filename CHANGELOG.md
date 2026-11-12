@@ -7,6 +7,16 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-12
+
+A patch release: the missing-chain-database error hint now shows the command
+with the global `--data-dir` option in the right position.
+
+### Fixed
+
+- The missing-chain-database error hint now places the global `--data-dir`
+  option before `node run`, matching the CLI syntax it tells you to run.
+
 ## [0.9.2] - 2026-11-12
 
 A patch release: the testnet deployment workflow and public documentation use
@@ -19,11 +29,6 @@ the public DNS name.
   `http://testnet.somecryptochessproject.com:8645/v1/status` after each deploy.
   The README and operator docs publish that endpoint instead of an IP-shaped
   example.
-
-### Fixed
-
-- The missing-chain-database error hint now places the global `--data-dir`
-  option before `node run`, matching the CLI syntax it tells you to run.
 
 ## [0.9.1] - 2026-11-12
 
