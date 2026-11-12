@@ -419,9 +419,9 @@ __all__ = [
     "TerminationValue",
     "TimeControl",
     "TimeoutClaim",
+    "Transaction",
     "Transcript",
     "TxType",
-    "Transaction",
     "Verdict",
     "WinProof",
 ]

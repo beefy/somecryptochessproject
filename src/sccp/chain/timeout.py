@@ -141,6 +141,8 @@ def validate_claim(state: State, tx: Transaction, height: int) -> TimeoutClaimRe
         _fail("flag receipt does not name a seat of this certificate")
     if flagged == claim.last_move.seat:
         _fail("a seat cannot flag itself")
+    if claim.last_move.seat != tx.sender:
+        _fail(f"the claim's last move must be signed by the claimant {tx.sender}")
     if final.ply != claim.last_move.ply + 1:
         _fail(
             f"flag receipt is for ply {final.ply}, expected {claim.last_move.ply + 1} "
@@ -173,7 +175,9 @@ def validate_claim(state: State, tx: Transaction, height: int) -> TimeoutClaimRe
 
     _require_balance(state, tx.sender, claim.bond + tx.fee, "the timeout claim bond")
 
-    accused = certificate.black if flagged == "white" else certificate.white
+    # The flagged seat is the one that ran out of time on its turn, and it is the
+    # only seat that could answer with a later move: it is the accused.
+    accused = final.seat
     return TimeoutClaimRecord(
         claim_id=txid(tx),
         claimant=tx.sender,

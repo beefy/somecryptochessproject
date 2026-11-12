@@ -9,23 +9,25 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
-> **Status: M2 complete.** M0 (packaging, config, crypto, wallets, CLI, CI),
-> M1 (PGN validation, canonical game hash, opening book, engine abstraction,
-> game runner, offline `sccp verify pgn`) and M2 (commit/reveal beacons,
+> **Status: M3 complete.** M0 (packaging, config, crypto, wallets, CLI, CI), M1
+> (PGN validation, canonical game hash, opening book, engine abstraction,
+> game runner, offline `sccp verify pgn`), M2 (commit/reveal beacons,
 > deterministic pairing, signed match certificates and transcripts, the relay,
-> offline `sccp verify proof`) are implemented and tested. The chain, node and
-> miner daemon milestones are next; their commands are still intended UX, not
-> working software. Normative formats are in
-> [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan lives in
-> [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
+> offline `sccp verify proof`) and M3 (the ledger: transactions, accounts and
+> bonds, headers and blocks, fork choice and reorg, difficulty retargeting,
+> mempool, SQLite storage, bonded timeout settlement, the wallet service, the
+> block builder and deterministic genesis files) are implemented and tested. M3
+> is a library milestone: the `chain`, `miner` and `devnet` CLI commands arrive
+> in M4, so the working console commands are still the M0–M2 ones. Normative
+> formats are in [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan
+> lives in [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
-> **Known M2 gap: no chess clock.** The relay's `timeout_seconds` only abandons
-> an inactive session; it does not award a win. A losing player can therefore
-> stall and deny the opponent a proof. The planned clock is a single fixed
-> **30+0** control for every match, fixed by the protocol rather than
-> negotiated in matchmaking, with bonded timeout settlement and a signed-move
-> checkmate proof. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
-> section 5.7.1.
+> **Known M3 gap: the clock is not wired into the relay yet.** The chain settles
+> a bonded `timeout_claim` and the protocol side of the fixed **30+0** control
+> exists (`src/sccp/protocol/clocks.py`), but the M2 relay still only abandons
+> silent sessions via `timeout_seconds`; wiring clocks into sessions, signing
+> moves and receipts, is M4 work. See
+> [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) section 5.7.1.
 
 > **Naming.** The repository and project name is `somecryptochessproject`. The
 > Python package and console command use the short form `sccp` (import `sccp`,
@@ -240,8 +242,8 @@ All values above are provisional and live in `src/sccp/config.py`.
 
 ## 5. Repository layout
 
-Modules marked *(M0)*, *(M1)* and *(M2)* exist; the rest is the target layout for
-later milestones.
+Modules marked *(M0)*, *(M1)*, *(M2)* and *(M3)* exist; the rest is the target
+layout for later milestones.
 
 ```text
 .
@@ -253,13 +255,13 @@ later milestones.
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # this project's plan
-│   ├── PROTOCOL.md               # normative wire formats (M1–M2)
+│   ├── PROTOCOL.md               # normative wire formats (M1–M3)
 │   ├── RUN_A_TESTNET_MINER.md    # operator guide (written in M6)
 │   └── THREAT_MODEL.md           # security analysis (written in M5)
 ├── data/
 │   ├── openings.json             # curated opening lines, shipped in the wheel
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
-├── genesis/{testnet,mainnet}.json
+├── genesis/{devnet,testnet,mainnet}.json
 ├── scripts/
 │   ├── fetch_engine.py           # verified Stockfish download
 │   └── make_genesis.py
@@ -270,10 +272,13 @@ later milestones.
 │   ├── chess/                    # pgn, openings, engines, gameplay (M1);
 │   │                             # quality policy lands with M5
 │   ├── protocol/                 # models, beacon, pairing, transcripts, verification
-│   ├── chain/                    # tx, blocks, state, mempool, fork choice, storage
-│   ├── node/                     # FastAPI app, gossip, services
-│   ├── miner/                    # engine miner, matchmaker/relay, block builder
-│   ├── wallet/
+│   ├── chain/                    # tx, blocks, state, mempool, fork choice, storage,
+│   │                             # difficulty, bonded timeouts, genesis (M3);
+│   │                             # quality slashing lands with M5
+│   ├── node/                     # FastAPI app, gossip, services (M4)
+│   ├── miner/                    # matchmaker/relay (M2), block builder (M3),
+│   │                             # engine miner (M4)
+│   ├── wallet/                   # M0 key files, M3 wallet service
 │   ├── devnet.py
 │   └── cli.py                    # Typer CLI
 └── tests/
@@ -289,7 +294,7 @@ later milestones.
 
 ## 6. Quickstart
 
-M0/M1/M2 commands work today; the node, miner and devnet commands are the
+M0–M3 modules work today; the `chain`, `miner` and `devnet` commands are the
 intended UX for later milestones.
 
 ```bash
@@ -329,7 +334,7 @@ sccp miner run --network testnet \
     --engine-path ./bin/stockfish-ubuntu-x86-64 \
     --relay http://127.0.0.1:8646
 
-# Spin up everything locally with mock engines (M5)
+# Spin up everything locally with mock engines (M4)
 sccp devnet up --miners 4 --blocks 10
 ```
 
@@ -342,7 +347,7 @@ sccp devnet up --miners 4 --blocks 10
 | **M0** | Foundations: packaging, config, crypto, CLI skeleton, CI | done |
 | **M1** | Chess core: PGN validation, canonical hashing, opening book, engine abstraction, game runner | done |
 | **M2** | Matchmaking: beacon, deterministic pairing, certificates, transcripts, relay, offline proof verification | done |
-| **M3** | Chain: transactions, wallet, blocks, state, mempool, fork choice, difficulty, block builder | not started |
+| **M3** | Chain: transactions, wallet, blocks, state, mempool, fork choice, difficulty, block builder | done |
 | **M4** | Node + P2P + miner daemon | not started |
 | **M5** | Quality verification, challenges, slashing, threat-model tests | not started |
 | **M6** | Testnet launch: genesis, faucet, docker-compose, observability | not started |
@@ -389,7 +394,7 @@ make cov           # whole-package report with the 85% gate
 make cov-gate      # crypto/ and serialization.py must stay >= 95% covered
 make test-all      # adds integration/e2e; skips if Stockfish is absent
 make dist-check    # build sdist+wheel and run `twine check --strict` (twine>=7)
-make devnet        # in-process node + relay + mock miners (lands with M5)
+make devnet        # in-process node + relay + mock miners (lands with M4)
 ```
 
 Real-engine tests are marked `engine` and deselected by default:
@@ -463,13 +468,48 @@ beacon, signatures and PGN offline. drand quicknet verification is a pluggable
 `DrandVerifier` (BLS12-381 is not in the stdlib crypto stack); `drand_used = 0`
 needs no verifier and is always valid.
 
+### The ledger, wallets and blocks (M3)
+
+The chain is a library, not a daemon yet: genesis, transactions, blocks, fork
+choice and storage all work in-process.
+
+```python
+from sccp.chain.chain import Chain
+from sccp.chain.mempool import Mempool
+from sccp.config import DEVNET
+from sccp.miner.block_builder import BlockBuilder
+from sccp.wallet.service import WalletService
+
+chain = Chain.from_genesis_file("devnet", "genesis/devnet.json")
+wallet = WalletService(DEVNET, chain.state, chain=chain)
+print(wallet.balance(miner_address).total)
+
+mempool = Mempool(params=DEVNET, tip_state=chain.state, book=chain.book)
+builder = BlockBuilder(params=DEVNET, chain=chain, mempool=mempool, keypair=miner_keys)
+built = builder.build_and_append(timestamp=chain.tip.block.header.timestamp + 1)
+```
+
+Every state transition is a signed transaction validated in a fixed order
+(schema, network, signature, nonce, balance, type rules, size) and applied by one
+function, so the mempool and block connection cannot disagree. Blocks carry one
+coinbase, ordinary transactions and exactly `wins_required` win proofs; their
+`state_root` is recomputed from the state the block produces, and fork choice
+adopts the heaviest chain by cumulative work, returning orphaned payloads to the
+mempool on a reorg. SQLite storage keeps canonical block JSON plus periodic
+snapshots, and a restart replays from the last snapshot rather than trusting it.
+Bonded `timeout_claim`/`timeout_dispute` settlement and clock-witness slashing
+live in `src/sccp/chain/timeout.py`; genesis documents in `genesis/*.json` are
+regenerated by `scripts/make_genesis.py`. Wire formats are in
+[`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+
 ### Releasing
 
 Publishing is automated by [`.github/workflows/publish.yml`](.github/workflows/publish.yml):
 
 1. Bump the version in `pyproject.toml` **and** `src/sccp/version.py`; the
    workflow refuses to publish if the two disagree or if the tag does not match.
-2. Run `make check`, commit, then tag `vX.Y.Z` and push the tag.
+2. Add a `CHANGELOG.md` entry, run `make check`, commit, then tag `vX.Y.Z` and
+   push the tag.
 3. Create a GitHub **release** for that tag. Publishing the release builds the
    sdist and wheel, re-runs lint/typecheck/tests, runs `twine check --strict`
    (twine 7+ — current hatchling emits `Metadata-Version: 2.5`, which twine 6

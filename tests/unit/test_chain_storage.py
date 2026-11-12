@@ -157,4 +157,3 @@ def test_an_incompatible_schema_fails_loudly(tmp_path: Path) -> None:
     storage.close()
     with pytest.raises(StorageError, match="expects"):
         Storage(path)
-

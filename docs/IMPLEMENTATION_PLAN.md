@@ -293,9 +293,10 @@ testnet and devnet have no supply cap).
 ```python
 INT_MIN, INT_MAX = -(2**63), 2**64 - 1
 
+
 def normalize(value):
     """Type-check, range-check and NFC-normalize a canonical JSON tree."""
-    if value is None or isinstance(value, bool):   # bool before int!
+    if value is None or isinstance(value, bool):  # bool before int!
         return value
     if isinstance(value, int):
         if not INT_MIN <= value <= INT_MAX:
@@ -317,13 +318,14 @@ def normalize(value):
         return out
     raise TypeError(f"unsupported canonical JSON type: {type(value).__name__}")
 
+
 def canonical_json(obj) -> bytes:
     return json.dumps(
-        normalize(obj),              # this is what rejects floats
+        normalize(obj),  # this is what rejects floats
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
-        allow_nan=False,             # belt and braces; no float survives normalize
+        allow_nan=False,  # belt and braces; no float survives normalize
     ).encode("utf-8")
 ```
 

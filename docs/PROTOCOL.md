@@ -2,14 +2,16 @@
 
 Status: **normative** for the parts implemented in milestones M0–M3 (canonical
 encoding, game hash, PGN contract, opening book, engine fingerprints, epoch
-beacons, pairing, certificates, transcripts, clocks and clock evidence, and
-win-proof verification). Sections for transactions, blocks, proofs-on-chain and
-the node API land in later milestones. The M3 clock layer covers the off-chain
-primitives; the relay's timed-session API remains the M2 API described below.
+beacons, pairing, certificates, transcripts, clocks and clock evidence, win-proof
+verification, and the M3 ledger: transaction envelopes, account state, block
+headers and bodies, difficulty, fork choice and genesis documents). Sections for
+the node and gossip API and for the quality/challenge lifecycle land in later
+milestones. The M3 clock layer covers the off-chain primitives *and* on-chain
+settlement; the relay's timed-session API remains the M2 API described below.
 
-Reference implementation: `src/sccp/protocol/`, `src/sccp/chess/` and
-`src/sccp/serialization.py`. The plan that motivates these rules is
-[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), sections 5.2–5.10.
+Reference implementation: `src/sccp/protocol/`, `src/sccp/chess/`,
+`src/sccp/chain/` and `src/sccp/serialization.py`. The plan that motivates these
+rules is [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), sections 5.2–5.11.
 
 ---
 
@@ -350,10 +352,11 @@ is included in the move list. A `time_forfeit` PGN without a matching
 The relay is untrusted. It derives the round from public data and stores
 signatures; it never signs a result. The implemented relay endpoint remains the
 M2 API: `timeout_seconds` only abandons a silent session and is not evidence of
-a loss. The clock layer now provides the off-chain primitives a timed relay will
-use — signed move messages, witness-signed receipts, flag evidence and timeout
-claims — as described in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)
-section 5.7.1. The timed session API itself is a later relay milestone.
+a loss. The clock layer provides the off-chain primitives a timed relay will use
+— signed move messages, witness-signed receipts and flag evidence — as described
+in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1, and the
+chain settles the result through the bonded claim lifecycle in section 10.4. The
+timed session API itself is a later relay milestone.
 
 | Method | Path | Body |
 | --- | --- | --- |
@@ -465,7 +468,254 @@ opening book is loaded from the installed package unless `--book` names an
 override. drand needs a callable verifier, so a `drand_used = 1` beacon fails
 offline verification until M4 wires the pinned verifier.
 
-## 10. Change control
+## 10. Transactions
+
+A transaction is one canonical JSON object: the same shape in the mempool, in a
+block body and on the wire. `src/sccp/chain/tx.py` is the only validator, and
+`ALLOWED` there is the normative list of payload keys per type.
+
+| Field | Type | Rule |
+| --- | --- | --- |
+| `network` | string | equals the chain's `network_id` |
+| `type` | string | one of the twelve values in 10.2 |
+| `from` | address | the sender; the Python attribute is `sender` |
+| `nonce` | int ≥ 0 | equals the sender's current nonce; a gap is a rejection |
+| `fee` | int ≥ 0 | at least `min_fee`, debited from spendable balance, never from a bond |
+| `payload` | object | type-specific; unknown keys are rejected |
+| `signature` | 128 hex chars | Ed25519 over the txid; `null` only for a coinbase |
+
+`txid = H("sccp/v1/tx", {network, type, from, nonce, fee, payload})`. The
+signature is outside the hash, so signing is well defined and re-signing never
+changes an id; every payload is normalized (section 1) before hashing. One
+`(from, nonce)` pair may exist at most once on a chain and at most once in a
+mempool, which is the anti-replay rule at this layer.
+
+Validation order is fixed and identical in both places: schema, network, sender
+key and signature, nonce, fee, balance, type rules, size (`max_tx_bytes`).
+Blocks rerun the whole checklist from scratch, so a mempool bug cannot make an
+invalid block valid. Failures carry a stable reason: `schema`, `network`,
+`signature`, `nonce`, `balance`, `fee`, `type`, `size`, `duplicate`, `window`,
+`bond`, `registration`.
+
+### 10.1 Sender keys
+
+Ed25519 is not key-recoverable, so a spend needs the sender's public key from
+somewhere. Two sources are authoritative: a genesis allocation and a miner's
+`register` transaction, both of which store the key on the account. An account
+with neither (a plain recipient) puts `public_key` in the payload of its first
+transaction; consensus then checks that the key re-encodes to the `from` address
+before storing it. The reveal is self-authenticating, so no key registry and no
+extra signature format is needed.
+
+### 10.2 Types and payloads
+
+| Type | Payload keys | Effect |
+| --- | --- | --- |
+| `transfer` | `to`, `amount`, `public_key`\* | moves `amount` from `from` to `to`; `to != from`, `amount >= 1` |
+| `register` | `public_key`, `endpoint`, `engine`, `bond` | locks `bond >= min_bond`, stores key/endpoint/engine, sets `registered_until_epoch = epoch + registration_epochs`; refused while banned |
+| `register_witness` | `public_key`, `endpoint`, `bond` | locks `bond >= clock_witness_bond` and registers a clock witness for `registration_epochs` |
+| `update_registration` | `endpoint`, `engine`, `extend_epochs`, `bond`, `public_key`\* | must change at least one of those; optionally tops up the bond |
+| `unregister` | `public_key`\* | clears registration and starts `unbond_delay` at `height + unbond_delay` |
+| `withdraw_bond` | `public_key`\* | only after the unbonding height, and only the unlocked bond, moves back to spendable |
+| `availability` | `epoch`, `max_games`, `commitment`, `public_key`\* | commits for `epoch = current + availability_lead`; `1 <= max_games <= rounds_per_epoch`; the committer must be registered through `epoch`, hold `min_bond`, and may not change a commitment |
+| `reveal` | `epoch`, `nonce`, `public_key`\* | only valid in epoch `epoch - 1`, must open that epoch's commitment, may not change |
+| `timeout_claim` | `match_id`, `certificate`, `last_move`, `clock_evidence`, `bond`, `public_key`\* | opens a bonded claim (10.3) |
+| `timeout_dispute` | `claim_id`, `move`, `move_signature`, `clock_evidence`, `public_key`\* | the accused answers with a later signed move (10.3) |
+| `slash_evidence` | `evidence`, `proof_id`, `public_key`\* | burns an equivocating clock witness (10.3); `proof_id` is refused in M3 |
+| `challenge` | `proof_id`, `reason`, `evidence`, `bond`, `public_key`\* | M5; M3 rejects every challenge explicitly |
+
+\* optional: only needed for an account whose public key the chain does not
+already know (10.1).
+
+### 10.3 Coinbase
+
+Every block above genesis carries exactly one coinbase: an *unsigned* `transfer`
+from the miner to itself with `nonce = 0`, `fee = 0` and
+`payload = {to: miner, amount: subsidy + fees}`. Its authorisation is the block
+seal, not a signature, so it is never applied as an ordinary transaction and
+consumes no nonce. `subsidy = params.subsidy >> (height // halving_interval)`,
+clamped so minted supply never exceeds `max_supply`; testnet and devnet have no
+cap and no halving. The credited amount matures after `coinbase_maturity` blocks
+(`immature` becomes spendable) and a body transaction may not imitate a coinbase.
+
+### 10.4 Bonded timeout settlement
+
+A losing seat can always stall, so a flag must settle without its cooperation.
+The lifecycle (implemented in `src/sccp/chain/timeout.py`) is:
+
+1. `timeout_claim` — from one seat of the match, bonded with
+   `bond >= min_timeout_bond`, carrying the certificate, the claimant's own
+   signed `last_move`, and `clock_evidence` whose `final` flag receipt is for
+   ply `last_move.ply + 1`, names the *other* seat, shows `0` ms for that seat
+   and a positive clock for the claimant, matches the certificate's
+   `time_control`, and carries at least `clock_witness_quorum` signatures from
+   witnesses registered and unexpired at the certificate's epoch. The bond is
+   debited (never the fee's source) and the record gets
+   `deadline_height = height + timeout_dispute_window`. Only one claim per match
+   may be open.
+2. `timeout_dispute` — from the **accused** seat only, at or before
+   `deadline_height`, carrying a later signed move of its own (`ply >
+   last_move.ply`). It returns the bond to the claimant and makes the claim
+   unfinalisable.
+3. Finalisation is not a transaction: when a `WinProof` with
+   `termination = "time_forfeit"` and `timeout_claim_id` is accepted, the claim
+   must exist, match the proof's certificate, be opened by the proof's winner
+   and be undisputed; the bond then returns to the claimant. A claim may only
+   finalise in a block **after** its deadline.
+
+`slash_evidence` covers clock-witness equivocation only in M3: it carries
+`evidence = {witness, receipts}` with exactly two receipts of the same
+`(match_id, kind, ply)`, different contents and valid signatures from the named
+witness. The witness must be registered with a non-zero bond; the bond is burned,
+the witness is de-registered and `banned_until = height + unbond_delay`.
+Equivocation about proofs (`proof_id` in the payload) is refused: it belongs to
+the M5 challenge layer.
+
+## 11. Ledger state
+
+The state is a deterministic, integer-only object (`src/sccp/chain/state.py`);
+nothing in it reads a clock, a random source or the network. It holds one
+`Account` per address:
+
+| Account field | Meaning |
+| --- | --- |
+| `balance` | spendable base units |
+| `immature` | coinbase credits that mature at a later height |
+| `bonded` | locked bond (registration or witness) |
+| `nonce` | next valid transaction nonce |
+| `public_key` | the spend key, once known (10.1) |
+| `registered_until_epoch`, `endpoint`, `engine`, `unbonding_height`, `banned_until` | registration and bond lifecycle |
+
+alongside the proof and match registries (`game_hash -> proof_id`, match id ->
+epoch/round/seats), per-miner stats (wins, games, last opponent epoch, which is
+what the opponent cooldown reads), per-epoch records (beacon, roster, quotas,
+matchable flag), the availability commitments and reveals (by epoch), the clock
+witness registry, and open/closed timeout claims.
+
+`state_root` is the merkle root (section 1) over `address -> account` leaves,
+where an account leaf commits to every field of the table above. `roster_root` is
+the same construction over the epoch's roster, committing only
+`{public_key, max_games}` per member. Both are recomputed rather than trusted.
+
+Snapshots are JSON with the top-level keys `network`, `height`, `tip_hash`,
+`accounts`, `proofs`, `proof_ids`, `matches`, `miner_stats`, `epochs`,
+`availability`, `reveals`, `witnesses`, `timeout_claims`, `difficulty`,
+`last_k_change_height`, `timestamps` and `minted`. A snapshot is a cache: a node
+replaying blocks checks the snapshot's `state_root` against the state it
+rebuilds, so a corrupted snapshot cannot become consensus.
+
+## 12. Blocks, difficulty and fork choice
+
+A block is a header plus a body of *one* coinbase, a list of transactions and a
+sorted list of win proofs. The header commits, in wire order, to:
+
+| Header field | Rule |
+| --- | --- |
+| `version` | `1` |
+| `network` | the chain's `network_id` |
+| `height` | parent height `+ 1` (`0` for genesis) |
+| `prev_hash` | the parent's block hash; 32 zero bytes for genesis |
+| `merkle_root` | body merkle root, below |
+| `state_root` | the state merkle root *after* the block (section 11) |
+| `roster_root` | the epoch roster root (section 11) |
+| `timestamp` | strictly greater than the median of the last 11 timestamps, at most 2 h ahead of the verifier |
+| `epoch` | `height // epoch_length` |
+| `beacon_hash` | the epoch's `B_e` (0 before the first matchable epoch) |
+| `wins_required`, `seal_bits` | exactly the values the retarget schedule yields |
+| `seal_nonce` | the value the miner ground for the seal |
+| `miner` | the coinbase payee and the required winner of every proof |
+
+`block_hash = H("sccp/v1/header", header)`. `merkle_root` is the merkle root of
+the ordered list `[coinbase_txid, txid..., proof_id...]` — *given* order, no
+sorting, leaves `sha256(0x00 || str(index) || 0x00 || canonical_json(item))`, an
+odd node promoted unchanged, and the 32-zero-byte hash for an empty body. Genesis
+therefore has a zero body root and no coinbase.
+
+### 12.1 The seal and difficulty
+
+`block_work(seal_bits, k) = (1 << seal_bits) + k * 65536`; a chain's weight is
+the sum of that over its blocks, so depth plus declared work decide forks.
+
+The seal is valid when `int(block_hash, 16) < 2 ** (256 - seal_bits)`; with
+`seal_bits = 0` every hash passes, which is why testnet and devnet can seal for
+free. `wins_required` (`k`) is the real cost: it is the number of verified chess
+wins a block must carry. Both values are retargeted from the parent's timestamps
+every `retarget_interval` blocks, comparing elapsed time with
+`expected_interval_seconds`: slower than 4/3 of the target lowers `seal_bits` by
+one bit and may lower `k`, faster than 3/4 raises them. `k` is clamped to
+`[k_min, k_max]`, may change at most once per epoch, and never within
+`epoch_length` blocks of the previous change (so open claim windows survive).
+A header that declares easier values than the schedule is invalid, so every node
+derives the schedule itself.
+
+### 12.2 Proof rules
+
+A block at `height` must carry exactly `required_proofs(height, k)` proofs, which
+is `0` up to and including the end of the first realizable matchable epoch (the
+bootstrap exemption, a pure function of the parameters) and `k` afterwards. Each
+proof must: name this network and this header's `miner` as winner; reference an
+epoch that ended before this block's epoch and that has a matchable roster, with
+the winner on that roster; use a `game_hash` and `proof_id` not already on the
+chain and not repeated in the block; sit inside
+`[epoch_end, epoch_end + claim_window]`; respect the `opponent_cooldown` against
+the winner's previous games; declare `low_ply` as `plies < min_plies`; and carry
+`move_evidence` only for `checkmate` and `clock_evidence` for `time_forfeit`.
+Proofs are ordered by `proof_id`, which makes the body canonical.
+
+### 12.3 Order of block checks
+
+Header shape and network, height and parent hash, timestamp, epoch and beacon and
+roster root, declared difficulty, seal, body size and tx ids and merkle root,
+coinbase maturity and transactions, proofs (the expensive part), coinbase value
+(`subsidy + fees` exactly), and finally `state_root` recomputed from the state
+the block actually produces. A block that disagrees only on `state_root` is
+invalid, not "almost valid": that root is what a light client trusts.
+
+### 12.4 Fork choice and reorgs
+
+The heaviest chain wins, ties broken by the numerically lower block hash. A newly
+stored block that is heavier than the current tip triggers a reorg: the fork
+point is the highest common ancestor, blocks above it leave the main chain and
+the candidate branch is adopted, and the orphaned transactions and proofs are
+returned to the mempool. Storage keeps canonical block JSON, the adopted tip and
+periodic snapshots, and replays from the last snapshot on restart instead of
+trusting it.
+
+## 13. Genesis documents
+
+Genesis is the only premine. Its block hash is pinned in `NetworkParams`
+(`genesis_hash`), and a pinned network refuses a document that hashes to
+anything else, so two nodes cannot disagree about height 0.
+
+```json
+{"version": 1,
+ "network": "testnet",
+ "timestamp": 1700000000,
+ "miner": "sccpt1...",
+ "allocations": [{"address": "sccpt1...", "public_key": "hex", "amount": 5000000000}],
+ "hash": "64 hex chars"}
+```
+
+The `hash` shown above is illustrative; a document may omit it, and a pinned
+network always checks the computed hash against `NetworkParams.genesis_hash`.
+
+`version` must be `1` and `network` must name the parameter set. `miner` is
+optional and defaults to the first allocation. `allocations` may be empty
+(mainnet has no premine); each entry needs a positive integer `amount` in base
+units, a valid address for this network, and a `public_key` that **derives** that
+address — Ed25519 is not key-recoverable, so an allocation without a matching key
+would be unspendable. Duplicate addresses are rejected. `hash` is optional and,
+when present, must equal the block hash the document builds; `scripts/make_genesis.py`
+writes it.
+
+Genesis state is the allocation accounts plus the initial difficulty, height 0,
+the genesis timestamp as the first median-time-past sample, an open epoch 0 record
+and an empty body. `genesis/devnet.json` is the devnet chain used by the test
+suite; `genesis/testnet.json` and `genesis/mainnet.json` are the pinned networks.
+Test-network faucet keys come from published seeds, which is why those networks
+are safe to hand out and mainnet must never gain one.
+
+## 14. Change control
 
 - Adding a header tag, changing a hash payload key, changing result or
   termination semantics, or changing selection all require a protocol version

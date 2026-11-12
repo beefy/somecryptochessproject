@@ -74,8 +74,8 @@ dist: venv  ## Build sdist and wheel into dist/ (needs `build`)
 dist-check: dist  ## Validate dist/ with twine check --strict (needs `twine>=7`)
 	$(PYTHON) -m twine check --strict dist/*
 
-devnet: venv  ## Start an in-process devnet (lands with M5)
-	@echo "devnet is not implemented yet; see docs/IMPLEMENTATION_PLAN.md (M5)." >&2
+devnet: venv  ## Start an in-process devnet (lands with M4)
+	@echo "devnet is not implemented yet; see docs/IMPLEMENTATION_PLAN.md (M4)." >&2
 	@exit 1
 
 clean:  ## Remove caches and build artefacts
