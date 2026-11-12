@@ -1,0 +1,104 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sccp"
+version = "0.1.0"
+description = "Some Crypto Chess Project: a cryptocurrency whose proof of work is winning chess games"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+keywords = ["chess", "cryptocurrency", "proof-of-work", "ed25519", "bech32"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Games/Entertainment :: Board Games",
+  "Topic :: Security :: Cryptography",
+]
+
+# Runtime dependencies: see docs/IMPLEMENTATION_PLAN.md section 3.
+# python-chess is pinned to the 1.11 behaviour line (dist version 1.999) because
+# docs/IMPLEMENTATION_PLAN.md section 5.8 depends on its exact PGN semantics.
+dependencies = [
+  "python-chess>=1.11,<2",
+  "cryptography>=50,<51",
+  "bech32>=1.2,<2",
+  "mnemonic>=0.21,<1",
+  "pydantic>=2.14,<3",
+  "pydantic-settings>=2.16,<3",
+  "fastapi>=0.162,<1",
+  "uvicorn>=0.54,<1",
+  "httpx>=0.28,<1",
+  "typer>=0.29,<1",
+  "rich>=15,<16",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9,<10",
+  "pytest-asyncio>=1.4,<2",
+  "pytest-cov>=7,<8",
+  "hypothesis>=6.170,<7",
+  "ruff>=0.17,<1",
+  "mypy>=2.4,<3",
+]
+fast = ["orjson>=3.11,<4"]
+
+[project.scripts]
+sccp = "sccp.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sccp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/sccp", "tests", "README.md", "LICENSE"]
+
+[tool.pytest.ini_options]
+minversion = "9.0"
+testpaths = ["tests"]
+asyncio_mode = "strict"
+addopts = "-ra -q -m 'not engine and not adversarial and not slow and not network'"
+markers = [
+  "engine: needs a real UCI engine binary (deselected by default)",
+  "adversarial: cheat/self-play/tamper suites (deselected by default)",
+  "slow: long-running (deselected by default)",
+  "network: needs real sockets or the internet (deselected by default)",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["sccp"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["sccp"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.11"
+files = ["src/sccp"]
+strict = true
+warn_unreachable = true
+pretty = true
