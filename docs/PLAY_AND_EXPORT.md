@@ -197,7 +197,7 @@ Use a separate `--out` directory per block. Each export writes its own
 
 ---
 
-## 6. What the export contains
+## 6. Inspect the export
 
 ```text
 block-games/game-1/
@@ -216,6 +216,26 @@ Inspect the manifest with:
 
 ```bash
 python -m json.tool block-games/game-1/manifest.json
+```
+
+### Read the PGN directly from the block
+
+The PGN is stored in the block body at `block.proofs[*].pgn`, so you can read it
+from the node API without exporting. There is no HTML explorer yet.
+
+With the node from step 4 still running:
+
+```bash
+curl -s http://127.0.0.1:8645/v1/blocks/5 \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["block"]["proofs"][0]["pgn"])'
+```
+
+Change `5` to your block height. A block can contain more than one proof; print
+all of them with:
+
+```bash
+curl -s http://127.0.0.1:8645/v1/blocks/5 \
+  | python -c 'import json,sys; print("\n".join(p["pgn"] for p in json.load(sys.stdin)["block"]["proofs"]))'
 ```
 
 ---
