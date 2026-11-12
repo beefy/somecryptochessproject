@@ -95,6 +95,15 @@ def _get_json(client: httpx.Client, path: str) -> dict[str, Any]:
     try:
         response = client.get(path)
         response.raise_for_status()
+    except httpx.ConnectError as exc:
+        port = client.base_url.port
+        listen = f" --port {port}" if port is not None else ""
+        raise ExportError(
+            f"cannot connect to a node at {client.base_url}: {exc}\n"
+            "start one first, for example:\n"
+            f"  sccp --data-dir ./data node run --network testnet{listen}\n"
+            "or point --node at a node that is already serving."
+        ) from None
     except httpx.HTTPStatusError as exc:
         detail = exc.response.text.strip()
         suffix = f": {detail}" if detail else ""

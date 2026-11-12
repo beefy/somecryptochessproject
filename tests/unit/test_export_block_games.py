@@ -16,6 +16,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import httpx
 import pytest
 
 from sccp.chain.mempool import Mempool
@@ -174,3 +175,18 @@ def test_the_parser_names_the_tip_as_the_default_block(export: ModuleType) -> No
     assert args.out == export.DEFAULT_OUT
     assert args.block is None
     assert args.timeout == export.DEFAULT_TIMEOUT
+
+
+def test_a_stopped_node_is_explained(export: ModuleType, tmp_path: Path) -> None:
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("Connection refused", request=request)
+
+    output = tmp_path / "games"
+    with (
+        httpx.Client(base_url=export.DEFAULT_NODE, transport=httpx.MockTransport(refuse)) as client,
+        pytest.raises(export.ExportError, match="start one first") as caught,
+    ):
+        export.export_block_games(client, output_dir=output)
+
+    assert " --port 8645" in str(caught.value)
+    assert not output.exists()

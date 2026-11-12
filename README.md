@@ -387,7 +387,9 @@ python scripts/play_miner.py --color black --engine stockfish-19 \
 # …or take a seat on a relay that is already serving, with your own keyfile
 python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 
-# Export every game in a node's latest block as PGN, with a manifest.json
+# Export every game in a node's latest block as PGN, with a manifest.json.
+# The exporter reads the node API, so start `sccp node run` in another terminal
+# first; `--block` may name any other height or hash.
 python scripts/export_block_games.py --node http://127.0.0.1:8645 --out ./games
 python scripts/export_block_games.py --block 42 --out ./games   # another block
 ```
