@@ -19,6 +19,12 @@ protocol and testnet directly, without construction-phase labels.
   is now a forward-looking list of next steps, acceptance criteria and
   improvement areas; protocol details remain normative in `docs/PROTOCOL.md`.
 
+### Fixed
+
+- Running `pytest` through its console script (as CI does) now adds the
+  repository root to `sys.path`, so `tests/unit/test_deploy_bootstrap.py` can
+  import the root-level `deploy` package during collection.
+
 ## [0.9.0] - 2026-11-12
 
 A minor release: the testnet is now deployable, fundable and operable with a

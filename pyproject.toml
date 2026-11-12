@@ -88,6 +88,10 @@ testpaths = ["tests"]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra -q -m 'not engine and not adversarial and not slow and not network'"
+# CI invokes the `pytest` console script rather than `python -m pytest`, which
+# does not add the repository root to sys.path. The tests import root-level
+# helper packages such as `deploy`.
+pythonpath = ["."]
 markers = [
   "engine: needs a real UCI engine binary (deselected by default)",
   "adversarial: cheat/self-play/tamper suites (deselected by default)",
