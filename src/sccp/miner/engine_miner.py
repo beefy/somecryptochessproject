@@ -40,7 +40,8 @@ from sccp.chess.quality import (
 from sccp.config import NetworkParams, QualityMode, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, sign_domain
-from sccp.errors import ClockError, MinerError, QualityError, RelayError
+from sccp.errors import ClockError, EpochPipelineError, MinerError, QualityError, RelayError
+from sccp.miner.epoch_pipeline import EpochPipeline, PipelineAction
 from sccp.miner.matchmaker import ClockBundle, MatchView
 from sccp.protocol.clocks import (
     MatchClock,
@@ -101,6 +102,27 @@ class MinerConfig:
     nodes_per_move: int = 200_000
     depth: int | None = None
     max_games_per_epoch: int = 1
+    nonce_secret: str | None = None
+    """The 32-byte hex nonce that availability commitments are built from.
+
+    When set, the miner submits its own availability and reveal transactions
+    every epoch (:class:`~sccp.miner.epoch_pipeline.EpochPipeline`), so it stays
+    on the roster without an operator running ``sccp wallet availability`` by
+    hand. When ``None`` the operator drives those transactions.
+    """
+
+    resign_after_plies: int | None = None
+    """Resign, on our turn, once an active game reaches this many plies.
+
+    Off by default. Two engines of comparable strength shuffle into a draw, and
+    a draw has no winner, so it yields no proof and the epoch pipeline's
+    availability/reveal transactions are the only work left. Resigning is a
+    consensus-valid decisive result (``Termination.RESIGNATION``) that both
+    seats can co-sign and the winner can prove, so an operator can bound game
+    length instead of waiting for the board to become decisive. The testnet
+    stack sets it to 60 plies, mirroring the devnet's own policy.
+    """
+
     witness_keys: tuple[tuple[str, str], ...] = ()
     """Trusted clock witnesses as ``(address, public_key_hex)`` pairs.
 
@@ -120,7 +142,9 @@ class MinerConfig:
         nodes_per_move: int = 200_000,
         depth: int | None = None,
         max_games_per_epoch: int = 1,
+        nonce_secret: str | None = None,
         witness_keys: Sequence[tuple[str, str]] = (),
+        resign_after_plies: int | None = None,
     ) -> MinerConfig:
         """Build a config from a network id and a wallet keypair."""
         return cls(
@@ -131,6 +155,8 @@ class MinerConfig:
             nodes_per_move=nodes_per_move,
             depth=depth,
             max_games_per_epoch=max_games_per_epoch,
+            nonce_secret=nonce_secret,
+            resign_after_plies=resign_after_plies,
             witness_keys=tuple(witness_keys),
         )
 
@@ -347,6 +373,20 @@ class NodeClient:
             raise RelayError("node /v1/status did not return an object")
         return document
 
+    def account(self, address: str) -> Mapping[str, object]:
+        """The node's view of ``address``: balance, nonce and registration."""
+        document = self._http.get(f"/v1/accounts/{address}")
+        if not isinstance(document, Mapping):
+            raise RelayError("node /v1/accounts did not return an object")
+        return document
+
+    def epoch(self, epoch: int) -> Mapping[str, object]:
+        """The node's view of one epoch: beacon, roster and quotas."""
+        document = self._http.get(f"/v1/epochs/{epoch}")
+        if not isinstance(document, Mapping):
+            raise RelayError("node /v1/epochs did not return an object")
+        return document
+
     def submit_transaction(self, tx: Transaction) -> Mapping[str, object]:
         """Announce a signed transaction."""
         document = self._http.post("/v1/tx", tx.model_dump(mode="json", by_alias=True))
@@ -409,7 +449,10 @@ class MinerTick:
     results: tuple[str, ...] = ()
     proofs: tuple[str, ...] = ()
     claims: tuple[str, ...] = ()
+    resignations: tuple[str, ...] = ()
     refusals: tuple[str, ...] = ()
+    pipeline: tuple[PipelineAction, ...] = ()
+    """Availability/reveal transactions the miner submitted this tick."""
 
 
 @dataclass(slots=True)
@@ -448,6 +491,7 @@ class EngineMiner:
         node: NodeClient | None = None,
         clock_ms: Callable[[], int] = monotonic_ms,
         quality_engine: AnalysisEngine | None = None,
+        pipeline: EpochPipeline | None = None,
     ) -> None:
         self.config = config
         self.engine = engine
@@ -465,10 +509,23 @@ class EngineMiner:
             self.node = NodeClient(config.node_url)
         else:
             self.node = None
+        if pipeline is not None:
+            self.pipeline: EpochPipeline | None = pipeline
+        elif config.nonce_secret is not None and self.node is not None:
+            self.pipeline = EpochPipeline(
+                config.params,
+                config.keypair,
+                self.node,
+                nonce_secret=config.nonce_secret,
+                max_games=config.max_games_per_epoch,
+            )
+        else:
+            self.pipeline = None
         self.clock_ms = clock_ms
         self.matches: dict[str, MatchState] = {}
         self.transcripts: dict[str, Transcript] = {}
         self.proofs: dict[str, WinProof] = {}
+        self.pending_proofs: dict[str, WinProof] = {}
         self.claims: dict[str, TimeoutClaim] = {}
         self.books: dict[str, ReceiptBook] = {}
         self.refusals: list[str] = []
@@ -538,17 +595,27 @@ class EngineMiner:
     def run_once(self) -> MinerTick:
         """Poll the relay once and act on every match this miner owns."""
         before = len(self.refusals)
+        submitted: list[PipelineAction] = []
+        if self.pipeline is not None:
+            try:
+                submitted = list(self.pipeline.step())
+            except (EpochPipelineError, RelayError) as exc:
+                self._refuse(f"epoch pipeline: {exc}")
         try:
             views = self.relay.matches()
         except RelayError as exc:
             self._refuse(f"relay unavailable: {exc}")
-            return MinerTick(refusals=tuple(self.refusals[before:]))
+            return MinerTick(
+                refusals=tuple(self.refusals[before:]),
+                pipeline=tuple(submitted),
+            )
         observed = 0
         joined: list[str] = []
         moves: list[str] = []
         results: list[str] = []
         proofs: list[str] = []
         claims: list[str] = []
+        resignations: list[str] = []
         for view in views:
             matchup = view.matchup
             if self.address not in (matchup.white, matchup.black):
@@ -558,15 +625,17 @@ class EngineMiner:
                 continue
             observed += 1
             try:
-                new_joined, new_moves, new_results, new_proofs, new_claims = self._process(view)
+                processed = self._process(view)
             except (MinerError, RelayError) as exc:
                 self._refuse(f"{matchup.match_id}: {exc}")
                 continue
-            joined += new_joined
-            moves += new_moves
-            results += new_results
-            proofs += new_proofs
-            claims += new_claims
+            joined += processed[0]
+            moves += processed[1]
+            results += processed[2]
+            proofs += processed[3]
+            claims += processed[4]
+            resignations += processed[5]
+        proofs += self._flush_proofs()
         return MinerTick(
             observed=observed,
             joined=tuple(joined),
@@ -574,12 +643,14 @@ class EngineMiner:
             results=tuple(results),
             proofs=tuple(proofs),
             claims=tuple(claims),
+            resignations=tuple(resignations),
             refusals=tuple(self.refusals[before:]),
+            pipeline=tuple(submitted),
         )
 
     def _process(
         self, view: MatchView
-    ) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
+    ) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
         matchup = view.matchup
         seat: Color = "white" if self.address == matchup.white else "black"
         state = self.matches.get(matchup.match_id)
@@ -597,15 +668,35 @@ class EngineMiner:
             view = self.relay.match(state.match_id)
             moves += self._sync_moves(state, view)
         if state.finished or state.refused:
-            return joined, moves, [], [], []
+            return joined, moves, [], [], [], []
         results: list[str] = []
         proofs: list[str] = []
         claims: list[str] = []
+        resignations: list[str] = []
         if view.status == "finished":
             results, proofs, claims = self._finish(view, state)
+        elif self._resign_if_stalled(view, state):
+            resignations.append(state.match_id)
         elif view.status == "active":
             moves += self._play(state)
-        return joined, moves, results, proofs, claims
+        return joined, moves, results, proofs, claims, resignations
+
+    def _resign_if_stalled(self, view: MatchView, state: MatchState) -> bool:
+        """Resign on our turn once the game passed ``resign_after_plies``.
+
+        Only the side to move may resign, so the check is done against the
+        board this miner replayed from the certificate; a game we are not to
+        move in is left to the opponent. Resigning produces the resignation
+        result both seats co-sign, which is what keeps a run of drawn games
+        from starving the chain of proofs.
+        """
+        limit = self.config.resign_after_plies
+        if limit is None or view.status != "active" or len(view.san_moves) < limit:
+            return False
+        if self._to_move(state) != state.seat:
+            return False
+        self.relay.resign(state.match_id, seat=self.address)
+        return True
 
     def _open_match(self, view: MatchView, seat: Color) -> MatchState:
         certificate = view.certificate
@@ -875,8 +966,7 @@ class EngineMiner:
                 proof = proof.model_copy(update={"quality_summary": summary})
             self.proofs[proof.proof_id] = proof
             proofs.append(proof.proof_id)
-            if self.node is not None:
-                self.node.announce_proof(proof)
+            self._announce_proof(proof)
         return actions, proofs, []
 
     def _settle_flag(
@@ -942,6 +1032,41 @@ class EngineMiner:
         elif result.termination == "time_forfeit":
             return False, "time forfeits need verified clock evidence"
         return True, ""
+
+    # -- proof announcement --------------------------------------------------
+
+    def _announce_proof(self, proof: WinProof) -> bool:
+        """Tell the node about ``proof``, queueing it when it is too early.
+
+        A game usually ends inside its own epoch, and a proof only becomes
+        admissible once that epoch has ended (PROTOCOL.md section 12). The node
+        refuses an early proof, so announcing it once and forgetting would drop
+        it: the epoch would then never close, because only proofs close epochs.
+        Queued proofs are re-announced on later polls until the node takes them
+        or their claim window has closed.
+        """
+        if self.node is None:
+            return False
+        try:
+            self.node.announce_proof(proof)
+        except RelayError as exc:
+            message = str(exc)
+            if "claim window" in message or "already" in message:
+                # Settled elsewhere, or too late to ever settle: stop retrying.
+                self.pending_proofs.pop(proof.proof_id, None)
+                return "already" in message
+            self.pending_proofs[proof.proof_id] = proof
+            return False
+        self.pending_proofs.pop(proof.proof_id, None)
+        return True
+
+    def _flush_proofs(self) -> list[str]:
+        """Re-announce queued proofs and return the ids the node accepted."""
+        accepted: list[str] = []
+        for proof_id, proof in list(self.pending_proofs.items()):
+            if self._announce_proof(proof):
+                accepted.append(proof_id)
+        return accepted
 
     # -- timeout claims -----------------------------------------------------
 

@@ -237,3 +237,7 @@ class DevnetError(SccpError):
 
 class MinerError(SccpError, RuntimeError):
     """The miner cannot act safely: refused match, clock, or relay response."""
+
+
+class EpochPipelineError(MinerError):
+    """The availability/reveal pipeline cannot keep the miner matchable."""

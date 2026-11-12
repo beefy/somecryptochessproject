@@ -219,10 +219,14 @@ nonce 4
 A node started with `sccp node run --mine --miner-address ADDRESS` runs a proof
 settler: it takes an eligible proof from the mempool and builds the next block
 around it, including any pending transfers. The docker-compose testnet starts
-that settler automatically. After the bootstrap window the node does not mine
-empty blocks, so a transfer confirms with the next decisive game; a draw
-produces no proof and no block. See [`RUNBOOK.md`](RUNBOOK.md) for the exact
-bootstrap and settlement behaviour.
+that settler automatically. After the bootstrap window the node never builds an
+empty block, but it does build a *heartbeat* block whenever the mempool holds at
+least one transaction; such a block mints no subsidy, so skipping proofs never
+pays, and it carries exactly one transaction, so a backlog of ledger work turns
+into one block per transaction -- the chain's clock only advances that way when
+no proof is available. Because the stack's miners commit availability and reveal
+it every epoch, a transfer normally confirms well within one epoch. See
+[`RUNBOOK.md`](RUNBOOK.md) for the exact bootstrap and settlement behaviour.
 
 ---
 

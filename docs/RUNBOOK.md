@@ -108,20 +108,46 @@ pre-built bootstrap chain (this stack) must pass `--no-mine-bootstrap`; otherwis
 the background miner can race the bootstrap and build a competing block at the
 same height.
 
-After height 19 the settler only acts when a proof is pending. If the node stays
-at 19 and the relay shows finished **draws**, that is expected: draws earn
-nothing, so there is no proof to settle. The next round (every 60 seconds, up to
-the epoch quota) gives the miners another game.
+After height 19 a block needs a proof or at least one transaction. The stack's
+miners commit and reveal availability every epoch, so those transactions carry
+the chain forward even when a round ends in a draw; without them (a miner started
+without `--nonce-secret-file`) the chain can only advance when somebody plays a
+decisive game.
 
 ## Stuck chain or mempool
 
 - **Height 19 forever, relay games active:** check the miners are running and
   their logs show moves. CPU-starved miners make slow progress; the 30+0 clock is
   real even on testnet.
-- **Height 19 forever, relay games drawn:** no proof exists. Wait for the next
-  round or redeploy; draws are deliberate no-ops.
-- **Height 20 and no further blocks:** the epoch's three games are exhausted on
-  this bootstrap. Redeploy resets the demonstration chain.
+- **Height 19 forever, relay games drawn:** draws earn nothing, so no proof
+  arrives. The miners' availability/reveal transactions are the heartbeat that
+  still produces blocks; if `GET /v1/mempool` is empty, restart the miners with
+  `--nonce-secret-file` (section 4.3 of
+  [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md)).
+- **The tip stops mid-epoch with an empty mempool:** a block needs a proof or a
+  transaction, and a proofless block takes exactly one transaction, so an epoch
+  of `epoch_length` blocks needs that much ledger work to end. The two stack
+  miners supply four items per epoch (availability plus reveal each), so one
+  decisive game -- or a timeout claim, which is a transaction too -- carries the
+  epoch; a roster of three or more miners is self-sustaining. `GET /v1/mempool`
+  shows which proof ids and tx ids are still waiting, and the relay log shows
+  rounds that never end.
+- **Every game in the epoch finished as a draw:** a draw has no winner, so it
+  yields no proof and leaves the pool with only the roster's own transactions.
+  Two engines of comparable strength draw long games, so give the miner
+  `--resign-after-plies 60`: the side to move resigns, both seats co-sign a
+  `resignation` result, and the winner's proof carries the epoch. Check with
+  `GET /v1/matches`: `"termination": "draw"` on every session is the symptom,
+  and `--resign-after-plies` on either miner is the fix.
+- **The relay keeps matching epoch N while the node is on a later epoch:** start
+  the relay with `--node http://<node>:8645`. It logs
+  `relay moved to epoch N+1 with 2 matchable miner(s)` and swaps in the chain's
+  beacon and roster; proofs for the old epoch are refused as
+  `epoch ... is not matchable`.
+- **A miner's proofs are all refused with "committed no availability":** that
+  miner was not running two epochs earlier, so it has no commitment for this
+  epoch. Availability is committed `availability_lead` epochs ahead; the miner
+  rejoins the roster by itself one epoch after it starts committing.
 - **A transaction never confirms:** check `GET /v1/mempool` and the node log.
   The pool expires transactions after the network's TTL; resubmit after the
   expiry if the sender still has the nonce.

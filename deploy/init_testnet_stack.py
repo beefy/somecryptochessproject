@@ -73,6 +73,16 @@ def _miner(index: int, directory: Path, params: NetworkParams) -> StackMiner:
     )
 
 
+def nonce_file(directory: Path, name: str) -> Path:
+    """Where :func:`write_stack` leaves the availability secret for miner ``name``.
+
+    ``sccp miner run --nonce-secret-file`` reads it so the miner commits and
+    reveals its own availability every epoch instead of relying on the one-off
+    bootstrap.
+    """
+    return directory / "keys" / f"{name}.nonce"
+
+
 def _write_keyfile(miner: StackMiner, params: NetworkParams, passphrase: str) -> None:
     if miner.keyfile.is_file():
         return  # keep an existing keyfile: its salt and nonce are random
@@ -93,6 +103,9 @@ def write_stack(out: Path, *, passphrase: str) -> dict[str, object]:
     miners = [_miner(index, out, params) for index in range(MINER_COUNT)]
     for miner in miners:
         _write_keyfile(miner, params, passphrase)
+        secret_file = nonce_file(out, miner.name)
+        secret_file.write_text(miner.nonce_secret + "\n", encoding="utf-8")
+        secret_file.chmod(0o600)
 
     passphrase_file = out / "passphrase"
     passphrase_file.write_text(passphrase + "\n", encoding="utf-8")
@@ -108,6 +121,7 @@ def write_stack(out: Path, *, passphrase: str) -> dict[str, object]:
                 "address": miner.address,
                 "keyfile": str(miner.keyfile),
                 "nonce_secret": miner.nonce_secret,
+                "nonce_file": str(nonce_file(out, miner.name)),
                 "commitment": commitment(miner.address, AVAILABILITY_EPOCH, miner.nonce_secret),
             }
             for miner in miners

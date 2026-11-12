@@ -719,12 +719,38 @@ proof must: name this network and this header's `miner` as winner; reference an
 epoch that ended before this block's epoch and that has a matchable roster, with
 the winner on that roster; use a `game_hash` and `proof_id` not already on the
 chain and not repeated in the block; sit inside
-`[epoch_end, epoch_end + claim_window]`; respect the `opponent_cooldown` against
+`(epoch_end, epoch_end + claim_window]`, i.e. settle from the first block of the
+next epoch until the claim window closes; respect the `opponent_cooldown` against
 the winner's previous games (a cooldown of `0` disables the rule, which is how
 testnet and devnet let a small roster settle every game it plays; mainnet keeps
 `4`); declare `low_ply` as `plies < min_plies`; and carry
 `move_evidence` only for `checkmate` and `clock_evidence` for `time_forfeit`.
 Proofs are ordered by `proof_id`, which makes the body canonical.
+
+The exception is the *heartbeat*: past the bootstrap window a block may instead
+carry **zero** proofs if it carries at least one transaction, and such a block
+mints no subsidy (it still collects its transactions' fees). Without it a chain
+can deadlock -- settled proofs are spent once, a small roster plays fewer games
+than an epoch has blocks, and if no block may be added then the availability and
+reveal transactions that rebuild the roster can never be mined, so no proof can
+ever exist again. The exemption cannot be farmed because skipping `k` proofs
+always costs more than it saves. How much ledger work a heartbeat block absorbs
+is a builder choice, not a consensus rule; the reference `BlockBuilder` includes
+exactly one transaction, because a block is also the chain's clock and an epoch
+of `epoch_length` blocks can only end if the ledger supplies that many blocks'
+worth of work.
+
+The same reasoning bounds the transactions a *proof* block carries. A proof
+block is one of the epoch's blocks without spending any ledger work, so the
+reference builder keeps one pending transaction in reserve for every block the
+epoch has left and adds only the surplus (the epoch's last block flushes what
+remains, still bounded by `max_block_bytes`). Packing
+a whole pool into one proof block spends an epoch's work without buying the
+epoch's blocks; if the pool then runs dry before the epoch's last block, the
+next epoch never opens, the proofs that only settle from that boundary are never
+selectable, and the chain stops for good. During the bootstrap window, where no
+proof is required, the builder carries the whole pool, because the deploy
+scripts seed those blocks offline one scripted height at a time.
 
 ### 12.3 Order of block checks
 
@@ -897,7 +923,9 @@ zero time. Two runs with the same arguments produce the same tip hash and the
 same proof ids. Because two seeded engines can shuffle past the ply ceiling, the
 devnet resigns the side to move once a game reaches 60 plies; resignation is a
 consensus-valid termination, both seats co-sign it, and the winner's proof is
-verified like any other.
+verified like any other. The same policy is available to a live miner with
+`sccp miner run --resign-after-plies 60` (off by default), which is what keeps a
+testnet of equal-strength engines from drawing every game in an epoch.
 
 ## 16. Change control
 

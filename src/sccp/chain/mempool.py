@@ -25,6 +25,22 @@ from sccp.errors import LedgerError, MempoolError, TxValidationError
 from sccp.protocol.models import BlockHeader, Transaction, WinProof
 
 
+def _settleable(proof: WinProof, *, height: int, params: NetworkParams) -> bool:
+    """Whether a block at ``height`` may settle ``proof`` (PROTOCOL.md 12.2).
+
+    A proof is valid in blocks *after* its epoch: :func:`sccp.chain.block.check_proof`
+    rejects ``proof.epoch >= header.epoch``, and the header at
+    ``epoch_end_height(e)`` still belongs to epoch ``e``. Settlement therefore
+    starts at the first block of epoch ``e + 1`` and closes
+    ``claim_window`` blocks after the epoch's last one. Admission, selection and
+    re-basing all use this one test, so the pool is never stricter than a block
+    (which would strand a proof the next block would accept) and never looser
+    (which would offer a builder a proof its block cannot carry).
+    """
+    ended = epoch_end_height(proof.epoch, params)
+    return ended < height <= ended + params.claim_window
+
+
 @dataclass(slots=True)
 class MempoolEntry:
     """A pending transaction and the height it entered the pool at."""
@@ -70,6 +86,11 @@ class Mempool:
         lands in; at an epoch boundary the two differ by one epoch.
         """
         return self.tip_state.height + 1
+
+    @property
+    def pending_transaction_count(self) -> int:
+        """How many transactions wait in the pool (proofs are counted apart)."""
+        return len(self.transactions)
 
     # -- transactions -------------------------------------------------------
 
@@ -119,13 +140,23 @@ class Mempool:
         state = self.tip_state
         if proof.network != self.params.network_id:
             raise MempoolError(f"proof is for {proof.network!r}")
-        ended = epoch_end_height(proof.epoch, self.params)
-        if state.height < ended:
-            raise MempoolError(
-                f"proof references epoch {proof.epoch}, which ends at height {ended}; "
-                f"the tip is {state.height}"
-            )
         next_height = state.height + 1
+        if not _settleable(proof, height=next_height, params=self.params):
+            ended = epoch_end_height(proof.epoch, self.params)
+            if next_height <= ended:
+                # Too early: the proof only settles once its epoch has ended, and
+                # the node answers with the height it becomes usable at so a miner
+                # can hold on to it instead of dropping it (PROTOCOL.md 12.2).
+                raise MempoolError(
+                    f"proof references epoch {proof.epoch}, which ends at height {ended}; "
+                    f"settlement starts at height {ended + 1} and the next block is "
+                    f"{next_height}"
+                )
+            raise MempoolError(
+                f"win from height {ended} is older than the {self.params.claim_window}-block "
+                f"claim window, which closed at height {ended + self.params.claim_window}; "
+                f"the next block is {next_height}"
+            )
         synthetic = BlockHeader(
             version=1,
             network=self.params.network_id,
@@ -172,9 +203,15 @@ class Mempool:
     # -- selection ----------------------------------------------------------
 
     def select_transactions(
-        self, *, height: int, max_bytes: int | None = None
+        self, *, height: int, max_bytes: int | None = None, limit: int | None = None
     ) -> list[Transaction]:
-        """A deterministic block body of transactions that fit the size cap."""
+        """A deterministic block body of transactions that fit the size cap.
+
+        ``limit`` caps how many transactions the body may carry; a proofless
+        heartbeat block asks for one at a time.
+        """
+        if limit is not None and limit < 1:
+            raise MempoolError(f"limit must be positive, not {limit}")
         cap = self.params.max_block_bytes if max_bytes is None else max_bytes
         queues: dict[str, list[MempoolEntry]] = {}
         for entry in self.transactions.values():
@@ -185,6 +222,8 @@ class Mempool:
         chosen: list[Transaction] = []
         used = 0
         while True:
+            if limit is not None and len(chosen) >= limit:
+                break
             ready = [
                 (entries[0].tx.fee, entries[0].tx.sender, entries)
                 for entries in queues.values()
@@ -210,12 +249,16 @@ class Mempool:
         return chosen
 
     def select_proofs(self, miner: str, count: int, *, height: int) -> list[WinProof]:
-        """Up to ``count`` pending proofs won by ``miner``, ordered by proof id."""
-        target_epoch = height // self.params.epoch_length
+        """Up to ``count`` pending proofs ``miner`` could settle at ``height``.
+
+        Eligibility is the block checklist's, not a stricter rule of the pool's
+        own: a game from the epoch that ``height`` belongs to is settleable once
+        ``height`` is that epoch's last block (:func:`_settleable`).
+        """
         live = [
             proof
             for proof in self.proofs.values()
-            if proof.winner == miner and proof.epoch < target_epoch
+            if proof.winner == miner and _settleable(proof, height=height, params=self.params)
         ]
         live.sort(key=lambda proof: proof.proof_id)
         return live[:count]
@@ -244,10 +287,11 @@ class Mempool:
         )
         self.tip_state = tip_state
         self.transactions.clear()
+        next_height = tip_state.height + 1
         stale = [
             proof_id
             for proof_id, proof in self.proofs.items()
-            if proof.epoch >= tip_state.current_epoch()
+            if not _settleable(proof, height=next_height, params=self.params)
         ]
         for proof_id in stale:
             self.proofs.pop(proof_id, None)

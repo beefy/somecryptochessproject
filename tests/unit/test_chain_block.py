@@ -238,6 +238,45 @@ def test_connect_requires_the_scheduled_proofs(
     assert _reason(chain, stripped) is BlockFailure.PROOFS
 
 
+def test_connect_accepts_a_proofless_heartbeat_block(
+    live_chain: Any, protocol_accounts: Any
+) -> None:
+    from sccp.chain.tx import make_coinbase
+    from sccp.wallet.service import WalletService
+
+    chain = live_chain.chain
+    tx = WalletService(chain.params, chain.state).build_transfer(
+        live_chain.faucet, protocol_accounts["alice"].address, 1
+    )
+    block = _propose(chain, protocol_accounts["carol"].keypair, txs=(tx,))
+    assert block.proofs == ()
+    coinbase = block.coinbase
+    assert coinbase is not None
+    assert coinbase.payload["amount"] == tx.fee  # fees only: a heartbeat mints nothing
+    connected = connect_block(
+        block,
+        params=chain.params,
+        parent_state=chain.state,
+        parent_hash=chain.tip_hash,
+        book=chain.book,
+    )
+    assert connected.state.height == chain.height + 1
+    # ``minted`` counts every coinbase credit, so it grows by the fees only: the
+    # heartbeat block adds no subsidy to the supply.
+    assert connected.state.minted == chain.state.minted + tx.fee
+    account = connected.state.account(block.header.miner)
+    assert account.coinbase_queue[-1] == (block.header.height, tx.fee)
+
+    stripped = block.model_copy(
+        update={
+            "transactions": (),
+            "coinbase": make_coinbase(block.header.miner, 0, chain.params.network_id),
+        }
+    )
+    stripped = _header(stripped, merkle_root=merkle_root_of(stripped))
+    assert _reason(chain, stripped) is BlockFailure.PROOFS
+
+
 def test_connect_rejects_a_duplicated_transaction(
     live_chain: Any, chain_match: Any, miner_keys: dict[str, Any], protocol_accounts: Any
 ) -> None:

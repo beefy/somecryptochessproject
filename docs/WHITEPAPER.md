@@ -284,6 +284,37 @@ miners do normal hash sealing and may include transactions, but no chess proof
 is required. This lets the faucet, registrations, availability commits and
 reveals enter the ledger before the first match can be claimed.
 
+Past the boundary a block owes `wins_required` proofs, with one strictly
+unprofitable exception: a block may carry **zero** proofs if it carries at least
+one transaction, and such a *heartbeat* block mints no subsidy (it still collects
+its transactions' fees). Without it a chain can deadlock: settled proofs are
+spent once, a two-miner roster plays fewer games than an epoch has blocks, and if
+no block may be added then the availability and reveal transactions that rebuild
+the roster can never be mined, so no proof can ever exist again. Skipping proofs
+never pays, so the exemption cannot be farmed; it only lets a chain leave a state
+it could not otherwise leave.
+
+Consensus only asks a heartbeat block for at least one transaction; how much
+ledger work a block absorbs is a builder policy, and it matters. Blocks are the
+chain's clock, so an epoch of `epoch_length` blocks can only end if the ledger
+can supply `epoch_length` blocks' worth of work. The reference `BlockBuilder`
+therefore folds **exactly one** transaction into a heartbeat block: four waiting
+transactions buy four blocks, not one, and the epoch boundary comes within reach.
+Packing the whole mempool into a single block spends the same work while
+producing one block, which is how a proofless epoch freezes one block short of
+its end.
+
+The same arithmetic bounds a *proof* block. It already is one of the epoch's
+blocks, so the reference builder keeps one pending transaction in reserve for
+each block the epoch has left and adds only the surplus (the epoch's last block
+flushes the rest, and `max_block_bytes` still caps the body). Packing the pool
+into proof blocks spends the epoch's work without buying the epoch's blocks: a
+run with four transactions and three proofs per epoch can then run dry before
+the boundary whose blocks make the next epoch's proofs settleable, and the chain
+stops for good. During the bootstrap window, where no proofs are owed, the
+builder carries the whole pool instead, because the deploy scripts seed those
+blocks offline one scripted height at a time.
+
 ### 5.3 The epoch cycle
 
 For a typical epoch `e`:
@@ -1022,7 +1053,8 @@ height `h` inside epoch `E`, the block builder and validators require:
 - the winner is the block miner;
 - the winner was on that epoch's roster;
 - the epoch has a matchable roster;
-- `h` is after the epoch's end;
+- `h > epoch_end`: settlement starts at the first block of the next epoch (the
+  header at `epoch_end` still belongs to the proof's own epoch);
 - `h <= epoch_end + claim_window`;
 - the opponent has not already appeared in another proof in this block;
 - the winner has not played that opponent within `opponent_cooldown` epochs (a

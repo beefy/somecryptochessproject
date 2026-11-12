@@ -7,14 +7,87 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- Blocks past `bootstrap_end_height` may now carry zero proofs when they carry at
+  least one transaction, and such a *heartbeat* block mints no subsidy (fees
+  only). A two-miner testnet froze at height 22 because every block demanded
+  exactly one proof, all settled proofs are spent once, and the availability and
+  reveal transactions that rebuild the roster could therefore never be mined.
+  `BlockBuilder` builds the heartbeat block when the mempool has something to
+  include and no proof is eligible.
+- `sccp miner run --nonce-secret HEX` / `--nonce-secret-file PATH`: the miner now
+  commits availability two epochs ahead and reveals it every epoch on its own, so
+  the roster keeps growing after the bootstrap's one-off transactions run out.
+  The old behaviour is unchanged without the secret.
+- `sccp matchmaker run --node URL [--node-poll-seconds S]`: the relay follows the
+  chain. `relay.json` pins one epoch, and as the chain opens later matchable
+  epochs the relay swaps in their beacon and roster, so matches always reference
+  an epoch whose proofs the node still accepts.
+- `deploy/init_testnet_stack.py` writes `/stack/keys/miner-N.nonce` and records
+  it in `stack.json`; `docker-compose.yml` passes both the secret file to the
+  miners and `--node` to the relay.
+- `sccp miner run --resign-after-plies N`: the miner resigns on its own turn
+  once an active game reaches `N` plies, so games end decisively instead of
+  drawing. Off by default; the testnet stack passes `60`, mirroring the devnet
+  policy. Two engines of comparable strength draw long games, and a draw has no
+  winner, so it yields no proof -- the epoch is then left with only the
+  availability and reveal transactions and can stall mid-epoch.
+
 ### Changed
 
+- A proofless *heartbeat* block now carries **exactly one** transaction instead
+  of the whole pending pool. A block is also the chain's clock, so an epoch of
+  `epoch_length` blocks only ends if the ledger supplies that many blocks' worth
+  of work; packing every pending transaction into one block spent the same work
+  while producing a single block, which froze a proofless epoch one block short
+  of its boundary. `BlockBuilder` asks the mempool for one transaction
+  (`select_transactions(..., limit=1)`) and the mempool validates the limit.
+- Mempool proof eligibility now mirrors the consensus checklist exactly: a proof
+  from epoch `e` is selectable from `epoch_end_height(e) + 1` -- the first block
+  of the *next* epoch, which is where `check_proof` starts accepting it, because
+  the header at `epoch_end_height(e)` still belongs to epoch `e` -- until
+  `epoch_end_height(e) + claim_window` closes. `reset` and `add_proof` share the
+  same `_settleable` test, so the pool is never stricter than a block (which
+  would strand a proof the next block accepts, exactly the block a proofless
+  epoch needs to cross its boundary) and never looser (which would offer a
+  builder a proof its block cannot carry).
+- A *proof* block now carries only the transactions the epoch can spare: the
+  builder keeps one pending transaction per block the epoch has left and adds
+  only the surplus (the epoch's last block flushes what remains, still bounded by
+  `max_block_bytes`). Packing the pool into proof blocks spent an epoch's work
+  without buying the epoch's blocks, so a run with four transactions and three
+  proofs per epoch still stalled one block short of the boundary that would have
+  made the next epoch's proofs settleable. The bootstrap window keeps the old
+  behaviour and carries the whole pool, because the deploy scripts seed those
+  heights offline one at a time.
+- Testnet docs (README, WHITEPAPER 5.2/12.4, PROTOCOL 12.2, RUNBOOK, deploy and
+  wallet guides) describe the heartbeat as one transaction per block, state that
+  the reference builder's policy -- not consensus -- sets that count, and state
+  the settleability window as `(epoch_end, epoch_end + claim_window]`.
 - `opponent_cooldown` is now `0` on testnet (and therefore devnet), which
   disables the on-chain rematch rule there while mainnet keeps its cooldown of
   `4`. A small test roster can settle every decisive game it plays instead of
   stranding all but the first proof of an epoch; a two-miner testnet previously
   stalled after its first proof block because every later pairing was rejected
   with "played ... in epoch ...; the cooldown is 1 epochs".
+
+### Fixed
+
+- A miner no longer drops a win proof the node refuses because its epoch has not
+  ended yet. `EngineMiner` queues the proof in `pending_proofs` and re-announces
+  it on every tick (`_flush_proofs`) until the node accepts it, drops it only
+  when the node reports the claim window has closed, and treats "already ..."
+  refusals as settled. Announcing once lost the proof for the rest of the epoch,
+  so the epoch never closed and the chain starved.
+- The relay can restart over its own store. `Matchmaker.from_document` now reuses
+  the sessions already stored for `open_round` (via `Matchmaker.has_round`)
+  instead of opening that round again, which raised on every restart.
+- The node's mempool no longer refuses proofs whose epoch has ended but whose
+  claim window is still open. `add_proof` judges a proof against the block it
+  would land in (`next_height`) with the same `_settleable` window the block
+  checklist uses, and names that window in its error: "too early" is retryable
+  and a closed claim window says so.
 
 ## [0.9.3] - 2026-11-12
 

@@ -484,30 +484,9 @@ class Matchmaker:
             raise RelayError("lag_grace_ms must be in [0, 1000]")
 
         entries = list(roster.values()) if isinstance(roster, Mapping) else list(roster)
-        self._roster: dict[str, RosterEntry] = {}
-        for entry in entries:
-            if entry.address in self._roster:
-                raise RelayError(f"duplicate roster address {entry.address}")
-            self._roster[entry.address] = entry
-
-        missing_keys = sorted(set(self._roster) - set(public_keys))
-        if missing_keys:
-            raise RelayError(f"no registered public key for {missing_keys}")
-        missing_engines = sorted(set(self._roster) - set(engines))
-        if missing_engines:
-            raise RelayError(f"no engine fingerprint for {missing_engines}")
-        for address in self._roster:
-            key_hex = public_keys[address]
-            try:
-                raw_key = bytes.fromhex(key_hex)
-            except ValueError:
-                raise RelayError(f"public key for {address} is not valid hex") from None
-            if encode_address(raw_key, params) != address:
-                raise RelayError(f"public key for {address} derives a different address")
-            if not engines[address]:
-                raise RelayError(f"engine fingerprint for {address} is empty")
-
         self.params = params
+        self._roster: dict[str, RosterEntry] = self._validated_roster(entries, public_keys, engines)
+
         self.beacon = beacon
         self.book = book if book is not None else book_for(params)
         self._public_keys = dict(public_keys)
@@ -532,6 +511,81 @@ class Matchmaker:
         if self.witness_keypair is None:
             return None
         return encode_address(self.witness_keypair.public_key_bytes, self.params)
+
+    def advance_epoch(
+        self,
+        beacon: Beacon,
+        *,
+        roster: Mapping[str, RosterEntry] | Sequence[RosterEntry],
+        public_keys: Mapping[str, str],
+        engines: Mapping[str, str],
+    ) -> bool:
+        """Move the relay onto a later epoch's beacon and roster.
+
+        The chain decides who is matchable; the relay only mirrors it, so a
+        deployment that follows the node (``--node``) can keep opening rounds
+        epoch after epoch instead of replaying a single baked-in roster. Sessions
+        of the epoch that just ended keep their own beacon and finish normally;
+        only round numbering restarts. Returns ``True`` when the relay moved and
+        ``False`` when it was already on ``beacon.epoch`` or later.
+        """
+        if beacon.network != self.params.network_id:
+            raise RelayError(
+                f"beacon is for {beacon.network!r}, relay is on {self.params.network_id!r}"
+            )
+        with self._lock:
+            if beacon.epoch <= self.beacon.epoch:
+                return False
+            entries = list(roster.values()) if isinstance(roster, Mapping) else list(roster)
+            validated = self._validated_roster(entries, public_keys, engines)
+            self.beacon = beacon
+            self._roster = validated
+            self._public_keys = dict(public_keys)
+            self._engines = dict(engines)
+            # Round numbers restart at 0 for the new epoch, so the schedule can
+            # open rounds for it even though the previous epoch used the same
+            # numbers.
+            self._rounds_opened.clear()
+            self._persist_locked()
+            return True
+
+    @property
+    def roster(self) -> dict[str, RosterEntry]:
+        """The roster the relay is matching for the current beacon."""
+        with self._lock:
+            return dict(self._roster)
+
+    def _validated_roster(
+        self,
+        entries: Sequence[RosterEntry],
+        public_keys: Mapping[str, str],
+        engines: Mapping[str, str],
+    ) -> dict[str, RosterEntry]:
+        """Check a roster against the registered keys and engines it needs."""
+        validated: dict[str, RosterEntry] = {}
+        for entry in entries:
+            if entry.address in validated:
+                raise RelayError(f"duplicate roster address {entry.address}")
+            validated[entry.address] = entry
+        if not validated:
+            raise RelayError("the epoch roster is empty")
+        missing_keys = sorted(set(validated) - set(public_keys))
+        if missing_keys:
+            raise RelayError(f"no registered public key for {missing_keys}")
+        missing_engines = sorted(set(validated) - set(engines))
+        if missing_engines:
+            raise RelayError(f"no engine fingerprint for {missing_engines}")
+        for address in validated:
+            key_hex = public_keys[address]
+            try:
+                raw_key = bytes.fromhex(key_hex)
+            except ValueError:
+                raise RelayError(f"public key for {address} is not valid hex") from None
+            if encode_address(raw_key, self.params) != address:
+                raise RelayError(f"public key for {address} derives a different address")
+            if not engines[address]:
+                raise RelayError(f"engine fingerprint for {address} is empty")
+        return validated
 
     def _now_ms(self) -> int:
         return int(self._clock_ms())
@@ -773,6 +827,18 @@ class Matchmaker:
             if session.matchup.epoch == self.beacon.epoch
         ]
         return max(rounds) if rounds else None
+
+    def has_round(self, round_number: int) -> bool:
+        """Whether the current epoch already has sessions for ``round_number``.
+
+        Used by :meth:`from_document`, so restarting a relay over the store it
+        wrote does not try to open a round that is already on disk.
+        """
+        with self._lock:
+            return any(
+                session.matchup.epoch == self.beacon.epoch and session.matchup.round == round_number
+                for session in self._sessions.values()
+            )
 
     def open_round(self, round_number: int) -> list[MatchView]:
         """Derive the pairings for ``round_number`` and create their sessions."""
@@ -1236,8 +1302,11 @@ class Matchmaker:
         if open_round is not None:
             if not isinstance(open_round, int) or isinstance(open_round, bool) or open_round < 0:
                 raise RelayError("open_round must be a non-negative integer")
-            matchmaker.open_round(open_round)
-        elif matchmaker.round_seconds:
+            # A store that already holds this round means the relay is being
+            # restarted over its own data: keep the sessions instead of failing.
+            if not matchmaker.has_round(open_round):
+                matchmaker.open_round(open_round)
+        elif matchmaker.round_seconds and not matchmaker.has_round(0):
             matchmaker.open_round(0)
         return matchmaker
 

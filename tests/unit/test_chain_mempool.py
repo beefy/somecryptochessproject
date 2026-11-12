@@ -8,6 +8,7 @@ import pytest
 
 from sccp.chain.genesis import faucet_keypair
 from sccp.chain.mempool import Mempool
+from sccp.chain.state import epoch_end_height
 from sccp.chain.tx import txid
 from sccp.crypto.address import encode_address
 from sccp.errors import MempoolError
@@ -115,6 +116,8 @@ def test_selection_orders_senders_by_fee_and_keeps_nonce_order(
         (alice.address, 4),
     ]
     assert pool.select_transactions(height=chain.height + 1) == chosen
+    assert pool.select_transactions(height=chain.height + 1, limit=2) == chosen[:2]
+    assert pool.select_transactions(height=chain.height + 1, limit=1) == chosen[:1]
 
 
 def test_selection_respects_the_size_cap(devnet_chain: Any, protocol_accounts: Any) -> None:
@@ -124,6 +127,9 @@ def test_selection_respects_the_size_cap(devnet_chain: Any, protocol_accounts: A
     full = pool.select_transactions(height=1)
     assert len(full) == 1
     assert pool.select_transactions(height=1, max_bytes=10) == []
+    assert pool.select_transactions(height=1, limit=1) == full
+    with pytest.raises(MempoolError, match="limit must be positive"):
+        pool.select_transactions(height=1, limit=0)
 
 
 def test_removal_and_expiry_rebuild_the_projection(
@@ -193,13 +199,25 @@ def test_a_rematch_needs_a_cooldown_above_zero(live_chain: Any, chain_match: Any
         guarded.add_proof(proof)
 
 
-def test_proof_admission_needs_an_ended_epoch(live_chain: Any, chain_match: Any) -> None:
+def test_proof_admission_reports_the_settlement_window(live_chain: Any, chain_match: Any) -> None:
+    """A proof for a future epoch is refused with the height it becomes usable at."""
     chain = live_chain.chain
     match = chain_match(chain, epoch=3)
     pool = _pool(chain)
     early = match.proof.model_copy(update={"epoch": 99})
-    with pytest.raises(MempoolError, match="ends at height"):
+    with pytest.raises(MempoolError, match="settlement starts at height"):
         pool.add_proof(early)
+
+
+def test_proof_admission_names_a_closed_claim_window(live_chain: Any, chain_match: Any) -> None:
+    """A proof past its window is refused with the wording a miner drops it on."""
+    chain = live_chain.chain
+    proof = chain_match(chain, epoch=3).proof
+    closed = chain.state.copy()
+    closed.height = epoch_end_height(3, chain.params) + chain.params.claim_window + 1
+    pool = Mempool(params=chain.params, tip_state=closed, book=chain.book)
+    with pytest.raises(MempoolError, match="claim window, which closed at height"):
+        pool.add_proof(proof)
 
 
 def test_proof_admission_dedupes_ids_and_games(live_chain: Any, chain_match: Any) -> None:
@@ -218,9 +236,7 @@ def test_proof_admission_dedupes_ids_and_games(live_chain: Any, chain_match: Any
     assert len(pool) == 0
 
 
-def test_proof_selection_filters_by_winner_epoch_and_count(
-    live_chain: Any, chain_match: Any
-) -> None:
+def test_proof_selection_filters_by_winner_and_count(live_chain: Any, chain_match: Any) -> None:
     chain = live_chain.chain
     match = chain_match(chain, epoch=3)
     pool = _pool(chain)
@@ -228,14 +244,43 @@ def test_proof_selection_filters_by_winner_epoch_and_count(
     winner = match.proof.winner
     assert pool.select_proofs(winner, 1, height=4) == [match.proof]
     assert pool.select_proofs(winner, 0, height=4) == []
-    assert pool.select_proofs(winner, 1, height=3) == []
+    assert pool.select_proofs("not-a-miner", 1, height=4) == []
 
 
-def test_reset_drops_proofs_for_unfinished_epochs(live_chain: Any, chain_match: Any) -> None:
+def test_proof_selection_opens_after_the_epochs_last_block(
+    live_chain: Any, chain_match: Any
+) -> None:
+    """A proof settles from the first block after its epoch, as consensus allows."""
     chain = live_chain.chain
+    match = chain_match(chain, epoch=3)
     pool = _pool(chain)
-    pool.add_proof(chain_match(chain, epoch=3).proof)
-    tip = chain.state.copy()
-    tip.height = 2
-    pool.reset(tip)
-    assert pool.proofs == {}
+    pool.add_proof(match.proof)
+    last = epoch_end_height(3, chain.params)
+    window = chain.params.claim_window
+    assert pool.select_proofs(match.proof.winner, 1, height=last) == []
+    assert pool.select_proofs(match.proof.winner, 1, height=last + 1) == [match.proof]
+    assert pool.select_proofs(match.proof.winner, 1, height=last + window) == [match.proof]
+    assert pool.select_proofs(match.proof.winner, 1, height=last + window + 1) == []
+
+
+def test_reset_keeps_only_proofs_the_next_block_can_settle(
+    live_chain: Any, chain_match: Any
+) -> None:
+    chain = live_chain.chain
+    proof = chain_match(chain, epoch=3).proof
+    last = epoch_end_height(3, chain.params)
+    window = chain.params.claim_window
+
+    def kept(height: int) -> bool:
+        """Whether a pool re-based on a tip at ``height`` still offers the proof."""
+        tip = chain.state.copy()
+        tip.height = height
+        pool = _pool(chain)
+        pool.add_proof(proof)
+        pool.reset(tip)
+        return proof.proof_id in pool.proofs
+
+    assert kept(last - 1) is False, "the next block is still epoch 3's last"
+    assert kept(last) is True, "the next block opens epoch 4"
+    assert kept(last + window - 1) is True, "the claim window is still open"
+    assert kept(last + window) is False, "the claim window has closed"

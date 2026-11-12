@@ -49,6 +49,7 @@ from sccp.crypto.wallet import (
 from sccp.devnet import run_devnet
 from sccp.errors import SccpError
 from sccp.miner.engine_miner import EngineMiner, MinerConfig, NodeClient
+from sccp.miner.epoch_follower import EpochFollower
 from sccp.miner.matchmaker import Matchmaker
 from sccp.miner.matchmaker import create_app as create_matchmaker_app
 from sccp.node.app import create_app as create_node_app
@@ -224,6 +225,26 @@ def _witness_keys(params: NetworkParams, keys: Sequence[str]) -> list[tuple[str,
             _fail(f"--relay-witness-key {key_hex!r} is not a public key: {exc}", code=2)
         pairs.append((address, key_hex))
     return pairs
+
+
+def _nonce_secret(value: str | None, path: Path | None) -> str | None:
+    """Resolve ``--nonce-secret``/``--nonce-secret-file`` to one 32-byte hex secret."""
+    if value is not None and path is not None:
+        _fail("pass --nonce-secret or --nonce-secret-file, not both", code=2)
+    if path is not None:
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            _fail(f"cannot read {path}: {exc}")
+    if value is None:
+        return None
+    try:
+        raw = bytes.fromhex(value)
+    except ValueError:
+        _fail("the availability nonce secret is not valid hex", code=2)
+    if len(raw) != 32:
+        _fail(f"the availability nonce secret must be 32 bytes, not {len(raw)}", code=2)
+    return raw.hex()
 
 
 def _echo_json(payload: object) -> None:
@@ -700,6 +721,20 @@ def matchmaker_run(
             help="How often the relay checks clocks and the round schedule.",
         ),
     ] = 1.0,
+    node: Annotated[
+        str | None,
+        typer.Option(
+            "--node",
+            help=(
+                "Follow this node: move the relay onto each later epoch's beacon and "
+                "roster as the chain opens it."
+            ),
+        ),
+    ] = None,
+    node_poll_seconds: Annotated[
+        float,
+        typer.Option("--node-poll-seconds", help="How often to ask the node for the tip height."),
+    ] = 2.0,
 ) -> None:
     """Serve the matchmaking relay over HTTP (uvicorn).
 
@@ -707,9 +742,15 @@ def matchmaker_run(
     charges moves against the mover, signs a receipt for every accepted move and
     flags a clock that reaches zero. ``--round-seconds`` adds the round schedule
     on top: round 0 opens at startup and the next round opens on the interval.
+    With ``--node`` the relay also follows the chain: the config's epoch is only
+    the starting point, and each later epoch the chain opens replaces the
+    beacon and roster, so matches always reference the epoch whose proofs the
+    chain accepts.
     """
     if sweep_seconds <= 0:
         _fail("--sweep-seconds must be positive", code=2)
+    if node_poll_seconds <= 0:
+        _fail("--node-poll-seconds must be positive", code=2)
     params = _resolve_network(ctx, network)
     document = _read_json(config)
     if not isinstance(document, Mapping):
@@ -753,6 +794,26 @@ def matchmaker_run(
 
     thread = Thread(target=service, name="relay-service", daemon=True)
     thread.start()
+    follower: EpochFollower | None = None
+    follower_thread: Thread | None = None
+    if node is not None:
+        follower = _run(
+            lambda: EpochFollower(params=params, matchmaker=state, node=NodeClient(node))
+        )
+
+        def follow() -> None:  # pragma: no cover - runs in the relay process
+            assert follower is not None
+            while not stop.wait(node_poll_seconds):
+                try:
+                    advance = follower.step()
+                except SccpError as exc:
+                    typer.echo(f"epoch follower failed: {exc}", err=True)
+                    continue
+                if advance is not None:
+                    typer.echo(f"relay moved to {advance.describe()}")
+
+        follower_thread = Thread(target=follow, name="epoch-follower", daemon=True)
+        follower_thread.start()
     import uvicorn
 
     try:
@@ -760,6 +821,8 @@ def matchmaker_run(
     finally:
         stop.set()
         thread.join(timeout=5)
+        if follower_thread is not None:
+            follower_thread.join(timeout=5)
 
 
 @node_app.command("run")
@@ -970,11 +1033,38 @@ def miner_run(
             help="Availability quota (default: the round count).",
         ),
     ] = None,
+    nonce_secret: Annotated[
+        str | None,
+        typer.Option(
+            "--nonce-secret",
+            help=(
+                "32-byte hex availability secret; makes the miner submit its own "
+                "availability and reveal transactions every epoch."
+            ),
+        ),
+    ] = None,
+    nonce_secret_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--nonce-secret-file",
+            help="File holding the availability secret (instead of --nonce-secret).",
+        ),
+    ] = None,
     relay_witness_key: Annotated[
         list[str] | None,
         typer.Option(
             "--relay-witness-key",
             help="Public key (hex) of the relay's clock witness, to verify its receipts.",
+        ),
+    ] = None,
+    resign_after_plies: Annotated[
+        int | None,
+        typer.Option(
+            "--resign-after-plies",
+            help=(
+                "Resign on our turn once a game reaches this many plies, so games "
+                "end decisively instead of drawing (default: never resign)."
+            ),
         ),
     ] = None,
     poll_seconds: Annotated[
@@ -994,6 +1084,9 @@ def miner_run(
         _fail("--poll-seconds must be positive", code=2)
     if iterations < 0:
         _fail("--iterations cannot be negative", code=2)
+    if resign_after_plies is not None and resign_after_plies < 1:
+        _fail("--resign-after-plies must be at least 1 ply", code=2)
+    secret = _nonce_secret(nonce_secret, nonce_secret_file)
     params = _resolve_network(ctx, network)
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
@@ -1008,7 +1101,9 @@ def miner_run(
         nodes_per_move=nodes_per_move or params.nodes_per_move,
         depth=depth,
         max_games_per_epoch=max_games_per_epoch or params.rounds_per_epoch,
+        nonce_secret=secret,
         witness_keys=witness_keys,
+        resign_after_plies=resign_after_plies,
     )
     miner = EngineMiner(config, engine=engine)
     if not _options(ctx).json_output:
@@ -1016,12 +1111,15 @@ def miner_run(
             f"miner {wallet.address} on {params.network_id} polling {relay} "
             f"with {engine.fingerprint}"
         )
+        if secret is not None and node is None:
+            typer.echo("--nonce-secret needs --node; the availability pipeline is off", err=True)
     polls = 0
     joined: list[str] = []
     moves: list[str] = []
     results: list[str] = []
     proofs: list[str] = []
     claims: list[str] = []
+    resignations: list[str] = []
     refusals: list[str] = []
     started = time.monotonic()
     try:
@@ -1033,6 +1131,7 @@ def miner_run(
             results.extend(tick.results)
             proofs.extend(tick.proofs)
             claims.extend(tick.claims)
+            resignations.extend(tick.resignations)
             refusals.extend(tick.refusals)
             if iterations and polls >= iterations:
                 break
@@ -1053,6 +1152,7 @@ def miner_run(
         "results": results,
         "proofs": proofs,
         "claims": claims,
+        "resignations": resignations,
         "refusals": refusals,
     }
     if _options(ctx).json_output:
@@ -1061,7 +1161,8 @@ def miner_run(
     typer.echo(
         f"stopped after {polls} polls ({payload['seconds']}s): "
         f"{len(joined)} joins, {len(moves)} moves, {len(results)} results, "
-        f"{len(proofs)} proofs, {len(claims)} timeout claims"
+        f"{len(proofs)} proofs, {len(claims)} timeout claims, "
+        f"{len(resignations)} resignations"
     )
     for reason in dict.fromkeys(refusals):
         typer.echo(f"  refused: {reason}")

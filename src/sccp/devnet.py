@@ -326,7 +326,9 @@ def _play_round(miners: Sequence[EngineMiner], pair: _RelayPair) -> None:
         acted = _resign_stalled(pair) > 0
         for miner in miners:
             tick = miner.run_once()
-            acted = acted or bool(tick.joined or tick.moves or tick.results or tick.proofs)
+            acted = acted or bool(
+                tick.joined or tick.moves or tick.results or tick.proofs or tick.resignations
+            )
         if not acted:
             return
 

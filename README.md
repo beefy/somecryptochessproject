@@ -352,9 +352,10 @@ sccp verify pgn game.pgn --network testnet
 
 # Run the matchmaking relay (beacon + roster + engine fingerprints in relay.json).
 # --witness-key makes it sign the clock receipts; --round-seconds opens a round
-# on that interval (0 or omitted disables the scheduler).
+# on that interval (0 or omitted disables the scheduler); --node makes it move
+# onto each later epoch's beacon/roster as the chain opens it.
 sccp matchmaker run --config relay.json --store ./relay-state.json \
-    --witness-key relay.key --round-seconds 900
+    --witness-key relay.key --round-seconds 900 --node http://127.0.0.1:8645
 
 # Verify a win proof offline against a public context document
 sccp verify proof proof.json --context context.json --network testnet
@@ -388,8 +389,11 @@ sccp --data-dir ./data miner reveal --network testnet \
 # Run an engine miner against a relay (repeat for bob.key, with another engine).
 # --relay-witness-key is the relay's witness public key (hex): with it the miner
 # verifies the relay's clock receipts and can settle a flag as a timeout claim.
+# --nonce-secret-file makes the miner commit and reveal its own availability each
+# epoch, so the roster keeps growing without a manual `miner availability` run.
 sccp miner run --network testnet \
     --key alice.key \
+    --nonce-secret-file alice.nonce \
     --engine-path ./bin/stockfish-macos-universal \
     --relay http://127.0.0.1:8646 \
     --node http://127.0.0.1:8645 \
@@ -696,8 +700,12 @@ resigns the side to move after 60 plies; resignation is a consensus-valid result
 both seats co-sign, so a run always ends with real proofs. Bootstrap is
 consensus-defined: blocks up to `bootstrap_end_height` may be empty, which is
 exactly the window funding, registration and availability need, so the first
-matchable epoch is 3. `tests/unit/test_devnet.py` asserts the run reaches the
-requested height and that two runs produce the same tip hash.
+matchable epoch is 3; past it a block needs `wins_required` proofs or, failing
+that, one transaction -- a proofless *heartbeat* block mints no subsidy and the
+builder puts exactly one transaction in it, so pending ledger work turns into
+one block per transaction instead of one block for the lot, which is what lets an
+epoch end without proofs. `tests/unit/test_devnet.py` asserts the run reaches
+the requested height and that two runs produce the same tip hash.
 
 The CLI is the whole operator surface: `node run` serves the API and
 pull-syncs from `--peer` URLs at startup, `miner run` is the unattended loop

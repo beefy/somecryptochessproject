@@ -296,6 +296,32 @@ def test_relay_config_document_opens_a_round(signed_match, tmp_path: Path) -> No
         Matchmaker.from_document(broken, params=signed_match.params)
 
 
+def test_relay_restarts_over_its_own_store(signed_match, tmp_path: Path) -> None:
+    """A relay that restarts must reuse the round it already opened on disk."""
+    document = {
+        "network": signed_match.params.network_id,
+        "beacon": signed_match.beacon.model_dump(mode="json"),
+        "roster": {
+            address: {
+                "public_key": signed_match.public_keys[address],
+                "engine": f"mock-v1:{index:016d}",
+                "max_games": 3,
+            }
+            for index, address in enumerate(signed_match.roster, start=1)
+        },
+        "timeout_seconds": 60,
+        "round_seconds": 60,
+    }
+    store = tmp_path / "relay.json"
+    first = Matchmaker.from_document(document, params=signed_match.params, store=store)
+    assert len(first.matches()) == 1
+    match_id = first.matches()[0].matchup.match_id
+
+    second = Matchmaker.from_document(document, params=signed_match.params, store=store)
+    assert [view.matchup.match_id for view in second.matches()] == [match_id]
+    assert second.has_round(0)
+
+
 def test_node_stub_shares_protocol_models(signed_match) -> None:
     app = create_node_app(
         signed_match.params,

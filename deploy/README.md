@@ -31,11 +31,11 @@ proof to settle.
 
 | Service | Command | Purpose |
 | --- | --- | --- |
-| `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the two keyfiles, the passphrase file and `stack.json` |
+| `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the two keyfiles, their availability secrets, the passphrase file and `stack.json` |
 | `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --no-mine-bootstrap` | node API plus the proof settler; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers both miners, commits and reveals availability, writes `relay.json` from epoch 3 |
-| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json` | opens round 0, runs the 30+0 clock, opens a new round every 60 s |
-| `miner-1`, `miner-2` | `sccp miner run --engine-profile stockfish-19 --nodes-per-move 5000` | join, play, co-sign and announce win proofs to the node |
+| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
+| `miner-1`, `miner-2` | `sccp miner run --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-1.nonce` | join, play, co-sign, announce win proofs and commit/reveal their own availability |
 
 The bootstrap is deliberately separate from mining. It builds each block with
 the same `BlockBuilder` a miner uses and submits it through the node's public
@@ -52,8 +52,39 @@ reproducible stack is what makes `docker compose up` work without a coordination
 step. **Never reuse these seeds, that passphrase or that bond on mainnet.**
 
 `/stack/stack.json` lists each miner's address, keyfile and availability nonce
-secret. The bootstrap rewrites `/stack/relay.json` from the chain's epoch 3
-beacon and roster every time it runs.
+secret, and `/stack/keys/miner-N.nonce` holds that secret for
+`sccp miner run --nonce-secret-file`. The bootstrap rewrites `/stack/relay.json`
+from the chain's epoch 3 beacon and roster every time it runs.
+
+## Keeping the chain moving
+
+The bootstrap commits availability for the epochs it can reach, but it is a
+one-shot job: without help the roster and the chain both stop once those reveals
+are used up. Two things keep the stack alive past that point:
+
+- Each miner runs with `--nonce-secret-file`, so it commits availability two
+  epochs ahead and reveals it every epoch. The roster therefore keeps growing
+  instead of emptying.
+- The relay runs with `--node http://node:8645`, so it moves onto each epoch the
+  chain opens instead of matching forever for epoch 3. `docker compose logs -f
+  relay` shows `relay moved to epoch N with 2 matchable miner(s)`.
+
+Between decisive games the chain still has to advance, and a block needs either a
+proof or at least one transaction: a draw produces no proof, so the availability
+and reveal transactions double as the heartbeat that carries the chain into the
+next epoch. The builder puts exactly one transaction in a proofless block, so
+each pending transaction buys one block and an epoch of five blocks needs five
+pieces of ledger work. A two-miner roster supplies four per epoch (availability
+plus reveal each), so one decisive game per epoch is what carries the stack; a
+roster of three or more is self-sustaining. A game that ends on the clock also
+files a bonded timeout claim, and that claim is an ordinary transaction, so it
+moves the ledger even before its proof settles.
+
+Two equal Stockfish builds mostly draw, and a draw is not a proof, so both stack
+miners run with `--resign-after-plies 60`: on its own turn a miner resigns once
+the game reaches 60 plies and both seats co-sign a `resignation` result, which
+the winner proves like any other win. Without that policy `GET /v1/matches`
+shows `"termination": "draw"` on every session and the tip can sit mid-epoch.
 
 ## Reset behaviour and limits
 
@@ -61,9 +92,8 @@ beacon and roster every time it runs.
   merge starts a fresh deterministic chain. Do the same locally when testing a
   new image.
 - The bootstrap registers three games per miner (the testnet epoch quota) and
-  the relay opens one round every minute. Once those games are played the chain
-  stops advancing until another deployment/reset: this is a demonstration
-  network, not a long-lived public testnet yet.
+  the relay opens one round every minute, so a miner's quota can run out for the
+  epoch; the next epoch's roster restores it.
 - The faucet's limits are in memory and reset with the node. See
   [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for the exact policy.
 

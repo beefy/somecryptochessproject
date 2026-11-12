@@ -742,6 +742,7 @@ def test_miner_run_reports_its_ticks(
     assert payload["polls"] == 2
     assert payload["joined"] == ["m1"]
     assert payload["proofs"] == ["p1"]
+    assert payload["resignations"] == []
 
 
 def test_matchmaker_run_refuses_bad_sweep_settings(tmp_path: Path) -> None:
@@ -795,6 +796,61 @@ def test_miner_run_passes_the_relay_witness_keys_through(
     assert seen == [{address: witness.public_key_hex}]
 
 
+def test_miner_run_refuses_a_zero_ply_resignation_limit(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "miner",
+            "run",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--resign-after-plies",
+            "0",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "--resign-after-plies must be at least 1 ply" in result.output
+
+
+def test_miner_run_passes_the_resignation_policy_through(
+    tmp_path: Path, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sccp.miner.engine_miner import EngineMiner, MinerTick
+
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    seen: list[int | None] = []
+
+    def capture(self: EngineMiner) -> MinerTick:
+        seen.append(self.config.resign_after_plies)
+        return MinerTick(resignations=("m1",))
+
+    monkeypatch.setattr(EngineMiner, "run_once", capture)
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--engine-profile",
+            "mock",
+            "--resign-after-plies",
+            "60",
+            "--iterations",
+            "1",
+            "--poll-seconds",
+            "0.01",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert seen == [60]
+    assert json.loads(result.stdout)["resignations"] == ["m1"]
+
+
 def test_miner_run_refuses_a_bad_relay_witness_key(tmp_path: Path, env: dict[str, str]) -> None:
     assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
     result = runner.invoke(
@@ -828,7 +884,110 @@ def test_miner_run_needs_a_binary_for_a_real_engine(tmp_path: Path, env: dict[st
     assert "needs an explicit binary" in result.output
 
 
+def test_miner_run_reads_the_availability_secret_file(
+    tmp_path: Path, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sccp.miner.engine_miner import EngineMiner, MinerTick
+
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    secret_file = tmp_path / "miner-1.nonce"
+    secret_file.write_text("11" * 32 + "\n", encoding="utf-8")
+    seen: list[str | None] = []
+
+    def capture(self: EngineMiner) -> MinerTick:
+        seen.append(self.config.nonce_secret)
+        return MinerTick()
+
+    monkeypatch.setattr(EngineMiner, "run_once", capture)
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--engine-profile",
+            "mock",
+            "--nonce-secret-file",
+            str(secret_file),
+            "--iterations",
+            "1",
+            "--poll-seconds",
+            "0.01",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert seen == ["11" * 32]
+
+
+def test_miner_run_refuses_a_bad_availability_secret(tmp_path: Path, env: dict[str, str]) -> None:
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    base = [
+        "miner",
+        "run",
+        "--network",
+        "devnet",
+        "--key",
+        str(tmp_path / "wallet.key"),
+        "--engine-profile",
+        "mock",
+    ]
+    not_hex = runner.invoke(app, [*base, "--nonce-secret", "not-hex"], env=env)
+    assert not_hex.exit_code == 2
+    assert "not valid hex" in not_hex.output
+
+    short = runner.invoke(app, [*base, "--nonce-secret", "11" * 31], env=env)
+    assert short.exit_code == 2
+    assert "must be 32 bytes" in short.output
+
+    secret_file = tmp_path / "miner-1.nonce"
+    secret_file.write_text("11" * 32 + "\n", encoding="utf-8")
+    both = runner.invoke(
+        app,
+        [*base, "--nonce-secret", "11" * 32, "--nonce-secret-file", str(secret_file)],
+        env=env,
+    )
+    assert both.exit_code == 2
+    assert "not both" in both.output
+
+
+def test_miner_run_warns_that_the_secret_needs_a_node(
+    tmp_path: Path, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sccp.miner.engine_miner import EngineMiner, MinerTick
+
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    monkeypatch.setattr(EngineMiner, "run_once", lambda self: MinerTick())
+    result = runner.invoke(
+        app,
+        [
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--engine-profile",
+            "mock",
+            "--nonce-secret",
+            "11" * 32,
+            "--iterations",
+            "1",
+            "--poll-seconds",
+            "0.01",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "needs --node" in result.output
+
+
 def test_miner_run_refuses_bad_poll_settings(tmp_path: Path, env: dict[str, str]) -> None:
+
     assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
     result = runner.invoke(
         app,

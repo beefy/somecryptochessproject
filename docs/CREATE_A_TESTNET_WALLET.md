@@ -263,19 +263,23 @@ sccpt1qrvk... 1000.00000000 (spendable 1000.00000000, bonded 0.00000000, immatur
 
 ### Why a faucet transfer can stay pending
 
-The testnet does not mine empty blocks after bootstrap. Blocks are produced
-when a miner settles a decisive game's win proof, and pending faucet transfers
-ride along in the next such block. A draw produces no proof and therefore no
-block.
+The testnet never mines an empty block. A block is built when there is a proof to
+settle, or -- after bootstrap -- when the mempool holds at least one transaction:
+that *heartbeat* block carries no proofs, mints no subsidy and takes exactly one
+pending transaction, so it cannot be used to farm coins. Pending faucet transfers
+ride along in the next block that is built for either reason, together with the
+miners' own availability and reveal transactions, which the miners in this guide
+submit every epoch. Because a heartbeat block absorbs one transaction and not the
+whole pool, the queue moves one block at a time, which is what carries the chain
+across an epoch boundary when no proof is available.
 
 So after a deploy:
 
-- if a game is still being played, the transfer rides in the next block built
-  around a decisive proof;
-- if games drew, it waits for another round while the epoch's three-game quota
-  allows one;
-- once that quota is exhausted, it waits until the chain is reset;
-- the faucet endpoint cannot force a block. Only a proof settlement can.
+- a transfer usually confirms within an epoch: the miners' availability and
+  reveal transactions are enough to produce heartbeat blocks on their own;
+- if nothing at all is pending -- no proof and no transaction -- no block can be
+  built, and the transfer waits for the next transaction;
+- the faucet endpoint cannot force a block. Only the mempool can.
 
 This is a demonstration-chain property, not a wallet problem. Check `/v1/status`
 and the node log before assuming the faucet failed.

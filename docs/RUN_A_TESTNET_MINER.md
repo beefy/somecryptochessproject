@@ -138,6 +138,7 @@ sccp matchmaker run \
     --network testnet \
     --config ./stack/relay.json \
     --store ./stack/relay-state.json \
+    --node http://127.0.0.1:8645 \
     --host 127.0.0.1 \
     --port 8646
 ```
@@ -147,6 +148,12 @@ matchmaker on 127.0.0.1:8646 for testnet epoch 3 (1 matches, round 0, witness no
 ```
 
 - `--store` persists sessions and reputation across a relay restart.
+- `--node URL` makes the relay follow the chain. `relay.json` pins epoch 3, and
+  once the chain opens epoch 4 the relay swaps in that epoch's beacon and roster
+  (`relay moved to epoch 4 with 2 matchable miner(s)`), so matches keep
+  referencing an epoch whose proofs the node still accepts. `--node-poll-seconds`
+  sets how often (default 2 s) the relay asks for the tip height. Without
+  `--node` the relay stays on the epoch in the config file.
 - `--round-seconds 900` makes the relay open the next round every 15 minutes.
   Without it, only the round named in `relay.json` (or `--round N`) is opened.
 - `--witness-key ./stack/keys/relay.key` signs the clock receipts. Create that
@@ -168,6 +175,7 @@ In one terminal per miner:
 sccp --passphrase-file ./stack/passphrase miner run \
     --network testnet \
     --key ./stack/keys/miner-1.key \
+    --nonce-secret-file ./stack/keys/miner-1.nonce \
     --engine-profile stockfish-19 \
     --engine-path ./bin/stockfish-macos-universal \
     --nodes-per-move 5000 \
@@ -194,6 +202,18 @@ When a game ends decisively, the winner announces its proof to `--node`; a node
 started with `--mine --miner-address ADDRESS --no-mine-bootstrap` then settles it
 in the next block. A draw produces no proof.
 
+`--nonce-secret-file` (or `--nonce-secret HEX`) keeps the miner on the roster
+without any further help from the bootstrap. Availability is committed two
+epochs ahead and revealed one epoch ahead, so a miner that never commits
+availability is dropped from the roster and its epoch stops being matchable --
+which is how a small testnet used to freeze once the bootstrap's own reveals ran
+out. With the secret, the miner submits its own `availability` and `reveal`
+transactions each epoch (the JSON summary lists them under `pipeline`) and the
+chain keeps finding proofs. It needs `--node`; without one the flags are ignored
+with a warning. `deploy/init_testnet_stack.py` writes `<name>.nonce` next to each
+keyfile and `stack.json` records the same value, so
+`--nonce-secret-file ./stack/keys/miner-2.nonce` is enough for the second miner.
+
 Stop a miner with `Ctrl-C`; it closes the engine and prints the summary. Useful
 options while testing:
 
@@ -202,6 +222,8 @@ options while testing:
 | `--iterations N` | Stop after N relay polls instead of running until interrupted. |
 | `--poll-seconds 1.0` | Wait between polls (must be positive). |
 | `--max-games-per-epoch N` | Availability quota this miner offers (default: the round count). |
+| `--nonce-secret HEX` | Availability secret; the miner commits and reveals by itself each epoch. |
+| `--nonce-secret-file PATH` | Read that secret from a file instead of the command line. |
 | `--json` | Print one JSON summary instead of human lines; refusals appear under `refusals`. |
 | `--node URL` | Announce win proofs to a node (section 6). |
 | `--relay-witness-key HEX` | Trust a relay clock witness, so a flag can become a timeout claim. Repeatable. |
@@ -244,6 +266,12 @@ sccp --passphrase-file ./stack/passphrase miner run \
 - `--nodes-per-move` is the search limit per move; the default comes from the
   network parameters (`50_000` on testnet, `250_000` on mainnet).
 - `--depth N` uses a fixed depth instead of a node limit.
+- `--resign-after-plies N` resigns on your own turn once a game reaches `N`
+  plies. Off by default. Two engines of comparable strength shuffle into a
+  draw, and a draw has no winner, so it yields no proof: the epoch then has
+  only the availability/reveal transactions to settle. A resignation is a
+  consensus-valid decisive result both seats co-sign, so the winner can prove
+  it like any other game. The stack's miners pass `60`.
 - The fingerprint in the first line is the SHA-256 of the binary you passed. The
   relay records an engine label from its roster in the match certificate; a
   verifier sees both, so publish an honest label.

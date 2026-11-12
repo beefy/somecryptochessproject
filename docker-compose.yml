@@ -94,6 +94,12 @@ services:
       - /stack/relay.json
       - --store
       - /stack/relay-state.json
+      # Follow the chain: the config pins epoch 3, and the relay moves onto each
+      # later epoch the chain opens, so proofs stay claimable past the bootstrap.
+      - --node
+      - http://node:8645
+      - --node-poll-seconds
+      - "2"
       - --host
       - 0.0.0.0
       - --port
@@ -127,6 +133,11 @@ services:
       - testnet
       - --key
       - /stack/keys/miner-1.key
+      # Keeps the miner on the roster: it commits availability two epochs ahead
+      # and reveals every epoch, so the chain keeps finding proofs after the
+      # bootstrap's own reveals run out.
+      - --nonce-secret-file
+      - /stack/keys/miner-1.nonce
       - --engine-profile
       - stockfish-19
       - --engine-path
@@ -134,6 +145,11 @@ services:
       # Testnet only: a 5k-node search keeps games fast enough for a demo.
       - --nodes-per-move
       - "5000"
+      # Testnet only: resign on our own turn after 60 plies. Two engines of equal
+      # strength draw long games, and a draw carries no proof, so without this
+      # policy an epoch with no decisive game has nothing to settle.
+      - --resign-after-plies
+      - "60"
       - --relay
       - http://relay:8646
       - --node
@@ -158,12 +174,17 @@ services:
       - testnet
       - --key
       - /stack/keys/miner-2.key
+      - --nonce-secret-file
+      - /stack/keys/miner-2.nonce
       - --engine-profile
       - stockfish-19
       - --engine-path
       - /usr/games/stockfish
       - --nodes-per-move
       - "5000"
+      # Testnet only: resign on our own turn after 60 plies (see miner-1).
+      - --resign-after-plies
+      - "60"
       - --relay
       - http://relay:8646
       - --node

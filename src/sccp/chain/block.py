@@ -19,6 +19,7 @@ A block that reaches step 8 but disagrees on ``state_root`` is invalid, not
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, NoReturn
@@ -195,6 +196,43 @@ def required_proofs(params: NetworkParams, height: int, wins_required: int) -> i
     if height <= bootstrap_end_height(params):
         return 0
     return wins_required
+
+
+def proofless_allowed(params: NetworkParams, height: int) -> bool:
+    """Whether a block at ``height`` may be a heartbeat: no proofs, no subsidy.
+
+    Past :func:`bootstrap_end_height` a block owes ``wins_required`` proofs, but
+    a chain can run out of them: a two-miner roster plays fewer games per epoch
+    than the epoch has blocks, and every settled proof is spent once. Demanding
+    a proof unconditionally then deadlocks the chain -- no block may be added, so
+    the availability and reveal transactions that build the next roster can
+    never be mined, so no proof is ever produced again (plan 5.10 is about
+    roster depth; it cannot mean a chain that can never leave the state it is
+    in).
+
+    A proofless block is therefore admissible above the bootstrap window, on two
+    conditions the validator enforces: it must carry at least one transaction
+    (it exists to move the ledger, not to pad the chain), and it mints no
+    subsidy (:func:`minted_subsidy`). Skipping proofs never pays, so the rule
+    cannot be farmed; it only unblocks a chain that has no proof to spend.
+
+    How many transactions such a block absorbs is a builder policy, not a
+    consensus rule: :class:`sccp.miner.block_builder.BlockBuilder` includes
+    exactly one, because blocks are also the chain's clock -- an epoch of
+    ``epoch_length`` blocks can only end if the ledger supplies that many blocks'
+    worth of work, and folding a whole pool into one block would spend the work
+    without buying the blocks.
+    """
+    return height > bootstrap_end_height(params)
+
+
+def minted_subsidy(
+    params: NetworkParams, height: int, *, proofs: Sequence[WinProof], minted: int
+) -> int:
+    """The subsidy a block at ``height`` mints, given the proofs it carries."""
+    if proofless_allowed(params, height) and not proofs:
+        return 0
+    return block_subsidy(params, height, minted)
 
 
 @dataclass(frozen=True, slots=True)
@@ -462,6 +500,27 @@ def _apply_proof(
             _fail(BlockFailure.PROOFS, f"timeout claim cannot finalise: {exc}")
 
 
+def _check_proof_count(params: NetworkParams, block: Block) -> None:
+    """Enforce the scheduled proof count, and the heartbeat exemption for zero."""
+    header = block.header
+    required = required_proofs(params, header.height, header.wins_required)
+    count = len(block.proofs)
+    if count == required:
+        return
+    if count == 0 and proofless_allowed(params, header.height):
+        if block.transactions:
+            return
+        _fail(
+            BlockFailure.PROOFS,
+            f"a proofless block at height {header.height} must carry a transaction "
+            f"(height {header.height} requires {required} proofs)",
+        )
+    _fail(
+        BlockFailure.PROOFS,
+        f"block carries {count} proofs, height {header.height} requires {required}",
+    )
+
+
 def _check_body(work: State, params: NetworkParams, block: Block) -> None:
     header = block.header
     if block.coinbase is None:
@@ -478,12 +537,7 @@ def _check_body(work: State, params: NetworkParams, block: Block) -> None:
         _fail(BlockFailure.COINBASE, "the coinbase must name the chain's network")
     if block.coinbase.payload.get("to") != header.miner:
         _fail(BlockFailure.COINBASE, "the coinbase must pay the block miner")
-    if len(block.proofs) != required_proofs(params, header.height, header.wins_required):
-        _fail(
-            BlockFailure.PROOFS,
-            f"block carries {len(block.proofs)} proofs, height {header.height} requires "
-            f"{required_proofs(params, header.height, header.wins_required)}",
-        )
+    _check_proof_count(params, block)
     size = block_size(block)
     if size > params.max_block_bytes:
         _fail(BlockFailure.SIZE, f"block is {size} bytes, cap is {params.max_block_bytes}")
@@ -615,7 +669,7 @@ def connect_block(
     work.timestamps = [*work.timestamps, header.timestamp][-MAX_RECENT_TIMESTAMPS:]
     fees = apply_block_body(work, params, header, block.transactions, block.proofs, book=book)
 
-    subsidy = block_subsidy(params, header.height, parent_state.minted)
+    subsidy = minted_subsidy(params, header.height, proofs=block.proofs, minted=parent_state.minted)
     expected_value = subsidy + fees
     coinbase = block.coinbase
     assert coinbase is not None  # _check_body rejected the alternative
@@ -662,5 +716,7 @@ __all__ = [
     "epoch_beacon",
     "header_payload",
     "merkle_root_of",
+    "minted_subsidy",
+    "proofless_allowed",
     "required_proofs",
 ]

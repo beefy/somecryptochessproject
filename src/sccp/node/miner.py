@@ -47,20 +47,22 @@ class NodeMiner:
         tip_time = self.service.chain.state.timestamps[-1]
         return max(self.clock(), tip_time + 1)
 
-    def _candidates(self, height: int) -> tuple[str | None, ...]:
-        """The proof winners to try, or one empty bootstrap slot.
+    def _candidates(self, height: int) -> tuple[str, ...]:
+        """The addresses to try as the block's miner, in order.
 
-        Bootstrap blocks may be empty (consensus allows it up to
-        ``bootstrap_end_height``). At every later height a block must carry the
-        proofs its difficulty asks for, so without an eligible proof there is no
-        candidate at all.
+        Past the bootstrap window a block may only carry proofs won by its own
+        miner (``check_proof``), so every announced winner is tried. The node's
+        own address comes last: when no usable proof is pending the builder can
+        still emit a heartbeat block, which carries transactions and mints
+        nothing.
         """
         if height > bootstrap_end_height(self.params):
-            return tuple(
+            winners = tuple(
                 dict.fromkeys(
                     sorted(proof.winner for proof in self.service.mempool.proofs.values())
                 )
             )
+            return (*winners, self.address)
         if not self.mine_bootstrap:
             return ()
         return (self.address,)
@@ -75,7 +77,7 @@ class NodeMiner:
                         params=self.params,
                         chain=self.service.chain,
                         mempool=self.service.mempool,
-                        miner_address=winner or self.address,
+                        miner_address=winner,
                     ).build(timestamp=self._timestamp())
                 except (ChainError, SccpError, ValueError):
                     continue

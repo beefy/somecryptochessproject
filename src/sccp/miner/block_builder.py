@@ -5,8 +5,10 @@ the mempool for ``k`` proofs won by this miner, applies the body to a copy of th
 tip state to learn the resulting ``state_root``, and only then writes the header
 and seals it.
 
-A miner with fewer than ``k`` eligible proofs gets ``None`` rather than an invalid
-block: the protocol stalls instead of lowering ``k``.
+A miner with fewer than ``k`` eligible proofs builds a proofless heartbeat block
+instead (one that carries at least one transaction and mints no subsidy), or
+``None`` when there is nothing to carry either: the protocol stalls rather than
+lowering ``k``.
 """
 
 from __future__ import annotations
@@ -17,9 +19,10 @@ from sccp.chain.block import (
     HEADER_VERSION,
     apply_block_body,
     block_hash,
-    block_subsidy,
     epoch_beacon,
     merkle_root_of,
+    minted_subsidy,
+    proofless_allowed,
     required_proofs,
 )
 from sccp.chain.chain import Chain, Reorg
@@ -105,8 +108,38 @@ class BlockBuilder:
                 return candidate
         raise ChainError(f"no seal nonce under {MAX_SEAL_ATTEMPTS} meets {header.seal_bits} bits")
 
+    def _transaction_budget(self, *, height: int) -> int:
+        """How many pending transactions a proof-carrying block should also take.
+
+        A block is also the chain's clock: an epoch of ``epoch_length`` blocks
+        only ends once that many blocks have been built, and one ledger
+        transaction or one proof buys at most one block. Packing a whole pool
+        into a block therefore spends an epoch's work without buying the
+        epoch's blocks, and an epoch that cannot reach its last block cannot
+        open the next one -- so the proofs that only become settleable at that
+        boundary (see :func:`sccp.chain.mempool._settleable`) are stranded and
+        the chain stops for good.
+
+        A block that already carries its proofs is one of the epoch's blocks
+        without touching the pool, so it only carries the transactions the
+        epoch can spare above one per remaining block. The epoch's *last* block
+        protects nothing and flushes what is left. Depth is not throttled: a
+        pool deeper than the epoch is long is carried in full, bounded only by
+        the block size cap.
+        """
+        params = self.params
+        pending = self.mempool.pending_transaction_count
+        blocks_left = (height // params.epoch_length + 1) * params.epoch_length - height
+        if blocks_left == 1:
+            return pending
+        return max(0, pending - blocks_left)
+
     def build(self, *, timestamp: int, now: int | None = None) -> Block | None:
         """Build the next block, or ``None`` when this miner cannot claim one.
+
+        A miner without an eligible proof builds a heartbeat block instead: one
+        pending transaction, no proofs and no subsidy. With no pending
+        transaction either there is nothing to build, and ``None`` is returned.
 
         ``now`` is accepted for symmetry with
         :meth:`sccp.chain.chain.Chain.add_block` and is not used to choose the
@@ -121,8 +154,27 @@ class BlockBuilder:
         needed = required_proofs(params, height, difficulty.wins_required)
         proofs = tuple(self.mempool.select_proofs(miner, needed, height=height))
         if len(proofs) < needed:
-            return None
-        transactions = tuple(self.mempool.select_transactions(height=height))
+            # No eligible proof for this miner. A heartbeat block carries one
+            # pending transaction and mints no subsidy (PROTOCOL.md 12.2); it is
+            # the chain's clock and only exists to move the ledger.
+            if not proofless_allowed(params, height):
+                return None
+            transactions = tuple(self.mempool.select_transactions(height=height, limit=1))
+            if not transactions:
+                return None
+            proofs = ()
+        else:
+            # A proof-carrying block still only carries the transactions the
+            # epoch can spare (see :meth:`_transaction_budget`). Bootstrapping is
+            # the exception: no proof is required yet and the deploy scripts seed
+            # those blocks offline, one scripted height at a time.
+            budget = None if needed == 0 else self._transaction_budget(height=height)
+            if budget == 0:
+                transactions = ()
+            elif budget is None:
+                transactions = tuple(self.mempool.select_transactions(height=height))
+            else:
+                transactions = tuple(self.mempool.select_transactions(height=height, limit=budget))
 
         epoch = height // params.epoch_length
         prev_hash = self.chain.tip_hash
@@ -150,7 +202,7 @@ class BlockBuilder:
         fees = apply_block_body(
             work, params, provisional, transactions, proofs, book=self.chain.book
         )
-        subsidy = block_subsidy(params, height, self.chain.state.minted)
+        subsidy = minted_subsidy(params, height, proofs=proofs, minted=self.chain.state.minted)
         value = subsidy + fees
         coinbase = make_coinbase(miner, value, params.network_id)
         work.credit_coinbase(miner, value, height)
