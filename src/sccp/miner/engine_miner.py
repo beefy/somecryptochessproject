@@ -34,7 +34,7 @@ from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, sign_domain
 from sccp.errors import ClockError, MinerError, RelayError
-from sccp.miner.matchmaker import MatchView
+from sccp.miner.matchmaker import ClockBundle, MatchView
 from sccp.protocol.clocks import (
     MatchClock,
     flag_result,
@@ -93,6 +93,13 @@ class MinerConfig:
     nodes_per_move: int = 200_000
     depth: int | None = None
     max_games_per_epoch: int = 1
+    witness_keys: tuple[tuple[str, str], ...] = ()
+    """Trusted clock witnesses as ``(address, public_key_hex)`` pairs.
+
+    The miner uses them to verify the relay's receipts before it builds a
+    timeout claim. With no ``witness_keys`` the relay's attestations cannot be
+    checked locally and the claim is refused rather than guessed at.
+    """
 
     @classmethod
     def for_network(
@@ -105,6 +112,7 @@ class MinerConfig:
         nodes_per_move: int = 200_000,
         depth: int | None = None,
         max_games_per_epoch: int = 1,
+        witness_keys: Sequence[tuple[str, str]] = (),
     ) -> MinerConfig:
         """Build a config from a network id and a wallet keypair."""
         return cls(
@@ -115,6 +123,7 @@ class MinerConfig:
             nodes_per_move=nodes_per_move,
             depth=depth,
             max_games_per_epoch=max_games_per_epoch,
+            witness_keys=tuple(witness_keys),
         )
 
     @property
@@ -126,6 +135,11 @@ class MinerConfig:
     def address(self) -> str:
         """The miner's address (its identity towards the relay)."""
         return encode_address(self.keypair.public_key_bytes, self.params)
+
+    @property
+    def witness_key_map(self) -> dict[str, str]:
+        """Trusted witness public keys, keyed by address."""
+        return dict(self.witness_keys)
 
     @property
     def limit(self) -> chess.engine.Limit:
@@ -236,10 +250,46 @@ class RelayClient:
         )
         return MatchView.model_validate(document)
 
-    def move(self, match_id: str, *, seat: str, san: str) -> MatchView:
-        """Submit one SAN move."""
-        document = self._http.post(f"/v1/matches/{match_id}/move", {"seat": seat, "san": san})
+    def move(
+        self,
+        match_id: str,
+        *,
+        seat: str,
+        san: str,
+        network: str | None = None,
+        ply: int | None = None,
+        clock_ms: int | None = None,
+        signature: str | None = None,
+    ) -> MatchView:
+        """Submit one SAN move.
+
+        Passing ``signature`` sends the clocked body of plan section 5.7.1:
+        ``{network, match_id, seat, ply, san, clock_ms, signature}``. The relay
+        verifies the signature against the registered seat key and recomputes
+        ``clock_ms`` from its own monotonic clock.
+        """
+        body: dict[str, object] = {"seat": seat, "san": san}
+        if signature is not None:
+            body["signature"] = signature
+            body["network"] = network
+            body["ply"] = ply
+            body["clock_ms"] = clock_ms
+        document = self._http.post(f"/v1/matches/{match_id}/move", body)
         return MatchView.model_validate(document)
+
+    def receipts(self, match_id: str) -> ClockBundle | None:
+        """The relay's clock bundle for ``match_id``, or ``None`` if unsupported.
+
+        A relay that predates timed sessions answers 404 here; the miner then
+        keeps using its own local receipts instead of failing the tick.
+        """
+        try:
+            document = self._http.get(f"/v1/matches/{match_id}/receipts")
+        except RelayError as exc:
+            if "404" in str(exc):
+                return None
+            raise
+        return ClockBundle.model_validate(document)
 
     def result(self, match_id: str, *, seat: str, signature: str) -> MatchView:
         """Co-sign the result."""
@@ -315,6 +365,7 @@ class MatchState:
     clock: MatchClock | None = None
     signed_moves: list[MoveMessage] = field(default_factory=list)
     receipts: list[MoveReceipt] = field(default_factory=list)
+    relay_flag: FlagReceipt | None = None
     result_signed: bool = False
     finished: bool = False
     refused: bool = False
@@ -344,6 +395,7 @@ class MinerTick:
     moves: tuple[str, ...] = ()
     results: tuple[str, ...] = ()
     proofs: tuple[str, ...] = ()
+    claims: tuple[str, ...] = ()
     refusals: tuple[str, ...] = ()
 
 
@@ -475,6 +527,7 @@ class EngineMiner:
         moves: list[str] = []
         results: list[str] = []
         proofs: list[str] = []
+        claims: list[str] = []
         for view in views:
             matchup = view.matchup
             if self.address not in (matchup.white, matchup.black):
@@ -484,7 +537,7 @@ class EngineMiner:
                 continue
             observed += 1
             try:
-                new_joined, new_moves, new_results, new_proofs = self._process(view)
+                new_joined, new_moves, new_results, new_proofs, new_claims = self._process(view)
             except (MinerError, RelayError) as exc:
                 self._refuse(f"{matchup.match_id}: {exc}")
                 continue
@@ -492,16 +545,20 @@ class EngineMiner:
             moves += new_moves
             results += new_results
             proofs += new_proofs
+            claims += new_claims
         return MinerTick(
             observed=observed,
             joined=tuple(joined),
             moves=tuple(moves),
             results=tuple(results),
             proofs=tuple(proofs),
+            claims=tuple(claims),
             refusals=tuple(self.refusals[before:]),
         )
 
-    def _process(self, view: MatchView) -> tuple[list[str], list[str], list[str], list[str]]:
+    def _process(
+        self, view: MatchView
+    ) -> tuple[list[str], list[str], list[str], list[str], list[str]]:
         matchup = view.matchup
         seat: Color = "white" if self.address == matchup.white else "black"
         state = self.matches.get(matchup.match_id)
@@ -511,20 +568,23 @@ class EngineMiner:
             self._check_pinned(state, view)
         joined: list[str] = []
         moves = self._sync_moves(state, view)
+        if view.status in ("active", "finished"):
+            self._sync_receipts(state)
         if view.status == "pending" and seat not in view.certificate.start_signatures:
             self._join(state)
             joined.append(state.match_id)
             view = self.relay.match(state.match_id)
             moves += self._sync_moves(state, view)
         if state.finished or state.refused:
-            return joined, moves, [], []
+            return joined, moves, [], [], []
         results: list[str] = []
         proofs: list[str] = []
+        claims: list[str] = []
         if view.status == "finished":
-            results, proofs = self._finish(view, state)
+            results, proofs, claims = self._finish(view, state)
         elif view.status == "active":
             moves += self._play(state)
-        return joined, moves, results, proofs
+        return joined, moves, results, proofs, claims
 
     def _open_match(self, view: MatchView, seat: Color) -> MatchState:
         certificate = view.certificate
@@ -584,6 +644,26 @@ class EngineMiner:
             self._apply_remote(state, san)
             actions.append(f"{state.match_id}:{san}")
         return actions
+
+    def _sync_receipts(self, state: MatchState) -> None:
+        """Pull the relay's signed receipts into the local receipt book.
+
+        A relay that does not run timed sessions has no receipts endpoint and
+        returns ``None``; the miner then keeps its own local records. A relay
+        that changes a receipt it already published for the same ply is
+        equivocating, and the conflict is fatal for the match.
+        """
+        bundle = self.relay.receipts(state.match_id)
+        if bundle is None:
+            return
+        if bundle.match_id != state.match_id:
+            raise MinerError("relay returned a clock bundle for another match")
+        for receipt in bundle.receipts:
+            if receipt.ply < state.opening_plies:
+                raise MinerError(f"relay receipt covers opening ply {receipt.ply}")
+            self.record_receipt(receipt)
+        if bundle.flag is not None:
+            state.relay_flag = bundle.flag
 
     def _join(self, state: MatchState) -> None:
         signature = sign_domain(
@@ -699,16 +779,26 @@ class EngineMiner:
             ),
             self.config.keypair,
         )
-        self.relay.move(state.match_id, seat=self.address, san=san)
+        self.relay.move(
+            state.match_id,
+            seat=self.address,
+            san=san,
+            network=self.config.network,
+            ply=signed.ply,
+            clock_ms=remaining,
+            signature=signed.signature,
+        )
         state.signed_moves.append(signed)
         self._apply_local(state, san, now)
         return [f"{state.match_id}:{san}"]
 
-    def _finish(self, view: MatchView, state: MatchState) -> tuple[list[str], list[str]]:
+    def _finish(self, view: MatchView, state: MatchState) -> tuple[list[str], list[str], list[str]]:
         result = view.result
         if result is None:
             state.refused = True
             raise MinerError("finished match has no result")
+        if result.termination == "time_forfeit":
+            return self._settle_flag(view, state)
         reproducible, reason = self._reproducible(view, state)
         if not reproducible:
             state.refused = True
@@ -727,7 +817,7 @@ class EngineMiner:
             if updated.result is None or len(updated.result.result_signatures) < 2:
                 # Our co-signature is on the relay, but the transcript only
                 # exists once both seats signed; finish on a later poll.
-                return actions, proofs
+                return actions, proofs, []
         transcript = self.relay.transcript(state.match_id)
         if transcript.result.game_hash != result.game_hash:
             state.refused = True
@@ -740,7 +830,37 @@ class EngineMiner:
             proofs.append(proof.proof_id)
             if self.node is not None:
                 self.node.announce_proof(proof)
-        return actions, proofs
+        return actions, proofs, []
+
+    def _settle_flag(
+        self, view: MatchView, state: MatchState
+    ) -> tuple[list[str], list[str], list[str]]:
+        """Handle a match the relay ended on time.
+
+        A flagged game is never co-signed: the losing seat simply stops
+        answering, so the settlement is a bonded ``timeout_claim`` backed by the
+        relay's receipts. The winner assembles and locally verifies that claim;
+        the loser records the loss and signs nothing.
+        """
+        winner = self._winner_seat(view.result.result if view.result else "1/2-1/2")
+        if winner != state.seat:
+            state.finished = True
+            if state.relay_flag is None:
+                self._refuse(
+                    f"{state.match_id}: lost on time without a flag receipt "
+                    "(no on-chain claim is possible)"
+                )
+            return [], [], []
+        bundle = self.relay.receipts(state.match_id)
+        if bundle is None or bundle.flag is None:
+            state.refused = True
+            raise MinerError("relay ended the match on time without a flag receipt")
+        state.relay_flag = bundle.flag
+        state.finished = True
+        claim = self.build_timeout_claim(view, bundle=bundle)
+        if claim is None:
+            return [], [], []
+        return [f"{state.match_id}:claim"], [], [state.match_id]
 
     @staticmethod
     def _winner_seat(result: ResultValue) -> Color | None:
@@ -783,21 +903,18 @@ class EngineMiner:
         view: MatchView,
         *,
         witnesses: Sequence[tuple[str, Keypair]] = (),
+        bundle: ClockBundle | None = None,
     ) -> TimeoutClaim | None:
-        """Assemble a bonded claim, or refuse when the evidence is incomplete."""
+        """Assemble a bonded claim, or refuse when the evidence is incomplete.
+
+        ``bundle`` is the relay's clock bundle: when present the claim carries
+        the relay's witness-signed receipts and flag receipt verbatim, which is
+        the path a timed relay enables. Without it the miner derives the flag
+        from its own clock state and signs the receipt with ``witnesses``.
+        """
         state = self.matches.get(view.matchup.match_id)
         if state is None:
             self._refuse(f"{view.matchup.match_id}: no local state for a timeout claim")
-            return None
-        if state.clock is None:
-            self._refuse(f"{state.match_id}: no clock has started")
-            return None
-        now = self.clock_ms()
-        flagged = state.clock.flag(now)
-        if flagged is None:
-            return None
-        if flagged == state.seat:
-            self._refuse(f"{state.match_id}: our own clock is the one that ran out")
             return None
         plies = len(state.san_moves)
         if plies <= state.opening_plies:
@@ -810,34 +927,60 @@ class EngineMiner:
         if last.ply != plies - 1:
             self._refuse(f"{state.match_id}: the last signed move is not ply {plies - 1}")
             return None
-        book = self.books.get(state.match_id)
-        receipts = () if book is None else book.ordered()
         expected = list(range(state.opening_plies, plies))
+        if bundle is not None:
+            if bundle.match_id != state.match_id:
+                self._refuse(f"{state.match_id}: the relay bundle is for another match")
+                return None
+            final = bundle.flag
+            if final is None:
+                self._refuse(f"{state.match_id}: the relay has no flag receipt")
+                return None
+            receipts = bundle.receipts
+            flagged = "white" if final.seat == state.certificate.white else "black"
+        else:
+            if state.clock is None:
+                self._refuse(f"{state.match_id}: no clock has started")
+                return None
+            now = self.clock_ms()
+            flagged_now = state.clock.flag(now)
+            if flagged_now is None:
+                return None
+            if flagged_now == state.seat:
+                self._refuse(f"{state.match_id}: our own clock is the one that ran out")
+                return None
+            flagged = flagged_now
+            book = self.books.get(state.match_id)
+            receipts = () if book is None else book.ordered()
+            snapshot = state.clock.snapshot(now)
+            final = FlagReceipt(
+                match_id=state.match_id,
+                ply=plies,
+                seat=state.opponent,
+                received_at_ms=now,
+                white_ms=0 if flagged == "white" else snapshot["white"],
+                black_ms=0 if flagged == "black" else snapshot["black"],
+            )
+            for _, keypair in witnesses:
+                signed = sign_receipt(final, keypair, network=self.config.network)
+                if not isinstance(signed, FlagReceipt):  # pragma: no cover - inputs are flags
+                    raise MinerError("sign_receipt returned the wrong receipt kind")
+                final = signed
         if [receipt.ply for receipt in receipts] != expected:
             self._refuse(f"{state.match_id}: witness receipts do not cover every post-opening move")
             return None
-        snapshot = state.clock.snapshot(now)
-        white_ms = snapshot["white"]
-        black_ms = snapshot["black"]
-        final = FlagReceipt(
-            match_id=state.match_id,
-            ply=plies,
-            seat=state.opponent,
-            received_at_ms=now,
-            white_ms=0 if flagged == "white" else white_ms,
-            black_ms=0 if flagged == "black" else black_ms,
-        )
-        for _, keypair in witnesses:
-            signed = sign_receipt(final, keypair, network=self.config.network)
-            if not isinstance(signed, FlagReceipt):  # pragma: no cover - inputs are flags
-                raise MinerError("sign_receipt returned the wrong receipt kind")
-            final = signed
         evidence = ClockEvidence(
             time_control=state.certificate.time_control,
             final=final,
-            receipts=receipts,
+            receipts=tuple(receipts),
         )
         result = flag_result(state.board, flagged=flagged)
+        if result == "1/2-1/2":
+            self._refuse(f"{state.match_id}: a flag with insufficient material is a draw")
+            return None
+        if self._winner_seat(result) != state.seat:
+            self._refuse(f"{state.match_id}: the flag does not win the game for us")
+            return None
         claim = TimeoutClaim(
             network=self.config.network,
             match_id=state.match_id,
@@ -846,7 +989,8 @@ class EngineMiner:
             clock_evidence=evidence,
             bond=max(self.config.params.min_timeout_bond, 1),
         )
-        public_keys = {address: keypair.public_key_hex for address, keypair in witnesses}
+        public_keys = self.config.witness_key_map
+        public_keys.update({address: keypair.public_key_hex for address, keypair in witnesses})
         try:
             verify_clock_evidence(
                 evidence,

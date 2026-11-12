@@ -247,6 +247,7 @@ def _relay_for_epoch(
         engines=engines,
         book=service.chain.book,
         clock=lambda: RELAY_CLOCK,
+        clock_ms=lambda: RELAY_CLOCK * 1000,
         timeout_seconds=3600,
     )
     relay_http = httpx.Client(

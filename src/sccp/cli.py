@@ -19,10 +19,11 @@ import json as jsonlib
 import os
 import secrets
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Event, Thread
 from typing import Annotated, NoReturn, TypeVar
 
 import typer
@@ -208,6 +209,22 @@ def _passphrase(ctx: typer.Context, *, confirm: bool) -> str:
     if from_env:
         return from_env
     return str(typer.prompt("Passphrase", hide_input=True, confirmation_prompt=confirm))
+
+
+def _witness_keys(params: NetworkParams, keys: Sequence[str]) -> list[tuple[str, str]]:
+    """Turn ``--relay-witness-key`` hex values into ``(address, key)`` pairs."""
+    pairs: list[tuple[str, str]] = []
+    for key_hex in keys:
+        try:
+            raw = bytes.fromhex(key_hex)
+        except ValueError:
+            _fail(f"--relay-witness-key {key_hex!r} is not valid hex", code=2)
+        try:
+            address = encode_address(raw, params)
+        except ValueError as exc:
+            _fail(f"--relay-witness-key {key_hex!r} is not a public key: {exc}", code=2)
+        pairs.append((address, key_hex))
+    return pairs
 
 
 def _echo_json(payload: object) -> None:
@@ -663,22 +680,87 @@ def matchmaker_run(
         int | None,
         typer.Option("--round", help="Open this round at startup."),
     ] = None,
+    witness_key: Annotated[
+        Path | None,
+        typer.Option(
+            "--witness-key",
+            help="Keyfile whose key signs the relay's clock receipts (its witness identity).",
+        ),
+    ] = None,
+    round_seconds: Annotated[
+        float | None,
+        typer.Option(
+            "--round-seconds",
+            help="Open the next round this many seconds after the last one (0 disables).",
+        ),
+    ] = None,
+    sweep_seconds: Annotated[
+        float,
+        typer.Option(
+            "--sweep-seconds",
+            help="How often the relay checks clocks and the round schedule.",
+        ),
+    ] = 1.0,
 ) -> None:
-    """Serve the matchmaking relay over HTTP (uvicorn)."""
+    """Serve the matchmaking relay over HTTP (uvicorn).
+
+    The relay runs timed sessions: it starts both clocks when a match activates,
+    charges moves against the mover, signs a receipt for every accepted move and
+    flags a clock that reaches zero. ``--round-seconds`` adds the round schedule
+    on top: round 0 opens at startup and the next round opens on the interval.
+    """
+    if sweep_seconds <= 0:
+        _fail("--sweep-seconds must be positive", code=2)
     params = _resolve_network(ctx, network)
     document = _read_json(config)
     if not isinstance(document, Mapping):
         _fail(f"{config} must contain a JSON object")
     if round_number is not None:
         document = {**document, "open_round": round_number}
-    state = _run(lambda: Matchmaker.from_document(document, params=params, store=store))
+    if round_seconds is not None:
+        document = {**document, "round_seconds": round_seconds}
+    witness = None
+    if witness_key is not None:
+        passphrase = _passphrase(ctx, confirm=False)
+        wallet = _run(lambda: load_wallet(witness_key, passphrase))
+        _check_network(ctx, network, wallet.network)
+        witness = wallet.keypair
+    state = _run(
+        lambda: Matchmaker.from_document(
+            document,
+            params=params,
+            store=store,
+            witness_keypair=witness,
+        )
+    )
     typer.echo(
         f"matchmaker on {host}:{port} for {params.network_id} epoch {state.beacon.epoch} "
-        f"({len(state.matches())} matches)"
+        f"({len(state.matches())} matches, round {state.current_round}, "
+        f"witness {state.witness or 'none'})"
     )
+    stop = Event()
+
+    def service() -> None:  # pragma: no cover - runs in the uvicorn process
+        while not stop.wait(sweep_seconds):
+            try:
+                flagged = state.sweep()
+                for match_id in flagged:
+                    typer.echo(f"clock flagged: {match_id}")
+                opened = state.maybe_open_next_round(state.round_seconds)
+                if opened:
+                    typer.echo(f"opened round {state.current_round} with {len(opened)} matches")
+            except SccpError as exc:
+                typer.echo(f"relay sweep failed: {exc}", err=True)
+
+    thread = Thread(target=service, name="relay-service", daemon=True)
+    thread.start()
     import uvicorn
 
-    uvicorn.run(create_matchmaker_app(state), host=host, port=port)
+    try:
+        uvicorn.run(create_matchmaker_app(state), host=host, port=port)
+    finally:
+        stop.set()
+        thread.join(timeout=5)
 
 
 @node_app.command("run")
@@ -832,6 +914,13 @@ def miner_run(
             help="Availability quota (default: the round count).",
         ),
     ] = None,
+    relay_witness_key: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--relay-witness-key",
+            help="Public key (hex) of the relay's clock witness, to verify its receipts.",
+        ),
+    ] = None,
     poll_seconds: Annotated[
         float,
         typer.Option("--poll-seconds", help="Seconds to wait between relay polls."),
@@ -854,6 +943,7 @@ def miner_run(
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
     engine = _run(lambda: open_engine(engine_profile, binary=engine_path))
+    witness_keys = _witness_keys(params, relay_witness_key or [])
     config = MinerConfig.for_network(
         params,
         wallet.keypair,
@@ -862,6 +952,7 @@ def miner_run(
         nodes_per_move=nodes_per_move or params.nodes_per_move,
         depth=depth,
         max_games_per_epoch=max_games_per_epoch or params.rounds_per_epoch,
+        witness_keys=witness_keys,
     )
     miner = EngineMiner(config, engine=engine)
     if not _options(ctx).json_output:
@@ -874,6 +965,7 @@ def miner_run(
     moves: list[str] = []
     results: list[str] = []
     proofs: list[str] = []
+    claims: list[str] = []
     refusals: list[str] = []
     started = time.monotonic()
     try:
@@ -884,6 +976,7 @@ def miner_run(
             moves.extend(tick.moves)
             results.extend(tick.results)
             proofs.extend(tick.proofs)
+            claims.extend(tick.claims)
             refusals.extend(tick.refusals)
             if iterations and polls >= iterations:
                 break
@@ -903,6 +996,7 @@ def miner_run(
         "moves": moves,
         "results": results,
         "proofs": proofs,
+        "claims": claims,
         "refusals": refusals,
     }
     if _options(ctx).json_output:
@@ -910,7 +1004,8 @@ def miner_run(
         return
     typer.echo(
         f"stopped after {polls} polls ({payload['seconds']}s): "
-        f"{len(joined)} joins, {len(moves)} moves, {len(results)} results, {len(proofs)} proofs"
+        f"{len(joined)} joins, {len(moves)} moves, {len(results)} results, "
+        f"{len(proofs)} proofs, {len(claims)} timeout claims"
     )
     for reason in dict.fromkeys(refusals):
         typer.echo(f"  refused: {reason}")

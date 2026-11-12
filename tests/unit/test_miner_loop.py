@@ -54,11 +54,28 @@ class _StubRelay:
         self.view = self.view.model_copy(update={"status": status, "certificate": certificate})
         return self.view
 
-    def move(self, match_id: str, *, seat: str, san: str) -> MatchView:
+    def move(
+        self,
+        match_id: str,
+        *,
+        seat: str,
+        san: str,
+        network: str | None = None,
+        ply: int | None = None,
+        clock_ms: int | None = None,
+        signature: str | None = None,
+    ) -> MatchView:
         self._guard()
         self.calls.append(("move", seat, san))
+        if signature is not None:
+            self.calls.append(("signed", str(ply), str(network)))
         self.view = self.view.model_copy(update={"san_moves": (*self.view.san_moves, san)})
         return self.view
+
+    def receipts(self, match_id: str) -> Any:
+        """No timed sessions in the stub: the miner falls back to local receipts."""
+        self._guard()
+        return None
 
     def result(self, match_id: str, *, seat: str, signature: str) -> MatchView:
         self._guard()

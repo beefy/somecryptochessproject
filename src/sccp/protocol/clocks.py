@@ -172,7 +172,13 @@ class MatchClock:
         return max(0, now_ms - self.turn_started_at_ms)
 
     def remaining_ms(self, now_ms: int) -> dict[Color, int]:
-        """The remaining clocks after applying elapsed time and lag grace."""
+        """The remaining clocks after applying elapsed time and lag grace.
+
+        A clock that is not running (never started, or stopped after the game
+        ended) does not count down: its stored values are returned unchanged.
+        """
+        if not self.started:
+            return {"white": self.white_ms, "black": self.black_ms}
         deduction = max(0, self.elapsed_ms(now_ms) - self.lag_grace_ms)
         current = self.white_ms if self.turn == "white" else self.black_ms
         remaining = max(0, current - deduction)
@@ -216,6 +222,18 @@ class MatchClock:
     def flag(self, now_ms: int) -> Color | None:
         """Return the flagged colour, or ``None`` when both clocks are positive."""
         return self.turn if self.is_flagged(now_ms) else None
+
+    def stop(self, now_ms: int) -> None:
+        """Freeze the clocks once the game is over.
+
+        The stored values become the snapshot at ``now_ms`` and ``started`` is
+        cleared, so later reads (a finished match view) are stable instead of
+        counting down a game that is no longer being played.
+        """
+        frozen = self.remaining_ms(now_ms)
+        self.white_ms = frozen["white"]
+        self.black_ms = frozen["black"]
+        self.started = False
 
     def snapshot(self, now_ms: int) -> dict[Color, int]:
         """The relay-visible ``{white_ms, black_ms}`` pair."""
