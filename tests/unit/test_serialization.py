@@ -22,6 +22,7 @@ from sccp.serialization import (
     Domain,
     canonical_json,
     domain_hash,
+    domain_hex,
     merkle_leaf,
     merkle_node,
     merkle_root,
@@ -102,6 +103,12 @@ def test_domain_hash_matches_golden(vectors: Vectors) -> None:
     assert domain_hash(golden["domain"], golden["payload"]).hex() == golden["hex"]
 
 
+def test_domain_hex_matches_domain_hash(vectors: Vectors) -> None:
+    golden = vectors["domain_hash"]
+    assert domain_hex(golden["domain"], golden["payload"]) == golden["hex"]
+    assert domain_hash(golden["domain"], golden["payload"]).hex() == golden["hex"]
+
+
 def test_domain_hash_is_domain_separated(vectors: Vectors) -> None:
     payload = {"a": 1}
     digests = {domain_hash(domain, payload) for domain in Domain}
@@ -171,3 +178,8 @@ def test_merkle_root_rejects_duplicate_keys() -> None:
 def test_merkle_root_rejects_duplicates_after_nfc() -> None:
     with pytest.raises(DuplicateKeyError):
         merkle_root({"é": 1, "e\u0301": 2})
+
+
+def test_merkle_root_rejects_non_string_keys() -> None:
+    with pytest.raises(UnsupportedTypeError):
+        merkle_root([(1, "a"), ("b", 2)])  # type: ignore[list-item]

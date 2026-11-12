@@ -354,11 +354,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
+make check         # ruff check + format --check + mypy + pytest
 make test          # pytest (unit + property; mock engines only)
+make cov-gate      # crypto/ and serialization.py must stay >= 95% covered
 make test-all      # adds integration/e2e; skips if Stockfish is absent
-make lint          # ruff check + format --check
-make typecheck     # mypy
-make devnet        # in-process node + relay + mock miners
+make devnet        # in-process node + relay + mock miners (lands with M5)
 ```
 
 Requirements: Python 3.11+ (developed against 3.13), `python-chess`, `pydantic`,

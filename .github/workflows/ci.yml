@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements.lock
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Lint
+        run: |
+          ruff check src tests
+          ruff format --check src tests
+
+      - name: Typecheck
+        run: mypy
+
+      - name: Test
+        run: pytest --cov=sccp --cov-report=term-missing --cov-fail-under=85
+
+      - name: Coverage gate (crypto and serialization >= 95%)
+        run: pytest -q --cov=sccp.crypto --cov=sccp.serialization --cov-fail-under=95

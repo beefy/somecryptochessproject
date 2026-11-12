@@ -218,3 +218,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# sccp local state (never commit private keys, engine binaries or chain data)
+/bin/
+/chaindata/
+*.key
+!tests/fixtures/*.key

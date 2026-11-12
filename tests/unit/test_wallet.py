@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from sccp.config import get_network
 from sccp.crypto.keys import keypair_from_seed
 from sccp.crypto.wallet import (
     DEFAULT_KDF,
@@ -168,10 +169,17 @@ def test_malformed_keyfiles_are_rejected(
         (lambda d: d.pop("created_at"), "missing field"),
         (lambda d: d.update(version=2), "version"),
         (lambda d: d.update(network="regtest"), "network"),
+        (lambda d: d.update(address=123), "address"),
         (lambda d: d["kdf"].update(name="pbkdf2"), "kdf"),
-        (lambda d: d["cipher"].update(name="chacha20"), "cipher"),
+        (lambda d: d.update(kdf="scrypt"), "kdf"),
+        (lambda d: d["kdf"].update(salt="zz"), "not valid hex"),
+        (lambda d: d["kdf"].update(salt="00" * 15), "16 bytes"),
         (lambda d: d["kdf"].update(n=1000), "power of two"),
+        (lambda d: d["cipher"].update(name="chacha20"), "cipher"),
+        (lambda d: d["cipher"].update(nonce="00" * 11), "12 bytes"),
+        (lambda d: d["cipher"].pop("nonce"), "missing field"),
         (lambda d: d.update(created_at="now"), "created_at"),
+        (lambda d: d.update(public_key="zz"), "not valid hex"),
         (lambda d: d.update(public_key="00" * 31), "public_key"),
     ]
     path = tmp_path / "wallet.key"
@@ -291,3 +299,40 @@ def test_default_kdf_matches_spec() -> None:
 def test_invalid_kdf_params(n: int, r: int, p: int) -> None:
     with pytest.raises(KeyfileError):
         KdfParams(n=n, r=r, p=p)
+
+
+def test_derive_key_rejects_bad_salt_length(fast_kdf: KdfParams) -> None:
+    with pytest.raises(KeyfileError):
+        derive_key("pass", bytes(15), fast_kdf)
+
+
+def test_wallet_exposes_network_params(
+    tmp_path: Path, fast_kdf: KdfParams, passphrase: str
+) -> None:
+    wallet = create_wallet(
+        tmp_path / "wallet.key", "mainnet", passphrase, seed=OTHER_SEED, kdf=fast_kdf
+    )
+    assert wallet.network_params == get_network("mainnet")
+    assert wallet.address.startswith("sccp1")
+
+
+def test_create_wallet_makes_parent_directories(
+    tmp_path: Path, fast_kdf: KdfParams, passphrase: str
+) -> None:
+    path = tmp_path / "nested" / "deeper" / "wallet.key"
+    create_wallet(path, "testnet", passphrase, seed=OTHER_SEED, kdf=fast_kdf)
+    assert path.is_file()
+
+
+def test_create_wallet_reports_unwritable_parent(
+    tmp_path: Path, fast_kdf: KdfParams, passphrase: str
+) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(KeyfileError):
+        create_wallet(blocker / "wallet.key", "testnet", passphrase, seed=OTHER_SEED, kdf=fast_kdf)
+
+
+def test_read_header_rejects_directory(tmp_path: Path) -> None:
+    with pytest.raises(KeyfileError):
+        read_header(tmp_path)
