@@ -1,12 +1,12 @@
 # The two-miner testnet stack
 
 `docker-compose.yml` runs the testnet deployment on one machine: a full node, the
-matchmaking relay, one deterministic bootstrap job and two Stockfish miners. It
-starts from the pinned `testnet` genesis, funds and registers both miners,
-commits/reveals availability, opens a matchable epoch, plays games and settles
-the winning proofs on chain. `sccp devnet up` remains the fast in-process demo;
-this stack exercises the real multi-process, HTTP and SQLite path. The merge-to-
-deploy workflow and its monthly cost are in
+matchmaking relay, one deterministic bootstrap job, a traffic drip and two
+Stockfish miners. It starts from the pinned `testnet` genesis, funds and
+registers both miners, commits/reveals availability, opens a matchable epoch,
+plays games and settles the winning proofs on chain. `sccp devnet up` remains the
+fast in-process demo; this stack exercises the real multi-process, HTTP and
+SQLite path. The merge-to-deploy workflow and its monthly cost are in
 [`docs/TESTNET_DEPLOYMENT.md`](../docs/TESTNET_DEPLOYMENT.md).
 
 The current hosted deployment is at
@@ -18,7 +18,7 @@ docker compose up --build
 curl http://127.0.0.1:8645/v1/status    # node: height, mempool, peers
 curl http://127.0.0.1:8646/v1/status     # relay: beacon, matches, reputation
 curl http://127.0.0.1:8646/v1/matches    # what the miners are playing
-docker compose logs -f bootstrap miner-1
+docker compose logs -f bootstrap drip miner-1
 docker compose down -v                   # resets the chain and relay state
 ```
 
@@ -32,8 +32,9 @@ proof to settle.
 | Service | Command | Purpose |
 | --- | --- | --- |
 | `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the two keyfiles, their availability secrets, the passphrase file and `stack.json` |
-| `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --no-mine-bootstrap` | node API plus the proof settler; chain in SQLite under `node-data` |
+| `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 60 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers both miners, commits and reveals availability, writes `relay.json` from epoch 3 |
+| `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
 | `miner-1`, `miner-2` | `sccp miner run --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-1.nonce` | join, play, co-sign, announce win proofs and commit/reveal their own availability |
 
@@ -79,6 +80,22 @@ plus reveal each), so one decisive game per epoch is what carries the stack; a
 roster of three or more is self-sustaining. A game that ends on the clock also
 files a bonded timeout claim, and that claim is an ordinary transaction, so it
 moves the ledger even before its proof settles.
+
+Two further settings make that arithmetic hold even when the games do not:
+
+- `drip` submits one ordinary faucet transfer whenever the node reports an empty
+  transaction pool, so the fifth piece of work is there when no game produced a
+  proof. It signs what any wallet signs and its transfer goes through
+  `POST /v1/tx` like any other, so the node admits or refuses it on the same
+  terms. `docker compose logs -f drip` shows `dripped 1 units to sccpt1...`.
+- The node's settler runs with `--mine-interval-seconds 60`, the network's
+  `target_block_seconds`. A block's timestamp is the wall clock and the
+  difficulty retarget reads those timestamps, so a settler that built a block on
+  every two-second poll made the chain look thirty times too fast; the schedule
+  answered by raising `wins_required` to `2`, which asks one block to carry two
+  wins by the same miner -- more than a two-miner roster wins in an epoch -- and
+  the chain stopped at the first block that demanded it. At one block per target
+  interval the retarget is neutral and `wins_required` stays `1`.
 
 Two equal Stockfish builds mostly draw, and a draw is not a proof, so both stack
 miners run with `--resign-after-plies 60`: on its own turn a miner resigns once

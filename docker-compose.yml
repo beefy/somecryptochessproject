@@ -47,6 +47,14 @@ services:
       - --no-mine-bootstrap
       - --mine-poll-seconds
       - "2"
+      # Pace blocks at the network's target spacing. A block's timestamp is the
+      # wall clock and the difficulty retarget reads it: settling on every 2s
+      # poll makes the chain look 30x too fast, so the schedule raises
+      # `wins_required` past what a two-miner roster can win per epoch and the
+      # chain stops. At one block per `target_block_seconds` the retarget is
+      # neutral.
+      - --mine-interval-seconds
+      - "60"
     ports:
       - "8645:8645"
     volumes:
@@ -117,6 +125,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 12
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  drip:
+    <<: *sccp-service
+    entrypoint: ["python", "/app/deploy/drip_testnet_traffic.py"]
+    command:
+      - --node
+      - http://node:8645
+      - --poll-seconds
+      - "2"
+    # Keep ledger work in the pool: an epoch is five blocks but the roster only
+    # generates four availability/reveal transactions, so an epoch without a
+    # decisive game would run one block short and stop the chain. See
+    # deploy/README.md.
     depends_on:
       bootstrap:
         condition: service_completed_successfully

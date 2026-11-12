@@ -9,6 +9,24 @@ not itemised here.
 
 ### Added
 
+- `sccp node run --mine-interval-seconds N`: the settlement miner can pace
+  itself, building at most one block per `N` seconds. A block's timestamp is the
+  wall clock and the difficulty retarget reads those timestamps, so a settler
+  that built a block on every two-second poll made the chain look thirty times
+  faster than `target_block_seconds`; at the height 30 retarget (the first one
+  that is also an epoch boundary after the bootstrap) the schedule answered by
+  raising `wins_required` to `2`, and a block then has to carry two wins by the
+  same miner at the same height -- more than a two-miner roster wins per epoch --
+  which stopped the chain. One block per target interval puts the retarget window
+  in its neutral band and keeps `wins_required` at `1`. `0` keeps the old
+  behaviour; the testnet stack passes `60`.
+- `deploy/drip_testnet_traffic.py` and the compose `drip` service: when the node
+  reports an empty transaction pool, the drip signs one ordinary faucet transfer
+  and submits it through the public `POST /v1/tx`. An epoch is five blocks and a
+  two-miner roster only generates four availability/reveal transactions, so an
+  epoch whose games all drew ran one block short and froze at the boundary. The
+  drip keeps ledger work in the pool, so the epoch crosses regardless of the
+  games' results, and it holds no roster slot and needs no node internals.
 - Blocks past `bootstrap_end_height` may now carry zero proofs when they carry at
   least one transaction, and such a *heartbeat* block mints no subsidy (fees
   only). A two-miner testnet froze at height 22 because every block demanded

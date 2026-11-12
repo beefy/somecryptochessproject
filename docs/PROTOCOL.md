@@ -708,7 +708,13 @@ one bit and may lower `k`, faster than 3/4 raises them. `k` is clamped to
 `[k_min, k_max]`, may change at most once per epoch, and never within
 `epoch_length` blocks of the previous change (so open claim windows survive).
 A header that declares easier values than the schedule is invalid, so every node
-derives the schedule itself.
+derives the schedule itself. A miner therefore controls the schedule through the
+timestamps it writes: a chain mined faster than `target_block_seconds` is
+answered with a higher `k`, and one block then has to carry that many verified
+wins. A deployment whose roster cannot supply them paces its miner at the target
+interval instead -- `sccp node run --mine-interval-seconds`, and the bootstrap
+scripts, which synthesize timestamps one target interval apart -- so the
+retarget window stays in its neutral band.
 
 ### 12.2 Proof rules
 

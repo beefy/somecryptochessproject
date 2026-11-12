@@ -858,6 +858,13 @@ def node_run(
         float,
         typer.Option("--mine-poll-seconds", help="Seconds between --mine attempts."),
     ] = 1.0,
+    mine_interval_seconds: Annotated[
+        int,
+        typer.Option(
+            "--mine-interval-seconds",
+            help="Minimum seconds between --mine blocks (0 mines as fast as it can).",
+        ),
+    ] = 0,
     mine_bootstrap: Annotated[
         bool,
         typer.Option(
@@ -875,6 +882,8 @@ def node_run(
             _fail(f"{miner_address!r} is not a valid {params.network_id} address", code=2)
         if mine_poll_seconds <= 0:
             _fail("--mine-poll-seconds must be positive", code=2)
+        if mine_interval_seconds < 0:
+            _fail("--mine-interval-seconds must not be negative", code=2)
     data_dir = _options(ctx).data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
     service = _run(
@@ -918,7 +927,11 @@ def node_run(
         if mine:
             assert miner_address is not None
             node_miner = NodeMiner(
-                service, miner_address, clock=service.clock, mine_bootstrap=mine_bootstrap
+                service,
+                miner_address,
+                clock=service.clock,
+                mine_bootstrap=mine_bootstrap,
+                min_interval_seconds=mine_interval_seconds,
             )
             stop = Event()
             thread = Thread(

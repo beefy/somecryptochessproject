@@ -626,6 +626,25 @@ def test_node_run_validates_the_mining_options(data_dir: Path) -> None:
     assert bad_poll.exit_code == 2
     assert "--mine-poll-seconds must be positive" in bad_poll.output
 
+    bad_interval = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "node",
+            "run",
+            "--network",
+            "devnet",
+            "--mine",
+            "--miner-address",
+            _devnet_address(),
+            "--mine-interval-seconds",
+            "-1",
+        ],
+    )
+    assert bad_interval.exit_code == 2
+    assert "--mine-interval-seconds must not be negative" in bad_interval.output
+
 
 def test_node_run_starts_the_settlement_miner(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch

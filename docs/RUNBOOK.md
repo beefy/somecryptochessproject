@@ -108,11 +108,32 @@ pre-built bootstrap chain (this stack) must pass `--no-mine-bootstrap`; otherwis
 the background miner can race the bootstrap and build a competing block at the
 same height.
 
+The other flag a deployment sets is the settler's pace:
+
+```text
+--mine-interval-seconds 60
+```
+
+A block's timestamp is the wall clock, and the difficulty schedule reads those
+timestamps every `retarget_interval` blocks (heights 10, 20, 30 on testnet),
+comparing their span with `target_block_seconds * (retarget_interval - 1)`. A
+settler that builds a block on every poll makes a 60-second chain look
+two-second fast, and the retarget answers by raising `wins_required` -- one block
+then has to carry two verified wins by the same miner, which a two-miner roster
+cannot supply, so the chain stops there. `60` is testnet's
+`target_block_seconds`: one block per minute keeps the retarget window in its
+neutral band and `wins_required` at `1`. `GET /v1/difficulty` reports the current
+values and the retarget history. The bootstrap script paces its synthesized
+timestamps the same way.
+
 After height 19 a block needs a proof or at least one transaction. The stack's
 miners commit and reveal availability every epoch, so those transactions carry
 the chain forward even when a round ends in a draw; without them (a miner started
 without `--nonce-secret-file`) the chain can only advance when somebody plays a
-decisive game.
+decisive game. The stack's `drip` service covers the remaining gap: an epoch is
+five blocks and the roster generates four transactions, so
+`deploy/drip_testnet_traffic.py` submits one ordinary faucet transfer whenever the
+pool is empty.
 
 ## Stuck chain or mempool
 
@@ -129,9 +150,21 @@ decisive game.
   of `epoch_length` blocks needs that much ledger work to end. The two stack
   miners supply four items per epoch (availability plus reveal each), so one
   decisive game -- or a timeout claim, which is a transaction too -- carries the
-  epoch; a roster of three or more miners is self-sustaining. `GET /v1/mempool`
-  shows which proof ids and tx ids are still waiting, and the relay log shows
-  rounds that never end.
+  epoch; a roster of three or more miners is self-sustaining. The stack's `drip`
+  service refills an empty pool with one ordinary transfer, so a pool that is
+  empty *and* stays empty means the drip is not running (`docker compose logs -f
+  drip`). `GET /v1/mempool` shows which proof ids and tx ids are still waiting,
+  and the relay log shows rounds that never end.
+- **The tip stops with `wins_required` above what the roster can win:** check
+  `GET /v1/difficulty`. The chain was mined faster than `target_block_seconds`,
+  the retarget raised `k` at an epoch boundary, and one block now has to carry `k`
+  wins by the same miner at the same height. Blocks with transactions still
+  advance (a heartbeat block needs no proof) but no proof can settle, so the
+  stack has to be mined at the target pace: `--mine-interval-seconds 60`. `k`
+  only moves at an epoch boundary and only outside the neutral band, so a chain
+  that already raised it needs blocks averaging slower than 4/3 of the target to
+  bring it back down; on a stack you control, `docker compose down -v` and a
+  fresh bootstrap is quicker.
 - **Every game in the epoch finished as a draw:** a draw has no winner, so it
   yields no proof and leaves the pool with only the roster's own transactions.
   Two engines of comparable strength draw long games, so give the miner

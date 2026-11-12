@@ -38,10 +38,31 @@ class NodeMiner:
     A deployment that feeds a pre-built bootstrap chain to the node sets this
     to ``False`` so the background miner cannot race the bootstrap blocks.
     """
+    min_interval_seconds: int = 0
+    """Minimum wall-clock spacing between the blocks this miner builds.
+
+    A block's timestamp is the wall clock and the difficulty retarget reads
+    those timestamps: a miner that builds a block on every poll makes the chain
+    look far faster than ``params.target_block_seconds``, and the schedule
+    answers by raising ``wins_required``. On a small roster that is fatal -- one
+    block then needs several wins by the same miner at the same height, more
+    than an epoch can supply -- so a deployment paces its miner at the target
+    spacing instead. ``0`` mines as fast as the pool allows (the default; the
+    retarget stays neutral because blocks are then limited by the chess).
+    """
 
     @property
     def params(self) -> NetworkParams:
         return self.service.params
+
+    def _paced(self) -> bool:
+        """Whether the tip is old enough for another block at this pace."""
+        if self.min_interval_seconds <= 0:
+            return True
+        timestamps = self.service.chain.state.timestamps
+        if not timestamps:
+            return True
+        return self.clock() - timestamps[-1] >= self.min_interval_seconds
 
     def _timestamp(self) -> int:
         tip_time = self.service.chain.state.timestamps[-1]
@@ -70,6 +91,8 @@ class NodeMiner:
     def mine_once(self) -> Block | None:
         """Build, ingest and return one block, or ``None`` if none is possible."""
         with self.service.write_lock:
+            if not self._paced():
+                return None
             height = self.service.height + 1
             for winner in self._candidates(height):
                 try:
