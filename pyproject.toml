@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sccp"
-version = "0.5.0"
+version = "0.5.1"
 description = "Some Crypto Chess Project: a cryptocurrency whose proof of work is winning chess games"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -62,9 +62,25 @@ packages = ["src/sccp"]
 [tool.hatch.build.targets.wheel.force-include]
 "data/openings.json" = "sccp/chess/data/openings.json"
 "data/engines.json" = "sccp/chess/data/engines.json"
+# The node's pinned genesis documents travel with the package so an installed
+# `sccp node run` works without a checkout (sccp.node.service finds them).
+"genesis/testnet.json" = "sccp/chain/data/genesis/testnet.json"
+"genesis/mainnet.json" = "sccp/chain/data/genesis/mainnet.json"
+"genesis/devnet.json" = "sccp/chain/data/genesis/devnet.json"
 
 [tool.hatch.build.targets.sdist]
-include = ["src/sccp", "tests", "data", "README.md", "LICENSE"]
+include = [
+  "src/sccp",
+  "tests",
+  "data",
+  "deploy",
+  "genesis",
+  "Dockerfile",
+  "docker-compose.yml",
+  "Makefile",
+  "README.md",
+  "LICENSE",
+]
 
 [tool.pytest.ini_options]
 minversion = "9.0"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import stat
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import chess
 import pytest
@@ -14,6 +14,8 @@ from typer.testing import CliRunner
 from sccp.chess.pgn import validate_pgn
 from sccp.cli import PASSPHRASE_ENV, app
 from sccp.config import DEVNET
+from sccp.crypto.address import encode_address
+from sccp.crypto.keys import keypair_from_seed
 from sccp.protocol.transcript import (
     build_win_proof,
     create_result,
@@ -412,3 +414,443 @@ def test_devnet_help_lists_up() -> None:
     result = runner.invoke(app, ["devnet", "--help"])
     assert result.exit_code == 0
     assert "up" in result.stdout
+
+
+# --- M4: node, miner, chain and faucet commands -----------------------------
+
+
+@pytest.fixture()
+def data_dir(tmp_path: Path) -> Path:
+    """A ``--data-dir`` holding a genesis-only devnet chain."""
+    from sccp.chain.storage import Storage, persist_chain
+    from sccp.node.service import NodeService
+
+    path = tmp_path / "data"
+    path.mkdir()
+    service = NodeService.open(DEVNET)
+    storage = Storage(path / "chain.sqlite")
+    try:
+        persist_chain(service.chain, storage)
+    finally:
+        storage.close()
+        service.close()
+    return path
+
+
+@pytest.fixture()
+def faucet_key(tmp_path: Path, passphrase: str) -> Path:
+    """A keyfile for the devnet faucet, which the genesis funds."""
+    from sccp.chain.genesis import faucet_keypair
+    from sccp.crypto.wallet import KdfParams, create_wallet
+
+    path = tmp_path / "faucet.key"
+    create_wallet(
+        path,
+        "devnet",
+        passphrase,
+        seed=faucet_keypair("devnet").seed,
+        kdf=KdfParams(n=1024),
+        created_at=1_700_000_000,
+    )
+    return path
+
+
+class _RecordingNode:
+    """Stand-in for ``NodeClient`` that records what the CLI would submit."""
+
+    submitted: ClassVar[list[Any]] = []
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+
+    def submit_transaction(self, tx: Any) -> dict[str, object]:
+        _RecordingNode.submitted.append(tx)
+        return {"network": tx.network, "txid": txid_of(tx), "accepted": True}
+
+    def close(self) -> None:
+        return None
+
+
+def txid_of(tx: Any) -> str:
+    from sccp.chain.tx import txid
+
+    return txid(tx)
+
+
+@pytest.fixture()
+def recorded_node(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Patch the node client the CLI submits through and return its receipts."""
+    import sccp.cli as cli
+
+    _RecordingNode.submitted = []
+    monkeypatch.setattr(cli, "NodeClient", _RecordingNode)
+    return _RecordingNode.submitted
+
+
+MINER_ADDRESS = encode_address(keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
+NONCE_SECRET = "11" * 32
+
+
+def test_m4_help_lists_the_new_commands() -> None:
+    for group, command in (
+        ("node", "run"),
+        ("miner", "run"),
+        ("miner", "register"),
+        ("miner", "availability"),
+        ("miner", "reveal"),
+        ("chain", "info"),
+        ("chain", "blocks"),
+        ("chain", "account"),
+        ("chain", "verify"),
+        ("wallet", "balance"),
+        ("wallet", "send"),
+        ("wallet", "history"),
+        ("faucet", "send"),
+    ):
+        result = runner.invoke(app, [group, "--help"])
+        assert result.exit_code == 0, result.output
+        assert command in result.stdout, (group, command)
+
+
+def test_chain_commands_read_the_local_database(
+    data_dir: Path, faucet_key: Path, env: dict[str, str]
+) -> None:
+    info = runner.invoke(
+        app, ["--json", "--data-dir", str(data_dir), "chain", "info", "--network", "devnet"]
+    )
+    assert info.exit_code == 0, info.output
+    payload = json.loads(info.stdout)
+    assert payload["network"] == "devnet"
+    assert payload["height"] == 0
+    assert payload["difficulty"]["wins_required"] == DEVNET.wins_required
+
+    blocks = runner.invoke(
+        app, ["--json", "--data-dir", str(data_dir), "chain", "blocks", "--network", "devnet"]
+    )
+    assert blocks.exit_code == 0, blocks.output
+    assert json.loads(blocks.stdout)[0]["height"] == 0
+
+    address = runner.invoke(app, ["wallet", "address", "--key", str(faucet_key)])
+    account = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(data_dir),
+            "chain",
+            "account",
+            address.stdout.strip(),
+            "--network",
+            "devnet",
+        ],
+    )
+    assert account.exit_code == 0, account.output
+    assert json.loads(account.stdout)["total"] > 0
+
+    verify = runner.invoke(
+        app, ["--data-dir", str(data_dir), "chain", "verify", "--network", "devnet"]
+    )
+    assert verify.exit_code == 0, verify.output
+    assert "ok: 1 blocks replay to height 0" in verify.stdout
+
+
+def test_chain_commands_need_a_database(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["--data-dir", str(tmp_path / "empty"), "chain", "info"])
+    assert result.exit_code == 1
+    assert "no chain database" in result.output
+
+
+def test_node_run_serves_the_app(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import uvicorn
+    from fastapi import FastAPI
+
+    served: dict[str, Any] = {}
+
+    def fake_run(application: Any, *, host: str, port: int) -> None:
+        served.update(app=application, host=host, port=port)
+
+    monkeypatch.setattr(uvicorn, "run", fake_run)
+    result = runner.invoke(
+        app,
+        ["--data-dir", str(data_dir), "node", "run", "--network", "devnet", "--port", "18645"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "height 0" in result.stdout
+    assert served["host"] == "127.0.0.1" and served["port"] == 18645
+    assert isinstance(served["app"], FastAPI)
+
+
+def test_node_run_warns_about_a_peer_that_is_down(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: None)
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "node",
+            "run",
+            "--network",
+            "devnet",
+            "--peer",
+            "http://127.0.0.1:1",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "did not answer" in result.output
+
+
+def test_miner_run_reports_its_ticks(
+    tmp_path: Path, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sccp.miner.engine_miner import EngineMiner, MinerTick
+
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    keyfile = tmp_path / "wallet.key"
+    ticks = iter(
+        [
+            MinerTick(observed=1, joined=("m1",), moves=("m1:e4",)),
+            MinerTick(observed=1, results=("m1:result",), proofs=("p1",)),
+        ]
+    )
+    monkeypatch.setattr(EngineMiner, "run_once", lambda self: next(ticks))
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(keyfile),
+            "--engine-profile",
+            "mock",
+            "--relay",
+            "http://127.0.0.1:8646",
+            "--iterations",
+            "2",
+            "--poll-seconds",
+            "0.01",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["network"] == "devnet"
+    assert payload["polls"] == 2
+    assert payload["joined"] == ["m1"]
+    assert payload["proofs"] == ["p1"]
+
+
+def test_miner_run_needs_a_binary_for_a_real_engine(tmp_path: Path, env: dict[str, str]) -> None:
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    result = runner.invoke(
+        app,
+        ["miner", "run", "--network", "devnet", "--key", str(tmp_path / "wallet.key")],
+        env=env,
+    )
+    assert result.exit_code == 1
+    assert "needs an explicit binary" in result.output
+
+
+def test_miner_run_refuses_bad_poll_settings(tmp_path: Path, env: dict[str, str]) -> None:
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    result = runner.invoke(
+        app,
+        [
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--engine-profile",
+            "mock",
+            "--poll-seconds",
+            "0",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 2
+    assert "must be positive" in result.output
+
+
+def test_wallet_balance_and_empty_history(
+    data_dir: Path, faucet_key: Path, env: dict[str, str]
+) -> None:
+    balance = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "balance",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+        ],
+        env=env,
+    )
+    assert balance.exit_code == 0, balance.output
+    assert "1000000.00000000" in balance.stdout
+
+    history = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "history",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+        ],
+        env=env,
+    )
+    assert history.exit_code == 0, history.output
+    assert "no transactions" in history.stdout
+
+
+def test_wallet_send_submits_a_signed_transfer(
+    data_dir: Path, faucet_key: Path, env: dict[str, str], recorded_node: list[Any]
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "send",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+            "--to",
+            MINER_ADDRESS,
+            "--amount",
+            "10",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "sent 10.00000000" in result.stdout
+    assert len(recorded_node) == 1
+    tx = recorded_node[0]
+    assert tx.type == "transfer"
+    assert tx.payload["amount"] == 1_000_000_000
+
+
+def test_miner_register_availability_and_reveal(
+    data_dir: Path,
+    faucet_key: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+) -> None:
+    common = ["--data-dir", str(data_dir)]
+
+    register = runner.invoke(
+        app,
+        [
+            *common,
+            "miner",
+            "register",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+            "--endpoint",
+            "tcp://alice.example:8646",
+            "--bond",
+            "10",
+        ],
+        env=env,
+    )
+    assert register.exit_code == 0, register.output
+    assert "registered" in register.stdout
+
+    availability = runner.invoke(
+        app,
+        [
+            *common,
+            "miner",
+            "availability",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+            "--max-games",
+            "3",
+            "--nonce-secret",
+            NONCE_SECRET,
+        ],
+        env=env,
+    )
+    assert availability.exit_code == 0, availability.output
+    assert NONCE_SECRET in availability.stdout
+
+    reveal = runner.invoke(
+        app,
+        [
+            *common,
+            "miner",
+            "reveal",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+            "--nonce-secret",
+            NONCE_SECRET,
+        ],
+        env=env,
+    )
+    assert reveal.exit_code == 0, reveal.output
+    assert "revealed for epoch" in reveal.stdout
+
+    assert [tx.type for tx in recorded_node] == ["register", "availability", "reveal"]
+    assert recorded_node[0].payload["bond"] == 1_000_000_000
+
+
+def test_faucet_send_is_limited_to_test_networks(
+    data_dir: Path, env: dict[str, str], recorded_node: list[Any]
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "faucet",
+            "send",
+            "--network",
+            "devnet",
+            "--to",
+            MINER_ADDRESS,
+            "--amount",
+            "1000",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "faucet sent 1000.00000000" in result.stdout
+    assert recorded_node[0].payload["amount"] == 100_000_000_000
+
+    rejected = runner.invoke(
+        app,
+        ["--data-dir", str(data_dir), "faucet", "send", "--network", "mainnet", "--to", "x"],
+        env=env,
+    )
+    assert rejected.exit_code == 2
+    assert "has no faucet" in rejected.output
+
+
+def test_devnet_up_accepts_only_mock_engines() -> None:
+    ok = runner.invoke(app, ["devnet", "up", "--miners", "2", "--blocks", "2", "--engines", "mock"])
+    assert ok.exit_code == 0, ok.output
+    rejected = runner.invoke(app, ["devnet", "up", "--engines", "stockfish-19"])
+    assert rejected.exit_code == 2
+    assert "only supports --engines mock" in rejected.output

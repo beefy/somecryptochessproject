@@ -6,7 +6,7 @@ PYTEST_ARGS ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help venv install test test-all cov cov-gate lint format typecheck check lock dist dist-check release-check devnet clean
+.PHONY: help venv install test test-all cov cov-gate lint format typecheck check lock dist dist-check release-check devnet stack clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -45,12 +45,12 @@ cov-gate: venv  ## M0 gate: crypto/ and serialization.py at >= 95%
 		--cov-report=term-missing --cov-fail-under=95 $(PYTEST_ARGS)
 
 lint: venv  ## Check ruff lint and formatting
-	$(PYTHON) -m ruff check src tests scripts
-	$(PYTHON) -m ruff format --check src tests scripts
+	$(PYTHON) -m ruff check src tests scripts deploy
+	$(PYTHON) -m ruff format --check src tests scripts deploy
 
 format: venv  ## Apply ruff formatting and safe lint fixes
-	$(PYTHON) -m ruff check --fix src tests scripts
-	$(PYTHON) -m ruff format src tests scripts
+	$(PYTHON) -m ruff check --fix src tests scripts deploy
+	$(PYTHON) -m ruff format src tests scripts deploy
 
 typecheck: venv  ## Run mypy in strict mode
 	$(PYTHON) -m mypy
@@ -76,6 +76,14 @@ dist-check: dist  ## Validate dist/ with twine check --strict (needs `twine>=7`)
 
 devnet: venv  ## Run the in-process devnet (node + relay + four mock miners)
 	$(PYTHON) -m sccp.cli devnet up --miners 4 --blocks 10
+
+stack: venv  ## Write the docker-compose stack into .stack and validate it
+	$(PYTHON) deploy/init_testnet_stack.py --out .stack
+	@if command -v docker >/dev/null 2>&1; then \
+		docker compose config --quiet && echo "compose config ok"; \
+	else \
+		echo "docker not installed; skipped compose validation"; \
+	fi
 
 clean:  ## Remove caches and build artefacts
 	rm -rf .mypy_cache .pytest_cache .ruff_cache .hypothesis htmlcov build dist

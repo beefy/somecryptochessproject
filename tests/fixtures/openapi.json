@@ -1,0 +1,2203 @@
+{
+  "components": {
+    "schemas": {
+      "AccountView": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "balance": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "banned_until": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "bonded": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "endpoint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "immature": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "nonce": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "public_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "registered_until_epoch": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "network",
+          "address",
+          "balance",
+          "immature",
+          "bonded",
+          "total",
+          "nonce"
+        ],
+        "type": "object"
+      },
+      "Beacon": {
+        "additionalProperties": false,
+        "properties": {
+          "block_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "drand_round": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "drand_signature": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "minLength": 2,
+                "pattern": "^[0-9a-f]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "drand_used": {
+            "default": false,
+            "type": "boolean"
+          },
+          "epoch": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "network": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "reveals": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BeaconReveal"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "network",
+          "epoch",
+          "hash",
+          "block_hash"
+        ],
+        "type": "object"
+      },
+      "BeaconReveal": {
+        "additionalProperties": false,
+        "properties": {
+          "commitment": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "miner": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "nonce": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "miner",
+          "commitment",
+          "nonce"
+        ],
+        "type": "object"
+      },
+      "Block": {
+        "additionalProperties": false,
+        "properties": {
+          "coinbase": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Transaction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "header": {
+            "$ref": "#/components/schemas/BlockHeader"
+          },
+          "proofs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/WinProof"
+            },
+            "type": "array"
+          },
+          "transactions": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/Transaction"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "header"
+        ],
+        "type": "object"
+      },
+      "BlockHeader": {
+        "additionalProperties": false,
+        "properties": {
+          "beacon_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "epoch": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "merkle_root": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "miner": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "network": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "prev_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "roster_root": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "seal_bits": {
+            "maximum": 32.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "seal_nonce": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "state_root": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "timestamp": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "version": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "wins_required": {
+            "minimum": 1.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "network",
+          "height",
+          "prev_hash",
+          "merkle_root",
+          "state_root",
+          "roster_root",
+          "timestamp",
+          "epoch",
+          "beacon_hash",
+          "wins_required",
+          "seal_bits",
+          "seal_nonce",
+          "miner"
+        ],
+        "type": "object"
+      },
+      "BlockView": {
+        "additionalProperties": false,
+        "properties": {
+          "block": {
+            "$ref": "#/components/schemas/Block"
+          },
+          "chain_work": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "main_chain": {
+            "type": "boolean"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "parent_hash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "hash",
+          "parent_hash",
+          "height",
+          "chain_work",
+          "main_chain",
+          "block"
+        ],
+        "type": "object"
+      },
+      "ClockEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "final": {
+            "$ref": "#/components/schemas/FlagReceipt"
+          },
+          "receipts": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MoveReceipt"
+            },
+            "type": "array"
+          },
+          "time_control": {
+            "$ref": "#/components/schemas/TimeControl"
+          }
+        },
+        "required": [
+          "time_control",
+          "final"
+        ],
+        "type": "object"
+      },
+      "ClockWitnessSignature": {
+        "additionalProperties": false,
+        "properties": {
+          "signature": {
+            "pattern": "^[0-9a-f]{128}$",
+            "type": "string"
+          },
+          "witness": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "witness",
+          "signature"
+        ],
+        "type": "object"
+      },
+      "DifficultyPoint": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "seal_bits": {
+            "maximum": 32.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "wins_required": {
+            "minimum": 1.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "height",
+          "wins_required",
+          "seal_bits"
+        ],
+        "type": "object"
+      },
+      "DifficultyView": {
+        "additionalProperties": false,
+        "properties": {
+          "height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "history": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DifficultyPoint"
+            },
+            "type": "array"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "retarget_enabled": {
+            "type": "boolean"
+          },
+          "retarget_interval": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "seal_bits": {
+            "maximum": 32.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "wins_required": {
+            "minimum": 1.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "network",
+          "height",
+          "wins_required",
+          "seal_bits",
+          "retarget_interval",
+          "retarget_enabled"
+        ],
+        "type": "object"
+      },
+      "EpochView": {
+        "additionalProperties": false,
+        "properties": {
+          "availability": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "beacon": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Beacon"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ended_at_height": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "epoch": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "matchable": {
+            "type": "boolean"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "quotas": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "roster": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RosterMember"
+            },
+            "type": "object"
+          },
+          "roster_root": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "epoch",
+          "network",
+          "roster_root",
+          "matchable"
+        ],
+        "type": "object"
+      },
+      "FlagReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "black_ms": {
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "flag",
+            "default": "flag",
+            "type": "string"
+          },
+          "match_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "ply": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "received_at_ms": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "seat": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "white_ms": {
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "witnesses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ClockWitnessSignature"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "match_id",
+          "ply",
+          "seat",
+          "received_at_ms",
+          "white_ms",
+          "black_ms"
+        ],
+        "type": "object"
+      },
+      "GameResult": {
+        "additionalProperties": false,
+        "properties": {
+          "game_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "match_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "network": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "plies": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "result": {
+            "enum": [
+              "1-0",
+              "0-1",
+              "1/2-1/2"
+            ],
+            "type": "string"
+          },
+          "result_signatures": {
+            "additionalProperties": {
+              "pattern": "^[0-9a-f]{128}$",
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "white",
+                "black"
+              ]
+            },
+            "type": "object"
+          },
+          "termination": {
+            "enum": [
+              "checkmate",
+              "draw",
+              "resignation",
+              "time_forfeit"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "match_id",
+          "game_hash",
+          "result",
+          "termination",
+          "plies"
+        ],
+        "type": "object"
+      },
+      "GameView": {
+        "additionalProperties": false,
+        "properties": {
+          "challenge_status": {
+            "default": "none",
+            "enum": [
+              "none",
+              "open"
+            ],
+            "type": "string"
+          },
+          "game_hash": {
+            "type": "string"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "in_mempool": {
+            "default": false,
+            "type": "boolean"
+          },
+          "match_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "proof_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "winner": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "game_hash",
+          "network"
+        ],
+        "type": "object"
+      },
+      "GossipEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/GossipKind"
+          },
+          "network": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "sender": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "signature": {
+            "pattern": "^[0-9a-f]{128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "kind",
+          "payload",
+          "sender",
+          "signature"
+        ],
+        "type": "object"
+      },
+      "GossipKind": {
+        "enum": [
+          "transaction",
+          "proof",
+          "block",
+          "peer"
+        ],
+        "type": "string"
+      },
+      "GossipResult": {
+        "additionalProperties": false,
+        "properties": {
+          "duplicate": {
+            "type": "boolean"
+          },
+          "fanout": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "kind": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "kind",
+          "object_id",
+          "duplicate"
+        ],
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "MatchCertificate": {
+        "additionalProperties": false,
+        "properties": {
+          "black": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "engine_black": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\x20-\\x7e]+$",
+            "type": "string"
+          },
+          "engine_white": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\x20-\\x7e]+$",
+            "type": "string"
+          },
+          "epoch": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "match_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "network": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "opening": {
+            "$ref": "#/components/schemas/OpeningRef"
+          },
+          "round": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "start_signatures": {
+            "additionalProperties": {
+              "pattern": "^[0-9a-f]{128}$",
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "white",
+                "black"
+              ]
+            },
+            "type": "object"
+          },
+          "time_control": {
+            "$ref": "#/components/schemas/TimeControl"
+          },
+          "white": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "match_id",
+          "epoch",
+          "round",
+          "white",
+          "black",
+          "opening",
+          "engine_white",
+          "engine_black"
+        ],
+        "type": "object"
+      },
+      "MatchInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "certificate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MatchCertificate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "epoch": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "match_id": {
+            "type": "string"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "round": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "seats": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "transcript": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Transcript"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "match_id",
+          "network",
+          "epoch",
+          "round",
+          "seats"
+        ],
+        "type": "object"
+      },
+      "MempoolStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "proofs": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "transactions": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "transactions",
+          "proofs"
+        ],
+        "type": "object"
+      },
+      "MempoolView": {
+        "additionalProperties": false,
+        "properties": {
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "proofs": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "transactions": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "network"
+        ],
+        "type": "object"
+      },
+      "MoveReceipt": {
+        "additionalProperties": false,
+        "properties": {
+          "black_ms": {
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "kind": {
+            "const": "move",
+            "default": "move",
+            "type": "string"
+          },
+          "match_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "ply": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "received_at_ms": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "san": {
+            "maxLength": 16,
+            "minLength": 1,
+            "type": "string"
+          },
+          "seat": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "white_ms": {
+            "maximum": 86400000.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "witnesses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ClockWitnessSignature"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "match_id",
+          "ply",
+          "seat",
+          "san",
+          "received_at_ms",
+          "white_ms",
+          "black_ms"
+        ],
+        "type": "object"
+      },
+      "NodeStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "genesis_hash": {
+            "type": "string"
+          },
+          "height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "mempool": {
+            "$ref": "#/components/schemas/MempoolStatus"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "peers": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "protocol_version": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "syncing": {
+            "type": "boolean"
+          },
+          "tip_hash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "protocol_version",
+          "height",
+          "tip_hash",
+          "genesis_hash",
+          "peers",
+          "syncing",
+          "mempool"
+        ],
+        "type": "object"
+      },
+      "OpeningRef": {
+        "additionalProperties": false,
+        "properties": {
+          "book_version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "line_id": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "moves": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 12,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "book_version",
+          "line_id",
+          "hash",
+          "moves"
+        ],
+        "type": "object"
+      },
+      "PeerView": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "banned_until": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "failures": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "height": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "last_seen": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "url": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "url"
+        ],
+        "type": "object"
+      },
+      "ProofAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "default": true,
+            "type": "boolean"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "proof_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "proof_id"
+        ],
+        "type": "object"
+      },
+      "QualitySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "policy": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "trace_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verdict": {
+            "enum": [
+              "pass",
+              "fail",
+              "unknown"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "policy",
+          "verdict"
+        ],
+        "type": "object"
+      },
+      "RosterMember": {
+        "additionalProperties": false,
+        "properties": {
+          "asn": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[\\x20-\\x7e]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "funder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_games": {
+            "default": 1,
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "public_key": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "recent_opponents": {
+            "default": [],
+            "items": {
+              "maxLength": 90,
+              "minLength": 8,
+              "pattern": "^[a-z0-9]+$",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "subnet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "public_key"
+        ],
+        "type": "object"
+      },
+      "SignedMove": {
+        "additionalProperties": false,
+        "properties": {
+          "match_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "network": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "ply": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "san": {
+            "maxLength": 16,
+            "minLength": 1,
+            "type": "string"
+          },
+          "seat": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "signature": {
+            "pattern": "^[0-9a-f]{128}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "match_id",
+          "seat",
+          "ply",
+          "san",
+          "signature"
+        ],
+        "type": "object"
+      },
+      "TimeControl": {
+        "additionalProperties": false,
+        "properties": {
+          "increment_ms": {
+            "minimum": 0.0,
+            "multipleOf": 1000.0,
+            "type": "integer"
+          },
+          "initial_ms": {
+            "minimum": 1000.0,
+            "multipleOf": 1000.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "initial_ms",
+          "increment_ms"
+        ],
+        "type": "object"
+      },
+      "Transaction": {
+        "additionalProperties": false,
+        "properties": {
+          "fee": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "from": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "network": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "nonce": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "signature": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{128}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "type": {
+            "$ref": "#/components/schemas/TxType"
+          }
+        },
+        "required": [
+          "network",
+          "type",
+          "from",
+          "nonce",
+          "fee"
+        ],
+        "type": "object"
+      },
+      "TransactionRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "block_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "height": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "in_mempool": {
+            "default": false,
+            "type": "boolean"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "txid": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TxType"
+          }
+        },
+        "required": [
+          "txid",
+          "network",
+          "type"
+        ],
+        "type": "object"
+      },
+      "Transcript": {
+        "additionalProperties": false,
+        "properties": {
+          "certificate": {
+            "$ref": "#/components/schemas/MatchCertificate"
+          },
+          "pgn": {
+            "maxLength": 262144,
+            "minLength": 1,
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/GameResult"
+          }
+        },
+        "required": [
+          "certificate",
+          "result",
+          "pgn"
+        ],
+        "type": "object"
+      },
+      "TxAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "default": true,
+            "type": "boolean"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "txid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "txid"
+        ],
+        "type": "object"
+      },
+      "TxType": {
+        "enum": [
+          "transfer",
+          "register",
+          "register_witness",
+          "update_registration",
+          "unregister",
+          "withdraw_bond",
+          "availability",
+          "reveal",
+          "timeout_claim",
+          "timeout_dispute",
+          "challenge",
+          "slash_evidence"
+        ],
+        "type": "string"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "type": "object"
+          },
+          "input": {},
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "type": "object"
+      },
+      "WinProof": {
+        "additionalProperties": false,
+        "properties": {
+          "certificate": {
+            "$ref": "#/components/schemas/MatchCertificate"
+          },
+          "clock_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ClockEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "epoch": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "game_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "loser": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "low_ply": {
+            "default": false,
+            "type": "boolean"
+          },
+          "match_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "move_evidence": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/SignedMove"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "network": {
+            "maxLength": 32,
+            "minLength": 1,
+            "type": "string"
+          },
+          "opening": {
+            "$ref": "#/components/schemas/OpeningRef"
+          },
+          "pgn": {
+            "maxLength": 262144,
+            "minLength": 1,
+            "type": "string"
+          },
+          "plies": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "proof_id": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "quality_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QualitySummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "enum": [
+              "1-0",
+              "0-1",
+              "1/2-1/2"
+            ],
+            "type": "string"
+          },
+          "result_signatures": {
+            "additionalProperties": {
+              "pattern": "^[0-9a-f]{128}$",
+              "type": "string"
+            },
+            "propertyNames": {
+              "enum": [
+                "white",
+                "black"
+              ]
+            },
+            "type": "object"
+          },
+          "round": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "termination": {
+            "enum": [
+              "checkmate",
+              "draw",
+              "resignation",
+              "time_forfeit"
+            ],
+            "type": "string"
+          },
+          "timeout_claim_id": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "winner": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "winner_seat": {
+            "enum": [
+              "white",
+              "black"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "proof_id",
+          "game_hash",
+          "match_id",
+          "epoch",
+          "round",
+          "winner",
+          "loser",
+          "winner_seat",
+          "result",
+          "termination",
+          "plies",
+          "opening",
+          "pgn",
+          "certificate"
+        ],
+        "type": "object"
+      }
+    }
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/accounts/{address}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/blocks": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Block"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/blocks/{reference}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/challenges": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/difficulty": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DifficultyView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/epochs/{epoch}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epoch",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EpochView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/epochs/{epoch}/beacon": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "epoch",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Beacon"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/games/{game_hash}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "game_hash",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/gossip": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GossipEnvelope"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GossipResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/matches/{match_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchInfo"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/matches/{match_id}/transcript": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "match_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Transcript"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/mempool": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MempoolView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/params": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/peers": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PeerView"
+                  },
+                  "type": "array"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/proofs": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WinProof"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProofAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/transactions/{txid}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "txid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransactionRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tx": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Transaction"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TxAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

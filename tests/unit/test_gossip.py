@@ -1,4 +1,4 @@
-"""Gossip envelopes, the peer table, dedupe and pull-sync planning (M4)."""
+"""Gossip envelopes, dedupe, fanout and the peer table (M4)."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from sccp.config import DEVNET, TESTNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import keypair_from_seed
 from sccp.errors import GossipError
+from sccp.node.app import create_app
 from sccp.node.p2p import (
     BAN_SECONDS,
     MAX_PEER_FAILURES,
@@ -23,16 +24,23 @@ from sccp.node.p2p import (
     PeerTable,
     choose_fanout,
     envelope_payload,
-    fetch_blocks,
     object_id_of,
-    plan_sync,
     sign_envelope,
     verify_envelope,
 )
+from sccp.node.service import NodeService
+from sccp.transport import client_for
 from sccp.wallet.service import WalletService
 
 BOB = keypair_from_seed(bytes([7]) * 32)
 BOB_ADDRESS = encode_address(BOB.public_key_bytes, DEVNET)
+FAUCET = faucet_keypair("devnet")
+MINER = keypair_from_seed(bytes([9]) * 32)
+MINER_ADDRESS = encode_address(MINER.public_key_bytes, DEVNET)
+
+
+def _node() -> NodeService:
+    return NodeService.open(DEVNET)
 
 
 def test_envelope_roundtrip() -> None:
@@ -175,53 +183,79 @@ def test_fanout_excludes_the_sender_and_samples() -> None:
     assert sampled == again
 
 
-def test_plan_sync_covers_caught_up_and_clamped_ranges() -> None:
-    assert plan_sync(5, 5) == (6, 5)
-    assert plan_sync(5, 4) == (6, 5)
-    assert plan_sync(0, 3) == (1, 3)
-    assert plan_sync(0, 10, max_blocks=4) == (1, 4)
-
-
-class _StubPeer:
-    def __init__(self, blocks: dict[str, Any]) -> None:
-        self.blocks = blocks
-
-    def status(self) -> dict[str, object]:
-        return {}
-
-    def block(self, reference: str) -> dict[str, object]:
-        return self.blocks[reference]
-
-
-def test_fetch_blocks_accepts_wrapped_and_bare_documents(
-    devnet_chain: Any, mine_block: Any
-) -> None:
-    miner = keypair_from_seed(bytes([3]) * 32)
-    first = mine_block(devnet_chain, miner)
-    second = mine_block(devnet_chain, miner)
-    peer = _StubPeer(
-        {"1": {"block": first.model_dump(mode="json")}, "2": second.model_dump(mode="json")}
-    )
-    blocks = fetch_blocks(peer, start_height=1, end_height=2)
-    assert [block.header.height for block in blocks] == [1, 2]
-
-
-def test_fetch_blocks_rejects_wrong_heights_and_malformed_documents(
-    devnet_chain: Any, mine_block: Any
-) -> None:
-    miner = keypair_from_seed(bytes([3]) * 32)
-    block = mine_block(devnet_chain, miner)
-    wrong = _StubPeer({"2": {"block": block.model_dump(mode="json")}})
-    with pytest.raises(GossipError, match="returned height 1"):
-        fetch_blocks(wrong, start_height=2, end_height=2)
-    malformed = _StubPeer({"1": {"block": {"nope": True}}})
-    with pytest.raises(GossipError, match="malformed block"):
-        fetch_blocks(malformed, start_height=1, end_height=1)
-
-
 def test_envelopes_cannot_be_replayed_on_another_network() -> None:
     envelope = sign_envelope(
         BOB, network=TESTNET.network_id, kind=GossipKind.PEER, payload={"url": "http://b"}
     )
     with pytest.raises(GossipError, match="testnet"):
         verify_envelope(envelope, network=DEVNET.network_id, public_key=BOB.public_key_hex)
+
+
+# --- the node's gossip endpoint ---------------------------------------------
+
+
+def test_gossip_peer_envelopes_dedupe_and_apply() -> None:
+    service = _node()
+    for index in range(3):
+        service.peers.add(f"http://peer-{index}")
+    envelope = sign_envelope(
+        MINER, network="devnet", kind=GossipKind.PEER, payload={"url": "http://new"}
+    )
+    with client_for(create_app(service)) as client:
+        first = client.post("/v1/gossip", json=envelope.model_dump(mode="json"))
+        second = client.post("/v1/gossip", json=envelope.model_dump(mode="json"))
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert body["duplicate"] is False
+    assert body["object_id"] == "http://new"
+    assert set(body["fanout"]) <= {*(f"http://peer-{index}" for index in range(3)), "http://new"}
+    assert second.json()["duplicate"] is True
+    assert "http://new" in service.peers
+    excluded = service.handle_gossip(
+        sign_envelope(MINER, network="devnet", kind=GossipKind.PEER, payload={"url": "http://z"}),
+        peer="http://peer-1",
+    )
+    assert "http://peer-1" not in excluded.fanout
+    service.close()
+
+
+def test_gossip_relays_transactions_for_registered_senders() -> None:
+    service = _node()
+    tx = WalletService(DEVNET, service.chain.state).build_transfer(FAUCET, MINER_ADDRESS, 5_000)
+    envelope = sign_envelope(
+        FAUCET,
+        network="devnet",
+        kind=GossipKind.TRANSACTION,
+        payload={"transaction": tx.model_dump(mode="json", by_alias=True)},
+    )
+    with client_for(create_app(service)) as client:
+        result = client.post("/v1/gossip", json=envelope.model_dump(mode="json"))
+    assert result.status_code == 200, result.text
+    assert result.json()["object_id"] == txid(tx)
+    assert len(service.mempool.transactions) == 1
+    service.close()
+
+
+def test_gossip_rejects_bad_signatures_and_foreign_networks() -> None:
+    service = _node()
+    envelope = sign_envelope(
+        FAUCET, network="devnet", kind=GossipKind.PEER, payload={"url": "http://x"}
+    )
+    tampered = envelope.model_copy(update={"payload": {"url": "http://y"}})
+    with client_for(create_app(service)) as client:
+        bad_signature = client.post("/v1/gossip", json=tampered.model_dump(mode="json"))
+    assert bad_signature.status_code == 400
+    foreign = envelope.model_copy(update={"network": TESTNET.network_id})
+    with pytest.raises(GossipError, match="testnet"):
+        service.handle_gossip(foreign)
+    service.close()
+
+
+def test_gossip_verifies_envelopes_against_an_explicit_key() -> None:
+    service = _node()
+    envelope = sign_envelope(
+        MINER, network="devnet", kind=GossipKind.PEER, payload={"url": "http://k"}
+    )
+    result = service.handle_gossip(envelope, public_key=MINER.public_key_hex)
+    assert result.object_id == "http://k"
+    service.close()

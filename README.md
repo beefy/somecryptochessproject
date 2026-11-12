@@ -9,25 +9,30 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
-> **Status: M3 complete.** M0 (packaging, config, crypto, wallets, CLI, CI), M1
+> **Status: M4 complete.** M0 (packaging, config, crypto, wallets, CLI, CI), M1
 > (PGN validation, canonical game hash, opening book, engine abstraction,
 > game runner, offline `sccp verify pgn`), M2 (commit/reveal beacons,
 > deterministic pairing, signed match certificates and transcripts, the relay,
-> offline `sccp verify proof`) and M3 (the ledger: transactions, accounts and
+> offline `sccp verify proof`), M3 (the ledger: transactions, accounts and
 > bonds, headers and blocks, fork choice and reorg, difficulty retargeting,
 > mempool, SQLite storage, bonded timeout settlement, the wallet service, the
-> block builder and deterministic genesis files) are implemented and tested. M3
-> is a library milestone: the `chain`, `miner` and `devnet` CLI commands arrive
-> in M4, so the working console commands are still the M0–M2 ones. Normative
-> formats are in [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan
-> lives in [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
+> block builder and deterministic genesis files) and M4 (the node API and
+> gossip, pull-sync, the unattended engine miner, the complete `sccp` command
+> surface, the in-process devnet and a docker-compose testnet stack) are
+> implemented and tested. Normative formats are in
+> [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan lives in
+> [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
-> **Known M3 gap: the clock is not wired into the relay yet.** The chain settles
-> a bonded `timeout_claim` and the protocol side of the fixed **30+0** control
-> exists (`src/sccp/protocol/clocks.py`), but the M2 relay still only abandons
-> silent sessions via `timeout_seconds`; wiring clocks into sessions, signing
-> moves and receipts, is M4 work. See
-> [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) section 5.7.1.
+> **Known gap: the relay does not run timed sessions yet.** The fixed **30+0**
+> control, signed move messages, witness-signed receipts, the flag verifier and
+> bonded `timeout_claim` settlement all exist (`src/sccp/protocol/clocks.py`,
+> `src/sccp/chain/timeout.py`) and are tested, and the miner refuses to sign any
+> clock arithmetic it cannot reproduce. The M2 relay API is still the one in
+> [`docs/PROTOCOL.md`](docs/PROTOCOL.md) section 8.4: it verifies turn and SAN
+> legality and abandons silent sessions after `timeout_seconds`, which is a
+> liveness choice and not evidence. Wiring the timed session body
+> (`{network, match_id, seat, ply, san, clock_ms, signature}`) into the relay is
+> the next protocol milestone and is called out in the plan's M5/M6 work.
 
 > **Naming.** The repository and project name is `somecryptochessproject`. The
 > Python package and console command use the short form `sccp` (import `sccp`,
@@ -250,8 +255,9 @@ target layout for later milestones.
 ├── README.md
 ├── LICENSE                       # Unlicense (public domain)
 ├── pyproject.toml                # packaging, deps, ruff/mypy/pytest config
-├── Makefile                      # test / lint / typecheck / dist
-├── docker-compose.yml            # node + relay + miners (M6)
+├── Makefile                      # test / lint / typecheck / devnet / stack / dist
+├── Dockerfile                    # image used by every stack service
+├── docker-compose.yml            # node + relay + 3 miners on testnet (M4)
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # this project's plan
@@ -261,10 +267,15 @@ target layout for later milestones.
 ├── data/
 │   ├── openings.json             # curated opening lines, shipped in the wheel
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
+├── deploy/
+│   ├── README.md                 # what the compose stack does and does not do
+│   └── init_testnet_stack.py     # deterministic stack keys + relay config
 ├── genesis/{devnet,testnet,mainnet}.json
 ├── scripts/
 │   ├── fetch_engine.py           # verified Stockfish download
-│   └── make_genesis.py
+│   ├── make_genesis.py
+│   ├── make_openapi_fixture.py   # regenerate the API contract snapshot
+│   └── check_release_version.py  # pyproject/version.py/tag agreement
 ├── src/sccp/
 │   ├── config.py                 # network parameters, settings
 │   ├── serialization.py          # canonical JSON, domain-separated hashing
@@ -283,21 +294,20 @@ target layout for later milestones.
 │   ├── devnet.py                 # `sccp devnet up` (M4)
 │   └── cli.py                    # Typer CLI
 └── tests/
-    ├── unit/
+    ├── unit/                     # per-module tests, including test_api.py,
+    │                             # test_gossip.py, test_sync.py, test_miner_loop.py
     ├── property/                 # hypothesis
     ├── integration/              # Stockfish smoke test (-m engine)
-    ├── e2e/
-    ├── adversarial/                # cheat / self-play / tamper suites (M5)
-    └── fixtures/                 # PGN/hash vectors, key vectors
+    ├── e2e/                      # test_local_network.py (real loopback ports)
+    ├── adversarial/              # cheat / self-play / tamper suites (M5)
+    └── fixtures/                 # PGN/hash vectors, crypto vectors, openapi.json
 ```
 
 ---
 
 ## 6. Quickstart
 
-M0–M4 modules work today. `sccp devnet up` runs a complete network in one
-process; the `sccp node run` and `sccp miner run` wrappers shown below are the
-remaining M4 CLI work (the library calls they wrap exist and are tested).
+M0–M4 work today, and every step below is a thin wrapper over a library call.
 
 ```bash
 git clone git@github.com:beefy/somecryptochessproject.git
@@ -322,24 +332,45 @@ sccp matchmaker run --config relay.json --store ./relay-state.json
 sccp verify proof proof.json --context context.json --network testnet
 
 # Spin up a node, a relay and four mock miners, and mine ten blocks
-sccp devnet up --miners 4 --blocks 10
+sccp devnet up --miners 4 --blocks 10 --engines mock
 sccp --json devnet up --miners 2 --blocks 4
 
-# Serve a full node (library today: sccp.node.app.create_app; CLI wrapper pending)
-sccp node run --network testnet --port 8645
+# Serve a full node (chain in ./data/chain.sqlite, API on port 8645)
+sccp node run --network testnet --port 8645 --data-dir ./data
 
-# Run an engine miner (library today: sccp.miner.engine_miner.EngineMiner)
+# Read that node's chain from the same data directory
+sccp --data-dir ./data chain info --network testnet
+sccp --data-dir ./data chain blocks --limit 5 --network testnet
+sccp --data-dir ./data chain account sccpt1... --network testnet
+sccp --data-dir ./data chain verify --network testnet
+
+# Send testnet coins from the public faucet, then check a balance
+sccp --data-dir ./data faucet send --network testnet --to sccpt1... --amount 1000
+sccp --data-dir ./data wallet balance --network testnet --key alice.key
+sccp --data-dir ./data wallet history --network testnet --key alice.key
+
+# Register the wallet as a miner and commit availability for the epoch ahead
+sccp --data-dir ./data miner register --network testnet \
+    --key alice.key --bond 10 --endpoint tcp://alice.example:8646
+sccp --data-dir ./data miner availability --network testnet \
+    --key alice.key --max-games 3
+sccp --data-dir ./data miner reveal --network testnet \
+    --key alice.key --nonce-secret <the-hex-from-the-previous-step>
+
+# Run an engine miner against a relay (repeat for bob.key, with another engine)
 sccp miner run --network testnet \
     --key alice.key \
     --engine-path ./bin/stockfish-macos-universal \
-    --relay http://127.0.0.1:8646
+    --relay http://127.0.0.1:8646 \
+    --node http://127.0.0.1:8645
 
-# Run a second miner with an older Stockfish, for testing
-sccp miner run --network testnet \
-    --key bob.key \
-    --engine-path ./bin/stockfish-ubuntu-x86-64 \
-    --relay http://127.0.0.1:8646
+# The whole stack, as containers (node + relay + three mock miners on testnet)
+docker compose up --build
 ```
+
+`--json` works on every command (`sccp --json chain info`, `sccp --json devnet
+up`, ...) and prints one machine-readable document; `miner run --iterations N`
+stops after `N` relay polls, which is how the CLI tests drive it.
 
 ---
 
@@ -351,9 +382,9 @@ sccp miner run --network testnet \
 | **M1** | Chess core: PGN validation, canonical hashing, opening book, engine abstraction, game runner | done |
 | **M2** | Matchmaking: beacon, deterministic pairing, certificates, transcripts, relay, offline proof verification | done |
 | **M3** | Chain: transactions, wallet, blocks, state, mempool, fork choice, difficulty, block builder | done |
-| **M4** | Node + P2P + miner daemon | partial — node API, gossip/sync, `EngineMiner` and `sccp devnet up` are done; `node run`/`miner run` CLI and docker-compose pending |
+| **M4** | Node + P2P + miner daemon | done — node API and gossip, pull-sync, `EngineMiner`, the full CLI, `sccp devnet up` and the docker-compose testnet stack |
 | **M5** | Quality verification, challenges, slashing, threat-model tests | not started |
-| **M6** | Testnet launch: genesis, faucet, docker-compose, observability | not started |
+| **M6** | Testnet launch: funded testnet, faucet operations, timed relay sessions, observability, operator guide | not started |
 | **M7** | Hardening and mainnet readiness review | not started |
 
 Detailed tasks, file-level deliverables and acceptance criteria are in
@@ -397,7 +428,8 @@ make cov           # whole-package report with the 85% gate
 make cov-gate      # crypto/ and serialization.py must stay >= 95% covered
 make test-all      # adds integration/e2e; skips if Stockfish is absent
 make dist-check    # build sdist+wheel and run `twine check --strict` (twine>=7)
-make devnet        # in-process node + relay + mock miners (lands with M4)
+make devnet        # in-process node + relay + mock miners
+make stack         # write the docker-compose stack and validate the file
 ```
 
 Real-engine tests are marked `engine` and deselected by default:
@@ -551,6 +583,29 @@ consensus-defined: blocks up to `bootstrap_end_height` may be empty, which is
 exactly the window funding, registration and availability need, so the first
 matchable epoch is 3. `tests/unit/test_devnet.py` asserts the run reaches the
 requested height and that two runs produce the same tip hash.
+
+The CLI is the whole surface of plan section 5.13: `node run` serves the API and
+pull-syncs from `--peer` URLs at startup, `miner run` is the unattended loop
+(with `--iterations` for scripted runs), `miner register|availability|reveal`
+sign the on-chain lifecycle, `wallet balance|send|history` and
+`chain info|blocks|account|verify` read the ledger in `--data-dir`, and
+`faucet send` is the public test faucet. Every command takes `--json` and is a
+thin wrapper over a library call, so the same behaviour is exercised in-process.
+
+Two tests pin the parts a unit test could otherwise drift from:
+
+- `tests/unit/test_api.py` compares the OpenAPI schema against
+  `tests/fixtures/openapi.json` (prose and the package version are stripped), so
+  a new route, field or status code has to be accepted on purpose with
+  `scripts/make_openapi_fixture.py`;
+- `tests/e2e/test_local_network.py` runs two nodes under uvicorn on real
+  loopback ports, partitions them, and checks they converge on the same tip, and
+  that a signed envelope crosses the wire.
+
+`docker-compose.yml` (with `Dockerfile` and `deploy/`) runs the same software as
+one node, one relay and three miners on testnet; `deploy/README.md` spells out
+what the stack does, which keys it publishes, and what it deliberately leaves to
+M6 (on-chain funding and registration, round scheduling, real engines).
 
 ### Releasing
 

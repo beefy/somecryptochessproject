@@ -730,12 +730,12 @@ an orphan block on `POST /v1/blocks` → 202.
 | --- | --- | --- |
 | GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes |
 | GET | `/v1/params` | the network parameters |
-| GET | `/v1/blocks/{height-or-hash}` | `BlockView`: hash, parent, height, work, main-chain flag, block |
+| GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |
 | POST | `/v1/blocks` | `BlockView`, or 202 when the parent is unknown |
-| GET | `/v1/accounts/{address}` | `AccountView`: balance, immature, bonded, nonce, registration, endpoint, engine, key, ban height |
+| GET | `/v1/accounts/{address}` | `AccountView`: network, balance, immature, bonded, nonce, registration, endpoint, engine, key, ban height |
 | GET | `/v1/epochs/{epoch}` | `EpochView`: beacon, roster, availability, quotas, matchable flag |
 | GET | `/v1/epochs/{epoch}/beacon` | `Beacon` (404 when the chain has none) |
-| GET | `/v1/difficulty` | `DifficultyView`: current `wins_required`/`seal_bits` and retarget history |
+| GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |
 | GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, height, mempool flag |
 | GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, certificate, transcript |
 | GET | `/v1/matches/{match_id}/transcript` | `Transcript` |
@@ -745,13 +745,18 @@ an orphan block on `POST /v1/blocks` → 202.
 | POST | `/v1/proofs` | `ProofAccepted`: the proof id |
 | GET | `/v1/challenges` | placeholder `{network, challenges: []}` until M5 |
 | POST | `/v1/gossip` | `GossipResult`: object id, duplicate flag, fanout |
-| GET | `/v1/peers` | `PeerView[]`: url, address, height, failures, ban and last-seen times |
+| GET | `/v1/peers` | `PeerView[]`: network, url, address, height, failures, ban and last-seen times |
 
 `POST /v1/tx` and `POST /v1/proofs` run the same checks a block would, so an
 invalid object never reaches the mempool; a duplicate `(sender, nonce)` or proof
 id is rejected instead of replacing the pending one. `POST /v1/blocks` is
 idempotent for a block the node already has and returns 202 for an unknown
 parent so a peer can retry once it receives the ancestor.
+
+The generated OpenAPI schema is part of the contract: prose and the package
+version are stripped and the rest is snapshotted in
+`tests/fixtures/openapi.json`, so a route, field or status-code change fails CI
+until `scripts/make_openapi_fixture.py` is run deliberately.
 
 ### 14.2 Gossip envelopes
 
@@ -794,6 +799,11 @@ branch is heavier. A malformed document, a wrong height or a ledger error aborts
 the sync, penalises the peer and leaves the local chain untouched beyond the
 blocks already accepted. A block that cannot be connected (its parent is still
 missing) is counted as `orphaned` and retried by a later sync.
+
+`sccp node run --peer URL` runs this once per URL before serving, through
+`sccp.node.service.sync_peers`. A peer that cannot be reached at all is recorded
+as one failure and skipped: startup must not depend on a peer being up, and the
+peer table bans an address that keeps failing.
 
 ## 15. Devnet parameters and policy
 

@@ -511,7 +511,7 @@ class EngineMiner:
             self._check_pinned(state, view)
         joined: list[str] = []
         moves = self._sync_moves(state, view)
-        if view.status == "pending" and self.address not in view.certificate.start_signatures:
+        if view.status == "pending" and seat not in view.certificate.start_signatures:
             self._join(state)
             joined.append(state.match_id)
             view = self.relay.match(state.match_id)

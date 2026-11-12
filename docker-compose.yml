@@ -1,0 +1,159 @@
+# Local testnet stack: one node, one matchmaking relay and three miners
+# (docs/IMPLEMENTATION_PLAN.md M4). See deploy/README.md for what it does and
+# what it deliberately does not do yet.
+#
+#   docker compose up --build
+#   curl http://127.0.0.1:8645/v1/status
+#   curl http://127.0.0.1:8646/v1/status
+name: sccp-testnet
+
+services:
+  init:
+    build: .
+    entrypoint: ["python", "/app/deploy/init_testnet_stack.py"]
+    command: ["--out", "/stack"]
+    environment:
+      SCCP_STACK_PASSPHRASE: sccp-testnet-stack
+    volumes:
+      - stack:/stack
+    restart: "no"
+
+  node:
+    build: .
+    command:
+      - --data-dir
+      - /data
+      - node
+      - run
+      - --network
+      - testnet
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8645"
+    ports:
+      - "8645:8645"
+    volumes:
+      - node-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8645/v1/status', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  relay:
+    build: .
+    command:
+      - matchmaker
+      - run
+      - --network
+      - testnet
+      - --config
+      - /stack/relay.json
+      - --store
+      - /stack/relay-state.json
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8646"
+    ports:
+      - "8646:8646"
+    volumes:
+      - stack:/stack
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8646/v1/status', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  miner-1:
+    build: .
+    command:
+      - --passphrase-file
+      - /stack/passphrase
+      - miner
+      - run
+      - --network
+      - testnet
+      - --key
+      - /stack/keys/miner-1.key
+      - --engine-profile
+      - mock
+      - --relay
+      - http://relay:8646
+      - --poll-seconds
+      - "2"
+    volumes:
+      - stack:/stack
+    depends_on:
+      relay:
+        condition: service_healthy
+    restart: unless-stopped
+
+  miner-2:
+    build: .
+    command:
+      - --passphrase-file
+      - /stack/passphrase
+      - miner
+      - run
+      - --network
+      - testnet
+      - --key
+      - /stack/keys/miner-2.key
+      - --engine-profile
+      - mock
+      - --relay
+      - http://relay:8646
+      - --poll-seconds
+      - "2"
+    volumes:
+      - stack:/stack
+    depends_on:
+      relay:
+        condition: service_healthy
+    restart: unless-stopped
+
+  miner-3:
+    build: .
+    command:
+      - --passphrase-file
+      - /stack/passphrase
+      - miner
+      - run
+      - --network
+      - testnet
+      - --key
+      - /stack/keys/miner-3.key
+      - --engine-profile
+      - mock
+      - --relay
+      - http://relay:8646
+      - --poll-seconds
+      - "2"
+    volumes:
+      - stack:/stack
+    depends_on:
+      relay:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  stack:
+  node-data:

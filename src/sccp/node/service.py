@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import random
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -84,11 +84,18 @@ def unix_now() -> int:
 
 
 def default_genesis_path(network: str) -> Path:
-    """Find ``<network>.json`` in ``$SCCP_GENESIS_DIR``, ``./genesis`` or the repo."""
+    """Find ``<network>.json`` in ``$SCCP_GENESIS_DIR``, the package or the repo.
+
+    The search order is deliberate: an explicit environment override wins
+    (containers and tests), then the files packaged inside the wheel (so
+    ``pip install sccp`` followed by ``sccp node run`` works anywhere), then a
+    ``genesis/`` directory next to the source checkout.
+    """
     candidates: list[Path] = []
     configured = os.environ.get(GENESIS_DIR_ENV)
     if configured:
         candidates.append(Path(configured))
+    candidates.append(Path(__file__).resolve().parents[1] / "chain" / "data" / "genesis")
     candidates.append(Path.cwd() / "genesis")
     candidates.append(Path(__file__).resolve().parents[3] / "genesis")
     for directory in candidates:
@@ -239,6 +246,7 @@ class NodeService:
         if stored is None:
             raise NotFoundError(f"unknown block {reference!r}")
         return BlockView(
+            network=self.params.network_id,
             hash=stored.block_hash,
             parent_hash=stored.parent_hash,
             height=stored.height,
@@ -253,6 +261,7 @@ class NodeService:
             raise AddressError(f"{address!r} is not a {self.params.network_id} address")
         account = self.chain.state.account(address)
         return AccountView(
+            network=self.params.network_id,
             address=address,
             balance=account.balance,
             immature=account.immature,
@@ -320,6 +329,7 @@ class NodeService:
                     )
                 )
         return DifficultyView(
+            network=self.params.network_id,
             height=self.height,
             wins_required=wins,
             seal_bits=seal,
@@ -412,6 +422,7 @@ class NodeService:
         """Every known peer, sorted by URL."""
         return tuple(
             PeerView(
+                network=self.params.network_id,
                 url=record.url,
                 address=record.address,
                 height=record.height,
@@ -572,15 +583,19 @@ class NodeService:
 
     def sync_from(self, peer: PeerClient, *, url: str) -> SyncReport:
         """Pull every missing block from ``peer`` and adopt the heavier branch."""
-        document = peer.status()
-        if document.get("network") != self.params.network_id:
-            raise GossipError(
-                f"peer {url} is on {document.get('network')!r}, "
-                f"this node is {self.params.network_id!r}"
-            )
-        remote_height = document.get("height")
-        if not isinstance(remote_height, int) or isinstance(remote_height, bool):
-            raise GossipError(f"peer {url} reported a bad height {remote_height!r}")
+        try:
+            document = peer.status()
+            if document.get("network") != self.params.network_id:
+                raise GossipError(
+                    f"peer {url} is on {document.get('network')!r}, "
+                    f"this node is {self.params.network_id!r}"
+                )
+            remote_height = document.get("height")
+            if not isinstance(remote_height, int) or isinstance(remote_height, bool):
+                raise GossipError(f"peer {url} reported a bad height {remote_height!r}")
+        except GossipError:
+            self.peers.record_failure(url, now=self.clock())
+            raise
         start_height = self.height
         start, end = plan_sync(start_height, remote_height, max_blocks=self.max_sync_blocks)
         requested = max(0, end - start + 1)
@@ -661,10 +676,37 @@ class HttpPeerClient:
             self._client.close()
 
 
+def sync_peers(
+    service: NodeService,
+    urls: Sequence[str],
+    *,
+    client_factory: Callable[[str], HttpPeerClient] = HttpPeerClient,
+) -> tuple[SyncReport, ...]:
+    """Pull-sync from each peer in turn, skipping peers that are down.
+
+    ``sccp node run --peer URL`` is a best-effort bootstrap: a peer that is
+    unreachable when the node starts must not stop the node from serving. The
+    peer table already records the failure (and bans a peer that keeps failing),
+    so this returns only the reports that completed and lets the caller decide
+    what to log.
+    """
+    reports: list[SyncReport] = []
+    for url in urls:
+        client = client_factory(url)
+        try:
+            reports.append(service.sync_from(client, url=url))
+        except GossipError:
+            continue
+        finally:
+            client.close()
+    return tuple(reports)
+
+
 __all__ = [
     "GENESIS_DIR_ENV",
     "HttpPeerClient",
     "NodeService",
     "default_genesis_path",
+    "sync_peers",
     "unix_now",
 ]

@@ -45,7 +45,13 @@ class _StubRelay:
     def join(self, match_id: str, *, seat: str, public_key: str, signature: str) -> MatchView:
         self._guard()
         self.calls.append(("join", seat))
-        self.view = self.view.model_copy(update={"status": "active"})
+        colour = "white" if seat == self.view.matchup.white else "black"
+        signatures = dict(self.view.certificate.start_signatures)
+        signatures[colour] = signature
+        certificate = self.view.certificate.model_copy(update={"start_signatures": signatures})
+        both = set(signatures) == {"white", "black"}
+        status = "active" if both else "pending"
+        self.view = self.view.model_copy(update={"status": status, "certificate": certificate})
         return self.view
 
     def move(self, match_id: str, *, seat: str, san: str) -> MatchView:
@@ -149,15 +155,33 @@ def test_matches_we_are_not_seated_in_are_ignored(protocol_accounts: Any) -> Non
     assert relay.calls == []
 
 
-def test_pending_match_is_joined_and_played(protocol_accounts: Any) -> None:
+def test_pending_match_is_joined_and_then_played(protocol_accounts: Any) -> None:
     alice, bob = protocol_accounts["alice"], protocol_accounts["bob"]
     relay = _StubRelay(_view(alice.address, bob.address))
     miner = _miner(protocol_accounts, relay)
-    tick = miner.run_once()
-    assert tick.joined == (MATCH_ID,)
-    assert relay.calls[0] == ("join", alice.address)
-    assert tick.moves and relay.calls[1] == ("move", alice.address, "Nf3")
+    first = miner.run_once()
+    assert first.joined == (MATCH_ID,)
+    assert relay.calls == [("join", alice.address)]
+
+    # The opponent joins, so the relay activates the session and it is our move.
+    relay.view = relay.view.model_copy(update={"status": "active"})
+    second = miner.run_once()
+    assert second.moves and relay.calls[1] == ("move", alice.address, "Nf3")
     assert miner.matches[MATCH_ID].san_moves == [*OPENING, "Nf3"]
+
+
+def test_a_pending_match_is_not_joined_twice(protocol_accounts: Any) -> None:
+    """A seat that is waiting for its opponent must not re-join every poll."""
+    alice, bob = protocol_accounts["alice"], protocol_accounts["bob"]
+    relay = _StubRelay(_view(alice.address, bob.address))
+    miner = _miner(protocol_accounts, relay)
+    first = miner.run_once()
+    second = miner.run_once()
+    assert first.joined == (MATCH_ID,)
+    assert second.joined == ()
+    assert second.refusals == ()
+    assert [call for call in relay.calls if call[0] == "join"] == [("join", alice.address)]
+    assert set(relay.view.certificate.start_signatures) == {"white"}
 
 
 def test_the_miner_waits_when_it_is_not_to_move(protocol_accounts: Any) -> None:
@@ -232,7 +256,9 @@ def test_timeout_claims_need_witness_receipts(protocol_accounts: Any) -> None:
     now = {"ms": 0}
     relay = _StubRelay(_view(alice.address, bob.address))
     miner = _miner(protocol_accounts, relay, clock=lambda: now["ms"])
-    miner.run_once()
+    miner.run_once()  # join
+    relay.view = relay.view.model_copy(update={"status": "active"})
+    miner.run_once()  # one signed move, so a claim has evidence to attach
     now["ms"] = 10**9  # both clocks are long gone
     assert miner.build_timeout_claim(relay.view) is None
     assert miner.claims == {}

@@ -1,7 +1,14 @@
-"""The node service and its HTTP API, exercised in-process (M4)."""
+"""The node's HTTP API, exercised in-process over ASGI (M4).
+
+Pull-sync lives in ``test_sync.py`` and gossip in ``test_gossip.py``; this file
+covers the routes themselves, plus the OpenAPI snapshot that makes an
+accidental breaking change to the contract visible in review.
+"""
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,11 +19,9 @@ from sccp.chain.tx import txid
 from sccp.config import DEVNET, TESTNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import keypair_from_seed
-from sccp.errors import GossipError, MempoolError, ProtocolError
-from sccp.node.app import create_app
-from sccp.node.app import create_app as create_node_app
-from sccp.node.p2p import GossipKind, sign_envelope
-from sccp.node.service import HttpPeerClient, NodeService
+from sccp.errors import MempoolError, ProtocolError
+from sccp.node.app import create_app, openapi_contract
+from sccp.node.service import NodeService
 from sccp.transport import client_for
 from sccp.version import PROTOCOL_VERSION
 from sccp.wallet.service import WalletService
@@ -25,6 +30,7 @@ FAUCET = faucet_keypair("devnet")
 FAUCET_ADDRESS = encode_address(FAUCET.public_key_bytes, DEVNET)
 MINER = keypair_from_seed(bytes([9]) * 32)
 MINER_ADDRESS = encode_address(MINER.public_key_bytes, DEVNET)
+OPENAPI_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "openapi.json"
 
 
 def _node(network: Any = DEVNET) -> NodeService:
@@ -177,143 +183,6 @@ def test_epoch_game_and_match_routes_report_absence(devnet_chain: Any, mine_bloc
     assert peers.json() == []
 
 
-def test_gossip_peer_envelopes_dedupe_and_apply() -> None:
-    service = _node()
-    for index in range(3):
-        service.peers.add(f"http://peer-{index}")
-    envelope = sign_envelope(
-        MINER, network="devnet", kind=GossipKind.PEER, payload={"url": "http://new"}
-    )
-    with _client(service) as client:
-        first = client.post("/v1/gossip", json=envelope.model_dump(mode="json"))
-        second = client.post("/v1/gossip", json=envelope.model_dump(mode="json"))
-    assert first.status_code == 200, first.text
-    body = first.json()
-    assert body["duplicate"] is False
-    assert body["object_id"] == "http://new"
-    assert set(body["fanout"]) <= {*(f"http://peer-{index}" for index in range(3)), "http://new"}
-    assert second.json()["duplicate"] is True
-    assert "http://new" in service.peers
-    excluded = service.handle_gossip(
-        sign_envelope(MINER, network="devnet", kind=GossipKind.PEER, payload={"url": "http://z"}),
-        peer="http://peer-1",
-    )
-    assert "http://peer-1" not in excluded.fanout
-
-
-def test_gossip_relays_transactions_for_registered_senders() -> None:
-    service = _node()
-    tx = WalletService(DEVNET, service.chain.state).build_transfer(FAUCET, MINER_ADDRESS, 5_000)
-    envelope = sign_envelope(
-        FAUCET,
-        network="devnet",
-        kind=GossipKind.TRANSACTION,
-        payload={"transaction": tx.model_dump(mode="json", by_alias=True)},
-    )
-    with _client(service) as client:
-        result = client.post("/v1/gossip", json=envelope.model_dump(mode="json"))
-    assert result.status_code == 200, result.text
-    assert result.json()["object_id"] == txid(tx)
-    assert len(service.mempool.transactions) == 1
-
-
-def test_gossip_rejects_bad_signatures_and_foreign_networks() -> None:
-    service = _node()
-    envelope = sign_envelope(
-        FAUCET, network="devnet", kind=GossipKind.PEER, payload={"url": "http://x"}
-    )
-    tampered = envelope.model_copy(update={"payload": {"url": "http://y"}})
-    with _client(service) as client:
-        bad_signature = client.post("/v1/gossip", json=tampered.model_dump(mode="json"))
-    assert bad_signature.status_code == 400
-    foreign = envelope.model_copy(update={"network": TESTNET.network_id})
-    with pytest.raises(GossipError, match="testnet"):
-        service.handle_gossip(foreign)
-
-
-def test_gossip_verifies_envelopes_against_an_explicit_key() -> None:
-    service = _node()
-    envelope = sign_envelope(
-        MINER, network="devnet", kind=GossipKind.PEER, payload={"url": "http://k"}
-    )
-    result = service.handle_gossip(envelope, public_key=MINER.public_key_hex)
-    assert result.object_id == "http://k"
-
-
-class _StubPeerClient:
-    def __init__(self, *, status: dict[str, object], blocks: dict[str, object]) -> None:
-        self._status = status
-        self._blocks = blocks
-
-    def status(self) -> dict[str, object]:
-        return self._status
-
-    def block(self, reference: str) -> dict[str, object]:
-        return self._blocks[reference]  # type: ignore[return-value]
-
-
-def test_sync_from_pulls_missing_blocks(devnet_chain: Any, mine_block: Any) -> None:
-    source = _node()
-    for _ in range(3):
-        mine_block(source.chain, MINER)
-    source_http = client_for(create_node_app(source))
-    target = _node()
-    with source_http:
-        peer = HttpPeerClient("http://source", client=source_http)
-        report = target.sync_from(peer, url="http://source")
-        again = target.sync_from(peer, url="http://source")
-    assert report.requested == 3
-    assert report.adopted == 3
-    assert report.height == source.height
-    assert report.tip_hash == source.tip_hash
-    assert target.tip_hash == source.tip_hash
-    assert again.requested == 0 and again.adopted == 0
-    assert target.peers.get("http://source") is not None
-
-
-def test_sync_from_refuses_a_peer_on_another_network() -> None:
-    target = _node()
-    other = _node(TESTNET)
-    with client_for(create_node_app(other)) as http:
-        peer = HttpPeerClient("http://other", client=http)
-        with pytest.raises(GossipError, match="testnet"):
-            target.sync_from(peer, url="http://other")
-
-
-def test_sync_from_penalises_a_peer_that_serves_garbage() -> None:
-    target = _node()
-    target.max_sync_blocks = 1
-    peer = _StubPeerClient(status={"network": "devnet", "height": 4}, blocks={"1": {}})
-    with pytest.raises(GossipError, match="malformed block"):
-        target.sync_from(peer, url="http://bad")
-    record = target.peers.get("http://bad")
-    assert record is not None and record.failures == 1
-
-
-def test_sync_from_counts_orphans(devnet_chain: Any, mine_block: Any) -> None:
-    source = _node()
-    mine_block(source.chain, MINER, timestamp=1_700_000_100)
-    orphan = mine_block(source.chain, MINER, timestamp=1_700_000_101)
-    service = _node()
-    mine_block(service.chain, MINER)
-    peer = _StubPeerClient(
-        status={"network": "devnet", "height": 2},
-        blocks={"2": {"block": orphan.model_dump(mode="json")}},
-    )
-    report = service.sync_from(peer, url="http://orphan")
-    assert report.adopted == 0
-    assert report.orphaned == 1
-
-
-def test_http_peer_client_turns_errors_into_gossip_errors() -> None:
-    service = _node()
-    with client_for(create_node_app(service)) as http:
-        peer = HttpPeerClient("http://node", client=http)
-        assert peer.status()["network"] == "devnet"
-        with pytest.raises(GossipError, match="cannot fetch"):
-            peer.block("999")
-
-
 def test_compat_shim_serves_a_genesis_only_node() -> None:
     from sccp.node.routes import create_app as create_compat_app
 
@@ -321,3 +190,48 @@ def test_compat_shim_serves_a_genesis_only_node() -> None:
         payload = client.get("/v1/status").json()
     assert payload["network"] == "devnet"
     assert payload["height"] == 0
+
+
+# --- the OpenAPI contract ---------------------------------------------------
+
+
+def _contract() -> dict[str, Any]:
+    """The current schema, without prose or the package-version-dependent info."""
+    return openapi_contract(create_app(NodeService.open(DEVNET)))
+
+
+def test_openapi_contract_has_not_changed() -> None:
+    """A route, field or status code change must update the fixture on purpose."""
+    expected = json.loads(OPENAPI_FIXTURE.read_text(encoding="utf-8"))
+    assert _contract() == expected, (
+        "the node API changed; regenerate tests/fixtures/openapi.json "
+        "with scripts/make_openapi_fixture.py if the change is intended"
+    )
+
+
+def test_openapi_contract_requires_the_network_id() -> None:
+    """Every top-level JSON response names its network (plan section 5.12)."""
+    schema = _contract()
+    components = schema["components"]["schemas"]
+    checked = 0
+    for path, operations in schema["paths"].items():
+        assert path.startswith("/v1/"), path
+        for operation in operations.values():
+            for code, response in operation["responses"].items():
+                if not code.startswith("2"):
+                    continue  # 422/404/400 carry the shared error envelope
+                body = response.get("content", {}).get("application/json", {}).get("schema")
+                if not body or "$ref" not in body:
+                    continue
+                model = components[body["$ref"].rsplit("/", 1)[-1]]
+                while model.get("type") == "array":
+                    model = components[model["items"]["$ref"].rsplit("/", 1)[-1]]
+                if "certificate" in model.get("properties", {}):
+                    # A transcript's certificate names the network; the wire
+                    # format is signed as a certificate, not as a transcript.
+                    assert "network" in components["MatchCertificate"]["properties"]
+                    checked += 1
+                    continue
+                assert "network" in model.get("properties", {}), path
+                checked += 1
+    assert checked >= 12

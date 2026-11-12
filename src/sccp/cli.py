@@ -1,9 +1,13 @@
 """``sccp`` command line interface (docs/IMPLEMENTATION_PLAN.md section 5.13).
 
 M0 shipped ``--version`` and the wallet basics; M1 added the offline PGN
-verifier (``verify pgn``); M2 adds offline proof verification (``verify proof``)
-and the matchmaking relay (``matchmaker run``). Every command is a thin wrapper
-over a library call so the same behaviour is testable in-process.
+verifier (``verify pgn``); M2 added offline proof verification (``verify
+proof``) and the matchmaking relay (``matchmaker run``); M3 added the ledger
+behind the wallet and chain commands; M4 completes the surface with the node
+(``node run``), the unattended miner (``miner run``, ``miner register``,
+``miner availability``, ``miner reveal``), the read-only chain commands, the
+testnet faucet and the one-command devnet. Every command is a thin wrapper over
+a library call so the same behaviour is testable in-process.
 
 Global options may be passed before or after the subcommand; an explicitly
 passed ``--network`` always wins over the global default of ``testnet``.
@@ -13,7 +17,10 @@ from __future__ import annotations
 
 import json as jsonlib
 import os
-from collections.abc import Callable, Mapping
+import secrets
+import time
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, NoReturn, TypeVar
@@ -21,9 +28,14 @@ from typing import Annotated, NoReturn, TypeVar
 import typer
 
 from sccp import version as version_module
+from sccp.chain.genesis import faucet_keypair
+from sccp.chain.storage import Storage
+from sccp.chain.tx import txid
+from sccp.chess.engines import open_engine
 from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
-from sccp.config import NetworkParams, get_network
+from sccp.config import UNITS_PER_COIN, NetworkParams, coins_to_units, get_network
+from sccp.crypto.address import encode_address
 from sccp.crypto.wallet import (
     DEFAULT_KDF,
     KdfParams,
@@ -31,22 +43,30 @@ from sccp.crypto.wallet import (
     create_wallet,
     export_mnemonic,
     import_mnemonic,
+    load_wallet,
     read_header,
     read_passphrase_file,
 )
 from sccp.devnet import run_devnet
 from sccp.errors import SccpError
+from sccp.miner.engine_miner import EngineMiner, MinerConfig, NodeClient
 from sccp.miner.matchmaker import Matchmaker
 from sccp.miner.matchmaker import create_app as create_matchmaker_app
-from sccp.protocol.models import WinProof
+from sccp.node.app import create_app as create_node_app
+from sccp.node.service import NodeService, sync_peers
+from sccp.protocol.models import Transaction, WinProof
 from sccp.protocol.verification import (
     ProofContext,
     context_from_document,
     verify_win_proof,
 )
+from sccp.wallet.service import WalletService
 
 DEFAULT_NETWORK = "testnet"
 PASSPHRASE_ENV = "SCCP_WALLET_PASSPHRASE"
+DEFAULT_NODE_URL = "http://127.0.0.1:8645"
+FAUCET_NETWORKS = ("testnet", "devnet")
+"Networks whose genesis funds a public faucet (plan section 5.1)."
 
 T = TypeVar("T")
 
@@ -61,8 +81,16 @@ verify_app = typer.Typer(no_args_is_help=True, help="Verify games and proofs off
 app.add_typer(verify_app, name="verify")
 matchmaker_app = typer.Typer(no_args_is_help=True, help="Run and inspect the matchmaking relay.")
 app.add_typer(matchmaker_app, name="matchmaker")
+node_app = typer.Typer(no_args_is_help=True, help="Run and query a full node.")
+app.add_typer(node_app, name="node")
+miner_app = typer.Typer(no_args_is_help=True, help="Run a miner and manage its on-chain keys.")
+app.add_typer(miner_app, name="miner")
+chain_app = typer.Typer(no_args_is_help=True, help="Read the chain stored in --data-dir.")
+app.add_typer(chain_app, name="chain")
 devnet_app = typer.Typer(no_args_is_help=True, help="Run a whole network in one process.")
 app.add_typer(devnet_app, name="devnet")
+faucet_app = typer.Typer(no_args_is_help=True, help="Send testnet coins from the public faucet.")
+app.add_typer(faucet_app, name="faucet")
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,6 +240,57 @@ def _emit_wallet(ctx: typer.Context, wallet: Wallet) -> None:
     typer.echo(wallet.address)
 
 
+def _coins(units: int) -> str:
+    """Format base units as a fixed-point coin amount; never a float."""
+    whole, fraction = divmod(abs(units), UNITS_PER_COIN)
+    sign = "-" if units < 0 else ""
+    return f"{sign}{whole}.{fraction:08d}"
+
+
+@contextmanager
+def _local_node(ctx: typer.Context, network: str | None) -> Iterator[NodeService]:
+    """Open the chain stored under ``--data-dir`` and close it on exit.
+
+    Commands that build signed transactions need a ledger to read nonces and
+    balances from. Rather than trusting a remote node's summary (or asking the
+    node to sign for us), they read the same SQLite database the node writes,
+    which is what an operator running both processes on one host already has.
+    """
+    params = _resolve_network(ctx, network)
+    path = _options(ctx).data_dir / "chain.sqlite"
+    if not path.is_file():
+        _fail(
+            f"no chain database at {path}; run `sccp node run --network "
+            f"{params.network_id} --data-dir {_options(ctx).data_dir}` first"
+        )
+    storage = _run(lambda: Storage(path))
+    service: NodeService | None = None
+    try:
+        service = _run(lambda: NodeService.open(params, storage=storage))
+        yield service
+    finally:
+        if service is None:
+            storage.close()
+        else:
+            service.close()
+
+
+def _submit_transaction(node: str, tx: Transaction) -> Mapping[str, object]:
+    """Submit one signed transaction to a node and return its receipt."""
+    client = NodeClient(node)
+    try:
+        return _run(lambda: client.submit_transaction(tx))
+    finally:
+        client.close()
+
+
+def _require_test_network(params: NetworkParams) -> None:
+    """Refuse faucet commands on a network that has no faucet."""
+    if params.network_id not in FAUCET_NETWORKS:
+        usable = ", ".join(FAUCET_NETWORKS)
+        _fail(f"{params.network_id} has no faucet; use one of: {usable}", code=2)
+
+
 @wallet_app.command("new")
 def wallet_new(
     ctx: typer.Context,
@@ -333,6 +412,142 @@ def wallet_import_mnemonic(
     _emit_wallet(ctx, wallet)
 
 
+@wallet_app.command("balance")
+def wallet_balance(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile whose address to inspect.")],
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the keyfile to belong to this network."),
+    ] = None,
+) -> None:
+    """Print spendable, immature and bonded balances from the local chain."""
+    header = _run(lambda: read_header(key))
+    _check_network(ctx, network, header.network)
+    params = _resolve_network(ctx, network)
+    with _local_node(ctx, params.network_id) as service:
+        balance = _run(
+            lambda: WalletService(params, service.chain.state, chain=service.chain).balance(
+                header.address
+            )
+        )
+    payload = {
+        "address": balance.address,
+        "network": params.network_id,
+        "spendable": balance.spendable,
+        "immature": balance.immature,
+        "bonded": balance.bonded,
+        "total": balance.total,
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(
+        f"{balance.address} {_coins(balance.total)} "
+        f"(spendable {_coins(balance.spendable)}, bonded {_coins(balance.bonded)}, "
+        f"immature {_coins(balance.immature)})"
+    )
+
+
+@wallet_app.command("send")
+def wallet_send(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile to sign with.")],
+    to: Annotated[str, typer.Option("--to", help="Recipient address.")],
+    amount: Annotated[int, typer.Option("--amount", help="Amount to send, in whole coins.")],
+    node: Annotated[
+        str | None,
+        typer.Option("--node", help="Node base URL that receives the transaction."),
+    ] = None,
+    fee: Annotated[
+        int | None,
+        typer.Option("--fee", help="Fee in base units (default: the network minimum)."),
+    ] = None,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the keyfile to belong to this network."),
+    ] = None,
+) -> None:
+    """Sign a transfer against the local chain and submit it to a node."""
+    header = _run(lambda: read_header(key))
+    _check_network(ctx, network, header.network)
+    params = _resolve_network(ctx, network)
+    passphrase = _passphrase(ctx, confirm=False)
+    wallet = _run(lambda: load_wallet(key, passphrase))
+    with _local_node(ctx, params.network_id) as service:
+        tx = _run(
+            lambda: WalletService(params, service.chain.state, chain=service.chain).build_transfer(
+                wallet.keypair, to, coins_to_units(amount), fee=fee
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    payload = {
+        "txid": txid(tx),
+        "network": params.network_id,
+        "type": str(tx.type),
+        "from": tx.sender,
+        "to": to,
+        "amount": coins_to_units(amount),
+        "fee": int(tx.fee),
+        "nonce": tx.nonce,
+        "accepted": receipt.get("accepted"),
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"sent {_coins(coins_to_units(amount))} to {to} (fee {_coins(int(tx.fee))})")
+    typer.echo(f"txid: {payload['txid']}")
+
+
+@wallet_app.command("history")
+def wallet_history(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile whose address to inspect.")],
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the keyfile to belong to this network."),
+    ] = None,
+) -> None:
+    """List every adopted-chain transaction that touched the keyfile's address."""
+    header = _run(lambda: read_header(key))
+    _check_network(ctx, network, header.network)
+    params = _resolve_network(ctx, network)
+    with _local_node(ctx, params.network_id) as service:
+        entries = _run(
+            lambda: WalletService(params, service.chain.state, chain=service.chain).history(
+                header.address
+            )
+        )
+    if _options(ctx).json_output:
+        _echo_json(
+            {
+                "address": header.address,
+                "network": params.network_id,
+                "history": [
+                    {
+                        "txid": entry.txid,
+                        "height": entry.height,
+                        "type": str(entry.type),
+                        "delta": entry.delta,
+                        "fee": entry.fee,
+                        "counterparty": entry.counterparty,
+                    }
+                    for entry in entries
+                ],
+            }
+        )
+        return
+    if not entries:
+        typer.echo(f"{header.address}: no transactions")
+        return
+    for entry in entries:
+        counterparty = entry.counterparty or "-"
+        typer.echo(
+            f"{entry.height:>6} {entry.type!s:<12} {_coins(entry.delta):>16} "
+            f"{counterparty} {entry.txid}"
+        )
+
+
 @verify_app.command("pgn")
 def verify_pgn(
     ctx: typer.Context,
@@ -436,6 +651,10 @@ def matchmaker_run(
     ],
     host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", help="Port to bind.")] = 8646,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the config to be for this network."),
+    ] = None,
     store: Annotated[
         Path | None,
         typer.Option("--store", help="JSON store that survives a relay restart."),
@@ -446,7 +665,7 @@ def matchmaker_run(
     ] = None,
 ) -> None:
     """Serve the matchmaking relay over HTTP (uvicorn)."""
-    params = _resolve_network(ctx, None)
+    params = _resolve_network(ctx, network)
     document = _read_json(config)
     if not isinstance(document, Mapping):
         _fail(f"{config} must contain a JSON object")
@@ -460,6 +679,69 @@ def matchmaker_run(
     import uvicorn
 
     uvicorn.run(create_matchmaker_app(state), host=host, port=port)
+
+
+@node_app.command("run")
+def node_run(
+    ctx: typer.Context,
+    host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port to bind.")] = 8645,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Network id: mainnet, testnet or devnet."),
+    ] = None,
+    genesis: Annotated[
+        Path | None,
+        typer.Option("--genesis", help="Genesis document override (tests)."),
+    ] = None,
+    peer: Annotated[
+        list[str] | None,
+        typer.Option("--peer", help="Peer base URL to pull-sync from at startup (repeatable)."),
+    ] = None,
+) -> None:
+    """Serve the node API over HTTP, replaying the chain in ``--data-dir``."""
+    params = _resolve_network(ctx, network)
+    data_dir = _options(ctx).data_dir
+    data_dir.mkdir(parents=True, exist_ok=True)
+    service = _run(
+        lambda: NodeService.open(
+            params,
+            genesis_path=genesis,
+            storage=Storage(data_dir / "chain.sqlite"),
+        )
+    )
+    try:
+        _run(service.check_startup)
+        reports = sync_peers(service, tuple(peer or ()))
+        status = service.status()
+        synced = {report.peer for report in reports}
+        for url in peer or ():
+            if url not in synced:
+                typer.echo(f"warning: peer {url} did not answer; continuing without it", err=True)
+        if _options(ctx).json_output:
+            _echo_json(
+                {
+                    **status.model_dump(mode="json"),
+                    "data_dir": str(data_dir),
+                    "synced": [report.model_dump(mode="json") for report in reports],
+                }
+            )
+        else:
+            typer.echo(
+                f"node on {host}:{port} for {params.network_id} height {status.height} "
+                f"({status.mempool.transactions} txs, {status.mempool.proofs} proofs pending)"
+            )
+            typer.echo(f"tip: {status.tip_hash}")
+            typer.echo(f"genesis: {status.genesis_hash}")
+            for report in reports:
+                typer.echo(
+                    f"synced {report.peer}: +{report.adopted} blocks to height {report.height}"
+                )
+        import uvicorn
+
+        uvicorn.run(create_node_app(service), host=host, port=port)
+    finally:
+        service.close()
 
 
 @devnet_app.command("up")
@@ -477,11 +759,17 @@ def devnet_up(
         Path | None,
         typer.Option("--genesis", help="Genesis document override (tests)."),
     ] = None,
+    engines: Annotated[
+        str,
+        typer.Option("--engines", help="Engine set to play with (only mock is supported)."),
+    ] = "mock",
 ) -> None:
     """Run a full network in-process and report what it produced."""
     requested = _options(ctx).network
     if requested is not None and requested != "devnet":
         _fail(f"devnet up only runs the devnet network, not {requested!r}", code=2)
+    if engines != "mock":
+        _fail(f"devnet up only supports --engines mock, not {engines!r}", code=2)
     summary = _run(
         lambda: run_devnet(
             miners=miners,
@@ -501,6 +789,442 @@ def devnet_up(
     )
     for address, balance in summary.balances.items():
         typer.echo(f"  {address} {balance / 100_000_000:.8f}")
+
+
+@miner_app.command("run")
+def miner_run(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile the miner signs with.")],
+    relay: Annotated[str, typer.Option("--relay", help="Matchmaking relay base URL.")] = (
+        "http://127.0.0.1:8646"
+    ),
+    node: Annotated[
+        str | None,
+        typer.Option("--node", help="Node base URL that receives win proofs."),
+    ] = None,
+    engine_path: Annotated[
+        Path | None,
+        typer.Option("--engine-path", help="UCI binary; overrides the profile's pinned build."),
+    ] = None,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the keyfile to belong to this network."),
+    ] = None,
+    engine_profile: Annotated[
+        str,
+        typer.Option(
+            "--engine-profile",
+            help="Engine profile: stockfish-19, stockfish-18 or mock.",
+        ),
+    ] = "stockfish-19",
+    nodes_per_move: Annotated[
+        int | None,
+        typer.Option("--nodes-per-move", help="Search limit per move (default: network policy)."),
+    ] = None,
+    depth: Annotated[
+        int | None,
+        typer.Option("--depth", help="Fixed search depth instead of a node limit."),
+    ] = None,
+    max_games_per_epoch: Annotated[
+        int | None,
+        typer.Option(
+            "--max-games-per-epoch",
+            help="Availability quota (default: the round count).",
+        ),
+    ] = None,
+    poll_seconds: Annotated[
+        float,
+        typer.Option("--poll-seconds", help="Seconds to wait between relay polls."),
+    ] = 1.0,
+    iterations: Annotated[
+        int,
+        typer.Option(
+            "--iterations",
+            help="Stop after N polls (0 keeps polling until interrupted).",
+        ),
+    ] = 0,
+) -> None:
+    """Play every match the relay assigns until interrupted."""
+    if poll_seconds <= 0:
+        _fail("--poll-seconds must be positive", code=2)
+    if iterations < 0:
+        _fail("--iterations cannot be negative", code=2)
+    params = _resolve_network(ctx, network)
+    passphrase = _passphrase(ctx, confirm=False)
+    wallet = _run(lambda: load_wallet(key, passphrase))
+    _check_network(ctx, network, wallet.network)
+    engine = _run(lambda: open_engine(engine_profile, binary=engine_path))
+    config = MinerConfig.for_network(
+        params,
+        wallet.keypair,
+        relay_url=relay,
+        node_url=node,
+        nodes_per_move=nodes_per_move or params.nodes_per_move,
+        depth=depth,
+        max_games_per_epoch=max_games_per_epoch or params.rounds_per_epoch,
+    )
+    miner = EngineMiner(config, engine=engine)
+    if not _options(ctx).json_output:
+        typer.echo(
+            f"miner {wallet.address} on {params.network_id} polling {relay} "
+            f"with {engine.fingerprint}"
+        )
+    polls = 0
+    joined: list[str] = []
+    moves: list[str] = []
+    results: list[str] = []
+    proofs: list[str] = []
+    refusals: list[str] = []
+    started = time.monotonic()
+    try:
+        while True:
+            tick = miner.run_once()
+            polls += 1
+            joined.extend(tick.joined)
+            moves.extend(tick.moves)
+            results.extend(tick.results)
+            proofs.extend(tick.proofs)
+            refusals.extend(tick.refusals)
+            if iterations and polls >= iterations:
+                break
+            time.sleep(poll_seconds)
+    except KeyboardInterrupt:  # pragma: no cover - interactive only
+        typer.echo("interrupted; shutting down", err=True)
+    finally:
+        miner.close()
+    payload = {
+        "address": wallet.address,
+        "network": params.network_id,
+        "relay": relay,
+        "engine": engine.fingerprint,
+        "polls": polls,
+        "seconds": round(time.monotonic() - started, 3),
+        "joined": joined,
+        "moves": moves,
+        "results": results,
+        "proofs": proofs,
+        "refusals": refusals,
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(
+        f"stopped after {polls} polls ({payload['seconds']}s): "
+        f"{len(joined)} joins, {len(moves)} moves, {len(results)} results, {len(proofs)} proofs"
+    )
+    for reason in dict.fromkeys(refusals):
+        typer.echo(f"  refused: {reason}")
+
+
+@miner_app.command("register")
+def miner_register(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile to register.")],
+    endpoint: Annotated[str, typer.Option("--endpoint", help="Public endpoint the relay dials.")],
+    bond: Annotated[int, typer.Option("--bond", help="Bond to lock, in whole coins.")] = 10,
+    engine: Annotated[
+        str,
+        typer.Option("--engine", help="Engine fingerprint recorded on chain."),
+    ] = "stockfish-19",
+    node: Annotated[
+        str | None,
+        typer.Option("--node", help="Node base URL that receives the transaction."),
+    ] = None,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the keyfile to belong to this network."),
+    ] = None,
+) -> None:
+    """Sign a registration transaction against the local chain and submit it."""
+    passphrase = _passphrase(ctx, confirm=False)
+    wallet = _run(lambda: load_wallet(key, passphrase))
+    _check_network(ctx, network, wallet.network)
+    params = wallet.network_params
+    with _local_node(ctx, params.network_id) as service:
+        tx = _run(
+            lambda: WalletService(params, service.chain.state, chain=service.chain).build_register(
+                wallet.keypair,
+                endpoint=endpoint,
+                engine=engine,
+                bond=coins_to_units(bond),
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    payload = {
+        "txid": txid(tx),
+        "network": params.network_id,
+        "miner": wallet.address,
+        "endpoint": endpoint,
+        "engine": engine,
+        "bond": coins_to_units(bond),
+        "accepted": receipt.get("accepted"),
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"registered {wallet.address} with a {_coins(coins_to_units(bond))} bond")
+    typer.echo(f"txid: {payload['txid']}")
+
+
+@miner_app.command("availability")
+def miner_availability(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile committing availability.")],
+    max_games: Annotated[
+        int, typer.Option("--max-games", help="Games the miner offers in the target epoch.")
+    ] = 1,
+    nonce_secret: Annotated[
+        str | None,
+        typer.Option("--nonce-secret", help="32-byte hex secret (default: freshly generated)."),
+    ] = None,
+    node: Annotated[
+        str | None,
+        typer.Option("--node", help="Node base URL that receives the transaction."),
+    ] = None,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the keyfile to belong to this network."),
+    ] = None,
+) -> None:
+    """Commit availability for the epoch two ahead; keep the printed secret safe."""
+    passphrase = _passphrase(ctx, confirm=False)
+    wallet = _run(lambda: load_wallet(key, passphrase))
+    _check_network(ctx, network, wallet.network)
+    params = wallet.network_params
+    secret = nonce_secret or secrets.token_hex(32)
+    with _local_node(ctx, params.network_id) as service:
+        wallet_service = WalletService(params, service.chain.state, chain=service.chain)
+        tx = _run(
+            lambda: wallet_service.build_availability(
+                wallet.keypair,
+                nonce_secret=secret,
+                max_games=max_games,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    payload = {
+        "txid": txid(tx),
+        "network": params.network_id,
+        "miner": wallet.address,
+        "epoch": tx.payload.get("epoch"),
+        "max_games": max_games,
+        "commitment": tx.payload.get("commitment"),
+        "nonce_secret": secret,
+        "accepted": receipt.get("accepted"),
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"committed availability for epoch {payload['epoch']} ({max_games} games)")
+    typer.echo(f"txid: {payload['txid']}")
+    typer.echo(f"nonce secret (needed for the reveal): {secret}")
+
+
+@miner_app.command("reveal")
+def miner_reveal(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile revealing availability.")],
+    nonce_secret: Annotated[
+        str,
+        typer.Option("--nonce-secret", help="The 32-byte hex secret used in the commitment."),
+    ],
+    node: Annotated[
+        str | None,
+        typer.Option("--node", help="Node base URL that receives the transaction."),
+    ] = None,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the keyfile to belong to this network."),
+    ] = None,
+) -> None:
+    """Reveal the availability nonce so the epoch's beacon can be derived."""
+    passphrase = _passphrase(ctx, confirm=False)
+    wallet = _run(lambda: load_wallet(key, passphrase))
+    _check_network(ctx, network, wallet.network)
+    params = wallet.network_params
+    with _local_node(ctx, params.network_id) as service:
+        tx = _run(
+            lambda: WalletService(params, service.chain.state, chain=service.chain).build_reveal(
+                wallet.keypair,
+                nonce_secret,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    payload = {
+        "txid": txid(tx),
+        "network": params.network_id,
+        "miner": wallet.address,
+        "epoch": tx.payload.get("epoch"),
+        "accepted": receipt.get("accepted"),
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"revealed for epoch {payload['epoch']}")
+    typer.echo(f"txid: {payload['txid']}")
+
+
+@chain_app.command("info")
+def chain_info(
+    ctx: typer.Context,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the database to belong to this network."),
+    ] = None,
+) -> None:
+    """Print height, tip, genesis and the current difficulty target."""
+    with _local_node(ctx, network) as service:
+        status = service.status()
+        difficulty = service.difficulty()
+    if _options(ctx).json_output:
+        _echo_json(
+            {
+                **status.model_dump(mode="json"),
+                "difficulty": difficulty.model_dump(mode="json"),
+            }
+        )
+        return
+    typer.echo(f"network: {status.network} (protocol {status.protocol_version})")
+    typer.echo(f"height: {status.height}")
+    typer.echo(f"tip: {status.tip_hash}")
+    typer.echo(f"genesis: {status.genesis_hash}")
+    typer.echo(
+        f"target: wins_required {difficulty.wins_required}, seal_bits {difficulty.seal_bits} "
+        f"(retarget every {difficulty.retarget_interval} blocks)"
+    )
+
+
+@chain_app.command("blocks")
+def chain_blocks(
+    ctx: typer.Context,
+    limit: Annotated[int, typer.Option("--limit", help="How many recent blocks to print.")] = 10,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the database to belong to this network."),
+    ] = None,
+) -> None:
+    """List the most recent blocks on the adopted branch."""
+    if limit < 1:
+        _fail("--limit must be at least 1", code=2)
+    with _local_node(ctx, network) as service:
+        stored = service.chain.main_chain()[-limit:]
+        rows = [
+            {
+                "height": item.height,
+                "hash": item.block_hash,
+                "timestamp": item.header.timestamp,
+                "epoch": item.header.epoch,
+                "transactions": len(item.block.transactions),
+                "proofs": len(item.block.proofs),
+            }
+            for item in stored
+        ]
+    if _options(ctx).json_output:
+        _echo_json(rows)
+        return
+    for row in rows:
+        typer.echo(
+            f"{row['height']:>6} {row['hash']} ts={row['timestamp']} epoch={row['epoch']} "
+            f"{row['transactions']}tx {row['proofs']}proofs"
+        )
+
+
+@chain_app.command("account")
+def chain_account(
+    ctx: typer.Context,
+    address: Annotated[str, typer.Argument(help="Address to inspect.")],
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the database to belong to this network."),
+    ] = None,
+) -> None:
+    """Print balance, bond, nonce and registration for one address."""
+    params = _resolve_network(ctx, network)
+    with _local_node(ctx, params.network_id) as service:
+        account = service.account(address)
+    if _options(ctx).json_output:
+        _echo_json(account.model_dump(mode="json"))
+        return
+    typer.echo(f"{account.address} ({params.network_id})")
+    typer.echo(
+        f"total {_coins(account.total)}: spendable {_coins(account.balance)}, "
+        f"bonded {_coins(account.bonded)}, immature {_coins(account.immature)}"
+    )
+    typer.echo(f"nonce {account.nonce}")
+    if account.registered_until_epoch is not None:
+        typer.echo(
+            f"registered until epoch {account.registered_until_epoch} "
+            f"({account.engine}, {account.endpoint})"
+        )
+    else:
+        typer.echo("not registered")
+
+
+@chain_app.command("verify")
+def chain_verify(
+    ctx: typer.Context,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the database to belong to this network."),
+    ] = None,
+) -> None:
+    """Replay every stored block through full validation and report the tip."""
+    with _local_node(ctx, network) as service:
+        payload = {
+            "network": service.params.network_id,
+            "ok": True,
+            "blocks": len(service.chain.main_chain()),
+            "height": service.height,
+            "tip_hash": service.tip_hash,
+            "genesis_hash": service.genesis_hash,
+        }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(
+        f"ok: {payload['blocks']} blocks replay to height {payload['height']} "
+        f"({payload['tip_hash']})"
+    )
+
+
+@faucet_app.command("send")
+def faucet_send(
+    ctx: typer.Context,
+    to: Annotated[str, typer.Option("--to", help="Recipient address.")],
+    amount: Annotated[int, typer.Option("--amount", help="Amount to send, in whole coins.")] = 1000,
+    node: Annotated[
+        str | None,
+        typer.Option("--node", help="Node base URL that receives the transaction."),
+    ] = None,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Test network whose faucet sends the coins."),
+    ] = None,
+) -> None:
+    """Send testnet coins from the network's documented faucet key."""
+    params = _resolve_network(ctx, network)
+    _require_test_network(params)
+    keypair = _run(lambda: faucet_keypair(params.network_id))
+    with _local_node(ctx, params.network_id) as service:
+        tx = _run(
+            lambda: WalletService(params, service.chain.state, chain=service.chain).build_transfer(
+                keypair, to, coins_to_units(amount)
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    payload = {
+        "txid": txid(tx),
+        "network": params.network_id,
+        "from": encode_address(keypair.public_key_bytes, params),
+        "to": to,
+        "amount": coins_to_units(amount),
+        "accepted": receipt.get("accepted"),
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"faucet sent {_coins(coins_to_units(amount))} to {to}")
+    typer.echo(f"txid: {payload['txid']}")
 
 
 if __name__ == "__main__":  # pragma: no cover - console-script parity

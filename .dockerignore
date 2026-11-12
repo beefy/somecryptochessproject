@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+.hypothesis
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.coverage
+dist
+build
+tests
+*.egg-info
+__pycache__
+*.pyc
+data/*.sqlite
+data/*.json.tmp

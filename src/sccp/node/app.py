@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -42,6 +43,39 @@ from sccp.version import __version__
 
 def _error_response(status_code: int, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"detail": message})
+
+
+CONTRACT_IGNORED_KEYS = frozenset({"description", "examples", "operationId", "summary", "title"})
+"""Schema keys that may change without affecting a client."""
+
+
+def _normalise(value: Any) -> Any:
+    """Recursively drop prose and generated ids from a JSON document."""
+    if isinstance(value, dict):
+        return {
+            key: _normalise(item)
+            for key, item in sorted(value.items())
+            if key not in CONTRACT_IGNORED_KEYS
+        }
+    if isinstance(value, list):
+        return [_normalise(item) for item in value]
+    return value
+
+
+def openapi_contract(app: FastAPI) -> dict[str, Any]:
+    """The API schema projected onto the parts a client actually depends on.
+
+    Prose and generated operation ids are dropped so documentation edits do not
+    churn the snapshot, and ``info`` is dropped because it carries the package
+    version. Routes, parameters, request bodies, response codes and model fields
+    all survive, so an accidental breaking change fails
+    ``tests/unit/test_api.py`` until ``scripts/make_openapi_fixture.py`` is run
+    on purpose.
+    """
+    schema = _normalise(app.openapi())
+    assert isinstance(schema, dict)  # FastAPI always returns a mapping
+    schema.pop("info", None)
+    return schema
 
 
 def create_app(service: NodeService) -> FastAPI:
@@ -150,4 +184,4 @@ def create_app(service: NodeService) -> FastAPI:
     return app
 
 
-__all__ = ["create_app"]
+__all__ = ["CONTRACT_IGNORED_KEYS", "create_app", "openapi_contract"]

@@ -224,3 +224,6 @@ __marimo__/
 /chaindata/
 *.key
 !tests/fixtures/*.key
+
+# Local docker-compose stack state written by `make stack`
+.stack/

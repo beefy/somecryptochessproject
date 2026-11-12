@@ -38,8 +38,8 @@ jobs:
 
       - name: Lint
         run: |
-          ruff check src tests scripts
-          ruff format --check src tests scripts
+          ruff check src tests scripts deploy
+          ruff format --check src tests scripts deploy
 
       - name: Typecheck
         run: mypy

@@ -47,6 +47,7 @@ class NodeStatus(ProtocolModel):
 class AccountView(ProtocolModel):
     """``GET /v1/accounts/{address}``: everything the ledger knows."""
 
+    network: str = Field(min_length=1)
     address: str = Field(min_length=1)
     balance: int = Field(ge=0)
     immature: int = Field(ge=0)
@@ -77,6 +78,7 @@ class EpochView(ProtocolModel):
 class BlockView(ProtocolModel):
     """``GET /v1/blocks/{height_or_hash}``: the block plus its position."""
 
+    network: str = Field(min_length=1)
     hash: str
     parent_hash: str
     height: int = Field(ge=0)
@@ -145,6 +147,7 @@ class ProofAccepted(ProtocolModel):
 class PeerView(ProtocolModel):
     """``GET /v1/peers``: one known peer and its abuse score."""
 
+    network: str = Field(min_length=1)
     url: str = Field(min_length=1)
     address: str | None = None
     height: int = Field(default=0, ge=0)
@@ -225,6 +228,7 @@ __all__ = [
 class DifficultyView(ProtocolModel):
     """``GET /v1/difficulty``: the current target and where it came from."""
 
+    network: str = Field(min_length=1)
     height: int = Field(ge=0)
     wins_required: int = Field(ge=1)
     seal_bits: int = Field(ge=0, le=32)

@@ -11,6 +11,62 @@ Milestone M5: quality verification, challenges and the threat-model tests. The
 `book_version: v1` quality profile, the challenge lifecycle and
 `sccp.node.quality_sampler` are still to come.
 
+## [0.5.1] - 2026-11-12
+
+Milestone M4, completed: the rest of the CLI surface and the multi-process stack.
+
+### Added
+
+- `sccp node run`: serves the section 5.12 API over uvicorn, replays the chain in
+  `--data-dir`, honours `--genesis` and pull-syncs from `--peer` URLs at startup.
+  A peer that is down is recorded, skipped and logged, never fatal.
+  `sync_peers` in `sccp.node.service` is the library behind it.
+- `sccp miner run`: the unattended loop with `--key`, `--relay`, `--node`,
+  `--engine-path`, `--engine-profile`, `--nodes-per-move`, `--depth`,
+  `--max-games-per-epoch`, `--poll-seconds` and `--iterations`; it reports joins,
+  moves, results, proofs and refusals, and supports `--json`.
+- `sccp miner register`, `sccp miner availability` and `sccp miner reveal`: sign
+  registration, availability commitments and reveals against the chain in
+  `--data-dir` and submit them to a node.
+- `sccp wallet balance`, `sccp wallet send` and `sccp wallet history`, plus
+  `sccp chain info|blocks|account|verify`: read the ledger in `--data-dir`
+  (replaying it through full validation) and build transfers from it.
+- `sccp faucet send`: the public testnet/devnet faucet, refused on a network
+  that has none.
+- `sccp devnet up --engines mock`, and `--network` on `matchmaker run`,
+  `node run` and the miner commands so a global option behaves the same whether
+  it is written before or after the subcommand.
+- `docker-compose.yml`, `Dockerfile`, `.dockerignore` and `deploy/`: one node,
+  one relay and three miners on testnet. `deploy/init_testnet_stack.py` writes
+  deterministic stack keys and a relay config, and `make stack` generates and
+  validates the file.
+- Genesis documents are force-included in the wheel (`sccp/chain/data/genesis/`)
+  and `default_genesis_path` prefers them, so `pip install sccp` followed by
+  `sccp node run` works outside a source checkout.
+- The OpenAPI contract is snapshotted in `tests/fixtures/openapi.json`, checked
+  by `tests/unit/test_api.py` and regenerated with
+  `scripts/make_openapi_fixture.py` when a change is intended.
+- `tests/e2e/test_local_network.py`: two nodes on real loopback ports converge
+  on the same tip after a partition, and a signed envelope crosses the wire.
+
+### Changed
+
+- Every top-level API response now carries the network id: `AccountView`,
+  `BlockView`, `PeerView` and `DifficultyView` gained `network`, as section 5.12
+  and the M4 acceptance criteria require.
+- The M4 test modules are named after the plan's deliverables: `test_api.py`,
+  `test_gossip.py`, `test_sync.py` and `test_miner_loop.py`.
+- `make lint`, `make format` and CI also cover `deploy/`.
+
+### Fixed
+
+- `EngineMiner` no longer re-joins a pending match on every poll: it compares the
+  certificate's start signatures by colour rather than by address, so a seat
+  waiting for its opponent makes progress instead of collecting
+  "has already joined" refusals.
+- `NodeService.sync_from` records a failure for a peer it cannot reach at all, so
+  `sccp node run --peer` bans a dead peer instead of silently forgetting it.
+
 ## [0.5.0] - 2026-11-12
 
 Milestone M4: the node, P2P gossip, the unattended engine miner and the
