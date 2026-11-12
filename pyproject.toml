@@ -63,6 +63,7 @@ include = ["src/sccp", "tests", "README.md", "LICENSE"]
 minversion = "9.0"
 testpaths = ["tests"]
 asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra -q -m 'not engine and not adversarial and not slow and not network'"
 markers = [
   "engine: needs a real UCI engine binary (deselected by default)",

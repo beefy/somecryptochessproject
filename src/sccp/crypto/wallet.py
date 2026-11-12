@@ -3,14 +3,14 @@
 Keyfile layout (docs/IMPLEMENTATION_PLAN.md section 5.3)::
 
     {
-      "version": 1,
-      "network": "testnet",
-      "address": "sccpt1...",
-      "public_key": "<64 hex>",
-      "kdf":    {"name": "scrypt", "n": 32768, "r": 8, "p": 1, "salt": "<32 hex>"},
-      "cipher": {"name": "aes-256-gcm", "nonce": "<24 hex>"},
-      "created_at": 1760000000,
-      "ciphertext": "<96 hex>"
+        "version": 1,
+        "network": "testnet",
+        "address": "sccpt1...",
+        "public_key": "<64 hex>",
+        "kdf": {"name": "scrypt", "n": 32768, "r": 8, "p": 1, "salt": "<32 hex>"},
+        "cipher": {"name": "aes-256-gcm", "nonce": "<24 hex>"},
+        "created_at": 1760000000,
+        "ciphertext": "<96 hex>",
     }
 
 The associated data for AES-GCM is the canonical JSON of every field except
@@ -144,7 +144,6 @@ def _require_hex(document: Mapping[str, object], key: str, size: int) -> bytes:
     return raw
 
 
-
 @dataclass(frozen=True, slots=True)
 class KeyfileHeader:
     """Every keyfile field except ``ciphertext``; also the AEAD associated data."""
@@ -227,7 +226,6 @@ class KeyfileHeader:
         )
 
 
-
 @dataclass(frozen=True, slots=True)
 class Wallet:
     """A decrypted keypair together with the keyfile header it came from."""
@@ -302,8 +300,7 @@ def decrypt_seed(header: KeyfileHeader, ciphertext: bytes, passphrase: str) -> b
         return AESGCM(key).decrypt(header.nonce, ciphertext, header.associated_data)
     except InvalidTag:
         raise PassphraseError(
-            f"cannot decrypt keyfile for {header.address}: "
-            "wrong passphrase or corrupted ciphertext"
+            f"cannot decrypt keyfile for {header.address}: wrong passphrase or corrupted ciphertext"
         ) from None
 
 
@@ -324,9 +321,7 @@ def mnemonic_to_seed(phrase: str) -> bytes:
     """Decode a 24-word BIP-39 phrase back into the 32-byte Ed25519 seed."""
     words = phrase.split()
     if len(words) != MNEMONIC_WORD_COUNT:
-        raise KeyEncodingError(
-            f"expected {MNEMONIC_WORD_COUNT} words, got {len(words)}"
-        )
+        raise KeyEncodingError(f"expected {MNEMONIC_WORD_COUNT} words, got {len(words)}")
     try:
         entropy = _english_mnemonic().to_entropy(words)
     except (KeyError, ValueError) as exc:

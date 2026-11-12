@@ -83,7 +83,6 @@ def canonical_json(value: object) -> bytes:
     return encoded.encode("utf-8")
 
 
-
 class Domain(StrEnum):
     """Hash domains from docs/IMPLEMENTATION_PLAN.md section 5.2."""
 

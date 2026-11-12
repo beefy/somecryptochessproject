@@ -1,0 +1,66 @@
+{
+  "description": "Golden vectors for M0 (canonical JSON, domain hashes, Merkle roots, Ed25519, bech32 addresses, mnemonic). Generated from a fixed seed; regenerate only with a deliberate consensus change.",
+  "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+  "mnemonic": "abandon amount liar amount expire adjust cage candy arch gather drum bullet absurd math era live bid rhythm alien crouch range attend journey unaware",
+  "canonical_json": {
+    "input": {
+      "b": [
+        1,
+        true,
+        null
+      ],
+      "a": "\u00e9",
+      "z": {
+        "y": 2,
+        "x": 1
+      }
+    },
+    "utf8_hex": "7b2261223a22c3a9222c2262223a5b312c747275652c6e756c6c5d2c227a223a7b2278223a312c2279223a327d7d",
+    "sha256_hex": "9662210097fd1b999bf4a58a79449a87254f46025bf657ba432ba4edc3315d88"
+  },
+  "domain_hash": {
+    "domain": "sccp/v1/header",
+    "payload": {
+      "height": 1,
+      "prev": "00",
+      "network": "testnet"
+    },
+    "hex": "7f00aa525553f4a4ebd1544c8bb4b781eed0c8ef7482e28d3af00e578c30597d"
+  },
+  "merkle": {
+    "leaves": {
+      "b": 2,
+      "a": 1,
+      "c": null,
+      "d": [
+        3,
+        4
+      ]
+    },
+    "root_hex": "aa293c3da8bea067b4b0e404f89849820caa0445c0f430fd8c56477c25705652"
+  },
+  "signature": {
+    "domain": "sccp/v1/game",
+    "payload": {
+      "game": "abc123",
+      "ply": 1
+    },
+    "hex": "2757fe603e16408cc4ec19f37aa4e30c9310e7c07eb1380c5a76872312ec26f9adcc638c209c01059cdc83c0a2e698b51656e28cb7ffc13289e0ecf122d7c70d"
+  },
+  "addresses": {
+    "testnet": "sccpt1qzrpqvhdr4vqjz9cu34n96tur7nkxhjf8gxmhtha",
+    "mainnet": "sccp1qpuzyxq33qc666sytykjg5vtxx8t6cjtlsl3qe09",
+    "devnet": "sccpt1qz54z79q7u22usyssrjju0zwe7wsaxuz8qc2mn39"
+  },
+  "uppercase_address": "SCCPT1QZRPQVHDR4VQJZ9CU34N96TUR7NKXHJF8GXMHTHA",
+  "invalid_addresses": {
+    "bad_checksum": "sccpt1qzrpqvhdr4vqjz9cu34n96tur7nkxhjf8gxmhth7",
+    "mixed_case": "SCCPt1qzrpqvhdr4vqjz9cu34n96tur7nkxhjf8gxmhtha",
+    "wrong_version": "sccpt1qxrpqvhdr4vqjz9cu34n96tur7nkxhjf8grcew2c",
+    "short_program": "sccpt1qzrpqvhdr4vqjz9cu34n96tur7nkxhjfke8yzr",
+    "wrong_hrp": "bc1qzrpqvhdr4vqjz9cu34n96tur7nkxhjf8g9jdjw3",
+    "empty": "",
+    "too_long": "sccpt1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+  }
+}

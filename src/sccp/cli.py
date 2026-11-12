@@ -182,7 +182,6 @@ def _emit_wallet(ctx: typer.Context, wallet: Wallet) -> None:
     typer.echo(wallet.address)
 
 
-
 @wallet_app.command("new")
 def wallet_new(
     ctx: typer.Context,
@@ -260,9 +259,7 @@ def wallet_export_mnemonic(
     passphrase = _passphrase(ctx, confirm=False)
     phrase = _run(lambda: export_mnemonic(key, passphrase))
     if _options(ctx).json_output:
-        _echo_json(
-            {"mnemonic": phrase, "address": header.address, "network": header.network}
-        )
+        _echo_json({"mnemonic": phrase, "address": header.address, "network": header.network})
         return
     typer.echo(phrase)
 
