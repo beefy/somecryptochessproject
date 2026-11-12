@@ -236,7 +236,7 @@ curl -sS "$SCCP_NODE/v1/accounts/$ADDRESS" | jq
 ```
 
 Or monitor for updates
-```
+```bash
 curl -sS "$SCCP_NODE/v1/transactions/$TXID" | jq
 curl -sS "$SCCP_NODE/v1/mempool" | jq
 curl -sS "$SCCP_NODE/v1/status" | jq '{height, mempool}'
