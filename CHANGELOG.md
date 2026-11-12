@@ -7,6 +7,13 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-12
+
+A minor release: the testnet chain now stays self-sustaining after its bootstrap.
+Blocks past the bootstrap may be heartbeat blocks, the miners commit and reveal
+availability on their own, the miner paces itself so the difficulty retarget does
+not outrun the roster, and a drip keeps ledger work in the pool when games draw.
+
 ### Added
 
 - `sccp node run --mine-interval-seconds N`: the settlement miner can pace
