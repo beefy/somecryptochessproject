@@ -187,7 +187,7 @@ admitted to the node's mempool**. It does not mean the coins are spendable yet.
 Track the transaction by the returned `txid`:
 
 ```bash
-TXID="9a2b..."   # value from the faucet response
+export TXID="9a2b..."   # value from the faucet response
 curl -sS "$SCCP_NODE/v1/transactions/$TXID" | jq
 ```
 
