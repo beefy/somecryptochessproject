@@ -386,6 +386,11 @@ python scripts/play_miner.py                     # you are white; SAN or UCI mov
 python scripts/play_miner.py --pgn-out game.pgn   # also keep the relay's PGN
 python scripts/play_miner.py --color black --engine stockfish-19 \
     --engine-path ./bin/stockfish-macos-universal
+# …or build a fresh devnet chain, play on it and mine the win proof into a block.
+# The game is written to ./data-play/chain.sqlite; serve it afterwards with
+# `sccp --data-dir ./data-play node run --network devnet`.
+python scripts/play_miner.py --on-chain
+python scripts/play_miner.py --on-chain --chain-dir ./my-play-data --color auto
 # …or take a seat on a relay that is already serving, with your own keyfile
 python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 
@@ -404,6 +409,15 @@ board it left and the move number you are on, and it numbers every move it
 reports (`you played 5.Nc3`, `opponent played 5...g5`). `--seed` derives the
 beacon, so a different seed is a different opening; `--engine-seed` makes a
 given mock opponent replay the same moves.
+
+`--on-chain` is devnet-only and always starts from an empty `--chain-dir`
+(default `./data-play`; use `--color auto` to take whichever seat the pairing
+deals you). When the game ends it co-signs the result with the engine, turns the
+relay transcript into a `WinProof` and mines it with the production block
+builder; the final report prints the block height, proof id and the `node run`
+command that serves the chain. A draw, a time forfeit (the claim-transaction
+path is not wired into this demo), a game under devnet's 20-ply minimum, or a
+result the engine will not co-sign produces no block, and the report says why.
 
 `--json` works on every command (`sccp --json chain info`, `sccp --json devnet
 up`, ...) and prints one machine-readable document; `miner run --iterations N`

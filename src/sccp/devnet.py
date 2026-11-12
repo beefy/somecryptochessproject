@@ -19,7 +19,7 @@ Two things make it feasible in one command:
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import httpx
@@ -228,7 +228,14 @@ def _submit_epoch_txs(service: NodeService, participants: Sequence[DevnetMiner])
 
 
 def _relay_for_epoch(
-    service: NodeService, epoch: int, participants: Sequence[DevnetMiner]
+    service: NodeService,
+    epoch: int,
+    participants: Sequence[DevnetMiner],
+    *,
+    clock: Callable[[], int] | None = None,
+    clock_ms: Callable[[], int] | None = None,
+    timeout_seconds: int = 3600,
+    witness_keypair: Keypair | None = None,
 ) -> _RelayPair:
     state = service.chain.state
     record = state.epochs.get(epoch)
@@ -246,9 +253,10 @@ def _relay_for_epoch(
         public_keys=state.public_keys(),
         engines=engines,
         book=service.chain.book,
-        clock=lambda: RELAY_CLOCK,
-        clock_ms=lambda: RELAY_CLOCK * 1000,
-        timeout_seconds=3600,
+        clock=clock if clock is not None else (lambda: RELAY_CLOCK),
+        clock_ms=clock_ms if clock_ms is not None else (lambda: RELAY_CLOCK * 1000),
+        timeout_seconds=timeout_seconds,
+        witness_keypair=witness_keypair,
     )
     relay_http = httpx.Client(
         transport=ASGITransport(create_matchmaker_app(relay)),

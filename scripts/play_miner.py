@@ -14,7 +14,7 @@ so this script puts a keyboard on one seat:
 - everything it renders — board, clocks, receipts, result — comes from the
   relay's ``/v1/matches`` and ``/v1/matches/{id}/receipts`` endpoints.
 
-Two modes:
+Three modes:
 
 ``python scripts/play_miner.py``
     **Solo.** An in-process relay and one real ``EngineMiner`` are built on the
@@ -27,6 +27,17 @@ Two modes:
     background thread, so the clocks really run: sit on your hands for thirty
     minutes and you are flagged, and the engine turns the relay's receipts into
     a verified ``TimeoutClaim``.
+
+``python scripts/play_miner.py --on-chain``
+    **On-chain.** Builds a fresh local devnet chain in ``--chain-dir`` (default
+    ``./data-play``), funds and registers both seats, opens epoch 3 and then
+    seats you through the same relay API. When the game ends it co-signs the
+    result, turns the relay transcript into a ``WinProof`` and mines that proof
+    into a block with the production block builder. The chain is written to
+    SQLite, so ``sccp --data-dir ./data-play node run --network devnet`` can
+    serve it and ``scripts/export_block_games.py`` can export the game. A draw,
+    a time forfeit (there is no claim-transaction path in this demo yet) or a
+    game shorter than devnet's 20-ply minimum produces no block.
 
 ``python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key``
     **Attached.** The same human seat, pointed at a relay that is already
@@ -45,8 +56,9 @@ move it reports carries its move number (``3. e4``, ``3... Nd5``), which is the
 only way to tell a knight that came from f6 from one that cannot have moved.
 
 The finished game's PGN is printed at the end; ``--pgn-out FILE`` also writes it
-to disk. That is the relay's game record, not a win proof: it does not put the
-game on a chain and it will not appear in ``export_block_games.py``.
+to disk. That is the relay's game record, not a win proof. In solo and attached
+mode it does not put the game on a chain and it will not appear in
+``export_block_games.py``; only ``--on-chain`` mines the proof into a block.
 """
 
 from __future__ import annotations
@@ -62,17 +74,25 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 import chess
 import httpx
 
+from sccp.chain.storage import Storage
 from sccp.chess.engines import MOCK_VERSION, Engine, open_engine
 from sccp.chess.openings import book_for
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, keypair_from_seed, sign_domain
 from sccp.crypto.wallet import load_wallet, read_passphrase_file
+from sccp.devnet import (
+    GENESIS_EPOCH,
+    DevnetMiner,
+    _bootstrap,
+    _mine_pending,
+    _relay_for_epoch,
+)
 from sccp.errors import SccpError
 from sccp.miner.engine_miner import (
     EMPTY_SIGNATURE,
@@ -83,11 +103,25 @@ from sccp.miner.engine_miner import (
 )
 from sccp.miner.matchmaker import ClockBundle, Matchmaker, MatchView
 from sccp.miner.matchmaker import create_app as create_relay_app
+from sccp.node.service import NodeService
 from sccp.protocol.beacon import commitment, compute_beacon
 from sccp.protocol.clocks import sign_move
-from sccp.protocol.models import BeaconReveal, Color, Matchup, MoveMessage, TimeControl
+from sccp.protocol.models import (
+    BeaconReveal,
+    Color,
+    Matchup,
+    MoveMessage,
+    TimeControl,
+    Transcript,
+)
 from sccp.protocol.pairing import RosterEntry
-from sccp.protocol.transcript import certificate_payload
+from sccp.protocol.transcript import (
+    certificate_payload,
+    proof_from_transcript,
+)
+from sccp.protocol.transcript import (
+    sign_result as sign_game_result,
+)
 from sccp.serialization import Domain
 from sccp.transport import client_for
 
@@ -136,6 +170,18 @@ SERVICE_INTERVAL: Final = 0.1
 COLOUR_ATTEMPTS: Final = 8
 """How many demo keys to try before giving up on the requested colour."""
 
+DEFAULT_CHAIN_DIR: Final = Path("data-play")
+"""Where ``--on-chain`` writes the fresh devnet chain, unless ``--chain-dir`` is given."""
+
+CHAIN_DB_NAME: Final = "chain.sqlite"
+"""The SQLite file ``sccp node run`` also reads from ``--data-dir``."""
+
+CHAIN_NETWORK: Final = "devnet"
+"""``--on-chain`` is devnet-only: its one-block epochs and zero seal are deterministic."""
+
+MAX_SETTLE_STEPS: Final = 20
+"""How many engine polls to spend waiting for the other seat's result signature."""
+
 LOW_TIME_MS: Final = 60_000
 """Below this, the prompt warns that the clock is nearly gone."""
 
@@ -143,6 +189,8 @@ EXAMPLES: Final = """\
 examples:
   python scripts/play_miner.py                          # solo, you are white
   python scripts/play_miner.py --color black            # solo, you are black
+  python scripts/play_miner.py --on-chain               # play a devnet game, mine the proof
+  python scripts/play_miner.py --on-chain --chain-dir ./data-play
   python scripts/play_miner.py --engine stockfish-19 --engine-path ./bin/stockfish-19
   python scripts/play_miner.py --pgn-out game.pgn        # keep the relay's PGN
   python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
@@ -168,6 +216,8 @@ class Options:
     passphrase_file: Path | None = None
     match: str | None = None
     network: str | None = None
+    on_chain: bool = False
+    chain_dir: Path | None = None
     color: str = "white"
     seed: str = HUMAN_SEED
     round: int = 0
@@ -270,6 +320,36 @@ class HumanSeat:
         """The relay's clock bundle, or ``None`` for a relay without receipts."""
         return self.client.receipts(self.match_id)
 
+    def cosign_result(self, view: MatchView) -> MatchView:
+        """Add this seat's result signature to an already finished match.
+
+        Only ``--on-chain`` needs this: a proof carries the result signatures,
+        so the human cannot leave the final result to the engine alone.
+        """
+        if view.result is None:
+            raise SccpError("the relay has not reported a result to co-sign")
+        signed = sign_game_result(view.result, view.certificate, self.color, self.keypair)
+        return self.client.result(
+            self.match_id,
+            seat=self.address,
+            signature=signed.result_signatures[self.color],
+        )
+
+    def transcript(self) -> Transcript:
+        """Fetch the relay's final, co-signed transcript."""
+        return self.client.transcript(self.match_id)
+
+
+@dataclass(frozen=True, slots=True)
+class ChainSettlement:
+    """What happened when the finished game tried to reach a block."""
+
+    mined: bool
+    summary: str
+    height: int | None = None
+    block_hash: str | None = None
+    proof_id: str | None = None
+
 
 @dataclass(slots=True)
 class SoloTable:
@@ -283,6 +363,11 @@ class SoloTable:
     stop: threading.Event = field(default_factory=threading.Event)
     thread: threading.Thread | None = None
     closed: bool = False
+    chain: NodeService | None = None
+    chain_dir: Path | None = None
+    keypairs: dict[str, Keypair] = field(default_factory=dict)
+    mined: list[str] = field(default_factory=list)
+    settlement: ChainSettlement | None = None
 
     def step(self) -> None:
         """One service tick: poll the miner, then sweep the relay's clocks.
@@ -309,8 +394,103 @@ class SoloTable:
             except Exception as exc:  # a bad tick must not kill the clock
                 self.errors.append(f"{type(exc).__name__}: {exc}")
 
+    def settle(self, view: MatchView) -> ChainSettlement:
+        """Co-sign, prove and mine a finished game; idempotent per table."""
+        if self.settlement is not None:
+            return self.settlement
+        if self.chain is None:
+            raise SccpError("this table has no chain to settle on")
+        self.pause()
+        result = view.result
+        if result is None:
+            self.settlement = ChainSettlement(False, "the relay has not finished the game")
+            return self.settlement
+        if result.termination == "time_forfeit":
+            self.settlement = ChainSettlement(
+                False, "time forfeits have no claim transaction in this demo yet"
+            )
+            return self.settlement
+        if result.result == "1/2-1/2":
+            self.settlement = ChainSettlement(False, "a draw has no winner to prove")
+            return self.settlement
+        minimum = self.chain.params.min_plies
+        if result.plies < minimum:
+            self.settlement = ChainSettlement(
+                False,
+                f"{result.plies} plies is below devnet's {minimum}-ply proof minimum",
+            )
+            return self.settlement
+        try:
+            signed_view = self._co_sign_result(view)
+            if signed_view is None:
+                self.settlement = ChainSettlement(False, "both seats did not co-sign the result")
+                return self.settlement
+            transcript = self.seat.transcript()
+            proof = proof_from_transcript(transcript, params=self.chain.params)
+            if proof.proof_id not in self.chain.mempool.proofs:
+                self.chain.announce_proof(proof)
+            if not _mine_pending(self.chain, self.keypairs, self.mined):
+                self.settlement = ChainSettlement(
+                    False, "the pending proof had no winner key to mine it"
+                )
+                return self.settlement
+            stored = self.chain.chain.block_at_height(self.chain.height)
+            if stored is None or not any(
+                item.proof_id == proof.proof_id for item in stored.block.proofs
+            ):
+                self.settlement = ChainSettlement(False, "the new block does not contain the proof")
+                return self.settlement
+            self.settlement = ChainSettlement(
+                True,
+                f"block {stored.height} {stored.block_hash[:12]}…",
+                height=stored.height,
+                block_hash=stored.block_hash,
+                proof_id=proof.proof_id,
+            )
+        except SccpError as exc:
+            self.settlement = ChainSettlement(False, f"settlement failed: {exc}")
+        return self.settlement
+
+    def _co_sign_result(self, view: MatchView) -> MatchView | None:
+        """Wait for both result signatures, adding the human's if it is missing.
+
+        The engine signs on its next poll. The human signs here because there is
+        no input loop left to do it: the prompt returned as soon as the game
+        ended. Returns ``None`` if the signatures never both arrive.
+        """
+        for _ in range(MAX_SETTLE_STEPS):
+            result = view.result
+            if result is None:
+                return None
+            signatures = set(result.result_signatures)
+            missing = {"white", "black"} - signatures
+            if not missing:
+                return view
+            if self.seat.color in missing:
+                view = self.seat.cosign_result(view)
+                continue
+            try:
+                self.miner.run_once()
+            except SccpError as exc:
+                self.errors.append(str(exc))
+                return None
+            view = self.seat.view()
+        return None
+
+    def pause(self) -> None:
+        """Stop the background service loop so settlement owns the miner.
+
+        ``EngineMiner`` is deliberately single-threaded; co-signing and mining
+        must not race the thread that was polling it during the game.
+        """
+        self.stop.set()
+        thread = self.thread
+        if thread is not None:
+            thread.join(timeout=5)
+            self.thread = None
+
     def close(self) -> None:
-        """Stop the service loop and release the engine and both transports."""
+        """Stop the service loop and release the chain, engine and transports."""
         if self.closed:
             return
         self.closed = True
@@ -320,6 +500,8 @@ class SoloTable:
         self.miner.close()
         for client in self.clients:
             client.close()
+        if self.chain is not None:
+            self.chain.close()
 
 
 def _parse_args(argv: Sequence[str] | None) -> Options:
@@ -355,19 +537,33 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
     parser.add_argument(
         "--network",
         metavar="ID",
-        help=f"Network id: {SOLO_NETWORK} (solo default), testnet or mainnet.",
+        help=f"Network id: {SOLO_NETWORK} (solo/on-chain default), testnet or mainnet.",
+    )
+    parser.add_argument(
+        "--on-chain",
+        action="store_true",
+        help=(
+            "Build a fresh devnet chain and mine the finished game's proof into a block "
+            "(writes --chain-dir)."
+        ),
+    )
+    parser.add_argument(
+        "--chain-dir",
+        type=Path,
+        metavar="DIR",
+        help=f"Data directory for --on-chain (default: ./{DEFAULT_CHAIN_DIR}).",
     )
     parser.add_argument(
         "--color",
         choices=("white", "black", "auto"),
         default="white",
-        help="Colour you want in solo mode; 'auto' takes the pairing (default: white).",
+        help=("Colour you want in solo/on-chain mode; 'auto' takes the pairing (default: white)."),
     )
     parser.add_argument(
         "--seed",
         metavar="HEX",
         default=HUMAN_SEED,
-        help="32-byte hex seed of the solo human seat.",
+        help="32-byte hex seed of the solo/on-chain human seat.",
     )
     parser.add_argument(
         "--round", type=int, default=0, metavar="N", help="Round to open in solo mode."
@@ -428,12 +624,24 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
         parser.error("--round cannot be negative")
     if namespace.relay is not None and namespace.key is None:
         parser.error("--relay needs --key: a seat signs its own certificate and moves")
+    if namespace.on_chain and namespace.relay is not None:
+        parser.error("--on-chain builds its own devnet; it cannot attach to --relay")
+    if namespace.on_chain and namespace.key is not None:
+        parser.error("--on-chain derives the human seat from --seed; drop --key")
+    if namespace.on_chain and namespace.match is not None:
+        parser.error("--on-chain opens its own round; drop --match")
+    if namespace.chain_dir is not None and not namespace.on_chain:
+        parser.error("--chain-dir only applies to --on-chain")
+    if namespace.on_chain and namespace.network not in (None, CHAIN_NETWORK):
+        parser.error(f"--on-chain is devnet-only; drop --network {namespace.network}")
     return Options(
         relay=namespace.relay,
         key=namespace.key,
         passphrase_file=namespace.passphrase_file,
         match=namespace.match,
         network=namespace.network,
+        on_chain=namespace.on_chain,
+        chain_dir=namespace.chain_dir,
         color=namespace.color,
         seed=seed,
         round=namespace.round,
@@ -592,6 +800,141 @@ def _solo_matchup(relay: Matchmaker, address: str) -> Matchup:
     raise SystemExit(f"the relay paired no match containing {address}")
 
 
+@dataclass(frozen=True, slots=True)
+class _HumanFingerprint:
+    """The fake engine identity a human seat registers on chain."""
+
+    fingerprint: str
+
+
+def _chain(options: Options) -> SoloTable:
+    """Build a fresh devnet chain, retrying until the pairing seats you as asked."""
+    params = get_network(options.network or SOLO_NETWORK)
+    if params.network_id != CHAIN_NETWORK:
+        raise SystemExit(
+            f"--on-chain is devnet-only; got --network {params.network_id} "
+            "(devnet's one-block epochs and zero seal are what make this demo deterministic)"
+        )
+    data_dir = options.chain_dir or DEFAULT_CHAIN_DIR
+    database = data_dir / CHAIN_DB_NAME
+    if database.exists():
+        raise SystemExit(
+            f"{database} already exists; --on-chain always starts a fresh devnet. "
+            "Pick a new --chain-dir or remove that directory."
+        )
+    data_dir.mkdir(parents=True, exist_ok=True)
+    base = bytes.fromhex(options.seed)
+    for attempt in range(COLOUR_ATTEMPTS):
+        if attempt:
+            _remove_chain(database)
+        seed = base if attempt == 0 else hashlib.sha256(base + attempt.to_bytes(4, "big")).digest()
+        table = _chain_table(params, keypair_from_seed(seed), options)
+        if options.color in ("auto", table.seat.color):
+            return table
+        table.close()
+    _remove_chain(database)
+    raise SystemExit(
+        f"could not be seated as {options.color} in {COLOUR_ATTEMPTS} tries; "
+        "use --color auto or a different --seed"
+    )
+
+
+def _remove_chain(database: Path) -> None:
+    """Remove the SQLite files a discarded colour attempt wrote."""
+    for suffix in ("", "-wal", "-shm"):
+        Path(f"{database}{suffix}").unlink(missing_ok=True)
+
+
+def _chain_table(
+    params: NetworkParams,
+    human: Keypair,
+    options: Options,
+    *,
+    clock_ms: Callable[[], int] = monotonic_ms,
+    engine: Engine | None = None,
+) -> SoloTable:
+    """A fresh devnet chain plus the relay, miner and seat on top of it.
+
+    This is the library path ``sccp devnet up`` uses: ``_bootstrap`` funds and
+    registers both seats, ``_relay_for_epoch`` builds the real epoch-3 relay
+    (beacon, pairing, receipts), and the chain is persisted in ``chain.sqlite``
+    so ``sccp node run`` can serve it after the game.
+    """
+    engine = (
+        engine
+        if engine is not None
+        else open_engine(options.engine, binary=options.engine_path, seed=options.engine_seed)
+    )
+    opponent = keypair_from_seed(bytes.fromhex(OPPONENT_SEED))
+    witness = keypair_from_seed(bytes.fromhex(WITNESS_SEED))
+    human_address = encode_address(human.public_key_bytes, params)
+    opponent_address = encode_address(opponent.public_key_bytes, params)
+    witness_address = encode_address(witness.public_key_bytes, params)
+    human_nonce, opponent_nonce = solo_nonces(options.seed)
+    participants = [
+        DevnetMiner(
+            keypair=human,
+            engine=cast(Engine, _HumanFingerprint(HUMAN_ENGINE)),
+            nonce_secret=human_nonce,
+        ),
+        DevnetMiner(keypair=opponent, engine=engine, nonce_secret=opponent_nonce),
+    ]
+    data_dir = options.chain_dir or DEFAULT_CHAIN_DIR
+    data_dir.mkdir(parents=True, exist_ok=True)
+    database = data_dir / CHAIN_DB_NAME
+    service = NodeService.open(params, storage=Storage(database))
+    clients: list[httpx.Client] = []
+    try:
+        service.check_startup()
+        _bootstrap(service, participants)
+        pair = _relay_for_epoch(
+            service,
+            GENESIS_EPOCH,
+            participants,
+            clock=lambda: clock_ms() // 1000,
+            clock_ms=clock_ms,
+            timeout_seconds=SOLO_TIMEOUT_SECONDS,
+            witness_keypair=witness,
+        )
+        pair.relay.open_round(options.round)
+        human_http = client_for(create_relay_app(pair.relay), base_url=SOLO_URL)
+        clients.append(human_http)
+        clients.extend(pair.http)
+        seat = HumanSeat(
+            client=RelayClient(SOLO_URL, client=human_http),
+            address=human_address,
+            keypair=human,
+            matchup=_solo_matchup(pair.relay, human_address),
+        )
+        config = MinerConfig(
+            params=params,
+            keypair=opponent,
+            relay_url=SOLO_URL,
+            max_games_per_epoch=params.rounds_per_epoch,
+            witness_keys=((witness_address, witness.public_key_hex),),
+        )
+        miner = EngineMiner(
+            config,
+            engine=engine,
+            relay=pair.relay_client,
+            clock_ms=clock_ms,
+        )
+    except BaseException:
+        for client in clients:
+            client.close()
+        service.close()
+        raise
+    return SoloTable(
+        relay=pair.relay,
+        seat=seat,
+        miner=miner,
+        clients=clients,
+        chain=service,
+        chain_dir=data_dir,
+        keypairs={human_address: human, opponent_address: opponent},
+    )
+
+
 def _attached(options: Options) -> HumanSeat:
     """Load the seat keyfile and pick the session to play on a running relay."""
     if options.key is None:  # argparse rejects this; keeps the type honest
@@ -628,7 +971,15 @@ def _attached(options: Options) -> HumanSeat:
 
 @contextmanager
 def _seat(options: Options) -> Iterator[tuple[HumanSeat, SoloTable | None]]:
-    """Yield the seat to play, plus the solo table when this process owns the relay."""
+    """Yield the seat to play, plus the local table when this process owns the relay."""
+    if options.on_chain:
+        table = _chain(options)
+        table.start()
+        try:
+            yield table.seat, table
+        finally:
+            table.close()
+        return
     if options.relay is not None:
         seat = _attached(options)
         try:
@@ -810,7 +1161,13 @@ class Game:
         self.out(f"clock    {_control_text(view.time_control)}")
         if self.stack is not None:
             self.out("relay    in-process, witness receipts, auto-flag on zero")
-            self.out("chain    off-chain demo: no proof announced, no block mined")
+            if self.stack.chain is not None:
+                self.out(
+                    f"chain    devnet at {self.stack.chain_dir} (height {self.stack.chain.height})"
+                )
+                self.out("         the finished result is co-signed, proved and mined here")
+            else:
+                self.out("chain    off-chain demo: no proof announced, no block mined")
         if engine.startswith(MOCK_VERSION):
             self.out("engine   seeded random legal moves, not a real engine:")
             self.out("         --engine stockfish-19 --engine-path BINARY to play one")
@@ -1004,6 +1361,20 @@ class Game:
             self.out(f"receipts {len(bundle.receipts)} move receipts, {signed}")
         if self.stack is not None:
             self.out(f"engine   {self._settlement()}")
+            if self.stack.chain is not None:
+                self.out("chain    co-signing the result and mining the proof…")
+                settlement = self.stack.settle(view)
+                if settlement.mined:
+                    self.out(f"chain    mined {settlement.summary}")
+                    self.out(
+                        f"proof    {settlement.proof_id} "
+                        f"(winner {result.result}, network {result.network})"
+                    )
+                    self.out(
+                        f"node     sccp --data-dir {self.stack.chain_dir} node run --network devnet"
+                    )
+                else:
+                    self.out(f"chain    not mined: {settlement.summary}")
             if self.stack.errors:
                 self.out(f"relay    {len(self.stack.errors)} service error(s), last: ")
                 self.out(f"         {self.stack.errors[-1]}")

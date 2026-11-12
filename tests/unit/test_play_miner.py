@@ -280,6 +280,147 @@ def test_a_flagged_human_is_settled_by_the_engine(play: ModuleType) -> None:
         assert bundle.flag.seat == seat.address
 
 
+def test_parse_args_validates_on_chain_mode(play: ModuleType) -> None:
+    """``--on-chain`` owns its relay and chain, so it rejects attached-mode flags."""
+    options = play._parse_args(["--on-chain"])
+    assert options.on_chain is True
+    assert options.chain_dir is None
+
+    chain_dir = Path("other-chain")
+    assert play._parse_args(["--on-chain", "--chain-dir", str(chain_dir)]).chain_dir == chain_dir
+    assert play._parse_args(["--on-chain", "--color", "auto"]).color == "auto"
+
+    for argv in (
+        ["--on-chain", "--relay", "http://127.0.0.1:8646"],
+        ["--on-chain", "--key", "seat.key"],
+        ["--on-chain", "--match", "0" * 64],
+        ["--chain-dir", str(chain_dir)],
+        ["--on-chain", "--network", "testnet"],
+    ):
+        with pytest.raises(SystemExit):
+            play._parse_args(argv)
+
+
+def _chain_table(play: ModuleType, chain_dir: Path) -> Any:
+    """A fresh on-chain solo table with a fixed clock and deterministic engine."""
+    return play._chain_table(
+        DEVNET,
+        keypair_from_seed(HUMAN_SEED),
+        play.Options(on_chain=True, chain_dir=chain_dir, color="auto", ascii=True),
+        clock_ms=lambda: 5_000_000,
+        engine=MockEngine(seed=11),
+    )
+
+
+def _play_to_minimum(play: ModuleType, table: Any) -> Any:
+    """Play deterministic legal moves until devnet's proof minimum, then resign."""
+    view = table.seat.join()
+    for _ in range(400):
+        table.step()
+        view = table.seat.view()
+        if view.status == "finished":
+            return view
+        if view.status != "active" or view.turn != table.seat.color:
+            continue
+        if view.last_ply >= DEVNET.min_plies:
+            return table.seat.resign()
+        board = play._board_from(view)
+        view = table.seat.play(
+            board,
+            next(iter(board.legal_moves)),
+            clock_ms=FIXED_TIME_CONTROL.initial_ms,
+        )
+    raise AssertionError("the game never reached devnet's proof minimum")
+
+
+def test_the_on_chain_table_bootstraps_a_devnet_chain(play: ModuleType, tmp_path: Path) -> None:
+    """The chain path funds both seats, opens epoch 3 and lets the miner join."""
+    table = _chain_table(play, tmp_path / "chain")
+    try:
+        assert table.chain is not None
+        assert table.chain_dir == tmp_path / "chain"
+        assert (tmp_path / "chain" / play.CHAIN_DB_NAME).exists()
+        assert table.chain.height >= play.GENESIS_EPOCH
+        assert table.seat.join().status == "pending"
+        for _ in range(50):
+            table.step()
+            if table.seat.view().status == "active":
+                break
+        assert table.seat.view().status == "active"
+        assert table.errors == []
+    finally:
+        table.close()
+
+
+def test_an_on_chain_game_mines_its_win_proof(play: ModuleType, tmp_path: Path) -> None:
+    """A finished, co-signed game is proved and the proof lands in a new block."""
+    table = _chain_table(play, tmp_path / "chain")
+    try:
+        view = _play_to_minimum(play, table)
+        assert view.status == "finished"
+        assert view.result is not None
+
+        settlement = table.settle(view)
+
+        assert settlement.mined, settlement.summary
+        assert settlement.proof_id is not None
+        assert settlement.height == table.chain.height
+        stored = table.chain.chain.block_at_height(table.chain.height)
+        assert stored is not None
+        assert settlement.block_hash == stored.block_hash
+        assert any(proof.proof_id == settlement.proof_id for proof in stored.block.proofs)
+        # Settling twice reports the same block rather than mining another one.
+        height = table.chain.height
+        assert table.settle(view) == settlement
+        assert table.chain.height == height
+        assert table.miner.refusals == []
+    finally:
+        table.close()
+
+
+def test_chain_settlement_explains_why_it_did_not_mine(play: ModuleType, tmp_path: Path) -> None:
+    """No result, a draw, a flag and a short game each report their own reason."""
+    table = _chain_table(play, tmp_path / "chain")
+    try:
+        view = table.seat.join()
+        for _ in range(50):
+            table.step()
+            view = table.seat.view()
+            if view.status == "active" and view.turn == table.seat.color:
+                view = table.seat.resign()
+                break
+        assert view.status == "finished"
+        assert view.result is not None
+
+        short = table.settle(view)
+        assert not short.mined
+        assert "minimum" in short.summary
+
+        table.settlement = None
+        draw = view.model_copy(
+            update={
+                "result": view.result.model_copy(
+                    update={"result": "1/2-1/2", "termination": "draw"}
+                )
+            }
+        )
+        assert table.settle(draw).summary == "a draw has no winner to prove"
+
+        table.settlement = None
+        flagged = view.model_copy(
+            update={"result": view.result.model_copy(update={"termination": "time_forfeit"})}
+        )
+        flagged_settlement = table.settle(flagged)
+        assert not flagged_settlement.mined
+        assert "time forfeits" in flagged_settlement.summary
+
+        table.settlement = None
+        no_result = view.model_copy(update={"result": None})
+        assert table.settle(no_result).summary == "the relay has not finished the game"
+    finally:
+        table.close()
+
+
 def test_main_reports_a_missing_keyfile_rather_than_crashing(
     play: ModuleType, capsys: pytest.CaptureFixture[str], tmp_path: Path, monkeypatch: Any
 ) -> None:

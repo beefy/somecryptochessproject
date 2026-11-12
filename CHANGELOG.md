@@ -19,7 +19,13 @@ resign.
   seat-signed moves, live clocks, `receipts` on demand, auto-flag and, when the
   human runs out of time, a verified `TimeoutClaim` from the opponent.
   `--relay/--key` instead takes a seat on a relay that is already serving.
-  `tests/unit/test_play_miner.py` drives the loop headlessly with a fake clock.
+  `--on-chain` builds a fresh devnet chain in `--chain-dir` (default
+  `./data-play`), seats both players on it and, when the game ends, co-signs the
+  result and mines the resulting `WinProof` into a block with the production
+  block builder, then prints the block, proof id and a `node run` command that
+  serves the chain. Draws, time forfeits and sub-20-ply games report why they
+  produced no block. `tests/unit/test_play_miner.py` drives the loop headlessly
+  with a fake clock and checks the on-chain settlement end to end.
 - `scripts/export_block_games.py`: fetch a node's tip block (or the block given
   by `--block`, a height or hash), replay every proof PGN against its
   certificate, and write one `.pgn` per game plus a `manifest.json` with the

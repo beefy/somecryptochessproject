@@ -222,6 +222,7 @@ __marimo__/
 # sccp local state (never commit private keys, engine binaries or chain data)
 /bin/
 /chaindata/
+/data-play/
 *.key
 !tests/fixtures/*.key
 
