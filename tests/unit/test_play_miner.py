@@ -242,6 +242,17 @@ def test_a_flagged_human_is_settled_by_the_engine(play: ModuleType) -> None:
         table.step()
         assert seat.view().status == "active"
 
+        # A timeout claim attaches the claimant's last signed move, and the
+        # chain refuses a claim from a seat that never moved, so the engine
+        # has to answer our move before our clock can run out. Whichever seat
+        # the beacon deals us, the board says whether it is our turn.
+        view = seat.view()
+        board = play._board_from(view)
+        if (board.turn == chess.WHITE) == (seat.color == "white"):
+            seat.play(board, next(iter(board.legal_moves)), clock_ms=FIXED_TIME_CONTROL.initial_ms)
+            table.step()
+        assert table.miner.matches[seat.match_id].signed_moves
+
         now[0] += FIXED_TIME_CONTROL.initial_ms + 5_000
         for _ in range(3):
             table.step()

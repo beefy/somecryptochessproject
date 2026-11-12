@@ -927,6 +927,9 @@ class Game:
         """Draw the position, from your side of the table."""
         if self.options.ascii:
             self.out(str(board))
+            # ``str(board)`` has no file labels; without them a plain ASCII
+            # board cannot be read for a move like ``Bb5``.
+            self.out("  a b c d e f g h")
             return
         self.out(board.unicode(borders=True, invert_color=self.seat.color == "black"))
 
