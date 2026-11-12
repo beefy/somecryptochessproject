@@ -367,6 +367,26 @@ Requirements: Python 3.11+ (developed against 3.13), `python-chess`, `pydantic`,
 development. Real-engine tests need a Stockfish binary; see
 `scripts/fetch_engine.py`.
 
+### Releasing
+
+Publishing is automated by [`.github/workflows/publish.yml`](.github/workflows/publish.yml):
+
+1. Bump the version in `pyproject.toml` **and** `src/sccp/version.py`; the
+   workflow refuses to publish if the two disagree or if the tag does not match.
+2. Run `make check`, commit, then tag `vX.Y.Z` and push the tag.
+3. Create a GitHub **release** for that tag. Publishing the release builds the
+   sdist and wheel, re-runs lint/typecheck/tests, runs `twine check --strict`,
+   smoke-tests the wheel in a clean venv, and uploads to PyPI with
+   [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC — no
+   API token is stored in the repository). Releases marked as pre-release are
+   never uploaded to PyPI.
+4. TestPyPI dry run: Actions → **publish** → *Run workflow* with
+   `repository: testpypi`.
+
+One-time setup: on PyPI (and TestPyPI) add this repository as a trusted
+publisher for `sccp` with workflow name `publish.yml` and environment name
+`pypi` (`testpypi`).
+
 ## 10. License
 
 Public domain, via the [Unlicense](LICENSE).

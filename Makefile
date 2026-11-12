@@ -6,7 +6,7 @@ PYTEST_ARGS ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help venv install test test-all cov cov-gate lint format typecheck check lock devnet clean
+.PHONY: help venv install test test-all cov cov-gate lint format typecheck check lock dist release-check devnet clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -39,12 +39,12 @@ cov-gate: venv  ## M0 gate: crypto/ and serialization.py at >= 95%
 		--cov-report=term-missing --cov-fail-under=95 $(PYTEST_ARGS)
 
 lint: venv  ## Check ruff lint and formatting
-	$(PYTHON) -m ruff check src tests
-	$(PYTHON) -m ruff format --check src tests
+	$(PYTHON) -m ruff check src tests scripts
+	$(PYTHON) -m ruff format --check src tests scripts
 
 format: venv  ## Apply ruff formatting and safe lint fixes
-	$(PYTHON) -m ruff check --fix src tests
-	$(PYTHON) -m ruff format src tests
+	$(PYTHON) -m ruff check --fix src tests scripts
+	$(PYTHON) -m ruff format src tests scripts
 
 typecheck: venv  ## Run mypy in strict mode
 	$(PYTHON) -m mypy
@@ -58,6 +58,12 @@ lock: venv  ## Regenerate requirements.lock from the current venv
 		'# Regenerate with: make lock' \
 		> requirements.lock
 	$(PYTHON) -m pip freeze --exclude-editable >> requirements.lock
+
+release-check: venv  ## Verify pyproject/version.py/RELEASE_TAG agree
+	$(PYTHON) scripts/check_release_version.py
+
+dist: venv  ## Build sdist and wheel into dist/ (needs `build`)
+	$(PYTHON) -m build
 
 devnet: venv  ## Start an in-process devnet (lands with M5)
 	@echo "devnet is not implemented yet; see docs/IMPLEMENTATION_PLAN.md (M5)." >&2
