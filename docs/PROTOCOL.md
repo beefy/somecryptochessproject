@@ -109,6 +109,12 @@ must agree with it.
 | No automatic outcome | decisive | `resignation` |
 | Anything else (time forfeit, abandoned, unterminated) | rejected | rejected |
 
+**M2 limitation.** There is no chess clock in the implemented protocol yet, so a
+time forfeit cannot be represented. The planned two-clock time control and
+bonded timeout settlement are specified in
+[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1; this table will
+gain `time_forfeit` when that milestone lands.
+
 Notes:
 
 - `claim_draw=False` deliberately excludes claimable 50-move and threefold
@@ -290,6 +296,10 @@ Both seats sign this payload with `H("sccp/v1/certificate", …)`:
 when both signatures verify against the addresses' registered Ed25519 keys, the
 colour draw matches the beacon, and `match_id` recomputes from the seats.
 
+The planned clock extension adds `time_control = {initial_ms, increment_ms}` to
+the certificate and its signed payload, and adds `time_forfeit` to
+`termination`; M2 emits neither. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
+
 ### 8.2 Result attestation
 
 When the board is terminal or a seat resigns, both seats sign:
@@ -306,6 +316,12 @@ The signature domain is `sccp/v1/result`; `result_signatures` is excluded from
 the signed payload. `game_hash` is the canonical game hash from section 2, so the
 two seats also attest the exact move list.
 
+In the planned clock protocol a checkmate may be proven without the loser's
+result signature: the winner supplies its own signature plus the signed move
+messages, and the verifier replays them to checkmate. Resignation and agreed
+draws still need both signatures. M2 has no signed move messages and keeps the
+both-signatures rule.
+
 ### 8.3 PGN assembly
 
 A transcript PGN is the game plus the required tags of section 3.1, with
@@ -317,7 +333,11 @@ result attestation. The opening prefix is included in the move list.
 ### 8.4 Relay API
 
 The relay is untrusted. It derives the round from public data and stores
-signatures; it never signs anything itself.
+signatures; it never signs a result. In M2 it also does not enforce a chess
+clock: `timeout_seconds` only abandons a silent session, and that is not
+evidence of a loss. The planned clock receipts, signed move messages and bonded
+timeout claim are described in
+[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1.
 
 | Method | Path | Body |
 | --- | --- | --- |
@@ -330,6 +350,13 @@ signatures; it never signs anything itself.
 | POST | `/v1/matches/{id}/resign` | `{"seat"}` |
 | POST | `/v1/matches/{id}/result` | `{"seat", "signature"}` |
 | GET | `/v1/status`, `/v1/reputation` | relay status and no-show counts |
+
+The M2 move body is exactly `{seat, san}`; the relay verifies the turn and SAN
+legality, but the move carries no ply or signature. The planned clocked move
+body is `{seat, ply, san, signature}` signed with `sccp/v1/move`; moves remain
+off-chain and only the final proof (or timeout claim) reaches a block. Because
+each move is signed, a checkmate can later be proven without the loser's result
+signature. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
 
 Illegal moves, wrong turns, duplicate joins and bad signatures are rejected with
 HTTP 400 and never change the session. A relay may abandon a silent session after

@@ -19,6 +19,12 @@ reward.
 > [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan lives in
 > [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
+> **Known M2 gap: no chess clock.** The relay's `timeout_seconds` only abandons
+> an inactive session; it does not award a win. A losing player can therefore
+> stall and deny the opponent a proof. The planned two-clock time control,
+> bonded timeout settlement and signed-move checkmate proof are specified in
+> [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) section 5.7.1.
+
 > **Naming.** The repository and project name is `somecryptochessproject`. The
 > Python package and console command use the short form `sccp` (import `sccp`,
 > run `sccp ...`), because the full name is impractical for imports and shell
