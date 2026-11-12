@@ -109,6 +109,14 @@ Runtime (declared in `pyproject.toml`):
 Development: `pytest`, `pytest-asyncio`, `pytest-cov`, `hypothesis`, `ruff`,
 `mypy`, and `types-*` packages as needed.
 
+Version pinning: depend on `python-chess>=1.11,<2`. The PyPI distribution reports
+`Version: 1.999` while `chess.__version__` is `1.11.2`; pin/lock on the
+distribution version and assert `chess.__version__.startswith("1.11")` at
+startup so a surprise major bump fails loudly instead of silently changing PGN
+parsing behaviour. `cryptography` is pinned `>=50,<51`; everything else uses
+compatible-release bounds and is locked in `requirements.lock` (pip-compile).
+`uv` is not installed in the validated environment; use it only if available.
+
 Deliberately not used:
 
 - The PyPI `stockfish` wrapper: `python-chess` already provides a complete UCI
@@ -137,6 +145,7 @@ somecryptochessproject/
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md
 │   ├── PROTOCOL.md                # normative wire formats (M1 deliverable)
+│   ├── RUN_A_TESTNET_MINER.md     # operator guide (M6 deliverable)
 │   └── THREAT_MODEL.md            # security analysis (M5 deliverable)
 ├── data/openings.json             # curated balanced opening lines
 ├── genesis/testnet.json
@@ -191,15 +200,13 @@ somecryptochessproject/
 │   └── cli.py                     # Typer entry point
 └── tests/
     ├── conftest.py
-    ├── unit/
-    ├── property/
-    ├── integration/
-    ├── e2e/
-    ├── adversarial/               # cheat/self-play/tamper suites (M5)
-    └── fixtures/                  # PGNs, key vectors, mock engines
+    ├── unit/                        # per-module tests, e.g. test_config.py
+    ├── property/                    # Hypothesis invariants
+    ├── integration/                 # e.g. test_stockfish_smoke.py (opt-in)
+    ├── e2e/                         # e.g. test_local_network.py
+    ├── adversarial/                 # cheat/self-play/tamper suites (M5)
+    └── fixtures/                    # PGNs, crypto_vectors.json, mock engines
 ```
-
-
 
 ---
 
@@ -235,8 +242,9 @@ is part of every hash and signature.
 | `quality_mode` | `off` | `sampled` | Quality policy |
 | `challenge_window` | 30 blocks | 100 blocks | Reward vesting / challenge period |
 
-Amounts are integers in base units: `1 coin = 100,000,000 units`. **No floating
-point value ever touches consensus code.**
+Amounts are integers in base units: `1 coin = 100,000,000 units`, so the subsidy
+column means `5_000_000_000` units and `min_bond` means `500_000_000` units on
+mainnet. **No floating point value ever touches consensus code.**
 
 Additional constants (defaults, all overridable per network):
 
@@ -245,7 +253,7 @@ Additional constants (defaults, all overridable per network):
 | `target_block_seconds` | 60 | 600 | Retarget goal |
 | `retarget_interval` | 10 blocks | 40 blocks | Difficulty adjustment period |
 | `k_min` / `k_max` | 1 / 5 | 1 / 10 | Bounds for `wins_required` |
-| `beacon_grace_blocks` | 2 | 6 | Wait before commit-reveal fallback |
+| `beacon_grace_blocks` | 2 | 6 | Producer wait budget for the drand round (not consensus) |
 | `drand_chain` | — | `quicknet` | Beacon source on mainnet |
 | `quality_sample_rate` | 0 | 50 | Per-mille of proofs re-analysed |
 | `max_block_bytes` | 1 MiB | 1 MiB | Hard block size |
@@ -254,37 +262,82 @@ Additional constants (defaults, all overridable per network):
 
 `devnet` reuses the testnet parameter set with `epoch_length = 1`,
 `target_block_seconds = 1`, `seal_bits = 0`, `k = 1`, `min_bond = 0`,
-`quality_mode = off` and a fixed genesis timestamp, so the whole loop runs in
-seconds inside tests and `sccp devnet up`.
+`quality_mode = off`, `retarget_enabled = false` and a fixed genesis timestamp,
+so the whole loop runs in seconds inside tests and `sccp devnet up`, and block
+succession is fully deterministic.
+
+`NetworkParams` validates its own invariants at construction:
+`retarget_interval % epoch_length == 0`, `k_min <= k <= k_max`,
+`0 <= seal_bits <= 32`, `min_plies <= max_plies <= 1000`, `book_version` exists
+in `data/openings.json`, and every amount is a positive integer that stays below
+`MAX_MONEY = max_supply * 100_000_000` when `max_supply` is set (mainnet only;
+testnet and devnet have no supply cap).
 
 ### 5.2 Canonical encoding and hashing
 
 `src/sccp/serialization.py` is the single source of truth:
 
 ```python
+INT_MIN, INT_MAX = -(2**63), 2**64 - 1
+
+def normalize(value):
+    """Type-check, range-check and NFC-normalize a canonical JSON tree."""
+    if value is None or isinstance(value, bool):   # bool before int!
+        return value
+    if isinstance(value, int):
+        if not INT_MIN <= value <= INT_MAX:
+            raise RangeError("integer outside [INT_MIN, INT_MAX]")
+        return value
+    if isinstance(value, str):
+        return unicodedata.normalize("NFC", value)
+    if isinstance(value, list):
+        return [normalize(v) for v in value]
+    if isinstance(value, dict):
+        out = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise TypeError("object keys must be strings")
+            key = unicodedata.normalize("NFC", key)
+            if key in out:
+                raise ValueError(f"duplicate object key after NFC: {key!r}")
+            out[key] = normalize(item)
+        return out
+    raise TypeError(f"unsupported canonical JSON type: {type(value).__name__}")
+
 def canonical_json(obj) -> bytes:
     return json.dumps(
-        obj,
+        normalize(obj),              # this is what rejects floats
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
-        allow_nan=False,
+        allow_nan=False,             # belt and braces; no float survives normalize
     ).encode("utf-8")
 ```
+
+`float`, `Decimal`, `bytes`, `tuple` and `set` are rejected by `normalize`;
+`dict`/`list` subclasses are accepted as their base type. `RangeError` is a
+`ValueError` subclass declared in `src/sccp/errors.py` so callers can catch
+either. Note that `json.dumps(allow_nan=False)` alone does **not** reject finite
+floats such as `1.5`, so the explicit walk is load-bearing and must never be
+dropped for speed.
 
 Rules:
 
 - Only `dict[str, ...]`, `list`, `str`, `int`, `bool`, `None`. Floats are
-  rejected at serialization time (use integer base units and integer seconds).
-  Integers must fit in `[-2**63, 2**64 - 1]`; larger values are rejected.
-- Strings are UTF-8 and normalized to NFC before encoding.
+  rejected by `normalize` before encoding (use integer base units and integer
+  seconds). Integers must fit in `[-2**63, 2**64 - 1]`; larger values are
+  rejected.
+- Strings (values and keys) are UTF-8 and NFC-normalized before encoding. Keys
+  that collide after NFC normalization are rejected rather than silently merged.
+- Object keys are sorted by Unicode code point (`sort_keys=True`), which is
+  stable across CPython versions and platforms.
 - Optional fields are omitted rather than set to `null` when unused.
 - Every signature and hash covers
   `sha256(domain.encode() + b"\x00" + canonical_json(payload))`, where `domain`
   is one of:
   - ledger: `sccp/v1/tx`, `sccp/v1/header`, `sccp/v1/block`, `sccp/v1/challenge`
   - chess: `sccp/v1/game`, `sccp/v1/proof`, `sccp/v1/certificate`,
-    `sccp/v1/result`, `sccp/v1/match`
+    `sccp/v1/result`, `sccp/v1/match`, `sccp/v1/opening`
   - matchmaking: `sccp/v1/beacon`, `sccp/v1/beacon-commit`, `sccp/v1/pair`
   - `sccp/v1/address` for address derivation (see 5.3)
 - Hex digests are lowercase, 32 bytes; signatures are lowercase hex, 64 bytes.
@@ -370,6 +423,10 @@ Rules:
 
 - Exactly one transaction per `(from, nonce)` in the mempool and per chain.
 - Fees are debited from spendable balance, never from bonded balance.
+- `availability(e, ...)` is valid only in blocks whose height falls inside epoch
+  `e - availability_lead`; `reveal(e, ...)` is valid only inside epoch `e - 1`.
+  Both are rejected outside their window even if well formed, which is what makes
+  the beacon's input set a function of the chain alone.
 - `register` requires `bond >= min_bond` and a reserved balance; the bond stays
   owned by the account but is unspendable until unbonding completes.
 - Registration expires after `registration_epochs` unless extended; expired
@@ -380,26 +437,43 @@ Rules:
 
 ### 5.5 Epochs, availability and the beacon
 
-Timeline for epoch `e`:
+Timeline for epoch `e` (`epoch_start_height(e) = e * epoch_length`, genesis at
+height 0; `epoch_end_height(e) = (e + 1) * epoch_length - 1`; and
+`H_e = epoch_start_height(e) - 1` is the last block of `e-1`):
 
 1. During epoch `e-2`, a miner submits
    `availability(e, max_games, commitment)` where
    `commitment = H("sccp/v1/beacon-commit", {address, epoch, nonce})`.
 2. During epoch `e-1`, the miner submits `reveal(e, nonce)`. A reveal is valid
    only if the matching availability tx is in an ancestor block.
-3. At the last block of epoch `e-1`, the beacon for `e` is fixed:
-   `B_e = SHA-256("sccp/v1/beacon" || network || e
-   || block_hash(epoch_start_height(e) - 1)
-   || concat(sorted(commitment || nonce) for valid reveals))`.
-4. On mainnet, mix in drand:
-   `B_e = SHA-256(B_e || drand_signature(round(e)))`. If drand is unavailable,
-   the network falls back to commit-reveal only after `beacon_grace_blocks`; the
-   fallback is logged and exposed in the API.
-5. Matches in epoch `e` use `B_e`. The roster is the set of registered, bonded,
-   non-expired miners at the last block of `e-1` with a valid reveal for `e`.
-6. The drand round is fixed deterministically from the median-time-past of block
-   `epoch_start_height(e) - 1` and stored in the epoch record, so every node
-   fetches and verifies the same signature offline.
+3. The beacon for `e` is a function of `H_e`, its ancestors and (optionally) one
+   drand signature:
+   `digest = SHA256("sccp/v1/beacon" || network || u64(e) || block_hash(H_e)
+   || concat(sorted(commitment || nonce) for valid reveals))`
+   `B_e = SHA256(digest || drand_signature)` when `drand_used = 1`, otherwise
+   `B_e = digest`.
+4. The **first block of epoch `e`** (height `H_e + 1`) declares `beacon_hash = B_e`
+   in its header and, on mainnet, carries `drand_round` and `drand_signature` in
+   its body. Validators recompute `B_e` from the parent hash and the reveal txs
+   in the ancestors; if `drand_used = 1` they also verify the signature against
+   the pinned drand chain key and the round rule below. Later blocks in the epoch
+   must repeat the same `beacon_hash`.
+5. `drand_used = 0` is always valid and drops the mix; it restores at most the
+   last revealer's one bit of influence and never changes the commit-reveal
+   security argument. Waiting for a round to publish is bounded only by the
+   producer's `beacon_grace_blocks` wait budget, which is a **liveness choice,
+   not a consensus rule** — no node rejects a block for `drand_used = 0`.
+6. The drand round is deterministic:
+   `round(e) = mtp(H_e) // drand_period_seconds + drand_round_offset`, where
+   `mtp` is the median of the last 11 timestamps ending at `H_e` and both
+   constants are pinned per chain (`quicknet`: 3 s period, offset 1). `round(e)`
+   is stored in the epoch record, so every node fetches and verifies the same
+   signature offline.
+7. Matches in epoch `e` use `B_e`. The roster is the set of registered, bonded,
+   non-expired miners at `H_e` with a valid reveal for `e`; a miner's quota is
+   the `max_games` it committed to, capped by `rounds_per_epoch`.
+8. Epochs 0 and 1 are not matchable (availability is committed two epochs ahead);
+   the first matchable epoch is 2. Genesis is exempt from all of the above.
 
 Properties and limits:
 
@@ -408,39 +482,56 @@ Properties and limits:
 - The last revealer can choose to reveal or withhold, giving at most one bit of
   influence per epoch. Withholding forfeits that epoch's availability and is
   recorded; repeated withholding blocks future registrations (policy, not
-  consensus). Mainnet mixing with drand removes the bias entirely.
+  consensus). Mixing drand removes that bias; `drand_used = 0` gives it back and
+  is not slashing evidence.
 - Reveals are cheap txs; the mempool prioritises them near epoch boundaries.
 - Beacons are stored per epoch and exposed at `GET /v1/epochs/{e}/beacon` with
-  the reveal set and the block hash used.
+  the reveal set, `drand_used`, `drand_round` and the block hash used.
 
 ### 5.6 Pairing algorithm
 
 `src/sccp/protocol/pairing.py`, pure and deterministic:
 
 ```text
-pair(roster, beacon, round, constraints) -> list[Matchup]
-  candidates = [m for m in roster if available(round, m) and quota(m, round) > 0]
+pair(roster, beacon, round, quotas, cooldowns) -> list[Matchup]
+  candidates = [m for m in roster
+                if quota_left(m) > 0 and not cooldown_blocks(m, round)]
   for m in candidates:
-      score[m] = SHA256("sccp/v1/pair" || beacon || round || m.address)
+      score[m] = SHA256("sccp/v1/pair" || network || beacon || u64(round)
+                        || m.address)
   ordered = sorted(candidates, key=lambda m: (score[m], m.address))
   i = 0
   while i + 1 < len(ordered):
       a, b = ordered[i], ordered[i+1]
-      if violates(a, b):            # same entity/funder/subnet/ASN, recent opponent
+      if violates(a, b):     # same entity/funder/subnet/ASN, or cooldown
           j = first index > i+1 such that swapping b with ordered[j] fixes it
           if j is None: accept the soft violation (liveness over diversity)
           else: ordered[i+1], ordered[j] = ordered[j], ordered[i+1]
-      emit Matchup(a, b)
+      emit Matchup(a, b); quota_left(a) -= 1; quota_left(b) -= 1
       i += 2
   if odd count: last miner sits out (logged)
 ```
 
-- Colour: `SHA256(beacon || "color" || match_id) & 1`.
-- Opening line: `int(SHA256(beacon || "opening" || match_id)) % len(book)`.
-- `match_id = H("sccp/v1/match", {epoch, round, seats_sorted, opening_hash})`.
+- `match_id = H("sccp/v1/match", {network, epoch, round, seats_sorted})` — it does
+  **not** contain the opening, so there is no circular dependency.
+- Opening: `opening_hash = H("sccp/v1/opening", {book_version, line_id, moves})`,
+  where `moves` is the book line's SAN list and `line_id` is its index in the
+  version's book. The line, not just the hash, is carried in the certificate so
+  verifiers can check the replay prefix.
+- Colour: `int.from_bytes(SHA256(beacon || "color" || match_id)[:8], "big") & 1`
+  → 0 means seat A is White. Opening line:
+  `int.from_bytes(SHA256(beacon || "opening" || match_id)[:8], "big") % len(book)`;
+  the chosen line and its `opening_hash` are then recorded in the certificate.
+- `quota_left(m)` starts at `max_games` from `m`'s availability tx (capped by
+  `rounds_per_epoch`) and decreases by one per emitted matchup. One game per
+  miner per round, so a quota of `g` allows at most `g` rounds.
 - Hard constraints: distinct addresses, both in the epoch roster, both with
-  available quota, no repeated pair in the same round. Soft constraints: the
-  diversity heuristics in section 8.3.
+  remaining quota. Soft constraints (may be violated to keep the epoch alive):
+  `opponent_cooldown`, shared funder/subnet/ASN, recent-opponent avoidance; see
+  section 8.3.
+- Greedy pairing is complete for the hard constraints: any miner left over is
+  left over because its quota is exhausted or the roster is odd, never because
+  of a missed swap. Soft-constraint swaps only reorder the same set.
 - Any node can recompute the matchup list from public data; the relay only
   delivers it. A proof whose certificate does not recompute to the same matchup
   is invalid.
@@ -485,9 +576,16 @@ dependency, so it is fully unit-testable.
 
 ```text
 validate_pgn(pgn_text, expected: MatchCertificate, params) -> ParsedGame
-  1. Reject empty input, > max_pgn_bytes, multiple games, non-UTF-8.
-  2. game = chess.pgn.read_game(io.StringIO(pgn_text))
+  1. Reject empty input, > max_pgn_bytes, non-UTF-8.
+     handle = io.StringIO(pgn_text)
+     if chess.pgn.read_game(handle) is None: reject "empty game"
+     if chess.pgn.read_game(handle) is not None: reject "multiple games"
+     (`read_game` consumes exactly one game per call; verified in 1.11.x.)
+  2. handle.seek(0); game = chess.pgn.read_game(handle)
      if game is None or game.errors: reject with the error list.
+     `game.errors` is necessary but not sufficient: the parser silently drops
+     some unparseable tokens (a trailing "Qh9" produced no error at all) and
+     always stops at the first error it does record.
   3. Required tags: Event, Site, Date, Round, White, Black, Result,
      Termination, MatchID, Epoch, RoundNumber, SeatWhite, SeatBlack,
      EngineWhite, EngineBlack, OpeningID, OpeningHash, Rules.
@@ -495,13 +593,17 @@ validate_pgn(pgn_text, expected: MatchCertificate, params) -> ParsedGame
      addresses, engine fingerprints, opening hash, Rules == "chess".
   5. Replay the mainline from chess.Board():
        board = chess.Board()
+       san_list = []
        for move in game.mainline_moves():
-           if board.status() != chess.STATUS_VALID: reject
-           board.push(move)                  # illegal moves raise here
+           if not board.is_legal(move): reject "illegal move at ply N"
+           san_list.append(board.san(move))
+           board.push(move)
            if board.ply() > params.max_plies: reject
-     Variations/comments/clocks are ignored for hashing but preserved in the
-     stored PGN. Proofs reject variations for simplicity; the offline verifier
-     accepts them.
+     `board.push()` does **not** validate legality (it will happily accept
+     `e2e5`), and `board.status()` describes FEN validity, not move legality, so
+     `is_legal` is the gate. Variations/comments/clocks are ignored for hashing
+     but preserved in the stored PGN. Proofs reject variations for simplicity;
+     the offline verifier accepts them.
   6. Opening check: the first len(opening_moves) plies equal the book line
      selected by the beacon; OpeningHash matches.
   7. Termination:
@@ -516,22 +618,29 @@ validate_pgn(pgn_text, expected: MatchCertificate, params) -> ParsedGame
   8. For proofs: require a decisive result and plies >= params.min_plies.
      Draws are valid PGNs but earn no credit.
   9. Canonical hash:
-       san_list = [board.san(m) for m in game.mainline_moves()]  # regenerate
        game_hash = H("sccp/v1/game", {network, start_fen, san_list, result})
+     `san_list` is the replay list built in step 5. Never re-derive SAN from a
+     static root board: `Board.san()` uses the board's current position.
      Raw PGN text, headers, comments, clocks and spacing never enter the hash.
  10. Return ParsedGame(game_hash, pgn_text, san_list, final_board, result,
      termination, tags).
 ```
 
-Implementation gotchas verified against `python-chess` 1.11.x:
+Implementation gotchas verified against `python-chess` 1.11.2:
 
 - `game.board()` returns the **root** board, not the final position. Replay
   `mainline_moves()` and keep your own board.
-- `game.errors` catches illegal SAN, but a game can end legally while its
+- `game.errors` catches most illegal SAN, but a game can end legally while its
   `Result` header lies; always compare the header with `board.outcome()`.
+- `board.push()` does not check legality and does not raise for an illegal move.
+  Use `board.is_legal(move)` before pushing.
 - `board.outcome()` ignores PGN headers entirely.
-- `board.variation_san()` cannot be called after the game is over; generate SAN
-  from the starting board instead.
+- `Board.san(move)` and `Board.variation_san(moves)` are relative to the board's
+  current position; `board.variation_san([])` on a finished position just
+  returns `""`. Build SAN during replay, not from the final board.
+- `read_game` returns `None` for empty or blank input and silently skips junk it
+  cannot interpret, so structural checks (tags, opening, terminal position,
+  result agreement) carry the real weight.
 - Castling rights, en passant, promotions and dead positions are handled by
   `python-chess`; do not duplicate those rules.
 
@@ -652,20 +761,25 @@ verification is therefore infeasible; sampling plus bonds is the design.
 
 A block is valid only if all of the following hold for its proof set:
 
-1. `len(proofs) == k` for the block's declared `wins_required` (genesis is
-   exempt, see 5.11).
+1. `len(proofs) == wins_required` and `wins_required == expected_k(parent)`
+   (genesis is exempt, see 5.11). A miner cannot declare an easier `k` than the
+   schedule dictates.
 2. `block.miner == proof.winner` for every proof; proofs are non-transferable.
 3. Each `proof_id` and `game_hash` is unused in the ancestor chain, the mempool,
    and the block itself.
 4. Both signatures in `start_signatures` and `result_signatures` verify against
-   the certificate seats; seats are distinct addresses.
-5. The certificate recomputes: roster at `epoch_start_height(e)-1`, beacon
-   `B_e`, pairing for `(e, round)`, colours, opening hash, engine fingerprints.
+   the *registered* public keys of the two certificate seats at the proof epoch;
+   the seats are distinct addresses.
+5. The certificate recomputes exactly: roster at `H_e` (last block of `e-1`),
+   beacon `B_e`, pairing for `(e, round)`, colours, `opening_hash`, engine
+   fingerprints. Any mismatch invalidates the proof.
 6. The PGN passes section 5.8, its tags match the certificate, and the declared
-   winner is the actual winner.
-7. `epoch_end_height(e) + claim_window >= block.height`; at least `k` distinct
-   opponents across the claim; no opponent repeated inside `opponent_cooldown`
-   epochs (checked against `MinerStats`).
+   winner is the actual winner (`winner_seat`/`result` must agree: white + `1-0`
+   or black + `0-1`).
+7. Timing and diversity: `epoch_end_height(e) <= block.height <=
+   epoch_end_height(e) + claim_window`; `0 <= round < rounds_per_epoch`; the
+   `len(proofs)` opponents are pairwise distinct; and no winner–opponent pair
+   recurs inside `opponent_cooldown` epochs (checked against `MinerStats`).
 8. The winner is registered, bonded and not banned at the proof epoch.
 9. The coinbase output equals `subsidy(height) + sum(fees)` and pays
    `block.miner`; coinbase value is not spendable until
@@ -673,16 +787,19 @@ A block is valid only if all of the following hold for its proof set:
 10. Proofs are ordered deterministically (by `proof_id`) to make block hashes
     canonical.
 
+Proofs may only reference epochs that have already ended, so a miner cannot
+claim a win from a match that has not been played against the roster it names.
+
 Duplicate handling on reorg: the proof registry is rebuilt from the new
 canonical chain; proofs from orphaned blocks return to the mempool unless their
 game hashes are already used on the winning chain.
 
-**Roster requirement.** A claim needs `k` distinct opponents inside the claim
-window and the pairing rules forbid immediate rematches, so `k = 3` requires at
-least four active miners (testnet `k = 1` requires two). Below that no valid
-blocks can be produced. The protocol stalls rather than lowering `k`
-automatically; the operator must add miners or reset a testnet. Mainnet launch
-therefore depends on demonstrated roster depth (M7).
+**Roster requirement.** A claim needs `k` proofs against `k` pairwise distinct
+opponents inside the claim window (proof rule 7), and one game per miner per
+round, so `k = 3` requires at least four active miners (testnet `k = 1` requires
+two). Below that no valid blocks can be produced. The protocol stalls rather
+than lowering `k` automatically; the operator must add miners or reset a
+testnet. Mainnet launch therefore depends on demonstrated roster depth (M7).
 
 
 ### 5.11 Blocks, state, fork choice and difficulty
@@ -698,6 +815,10 @@ timestamp, epoch, beacon_hash, wins_required (k), seal_bits, seal_nonce, miner
 - `state_root` is a sorted SHA-256 Merkle tree over `address -> account` leaves;
   `roster_root` is the same construction over the epoch's active roster. Both
   are commitments for future light clients and are cheap at prototype scale.
+- `epoch` must equal `height // epoch_length`. `beacon_hash` must equal the
+  epoch's `B_e` (5.5): checked against `block_hash(H_e)` and the reveal set for
+  blocks at the epoch boundary, and against the stored epoch record for the rest
+  of the epoch.
 - `block_hash = H("sccp/v1/header", header)`.
 - Seal: `int(block_hash, 16) < 2 ** (256 - seal_bits)`. With `seal_bits = 0`
   every hash is valid (devnet/testnet speed).
@@ -739,17 +860,31 @@ undo data.
 **Difficulty**
 
 - Retarget every `retarget_interval` (testnet 10, mainnet 40 blocks) using the
-  median time past of the interval.
-- Adjust `seal_bits` by ±1 for fine control, clamped to the network range.
-- Adjust `k` by ±1 for coarse control only at epoch boundaries, clamped to
-  `k_min..k_max`. Never increase `k` while a claim window is open without a
-  grace period of one epoch; proofs already accepted remain valid.
+  median time past of the interval. `retarget_interval` is always a multiple of
+  `epoch_length`, so `k` changes land on epoch boundaries.
+- Actual block spacing is dominated by match throughput, not hashing: a block
+  needs `k` finished games, so `seal_bits` only absorbs the residual. With
+  `seal_bits = 0` (testnet) the seal costs nothing and spacing is whatever the
+  chess takes; that is expected, not a bug.
+- Adjust `seal_bits` by ±1 per retarget for fine control, clamped to the network
+  range (0..32).
+- Adjust `k` by ±1 per retarget for coarse control only at epoch boundaries,
+  clamped to `k_min..k_max`. Never increase `k` while a claim window is open
+  without a grace period of one epoch; proofs already accepted remain valid.
+- `block_work` sums `2**seal_bits + k * 65536` per block, which is a documented
+  v1 approximation for comparing chains with mixed `k`; it is monotone in both
+  knobs and identical for well-behaved chains. Revisit only if fork-choice
+  pathologies appear in the adversarial suite.
 - Store the retarget history for debugging; expose at `GET /v1/difficulty`.
 
 **Subsidy and fees**
 
-- `subsidy(height) = 50 coins >> (height // halving_interval)` (mainnet), capped
-  at `max_supply`; testnet uses a flat 50 coins.
+- All amounts in base units: `subsidy(height) = (50 * 100_000_000) >>
+  (height // halving_interval)` on mainnet — eras of 210,000 blocks at 600 s,
+  halving each time, converging to the 21M coin cap; testnet pays a flat 50 coins
+  per block with no cap.
+- If `max_supply` is set, the scheduled subsidy is clamped to
+  `max_supply * 100_000_000 - total_supply` so the cap can never be exceeded.
 - Coinbase = subsidy + all fees in the block; one output to the block miner.
 - Maturity prevents spending until `height + coinbase_maturity`.
 
@@ -797,7 +932,7 @@ sccp miner run --network testnet --key alice.key --relay URL
              [--engine-path PATH | --engine-profile stockfish-17|stockfish-11|mock]
              [--nodes-per-move N] [--depth D] [--max-games-per-epoch N]
 sccp miner register --key alice.key --bond 10 --endpoint https://...
-sccp miner availability --key alice.key --epochs 3 --max-games 3
+sccp miner availability --key alice.key --epoch 42 --max-games 3
 sccp chain info | blocks | account ADDRESS | verify
 sccp verify pgn FILE [--reference-engine PATH] [--network testnet]
 sccp verify proof FILE [--network testnet]
@@ -902,8 +1037,9 @@ Deliverables:
 
 - `src/sccp/protocol/models.py`: pydantic models for `Availability`, `Reveal`,
   `Matchup`, `MatchCertificate`, `GameResult`, `WinProof`, `Beacon`.
-- `src/sccp/protocol/beacon.py`: commit/reveal derivation, drand mixing,
-  fallback rules, reveal-set serialization, validation of a beacon from public
+- `src/sccp/protocol/beacon.py`: commit/reveal derivation, optional drand mix
+  (`drand_used`, round derivation from MTP, signature verification against the
+  pinned chain key), reveal-set serialization, validation of a beacon from public
   data.
 - `src/sccp/protocol/pairing.py`: deterministic pairing with constraints and
   quotas; `verify_pairing(match, roster, beacon)`.
@@ -925,6 +1061,10 @@ Acceptance criteria:
   one reveal changes the pairing set.
 - Withholding a reveal is detectable; a commit without a reveal removes the
   miner from that epoch and is recorded.
+- Beacons with `drand_used = 0` and `drand_used = 1` are both accepted
+  deterministically; a forged round, a wrong signature or a `drand_used` flag
+  without a signature fails verification. `round(e)` recomputes from the same
+  MTP on every platform.
 - A complete 2-miner mock-engine match over the ASGI relay produces a
   certificate with both signatures and a `WinProof` that passes verification.
 - Tampering tests fail verification: swapped colours, changed opening, swapped
@@ -967,8 +1107,10 @@ Acceptance criteria:
   withdrawal fails, late withdrawal succeeds.
 - Coinbase is unspendable until maturity; subsidy halves at the configured
   height; fees are paid exactly once.
-- A block with fewer/more than `k` proofs, a proof from another miner, a reused
-  game hash, or a stale epoch is rejected.
+- A block with fewer/more than `k` proofs, a `wins_required` that disagrees with
+  the schedule, a proof from another miner, a reused game hash, a claim outside
+  the window, or a `beacon_hash` that does not match the epoch's `B_e` is
+  rejected.
 - Fork choice picks the heaviest chain; a 3-block reorg restores state and
   returns orphaned proofs to the mempool.
 - Restarting the node from SQLite reproduces the tip, balances and registries
@@ -1125,7 +1267,8 @@ Stockfish, so CI installs a pinned binary in a separate job).
   checksums), genesis hashes, a known PGN → game hash pair.
 - **Property tests** (Hypothesis): canonical JSON round-trip and sort stability;
   bech32 encode/decode; address validation; `apply_tx` never creates coins;
-  pairing never duplicates a seat; merkle proofs verify for random sets; reorg to
+  pairing never duplicates a seat; merkle roots are independent of insertion
+  order for the same key/value set and change when any value changes; reorg to
   any shorter fork restores the pre-fork state; `validate_pgn` never raises a
   non-`PgnValidationError` for hostile input.
 - **Golden-chain tests**: a scripted 20-block chain committed as JSON; any
@@ -1177,7 +1320,7 @@ Full version in `docs/THREAT_MODEL.md` at M5.
 | Fabricated game | Dual signatures, PGN replays legally, opening matches beacon, quality policy | Novel legal-looking fabrication not caught by CPL thresholds |
 | Weak-loser self-play | Both sides checked against a reference profile, bonds, challenges | Two strong engines pass; cost is the only defense |
 | Sybil pairing | Identity-diverse pairing heuristics, bond cost, funding/endpoint clustering | Determined attacker with distinct infrastructure |
-| Opponent shopping | Commit-reveal + drand beacon, pairing recomputed by every node | Last-revealer bias (removed by drand mixing) |
+| Opponent shopping | Commit-reveal + optional drand beacon, pairing recomputed by every node | Last-revealer bias when `drand_used = 0` (one bit, no slashing evidence) |
 | Matchmaker censorship | Any node recomputes matchups; miners can submit proofs earned elsewhere | Liveness only if a relay exists |
 | Replayed game | `game_hash` registry, `match_id` registry, proof ids | Reorg window reuse handled by rebuilding registries |
 | Invalid block | Full validation on receipt, headers-first sync, peer scoring | Bug in validation code |
@@ -1200,24 +1343,31 @@ Full version in `docs/THREAT_MODEL.md` at M5.
 
 All numbers are **estimates to be validated by benchmarks**, not claims.
 
-Assumptions: `k = 3` wins/block, 60% draw rate (so ~5 games per win), ~80 plies
-per game, `nodes_per_move = 250_000`, 600 s target block time, a modern desktop
-core at ~1–5 Mnodes/s for a pinned Stockfish at a shallow node limit.
+Assumptions: `k = 3` wins/block, ~60% draw rate with the remaining games split
+evenly (so ~20% win rate per seat), ~80 plies per game, `nodes_per_move =
+250_000`, 600 s target block time, a modern desktop core at ~1–5 Mnodes/s for a
+pinned Stockfish at a shallow node limit.
 
-- Games per block: `k / (1 - draw_rate) / (1 - rematch_loss)` ≈ 15.
-- Engine work per block: 15 games × 80 plies × 0.25 Mnodes ≈ 300 Mnodes ≈ 2–5
-  CPU-minutes at 1–2 Mnodes/s. That is a few cores keeping up with a 10-minute
-  block, which is the intended shape: mining is parallel and CPU-bound, not a
-  lottery of wasted hashes.
+- Games per block: a miner needs `k` wins, wins arrive at ~20% per game and
+  opponents must be distinct, so `k / 0.2 ≈ 15` games per block. The naive
+  `k / (1 - draw_rate) = 7.5` undercounts because draws and losses both consume
+  an opponent slot.
+- Engine work per claim: 15 games × 80 plies × 0.25 Mnodes ≈ 300 Mnodes for the
+  winner's own engine, and the same again spread over its 15 opponents (~600
+  Mnodes of CPU in total). At 1–2 Mnodes/s that is 2.5–5 CPU-minutes of
+  wall-clock work for the winner. A few cores keep up with a 10-minute block,
+  which is the intended shape: mining is parallel and CPU-bound, not a lottery
+  of wasted hashes.
 - Verification: one sampled game per block at depth 14 is roughly 10–40 s of a
   single core; at 5% sampling the expected work is far below that. Full audit of
   a history costs `games × analysis_time`, so consumers never do it inline.
 - Draw rate matters more than engine strength: at 80% draws the cost per block
-  doubles. This is why the opening book is diverse, the pairing rotates, and
-  draws earn nothing (miners are incentivised to play on).
-- Reward variance: a miner with `wins_required = k` games must win `k` in a row
-  against comparably strong opponents; with a 50% win rate, expected blocks per
-  miner is high and variance is punishing. Mitigation ideas in open questions.
+  more than doubles. This is why the opening book is diverse, the pairing
+  rotates, and draws earn nothing (miners are incentivised to play on).
+- Reward variance: a miner must win `k` of ~15 matches inside the claim window
+  against comparably strong opponents; with a 20% win rate that is achievable
+  but streaky, so variance is punishing for small miners. Pooling and delegated
+  play are open questions (section 10, item 11).
 
 ## 10. Open questions
 

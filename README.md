@@ -113,14 +113,17 @@ reorganisation, so games orphaned by a reorg can be mined again.
 ### 3.2 Unpredictable, unbiasable matchmaking
 
 - Miners commit to a random nonce in epoch `e-2` and reveal it in epoch `e-1`.
-- The epoch beacon is
-  `B_e = SHA-256("sccp/v1/beacon" || network || e || block_hash(epoch_start(e)-1)
-  || sorted(commitment || nonce) || drand_signature(round(e)))`
-  (commit-reveal only on testnet).
+- The epoch beacon is derived from the last block of `e-1` (`H_e`) and the valid
+  reveals, and optionally mixed with one drand signature:
+  `digest = SHA-256("sccp/v1/beacon" || network || e || block_hash(H_e)
+  || sorted(commitment || nonce))`, then `B_e = SHA-256(digest || drand_sig)`
+  when `drand_used = 1`, else `B_e = digest`. The first block of epoch `e`
+  declares `B_e` and (on mainnet) carries the signature; `drand_used = 0` is
+  always valid, so a drand outage cannot halt the chain.
 - Pairings are a **deterministic function** of the active roster and `B_e`:
-  every miner is ranked by `SHA-256(B_e || "pair" || address)`, the sorted list
-  is paired adjacent, and colour plus opening line are drawn from the same
-  beacon.
+  every miner is ranked by `H("sccp/v1/pair", {network, epoch, round, beacon,
+  address})`, the sorted list is paired adjacent, and colour plus opening line
+  are drawn from the same beacon.
 - Because the beacon is unknown when a miner commits, nobody can choose an
   opponent. Because pairing is deterministic, any node can verify that a claimed
   match was the one the protocol assigned. A relay that deviates produces proofs
@@ -230,9 +233,11 @@ All values above are provisional and live in `src/sccp/config.py`.
 ├── pyproject.toml                # packaging, deps, ruff/mypy/pytest config
 ├── Makefile                      # test / lint / typecheck / devnet
 ├── docker-compose.yml            # node + relay + miners (M6)
+├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # this project's plan
 │   ├── PROTOCOL.md               # normative wire formats (written in M1)
+│   ├── RUN_A_TESTNET_MINER.md    # operator guide (written in M6)
 │   └── THREAT_MODEL.md           # security analysis (written in M5)
 ├── data/openings.json            # curated, balanced opening lines
 ├── genesis/{testnet,mainnet}.json
@@ -331,8 +336,9 @@ Detailed tasks, file-level deliverables and acceptance criteria are in
   cannot fork the chain over a 3-centipawn disagreement.
 - **Sybil resistance is economic.** Bonds, diversity constraints and detection
   raise the cost of self-play; they do not make it impossible.
-- **Reward variance is high.** Winner-take-all with ~50% draws means individual
-  miners may wait a long time between payouts.
+- **Reward variance is high.** Draws earn nothing, so a miner wins maybe one
+  game in five against a peer; individual miners may wait a long time between
+  payouts, and pooling is an open question.
 - **Testnet coins have no value.**
 - **License.** This repository is released under the Unlicense. Stockfish is
   GPLv3; this project invokes engine binaries as separate processes and never
