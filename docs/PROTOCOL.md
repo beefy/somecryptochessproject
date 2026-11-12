@@ -110,9 +110,9 @@ must agree with it.
 | Anything else (time forfeit, abandoned, unterminated) | rejected | rejected |
 
 **M2 limitation.** There is no chess clock in the implemented protocol yet, so a
-time forfeit cannot be represented. The planned two-clock time control and
-bonded timeout settlement are specified in
-[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1; this table will
+time forfeit cannot be represented. The planned clock is one fixed 30+0 control
+for every match, with bonded timeout settlement; it is specified in
+[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1. This table will
 gain `time_forfeit` when that milestone lands.
 
 Notes:
@@ -298,7 +298,9 @@ colour draw matches the beacon, and `match_id` recomputes from the seats.
 
 The planned clock extension adds `time_control = {initial_ms, increment_ms}` to
 the certificate and its signed payload, and adds `time_forfeit` to
-`termination`; M2 emits neither. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
+`termination`; M2 emits neither. Every match uses one protocol-fixed **30+0**
+control (`initial_ms = 1_800_000`, `increment_ms = 0`); matchmaking never offers
+or accepts a per-match choice. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
 
 ### 8.2 Result attestation
 
@@ -353,7 +355,9 @@ timeout claim are described in
 
 The M2 move body is exactly `{seat, san}`; the relay verifies the turn and SAN
 legality, but the move carries no ply or signature. The planned clocked move
-body is `{seat, ply, san, signature}` signed with `sccp/v1/move`; moves remain
+body is `{network, match_id, seat, ply, san, clock_ms, signature}`; `clock_ms`
+is relay-computed display data and is not signed. The signed payload is
+`{network, match_id, seat, ply, san}` under `sccp/v1/move`; moves remain
 off-chain and only the final proof (or timeout claim) reaches a block. Because
 each move is signed, a checkmate can later be proven without the loser's result
 signature. See `IMPLEMENTATION_PLAN.md` section 5.7.1.

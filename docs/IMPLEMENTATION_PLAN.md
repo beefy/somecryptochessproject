@@ -88,7 +88,7 @@ plus tests.
 | D12 | HTTP/JSON API + simple gossip | Debuggable; enough for a testnet; P2P stack is a later milestone |
 | D13 | Pinned engine profiles per network | Makes quality checks reproducible and prevents "unknown engine" ambiguity |
 | D14 | Canonical game hash excludes PGN metadata | Same moves = same game, regardless of formatting/comments/clocks |
-| D15 | Two-clock Fischer time control with bonded timeout settlement | Stalls cannot deny a win; clocks are witness-signed, never wall time |
+| D15 | Fixed 30+0 Fischer clock for every match, with bonded timeout settlement | Matchmaking cannot offer odd controls; stalls cannot deny a win; clocks are witness-signed, never wall time |
 
 ---
 
@@ -259,8 +259,6 @@ Additional constants (defaults, all overridable per network):
 | `beacon_grace_blocks` | 2 | 6 | Producer wait budget for the drand round (not consensus) |
 | `drand_chain` | — | `quicknet` | Beacon source on mainnet |
 | `quality_sample_rate` | 0 | 50 | Per-mille of proofs re-analysed |
-| `initial_clock_ms` | 300,000 | 600,000 | Starting clock per seat |
-| `increment_ms` | 1,000 | 2,000 | Fischer increment per accepted move |
 | `lag_grace_ms` | 250 | 250 | Network-jitter credit per move |
 | `timeout_dispute_window` | 2 blocks | 6 blocks | Time to answer a timeout claim |
 | `min_timeout_bond` | 1 coin | 10 coins | Claimant bond |
@@ -269,6 +267,11 @@ Additional constants (defaults, all overridable per network):
 | `max_block_bytes` | 1 MiB | 1 MiB | Hard block size |
 | `max_pgn_bytes` | 256 KiB | 256 KiB | PGN size cap |
 | `max_tx_bytes` | 64 KiB | 64 KiB | Transaction size cap |
+
+For v1 the chess clock is not a network parameter or a matchmaking option.
+`FIXED_TIME_CONTROL` in `src/sccp/protocol/clocks.py` is the protocol constant
+`{initial_ms: 1_800_000, increment_ms: 0}` (30+0). Every network, including
+devnet, uses it; a certificate carrying any other control is invalid.
 
 `devnet` reuses the testnet parameter set with `epoch_length = 1`,
 `target_block_seconds = 1`, `seal_bits = 0`, `k = 1`, `min_bond = 0`,
@@ -574,12 +577,15 @@ A match is one game. The relay orchestrates rounds, but every step is signed so
 the transcript is self-contained.
 
 1. **Start commitment.** The relay sends each seat the matchup, colours, opening
-   line, time control and `match_id`. Each seat signs
+   line, protocol-fixed 30+0 time control and `match_id`. Seats do not choose or
+   negotiate the control. Each seat signs
    `H("sccp/v1/certificate", {match_id, epoch, round, seats, colors,
    opening_hash, engine_fingerprints, time_control})` and sends it to the relay
    and the peer.
-2. **Play.** A move message is `{match_id, seat, ply, san, signature}`, signed
-   with `H("sccp/v1/move", {network, match_id, seat, ply, san})`. The relay
+2. **Play.** A move message is
+   `{network, match_id, seat, ply, san, clock_ms, signature}`, signed with
+   `H("sccp/v1/move", {network, match_id, seat, ply, san})`; `clock_ms` is
+   relay-computed display data and is not signed. The relay
    forwards signed moves and verifies the seat's signature, turn and SAN legality
    before applying them; it also deducts the mover's clock as described in 5.7.1.
    The engine miner validates every incoming move with
@@ -617,25 +623,36 @@ require the stalling seat's cooperation.
 payload. Bounds are `initial_ms >= 1000`, `increment_ms >= 0`, both multiples of
 1000 so the PGN `TimeControl` tag is lossless, and
 `initial_ms + increment_ms * max_plies <= MAX_CLOCK_MS` (24 hours).
-`TerminationValue` gains `time_forfeit`. New matches must have a time control;
+`TerminationValue` gains `time_forfeit`. New matches all use the fixed control;
 the unclocked M2 format is kept only for replaying old testnet fixtures and is
 rejected by mainnet policy. This is a wire-format revision: bump the protocol
 and genesis version rather than mixing M2 and clocked certificates in one match.
-The time control is network policy, not a free per-match choice: `NetworkParams`
-fixes `initial_clock_ms` and `increment_ms` (no per-match menu in v1), so a
-colluding pair cannot pick a one-second game to farm low-ply forfeits.
+
+**One fixed control, no negotiation.** For v1 the protocol constant
+`FIXED_TIME_CONTROL` is exactly **30+0**: `initial_ms = 1_800_000`,
+`increment_ms = 0` (30 minutes per seat, no increment). Matchmaking never asks
+either seat to choose or accept a time control, and `Matchup` has no
+time-control field. The certificate is built from `FIXED_TIME_CONTROL`; both
+seats sign it, and a verifier rejects any certificate whose `time_control`
+differs from the protocol-fixed 30+0. A per-match menu would be exploitable: a
+colluding pair could request an unusual control, accept it with their other
+agent, and farm low-ply forfeits or force a disadvantage on an honest opponent.
+A single fixed control removes that negotiation surface, keeps `clock_evidence`
+rules uniform, and makes the 30 minutes long enough that ordinary network jitter
+cannot decide a game. Zero increment also avoids an increment-after-flag edge
+case and keeps clock arithmetic exact: a player either has time or is flagged.
 
 **Two clocks.** The session stores `white_ms`, `black_ms`, and
 `turn_started_at_ms`. Both clocks start at `initial_ms` when the second start
 signature activates the session. Only the side to move's clock runs. On each
 accepted move the relay deducts `now - turn_started_at_ms` from the mover,
-rejects a move if the result is `<= 0`, adds `increment_ms`, and switches the
-turn. The relay's monotonic clock is authoritative for live play; client
-timestamps are display hints and are never trusted. A small `lag_grace_ms`
-(default 250, maximum 1000) is granted once per move to absorb network jitter;
-it is relay policy and never enters the game hash. When a clock reaches zero
-before a legal move, the match ends immediately with the opponent winning on
-time. If the opponent has insufficient mating material
+rejects a move if the result is `<= 0`, adds `increment_ms` (zero in v1),
+and switches the turn. The relay's monotonic clock is authoritative for live
+play; client timestamps are display hints and are never trusted. A small
+`lag_grace_ms` (default 250, maximum 1000) is granted once per move to absorb
+network jitter; it is relay policy and never enters the game hash. When a clock
+reaches zero before a legal move, the match ends immediately with the opponent
+winning on time. If the opponent has insufficient mating material
 (`Board.is_insufficient_material()`), the result is a draw instead, matching
 FIDE's flag-fall rule. The legacy `timeout_seconds` inactivity reaper must not
 abandon an ACTIVE clocked session before its clock flags; it may only reap
@@ -648,7 +665,7 @@ needs to settle the final result or a timeout claim. A move becomes:
 
 ```json
 {"network": "testnet", "match_id": "hex", "seat": "sccpt1...", "ply": 17,
- "san": "Nf3", "clock_ms": 594120, "signature": "hex"}
+ "san": "Nf3", "clock_ms": 1794120, "signature": "hex"}
 ```
 
 The signature covers `H("sccp/v1/move", {network, match_id, seat, ply, san})`
@@ -661,7 +678,7 @@ flag receipt when a clock reaches zero:
 ```json
 {"kind": "move", "match_id": "hex", "ply": 17, "seat": "sccpt1...",
  "san": "Nf3", "received_at_ms": 1760000000123,
- "white_ms": 594120, "black_ms": 600000,
+ "white_ms": 1794120, "black_ms": 1800000,
  "witnesses": [{"witness": "sccpt1...", "signature": "hex"}]}
 
 {"kind": "flag", "match_id": "hex", "ply": 87, "seat": "sccpt1...",
@@ -735,11 +752,11 @@ recorded as residual risk, but it is strictly stronger than today's "abandon and
 hope": the stalling seat either moves or forfeits, and the winner can settle
 without its signature.
 
-**PGN and hashing.** Clocked PGNs carry `TimeControl` (seconds, e.g. `600+2`)
-and optional `%clk` annotations for display. `TimeControl` is bound to the
-certificate by the verifier; `%clk` values and receipt timestamps are excluded
-from `game_hash`, exactly like comments. The canonical game hash remains
-`(network, start_fen, san_list, result)`.
+**PGN and hashing.** Clocked PGNs carry `TimeControl` (seconds, fixed
+`1800+0`) and optional `%clk` annotations for display. `TimeControl` is bound to
+the certificate by the verifier; `%clk` values and receipt timestamps are
+excluded from `game_hash`, exactly like comments. The canonical game hash
+remains `(network, start_fen, san_list, result)`.
 
 **Tests.** Unit tests cover clock arithmetic (increment, lag grace, immediate
 flag, draw on insufficient material), certificate `time_control` binding,
@@ -778,8 +795,7 @@ validate_pgn(pgn_text, expected: MatchCertificate, params,
      EngineWhite, EngineBlack, OpeningID, OpeningHash, Rules, TimeControl.
   4. Tags must match `expected` exactly: match id, epoch, round, seat
      addresses, engine fingerprints, opening hash, Rules == "chess", and
-     TimeControl rendered from the certificate's `initial_ms`/`increment_ms`
-     as seconds (`600+2`, or `600+0`).
+     TimeControl exactly `1800+0` (30 minutes, no increment).
   5. Replay the mainline from chess.Board():
        board = chess.Board()
        san_list = []
@@ -948,11 +964,11 @@ verification is therefore infeasible; sampling plus bonds is the design.
   "low_ply": false,
   "opening": {"book_version": "dev-1", "line_id": 17, "hash": "hex"},
   "pgn": "[Event ...] ...",
-  "certificate": {"time_control": {"initial_ms": 600000, "increment_ms": 2000},
+  "certificate": {"time_control": {"initial_ms": 1800000, "increment_ms": 0},
                   "start_signatures": {"white": "hex", "black": "hex"},
                   "result_signatures": {"white": "hex", "black": "hex"}},
   "clock_evidence": {
-    "time_control": {"initial_ms": 600000, "increment_ms": 2000},
+    "time_control": {"initial_ms": 1800000, "increment_ms": 0},
     "final": {"kind": "flag", "seat": "sccpt1...", "ply": 87,
               "received_at_ms": 1760000000456, "white_ms": 42120,
               "black_ms": 0,
@@ -993,7 +1009,7 @@ A block is valid only if all of the following hold for its proof set:
    carry one result signature when rule 12 is satisfied.
 5. The certificate recomputes exactly: roster at `H_e` (last block of `e-1`),
    beacon `B_e`, pairing for `(e, round)`, colours, `opening_hash`, engine
-   fingerprints and `time_control` equal to the network's configured control.
+   fingerprints, and `time_control` equal to the protocol-fixed 30+0 control.
    Any mismatch invalidates the proof.
 6. The PGN passes section 5.8, its tags match the certificate, and the declared
    winner is the actual winner (`winner_seat`/`result` must agree: white + `1-0`
@@ -1339,8 +1355,9 @@ Deliverables:
   ordering, expiry, rebroadcast on reorg.
 - `src/sccp/chain/difficulty.py`: retarget rules and clamps.
 - `src/sccp/chain/storage.py`: SQLite schema, WAL mode, snapshots, migrations.
-- `src/sccp/protocol/clocks.py`: `TimeControl`, two-clock arithmetic, signed
-  move/clock-receipt models and the `clock_evidence` verifier from 5.7.1.
+- `src/sccp/protocol/clocks.py`: `TimeControl`, the `FIXED_TIME_CONTROL`
+  constant (30+0), two-clock arithmetic, signed move/clock-receipt models and
+  the `clock_evidence` verifier from 5.7.1.
 - `src/sccp/protocol/models.py`: add `TimeControl` to `MatchCertificate`,
   `time_forfeit` to `TerminationValue`, and the `ClockEvidence`/`TimeoutClaim`
   types, plus `WinProof.move_evidence` for the refused-checkmate path.
@@ -1379,9 +1396,12 @@ Acceptance criteria:
   exactly.
 - `sccp devnet up --miners 4 --blocks 10 --engines mock` produces 10 valid
   blocks and a per-account balance ledger that sums to the subsidy.
-- Two clocks follow Fischer rules exactly: only the side to move loses time,
-  increments apply after a legal move, a flag ends the game immediately, and
-  insufficient mating material turns a flag into a draw.
+- Two clocks follow the fixed 30+0 control exactly: both start at 30:00, only
+  the side to move loses time, v1 applies no increment, a flag ends the game
+  immediately, and insufficient mating material turns a flag into a draw.
+- A certificate whose `time_control` is not the protocol-fixed
+  `{initial_ms: 1_800_000, increment_ms: 0}` is rejected even when both seats
+  signed it, and the matchmaking API exposes no time-control parameter.
 - A losing seat that stops responding cannot deny the win: a co-signed time
   forfeit proof passes, and a bonded `timeout_claim` finalises after its dispute
   window when the accused does not produce a timely signed move. A checkmated
@@ -1601,7 +1621,7 @@ Full version in `docs/THREAT_MODEL.md` at M5.
 | Sybil pairing | Identity-diverse pairing heuristics, bond cost, funding/endpoint clustering | Determined attacker with distinct infrastructure |
 | Opponent shopping | Commit-reveal + optional drand beacon, pairing recomputed by every node | Last-revealer bias when `drand_used = 0` (one bit, no slashing evidence) |
 | Matchmaker censorship | Any node recomputes matchups; miners can submit proofs earned elsewhere | Liveness only if a relay exists |
-| Loser stalls to deny a win | Two clocks, immediate forfeit, signed-move checkmate proof, bonded claim with dispute window | Clock receipts trust bonded witnesses; mainnet quorum |
+| Loser stalls to deny a win | Fixed 30+0 two clocks, immediate forfeit, signed-move checkmate proof, bonded claim with dispute window | Clock receipts trust bonded witnesses; mainnet quorum |
 | Forged timeout | Signed receipts, monotonic plies, witness quorum, later-move dispute, claimant bond | Colluding witness quorum can still fabricate a flag |
 | Replayed game | `game_hash` registry, `match_id` registry, proof ids | Reorg window reuse handled by rebuilding registries |
 | Invalid block | Full validation on receipt, headers-first sync, peer scoring | Bug in validation code |
@@ -1615,8 +1635,8 @@ Full version in `docs/THREAT_MODEL.md` at M5.
 - Resistance to a well-funded attacker running honest strong engines; the design
   makes cheating *cost as much as competing honestly*, not impossible.
 - Sybil resistance without stake: identity is economic, not biometric.
-- Human tournament integration; clock support is base+increment only (no delay,
-  berserk or increment caps), and moves stay off-chain.
+- Human tournament integration; v1 is fixed 30+0 with no delay, increment,
+  berserk or per-match negotiation, and moves stay off-chain.
 - Sub-second trustless clocks: consensus verifies witness-signed receipts, not
   wall time. Mainnet requires a three-witness quorum; colluding witnesses remain
   a residual risk.

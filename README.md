@@ -21,9 +21,11 @@ reward.
 
 > **Known M2 gap: no chess clock.** The relay's `timeout_seconds` only abandons
 > an inactive session; it does not award a win. A losing player can therefore
-> stall and deny the opponent a proof. The planned two-clock time control,
-> bonded timeout settlement and signed-move checkmate proof are specified in
-> [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md) section 5.7.1.
+> stall and deny the opponent a proof. The planned clock is a single fixed
+> **30+0** control for every match, fixed by the protocol rather than
+> negotiated in matchmaking, with bonded timeout settlement and a signed-move
+> checkmate proof. See [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md)
+> section 5.7.1.
 
 > **Naming.** The repository and project name is `somecryptochessproject`. The
 > Python package and console command use the short form `sccp` (import `sccp`,
