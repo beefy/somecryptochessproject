@@ -20,6 +20,12 @@ resign.
   human runs out of time, a verified `TimeoutClaim` from the opponent.
   `--relay/--key` instead takes a seat on a relay that is already serving.
   `tests/unit/test_play_miner.py` drives the loop headlessly with a fake clock.
+- `scripts/export_block_games.py`: fetch a node's tip block (or the block given
+  by `--block`, a height or hash), replay every proof PGN against its
+  certificate, and write one `.pgn` per game plus a `manifest.json` with the
+  block, proof and match identifiers. The export refuses a PGN that does not
+  reproduce the proof's game hash, result, winner or ply count.
+  `tests/unit/test_export_block_games.py` drives it through the node API.
 - `RelayClient.resign` posts `POST /v1/matches/{id}/resign` and returns the
   updated `MatchView`, so a client can end its own game on the relay.
 
