@@ -7,6 +7,15 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- `opponent_cooldown` is now `0` on testnet (and therefore devnet), which
+  disables the on-chain rematch rule there while mainnet keeps its cooldown of
+  `4`. A small test roster can settle every decisive game it plays instead of
+  stranding all but the first proof of an epoch; a two-miner testnet previously
+  stalled after its first proof block because every later pairing was rejected
+  with "played ... in epoch ...; the cooldown is 1 epochs".
+
 ## [0.9.3] - 2026-11-12
 
 A patch release: the missing-chain-database error hint now shows the command

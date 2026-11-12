@@ -459,18 +459,19 @@ given mock opponent replay the same moves.
 `--on-chain` is devnet-only. The first run bootstraps `--chain-dir` (default
 `./data-play`); later runs **resume that chain** at its next epoch, and
 `--games N` plays several games in one sitting. `--fresh` is the explicit reset.
-The chain has three funded opponent miners, so consecutive proofs do not trip the
-devnet `opponent_cooldown`; `--color auto` takes whichever seat the pairing deals
-you. When the game ends the script co-signs the result with the engine, turns the
-relay transcript into a `WinProof` and mines it with the production block
-builder; the final report prints the block height, proof id and the `node run`
-command that serves the chain. The mined block also carries the availability and
-reveal transactions that make the *next* game's epoch matchable. A draw, a time
-forfeit (the claim-transaction path is not wired into this demo), a game under
-devnet's 20-ply minimum, or a result the engine will not co-sign produces no
-block, and the report says why. Opponent strength is irrelevant to that rule: a
-loss to a strong engine still mines the winner's proof, while a draw or a flag
-has no ordinary co-signed winner.
+The chain has three funded opponent miners, so the demo keeps the shape of a
+mainnet roster; test networks disable the `opponent_cooldown`, so consecutive
+proofs are never blocked on a rematch. `--color auto` takes whichever seat the
+pairing deals you. When the game ends the script co-signs the result with the
+engine, turns the relay transcript into a `WinProof` and mines it with the
+production block builder; the final report prints the block height, proof id and
+the `node run` command that serves the chain. The mined block also carries the
+availability and reveal transactions that make the *next* game's epoch
+matchable. A draw, a time forfeit (the claim-transaction path is not wired into
+this demo), a game under devnet's 20-ply minimum, or a result the engine will not
+co-sign produces no block, and the report says why. Opponent strength is
+irrelevant to that rule: a loss to a strong engine still mines the winner's
+proof, while a draw or a flag has no ordinary co-signed winner.
 
 `--json` works on every command (`sccp --json chain info`, `sccp --json devnet
 up`, ...) and prints one machine-readable document; `miner run --iterations N`

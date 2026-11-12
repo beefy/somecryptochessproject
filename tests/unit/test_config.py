@@ -45,6 +45,13 @@ def test_amounts_are_integer_base_units() -> None:
     assert TESTNET.max_money is None
 
 
+def test_only_mainnet_enforces_the_opponent_cooldown() -> None:
+    """Test networks let a small roster rematch; mainnet keeps the cooldown."""
+    assert TESTNET.opponent_cooldown == 0
+    assert DEVNET.opponent_cooldown == 0
+    assert MAINNET.opponent_cooldown == 4
+
+
 def test_coins_to_units() -> None:
     assert coins_to_units(0) == 0
     assert coins_to_units(21_000_000) == 2_100_000_000_000_000

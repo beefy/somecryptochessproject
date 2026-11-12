@@ -1025,7 +1025,8 @@ height `h` inside epoch `E`, the block builder and validators require:
 - `h` is after the epoch's end;
 - `h <= epoch_end + claim_window`;
 - the opponent has not already appeared in another proof in this block;
-- the winner has not played that opponent within `opponent_cooldown` epochs;
+- the winner has not played that opponent within `opponent_cooldown` epochs (a
+  cooldown of `0`, as on testnet and devnet, disables this rule);
 - `low_ply` exactly matches `plies < min_plies`;
 - the proof's game hash and proof id are not already on the chain;
 - the block has exactly `wins_required` proofs (or zero during bootstrap).
@@ -1488,8 +1489,9 @@ Sybil resistance is economic, not cryptographic:
   relay-configured rosters, so a cluster may be less likely to be paired
   internally when honest miners are available. The on-chain roster does not
   commit this metadata, so the rule is not enforced by consensus.
-- **Opponent cooldown.** A winner cannot repeatedly claim against the same
-  opponent within the cooldown window.
+- **Opponent cooldown.** On mainnet a winner cannot repeatedly claim against the
+  same opponent within the cooldown window; test networks set the cooldown to
+  zero so a small roster stays live.
 - **Unique games.** A game can only be claimed once, so a fixed script cannot
   be replayed across many blocks.
 

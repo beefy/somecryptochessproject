@@ -158,12 +158,12 @@ OPPONENT_SEED: Final = "a1" * 32
 """Demo seed of the engine miner's seat in solo mode."""
 
 CHAIN_OPPONENT_SEEDS: Final = ("a1" * 32, "a2" * 32, "a3" * 32)
-"""Three chain opponents, so consecutive games are not the same pairing.
+"""Three chain opponents, so the demo mirrors a mainnet-sized roster.
 
-Devnet enforces an ``opponent_cooldown`` of one epoch. With a single opponent a
-second proof would be rejected, because the next game's epoch is always only one
-block after the previous proof. Rotating distinct, funded opponents lets a
-single chain host any number of games.
+Test networks disable ``opponent_cooldown``, but rotating distinct, funded
+opponents keeps the demo chain close to the shape mainnet enforces -- no two
+consecutive proofs recycle one adversary -- and gives ``--color`` a choice of
+seats.
 """
 
 WITNESS_SEED: Final = "c0" * 32
@@ -944,8 +944,8 @@ def _seat_matchup(
     if fallback is not None:
         return fallback
     raise SystemExit(
-        "this chain has no opponent outside the devnet cooldown that can seat you "
-        f"as {options.color}; use --color auto or --fresh"
+        f"this chain has no available opponent that can seat you as {options.color}; "
+        "use --color auto or --fresh"
     )
 
 
@@ -1175,15 +1175,13 @@ def _chain_table(
         )
         opponent_addresses = set(opponents_by_address) & set(record.roster)
         stats = service.chain.state.miner_stats.get(human_address)
-        blocked = (
-            {
+        blocked: set[str] = set()
+        if stats is not None and params.opponent_cooldown > 0:
+            blocked = {
                 opponent
                 for opponent, last_epoch in stats.last_opponent_epoch.items()
                 if epoch - last_epoch <= params.opponent_cooldown
             }
-            if stats is not None
-            else set()
-        )
         matchup = _seat_matchup(
             record,
             human_address,

@@ -390,7 +390,9 @@ def check_proof(
             f"win from height {ended} is older than the {params.claim_window}-block claim window",
         )
     stats = work.miner_stats.get(proof.winner)
-    if stats is not None:
+    # A zero cooldown disables the rematch rule (test networks run a tiny roster
+    # that must be able to settle every game it plays; mainnet sets a cooldown).
+    if stats is not None and params.opponent_cooldown > 0:
         last = stats.last_opponent_epoch.get(opponent)
         if last is not None and proof.epoch - last <= params.opponent_cooldown:
             _fail(

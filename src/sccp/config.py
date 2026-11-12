@@ -158,7 +158,10 @@ TESTNET: Final = NetworkParams(
     k_min=1,
     k_max=5,
     claim_window=64,
-    opponent_cooldown=1,
+    # Test networks seat the same small roster over and over; a zero cooldown
+    # disables the rematch rule (PROTOCOL.md section 12.2) so every decisive game
+    # can settle. Only mainnet enforces a cooldown.
+    opponent_cooldown=0,
     seal_bits=0,
     target_block_seconds=60,
     retarget_interval=10,

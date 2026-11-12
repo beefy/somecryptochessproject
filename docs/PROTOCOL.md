@@ -720,7 +720,9 @@ epoch that ended before this block's epoch and that has a matchable roster, with
 the winner on that roster; use a `game_hash` and `proof_id` not already on the
 chain and not repeated in the block; sit inside
 `[epoch_end, epoch_end + claim_window]`; respect the `opponent_cooldown` against
-the winner's previous games; declare `low_ply` as `plies < min_plies`; and carry
+the winner's previous games (a cooldown of `0` disables the rule, which is how
+testnet and devnet let a small roster settle every game it plays; mainnet keeps
+`4`); declare `low_ply` as `plies < min_plies`; and carry
 `move_evidence` only for `checkmate` and `clock_evidence` for `time_forfeit`.
 Proofs are ordered by `proof_id`, which makes the body canonical.
 

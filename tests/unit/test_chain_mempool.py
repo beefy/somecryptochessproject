@@ -172,6 +172,27 @@ def test_rebroadcast_reports_what_was_re_admitted(
     assert pool.rebroadcast((tx,), tip_state=stale_tip) == (0, 0), "the nonce is spent"
 
 
+def test_a_rematch_needs_a_cooldown_above_zero(live_chain: Any, chain_match: Any) -> None:
+    """A zero cooldown disables the rematch rule; a positive one still rejects."""
+    from sccp.chain.state import MinerStats
+
+    chain = live_chain.chain
+    assert chain.params.opponent_cooldown == 0
+    proof = chain_match(chain, epoch=3).proof
+    state = chain.state.copy()
+    state.miner_stats[proof.winner] = MinerStats(
+        wins=1, games=1, last_opponent_epoch={proof.loser: proof.epoch}
+    )
+
+    pool = Mempool(params=chain.params, tip_state=state, book=chain.book)
+    assert pool.add_proof(proof) == proof.proof_id
+
+    strict = chain.params.model_copy(update={"opponent_cooldown": 1})
+    guarded = Mempool(params=strict, tip_state=state, book=chain.book)
+    with pytest.raises(MempoolError, match="cooldown is 1 epochs"):
+        guarded.add_proof(proof)
+
+
 def test_proof_admission_needs_an_ended_epoch(live_chain: Any, chain_match: Any) -> None:
     chain = live_chain.chain
     match = chain_match(chain, epoch=3)
