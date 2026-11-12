@@ -235,6 +235,13 @@ curl -sS "$SCCP_NODE/v1/accounts/$ADDRESS" | jq
 }
 ```
 
+Or monitor for updates
+```
+curl -sS "$SCCP_NODE/v1/transactions/$TXID" | jq
+curl -sS "$SCCP_NODE/v1/mempool" | jq
+curl -sS "$SCCP_NODE/v1/status" | jq '{height, mempool}'
+```
+
 Amounts from the HTTP API are integer **base units**, and
 `1 coin = 100,000,000` units. The example balance is 1,000 coins.
 
