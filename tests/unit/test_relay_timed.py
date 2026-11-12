@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -35,6 +34,7 @@ from sccp.protocol.models import (
 )
 from sccp.protocol.transcript import certificate_payload
 from sccp.serialization import Domain
+from sccp.transport import client_for
 
 RELAY_SECONDS = 1_700_000_000
 CONTINUATION = (("white", "Qh5"), ("black", "Nf6"), ("white", "Qxf7#"))
@@ -92,9 +92,7 @@ def _relay(
 
 
 def _account(signed_match: Any, address: str) -> Any:
-    return next(
-        account for account in signed_match.accounts.values() if account.address == address
-    )
+    return next(account for account in signed_match.accounts.values() if account.address == address)
 
 
 def _join(client: TestClient, signed_match: Any, view: dict[str, Any], seat: str) -> dict[str, Any]:
@@ -262,8 +260,6 @@ def test_a_forged_or_inconsistent_move_body_is_refused(
     assert current["receipts"] == 0
     assert current["last_ply"] == ply
 
-    assert session.clock is not None and session.clock.started
-
 
 def test_a_clock_that_reaches_zero_flags_without_the_loser(signed_match: Any) -> None:
     time = FakeTime()
@@ -277,7 +273,7 @@ def test_a_clock_that_reaches_zero_flags_without_the_loser(signed_match: Any) ->
     )
 
     # Black never answers: the relay's own sweep ends the game.
-    time.advance(FIXED_TIME_CONTROL.initial_ms)
+    time.advance(FIXED_TIME_CONTROL.initial_ms + 1_000)
     assert state.sweep() == [match_id]
 
     finished = client.get(f"/v1/matches/{match_id}").json()
@@ -308,19 +304,19 @@ def test_a_late_move_is_refused_and_the_session_flags_the_mover(signed_match: An
         json=_move_body(signed_match, view, "white", ply, CONTINUATION[0][1]),
     )
     assert response.status_code == 400
-    assert "no time left" in response.json()["detail"]
+    assert "not accepting moves" in response.json()["detail"]
     finished = client.get(f"/v1/matches/{match_id}").json()
     assert finished["status"] == "finished"
     assert finished["flagged"] == "white"
+    assert finished["result"]["termination"] == "time_forfeit"
     assert finished["result"]["result"] == "0-1"
     assert finished["san_moves"] == view["san_moves"]
 
 
-
-
 def test_the_relay_flag_settles_as_a_verifiable_timeout_claim(signed_match: Any) -> None:
     time = FakeTime()
-    state, client, view = _start(signed_match, time=time, witness=generate_keypair())
+    witness_keypair = generate_keypair()
+    state, client, view = _start(signed_match, time=time, witness=witness_keypair)
     witness = state.witness
     assert witness is not None
     match_id = view["matchup"]["match_id"]
@@ -333,7 +329,7 @@ def test_the_relay_flag_settles_as_a_verifiable_timeout_claim(signed_match: Any)
     )
     assert played.status_code == 200, played.text
 
-    time.advance(FIXED_TIME_CONTROL.initial_ms)
+    time.advance(FIXED_TIME_CONTROL.initial_ms + 1_000)
     state.sweep()
     finished = client.get(f"/v1/matches/{match_id}").json()
     bundle = client.get(f"/v1/matches/{match_id}/receipts").json()
@@ -342,7 +338,13 @@ def test_the_relay_flag_settles_as_a_verifiable_timeout_claim(signed_match: Any)
             "network": finished["certificate"]["network"],
             "match_id": match_id,
             "certificate": finished["certificate"],
-            "last_move": last.model_dump(mode="json"),
+            "last_move": SignedMove.model_validate(
+                {
+                    key: value
+                    for key, value in last.model_dump(mode="json").items()
+                    if key != "clock_ms"
+                }
+            ).model_dump(mode="json"),
             "clock_evidence": {
                 "time_control": bundle["time_control"],
                 "final": bundle["flag"],
@@ -351,12 +353,12 @@ def test_the_relay_flag_settles_as_a_verifiable_timeout_claim(signed_match: Any)
             "bond": DEVNET.min_timeout_bond,
         }
     )
-    witness_key = _account(signed_match, witness).keypair.public_key_hex
+    witness_key = witness_keypair.public_key_hex
     winner = verify_timeout_claim(
         claim,
         certificate=claim.certificate,
         san_moves=finished["san_moves"],
-        public_keys={witness: witness_key},
+        public_keys={**dict(signed_match.public_keys), witness: witness_key},
         quorum=DEVNET.clock_witness_quorum,
         max_plies=DEVNET.max_plies,
         lag_grace_ms=DEVNET.lag_grace_ms,
@@ -371,6 +373,13 @@ def test_a_relay_without_a_witness_key_still_runs_the_clock(signed_match: Any) -
     match_id = view["matchup"]["match_id"]
     ply = len(view["san_moves"])
     time.advance(3_000)
+    moved = client.post(
+        f"/v1/matches/{match_id}/move",
+        json=_move_body(signed_match, view, "white", ply, CONTINUATION[0][1]),
+    ).json()
+    assert moved["white_ms"] == FIXED_TIME_CONTROL.initial_ms - (3_000 - DEVNET.lag_grace_ms)
+    bundle = client.get(f"/v1/matches/{match_id}/receipts").json()
+    assert bundle["receipts"][0]["witnesses"] == []
 
 
 def test_a_live_clocked_session_is_never_reaped_for_inactivity(signed_match: Any) -> None:
@@ -394,10 +403,170 @@ def test_a_silent_join_is_still_reaped(signed_match: Any) -> None:
     assert state.expire() == [view["matchup"]["match_id"]]
     assert state.reputation() == {view["certificate"]["black"]: 1}
 
+
+def test_a_relay_restart_re_bases_the_live_clock(signed_match: Any, tmp_path: Path) -> None:
+    store = tmp_path / "relay.json"
+    time = FakeTime()
+    _state, client, view = _start(signed_match, time=time, witness=generate_keypair(), store=store)
+    match_id = view["matchup"]["match_id"]
+    ply = len(view["san_moves"])
+    time.advance(4_000)
     moved = client.post(
         f"/v1/matches/{match_id}/move",
         json=_move_body(signed_match, view, "white", ply, CONTINUATION[0][1]),
     ).json()
-    assert moved["white_ms"] == FIXED_TIME_CONTROL.initial_ms - (3_000 - DEVNET.lag_grace_ms)
-    bundle = client.get(f"/v1/matches/{match_id}/receipts").json()
-    assert bundle["receipts"][0]["witnesses"] == []
+    assert store.exists()
+
+    # Six hours later a new process loads the store: the old monotonic
+    # timestamps mean nothing, so the side to move gets its turn again.
+    later = FakeTime(ms=time.ms + 6 * 60 * 60 * 1_000)
+    reloaded = _relay(signed_match, time=later, witness=generate_keypair(), store=store)
+    resumed = reloaded.get(match_id)
+    assert resumed.status == "active"
+    assert resumed.white_ms == moved["white_ms"]
+    assert resumed.black_ms == FIXED_TIME_CONTROL.initial_ms
+    assert resumed.receipts == 1
+    assert resumed.turn == "black"
+    later.advance(60_000)
+    running = reloaded.get(match_id)
+    assert running.black_ms == FIXED_TIME_CONTROL.initial_ms - (60_000 - DEVNET.lag_grace_ms)
+    assert running.white_ms == resumed.white_ms
+
+
+def test_the_round_schedule_opens_one_round_per_interval(signed_match: Any) -> None:
+    time = FakeTime()
+    state = _relay(signed_match, time=time)
+    assert state.current_round is None
+    assert state.schedule(round_seconds=60.0)
+    assert state.current_round == 0
+    assert state.schedule(round_seconds=60.0) is None
+    time.advance_seconds(61)
+    assert state.schedule(round_seconds=60.0)
+    assert state.current_round == 1
+    # A zero interval disables the schedule; a positive one still works.
+    time.advance_seconds(61)
+    assert state.schedule(round_seconds=0.0) is None
+    assert state.current_round == 1
+    assert state.schedule(round_seconds=60.0)
+    assert state.current_round == 2
+    # rounds_per_epoch caps the schedule.
+    time.advance_seconds(61)
+    assert state.schedule(round_seconds=60.0) is None
+    assert state.current_round == 2
+
+
+def test_a_relay_config_document_carries_the_witness_and_schedule(
+    signed_match: Any, tmp_path: Path
+) -> None:
+    witness = generate_keypair()
+    document = {
+        "network": DEVNET.network_id,
+        "beacon": signed_match.beacon.model_dump(mode="json"),
+        "roster": {
+            address: {
+                "public_key": signed_match.public_keys[address],
+                "engine": f"mock-v1:{index:016d}",
+                "max_games": 3,
+            }
+            for index, address in enumerate(signed_match.roster, start=1)
+        },
+        "timeout_seconds": 60,
+        "round_seconds": 900,
+    }
+    state = Matchmaker.from_document(
+        document,
+        params=DEVNET,
+        store=tmp_path / "relay.json",
+        witness_keypair=witness,
+        clock_ms=lambda: 1_000,
+    )
+    assert state.witness == encode_address(witness.public_key_bytes, DEVNET)
+    assert state.round_seconds == 900.0
+    # A schedule with no explicit open_round opens round 0 at startup.
+    assert state.current_round == 0
+    assert [view.status for view in state.matches()] == ["pending"]
+
+
+def _miner(
+    signed_match: Any,
+    address: str,
+    app: Any,
+    script: tuple[str, ...],
+    time: FakeTime,
+    witness_keys: tuple[tuple[str, str], ...] = (),
+) -> EngineMiner:
+    account = _account(signed_match, address)
+    config = MinerConfig(
+        params=DEVNET,
+        keypair=account.keypair,
+        witness_keys=witness_keys,
+    )
+    return EngineMiner(
+        config,
+        engine=ScriptedEngine(list(script)),
+        relay=RelayClient("http://relay", client=client_for(app, base_url="http://relay")),
+        clock_ms=time.now_ms,
+    )
+
+
+def test_a_miner_settles_a_relay_flag_from_the_relay_receipts(signed_match: Any) -> None:
+    time = FakeTime()
+    witness = generate_keypair()
+    state = _relay(signed_match, time=time, witness=witness)
+    app = create_app(state)
+    client = TestClient(app)
+    client.post("/v1/rounds", json={"round": 0})
+    view = client.get("/v1/matches").json()[0]
+    match_id = view["matchup"]["match_id"]
+    witness_address = state.witness
+    assert witness_address is not None
+    keys = ((witness_address, witness.public_key_hex),)
+
+    white = _miner(signed_match, view["certificate"]["white"], app, ("Qh5",), time, keys)
+    black = _miner(signed_match, view["certificate"]["black"], app, (), time, keys)
+    assert white.run_once().joined == (match_id,)
+    assert black.run_once().joined == (match_id,)
+    played = white.run_once()
+    assert played.moves == (f"{match_id}:Qh5",)
+
+    # Black stops answering. The relay flags it on its own clock, and the winner
+    # turns the relay's signed receipts into a locally verified claim.
+    time.advance(FIXED_TIME_CONTROL.initial_ms + 5_000)
+    settled = white.run_once()
+    assert settled.claims == (match_id,)
+    assert white.refusals == []
+
+    claim = white.claims[match_id]
+    finished = client.get(f"/v1/matches/{match_id}").json()
+    assert finished["flagged"] == "black"
+    assert claim.clock_evidence.final == white.matches[match_id].relay_flag
+    winner = verify_timeout_claim(
+        claim,
+        certificate=claim.certificate,
+        san_moves=finished["san_moves"],
+        public_keys={**dict(signed_match.public_keys), **dict(keys)},
+        quorum=DEVNET.clock_witness_quorum,
+        max_plies=DEVNET.max_plies,
+        lag_grace_ms=DEVNET.lag_grace_ms,
+    )
+    assert winner == "white"
+
+
+def test_a_miner_without_witness_keys_refuses_the_flag(signed_match: Any) -> None:
+    time = FakeTime()
+    state = _relay(signed_match, time=time, witness=generate_keypair())
+    app = create_app(state)
+    client = TestClient(app)
+    client.post("/v1/rounds", json={"round": 0})
+    view = client.get("/v1/matches").json()[0]
+    match_id = view["matchup"]["match_id"]
+    white = _miner(signed_match, view["certificate"]["white"], app, ("Qh5",), time)
+    black = _miner(signed_match, view["certificate"]["black"], app, (), time)
+    white.run_once()
+    black.run_once()
+    white.run_once()
+    time.advance(FIXED_TIME_CONTROL.initial_ms + 5_000)
+    settled = white.run_once()
+    assert settled.claims == ()
+    assert match_id not in white.claims
+    assert any("does not verify" in reason for reason in white.refusals)

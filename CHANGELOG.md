@@ -7,8 +7,61 @@ summarised in the M0–M2 rows of the README roadmap.
 
 ## [Unreleased]
 
-Milestone M5: quality verification, challenges and the threat-model tests. The
-`book_version: v1` quality profile, the challenge lifecycle and
+Timed relay sessions: every match now runs the fixed 30+0 control on the relay's
+own monotonic clock, with witness-signed receipts, automatic flags and an opt-in
+round scheduler.
+
+### Added
+
+- The relay runs clocked sessions (`TIMED_SESSIONS` in `sccp.miner.matchmaker`).
+  The second start signature activates a session and starts both clocks with the
+  side to move on the clock; a `MoveRequest` may be the signed form
+  `{network, match_id, seat, ply, san, clock_ms, signature}`, which is verified
+  against the registered seat key before the move is applied.
+- `GET /v1/matches/{id}/receipts` returns a `ClockBundle`: the time control, both
+  clocks, every move receipt in ply order and the flag receipt if there is one.
+  `ClockBundle.receipts` is exactly the `clock_evidence.receipts` of a
+  `TimeoutClaim`, so a winner settles a flag without re-deriving the bundle.
+- `MatchView` exposes `time_control`, `white_ms`, `black_ms`, `turn`, `last_ply`,
+  `flagged` and a `receipts` count, and `/v1/status` reports `timed`,
+  `time_control`, `round`, `round_seconds` and the relay's `witness` address.
+- The relay signs its receipts when it runs with a witness key
+  (`sccp matchmaker run --witness-key KEYFILE`), and auto-flags a clock that
+  reaches zero even when the losing seat never answers, so a stall cannot deny
+  the win.
+- Opt-in round scheduler: `--round-seconds` (or `round_seconds` in the relay
+  document) opens the next round on that interval up to `rounds_per_epoch`, and
+  `--sweep-seconds` sets how often the serving loop sweeps clocks and rounds.
+- `sccp miner run --relay-witness-key HEX` (repeatable) trusts the relay's clock
+  witness. The miner pulls the relay's receipts, verifies them locally against
+  those keys and builds a bonded `timeout_claim` for a flag it won;
+  `MinerTick.claims` reports the match ids it settled.
+- `tests/unit/test_relay_timed.py`: activation, per-mover charging, receipt
+  issuance, forged-body refusal, flag-on-zero, late-move flagging, restart
+  re-basing, the round schedule, the replay-independent reaper and a two-miner
+  run that ends in a verified timeout claim.
+
+### Changed
+
+- The relay store is `format: 2`: sessions persist their clock, receipts and flag
+  receipt. A live clock is re-based to "now" for the side to move on load,
+  because monotonic timestamps from the previous process are meaningless.
+- `MatchClock.remaining_ms` returns the stored values for a clock that has not
+  started, and `MatchClock.stop(now_ms)` freezes a clock at a known instant.
+- `sccp matchmaker run` starts a background service thread that sweeps the clocks
+  and opens scheduled rounds; `sccp devnet up` pins the relay's millisecond clock
+  so a devnet run stays deterministic.
+
+### Fixed
+
+- The inactivity reaper blamed a seat that had already joined: it compared seat
+  *addresses* against `start_signatures`, which is keyed by colour. Only the seats
+  that never joined now collect a no-show.
+- `timeout_seconds` no longer abandons a live clocked session; abandoning one
+  would let the losing seat escape the flag.
+
+The next milestone, M5, is quality verification, challenges and the threat-model
+tests. The `book_version: v1` quality profile, the challenge lifecycle and
 `sccp.node.quality_sampler` are still to come.
 
 ## [0.5.1] - 2026-11-12

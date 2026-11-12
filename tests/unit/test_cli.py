@@ -646,6 +646,79 @@ def test_miner_run_reports_its_ticks(
     assert payload["proofs"] == ["p1"]
 
 
+def test_matchmaker_run_refuses_bad_sweep_settings(tmp_path: Path) -> None:
+    config = tmp_path / "relay.json"
+    config.write_text("{}", encoding="utf-8")
+    result = runner.invoke(
+        app, ["matchmaker", "run", "--config", str(config), "--sweep-seconds", "0"]
+    )
+    assert result.exit_code == 2
+    assert "--sweep-seconds must be positive" in result.output
+
+
+def test_miner_run_passes_the_relay_witness_keys_through(
+    tmp_path: Path, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from sccp.crypto.keys import generate_keypair
+    from sccp.miner.engine_miner import EngineMiner, MinerTick
+
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    witness = generate_keypair()
+    seen: list[dict[str, str]] = []
+
+    def capture(self: EngineMiner) -> MinerTick:
+        seen.append(self.config.witness_key_map)
+        return MinerTick()
+
+    monkeypatch.setattr(EngineMiner, "run_once", capture)
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--engine-profile",
+            "mock",
+            "--relay-witness-key",
+            witness.public_key_hex,
+            "--iterations",
+            "1",
+            "--poll-seconds",
+            "0.01",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    address = encode_address(witness.public_key_bytes, DEVNET)
+    assert seen == [{address: witness.public_key_hex}]
+
+
+def test_miner_run_refuses_a_bad_relay_witness_key(tmp_path: Path, env: dict[str, str]) -> None:
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    result = runner.invoke(
+        app,
+        [
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--engine-profile",
+            "mock",
+            "--relay-witness-key",
+            "not-hex",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 2
+    assert "not valid hex" in result.output
+
+
 def test_miner_run_needs_a_binary_for_a_real_engine(tmp_path: Path, env: dict[str, str]) -> None:
     assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
     result = runner.invoke(

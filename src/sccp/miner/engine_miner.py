@@ -928,6 +928,7 @@ class EngineMiner:
             self._refuse(f"{state.match_id}: the last signed move is not ply {plies - 1}")
             return None
         expected = list(range(state.opening_plies, plies))
+        flagged: Color
         if bundle is not None:
             if bundle.match_id != state.match_id:
                 self._refuse(f"{state.match_id}: the relay bundle is for another match")

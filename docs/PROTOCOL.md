@@ -352,42 +352,73 @@ is included in the move list. A `time_forfeit` PGN without a matching
 ### 8.4 Relay API
 
 The relay is untrusted. It derives the round from public data and stores
-signatures; it never signs a result. The implemented relay endpoint remains the
-M2 API: `timeout_seconds` only abandons a silent session and is not evidence of
-a loss. The clock layer provides the off-chain primitives a timed relay will use
-— signed move messages, witness-signed receipts and flag evidence — as described
-in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1, and the
-chain settles the result through the bonded claim lifecycle in section 10.4. The
-timed session API itself is a later relay milestone.
+signatures; it never signs a result. It does keep the clock: every session runs
+the fixed **30+0** control (`TIMED_SESSIONS` in `sccp.miner.matchmaker`), charged
+from the relay's own monotonic clock, and the receipts it issues are the evidence
+the chain's bonded claim lifecycle (section 10.4) settles.
+
+Timed sessions work like this:
+
+- The **second start signature activates the session** and starts both clocks;
+  the side to move is on the clock.
+- The relay's monotonic millisecond source is authoritative. A move body may
+  carry `clock_ms`, but it is display data: the relay ignores it and recomputes
+  from its own source.
+- A move is checked for turn and SAN legality *before* the clock is charged, so
+  an illegal move costs no time. A charge is `elapsed - lag_grace_ms` (floored at
+  zero) plus the increment, applied to the mover only.
+- A move arriving after the mover's clock reached zero is refused and the
+  session is flagged instead. The flag ends the game whether or not the losing
+  seat ever answers, so a stall cannot deny the win.
+- Every accepted post-opening ply gets a **move receipt** (`kind: "move"`, `ply`,
+  `seat`, `san`, `received_at_ms`, both clocks); a flag adds a **flag receipt**
+  (`kind: "flag"`, `ply` = total plies, the flagged `seat`, both clocks, the
+  flagged clock at zero). Both are signed by the relay's clock witness when the
+  relay runs with a witness key, and carry no witness signatures when it does
+  not (a relay may observe without attesting).
+- A live clocked session is never abandoned by `timeout_seconds`: that reaper
+  only applies to pending joins, because abandoning a clocked game would let the
+  losing seat escape the flag.
+- After a restart the relay re-bases every live clock to "now" for the side to
+  move. Monotonic timestamps from the previous process are meaningless here, and
+  flagging on them would punish a seat for the relay's downtime.
 
 | Method | Path | Body |
 | --- | --- | --- |
 | POST | `/v1/rounds` | `{"round": 0}` — derive and create that round's sessions |
-| GET | `/v1/matches` | all sessions |
-| GET | `/v1/matches/{id}` | one session: certificate, SAN list, result, PGN |
+| GET | `/v1/matches` | all sessions, with live clocks |
+| GET | `/v1/matches/{id}` | one session: certificate, SAN list, result, PGN, clocks |
+| GET | `/v1/matches/{id}/receipts` | the `ClockBundle`: time control, clocks, every receipt, the flag |
 | GET | `/v1/matches/{id}/transcript` | co-signed transcript, 404 until both signs |
 | POST | `/v1/matches/{id}/join` | `{"seat", "public_key", "signature"}` |
-| POST | `/v1/matches/{id}/move` | `{"seat", "san"}` |
+| POST | `/v1/matches/{id}/move` | `{"seat", "san"}`, or the signed form below |
 | POST | `/v1/matches/{id}/resign` | `{"seat"}` |
 | POST | `/v1/matches/{id}/result` | `{"seat", "signature"}` |
-| GET | `/v1/status`, `/v1/reputation` | relay status and no-show counts |
+| GET | `/v1/status`, `/v1/reputation` | relay status (timed fields, round, witness) and no-show counts |
 
-The current move body is exactly `{seat, san}`; the relay verifies the turn and
-SAN legality, but the move carries no ply or signature. The clocked move body is
-`{network, match_id, seat, ply, san, clock_ms, signature}`; `clock_ms` is
-relay-computed display data and is not signed. The signed payload is
-`{network, match_id, seat, ply, san}` under `sccp/v1/move`. Moves remain
-off-chain and only the final proof (or timeout claim) reaches a block. Because
-each move is signed, a checkmate can later be proven without the loser's result
-signature. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
+`MatchView` carries `time_control`, `white_ms`, `black_ms`, `turn`, `last_ply`,
+`flagged` and `receipts` (a count; fetch the bundle for the objects).
+`ClockBundle.receipts` is exactly the `clock_evidence.receipts` list of a
+`TimeoutClaim`, and `ClockBundle.flag` is its `final`.
 
-Illegal moves, wrong turns, duplicate joins and bad signatures are rejected with
-HTTP 400 and never change the session. A relay may abandon a silent session after
-its timeout; that is a liveness choice, not evidence. Restart-safe state is a
-JSON list of sessions (certificate, SAN list, result, signatures); pending
-sessions replay their SAN list on load.
+The signed move body is `{network, match_id, seat, ply, san, clock_ms, signature}`;
+`clock_ms` is neither signed nor trusted. The signed payload is
+`{network, match_id, seat, ply, san}` under `sccp/v1/move`, and `san` must be the
+canonical SAN for the position. A body carrying a signature must also carry
+`network` and `ply`, and the signature is verified against the registered seat
+key. Moves remain off-chain and only the final proof (or timeout claim) reaches a
+block; because each move is signed, a checkmate can later be proven without the
+loser's result signature. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
 
-`sccp matchmaker run --config relay.json` reads:
+Illegal moves, wrong turns, stale plies, forged bodies, duplicate joins and bad
+signatures are rejected with HTTP 400 and never change the session or its
+clocks. A pending session may be abandoned after `timeout_seconds`; that is a
+liveness choice, not evidence. Restart-safe state is a JSON document
+(`format: 2`) of sessions with their clocks, receipts and flag; pending sessions
+replay their SAN list on load and live clocks are re-based as described above.
+
+`sccp matchmaker run --config relay.json [--witness-key relay.key]
+[--round-seconds 900] [--sweep-seconds 1]` reads:
 
 ```json
 {"network": "testnet",
@@ -401,11 +432,18 @@ sessions replay their SAN list on load.
  "min_timeout_bond": 1,
  "clock_witness_quorum": 1,
  "clock_witness_bond": 1,
+ "round_seconds": 900,
  "open_round": 0}
 ```
 
 `engine` is the fingerprint the seat committed to at registration; `open_round`
-is optional and opens one round at startup.
+is optional and opens one round at startup. `round_seconds` (or
+`--round-seconds`) is relay policy, not consensus: while the relay serves, a
+background loop sweeps the clocks and opens the next round once the interval has
+passed, up to `rounds_per_epoch`. `--witness-key` makes the relay sign its
+receipts. A miner given the matching `--relay-witness-key` (the witness's public
+key in hex) verifies those receipts locally before it builds a `timeout_claim`;
+without it the claim is refused rather than guessed at.
 
 ## 9. Win proofs and offline verification
 
@@ -828,10 +866,11 @@ epochs rolling by submitting both one block ahead.
 
 A devnet run is deterministic: participant keys come from fixed seeds, engines
 are seeded `MockEngine`s with fixed fingerprints, availability nonces are fixed
-strings, and the relay clock is frozen at a fixed timestamp so no game expires.
-Two runs with the same arguments produce the same tip hash and the same proof
-ids. Because two seeded engines can shuffle past the ply ceiling, the devnet
-resigns the side to move once a game reaches 60 plies; resignation is a
+strings, and the relay's clock and its monotonic millisecond clock are both
+pinned to fixed values, so no clock ever runs out and every accepted move costs
+zero time. Two runs with the same arguments produce the same tip hash and the
+same proof ids. Because two seeded engines can shuffle past the ply ceiling, the
+devnet resigns the side to move once a game reaches 60 plies; resignation is a
 consensus-valid termination, both seats co-sign it, and the winner's proof is
 verified like any other.
 

@@ -386,7 +386,9 @@ class MatchSession:
                     raise RelayError(
                         f"stored match {matchup.match_id} result disagrees with the board"
                     )
-            elif result.termination == "resignation" and board.outcome(claim_draw=False) is not None:
+            elif (
+                result.termination == "resignation" and board.outcome(claim_draw=False) is not None
+            ):
                 raise RelayError(
                     f"stored match {matchup.match_id} claims resignation on a finished board"
                 )
@@ -400,9 +402,7 @@ class MatchSession:
             )
         for receipt in receipts:
             if receipt.match_id != matchup.match_id:
-                raise RelayError(
-                    f"stored match {matchup.match_id} has a receipt for another match"
-                )
+                raise RelayError(f"stored match {matchup.match_id} has a receipt for another match")
         if flag is not None:
             if flag.match_id != matchup.match_id:
                 raise RelayError(f"stored match {matchup.match_id} has a flag for another match")
@@ -420,11 +420,14 @@ class MatchSession:
                 raise RelayError(
                     f"stored match {matchup.match_id} flag result disagrees with the board"
                 )
-        elif status is SessionStatus.FINISHED and result is not None:
-            if result.termination == "time_forfeit":
-                raise RelayError(
-                    f"stored match {matchup.match_id} is a time forfeit without a flag receipt"
-                )
+        elif (
+            status is SessionStatus.FINISHED
+            and result is not None
+            and result.termination == "time_forfeit"
+        ):
+            raise RelayError(
+                f"stored match {matchup.match_id} is a time forfeit without a flag receipt"
+            )
         return cls(
             matchup=matchup,
             certificate=certificate,
@@ -592,7 +595,9 @@ class Matchmaker:
                 )
             ],
             "no_shows": dict(sorted(self._no_shows.items())),
-            "rounds": {str(number): opened_at for number, opened_at in sorted(self._rounds_opened.items())},
+            "rounds": {
+                str(number): opened_at for number, opened_at in sorted(self._rounds_opened.items())
+            },
         }
         try:
             self._store.parent.mkdir(parents=True, exist_ok=True)
@@ -637,10 +642,14 @@ class Matchmaker:
             session.status = SessionStatus.ABANDONED
             expired.append(session.matchup.match_id)
             if previous is SessionStatus.PENDING:
+                joined = set(session.certificate.start_signatures)
                 missing = [
-                    seat
-                    for seat in (session.certificate.white, session.certificate.black)
-                    if seat not in session.certificate.start_signatures
+                    address
+                    for colour, address in (
+                        ("white", session.certificate.white),
+                        ("black", session.certificate.black),
+                    )
+                    if colour not in joined
                 ]
             else:
                 missing = [session.certificate.white, session.certificate.black]
@@ -671,9 +680,7 @@ class Matchmaker:
         session.clock.lag_grace_ms = self.lag_grace_ms
         session.clock.started = True
 
-    def _sign_receipt_locked(
-        self, receipt: MoveReceipt | FlagReceipt
-    ) -> MoveReceipt | FlagReceipt:
+    def _sign_receipt_locked(self, receipt: MoveReceipt | FlagReceipt) -> MoveReceipt | FlagReceipt:
         """Add the relay's witness signature, when the relay has a key."""
         if self.witness_keypair is None:
             return receipt

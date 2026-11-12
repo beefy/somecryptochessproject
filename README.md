@@ -23,16 +23,20 @@ reward.
 > [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan lives in
 > [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
-> **Known gap: the relay does not run timed sessions yet.** The fixed **30+0**
-> control, signed move messages, witness-signed receipts, the flag verifier and
-> bonded `timeout_claim` settlement all exist (`src/sccp/protocol/clocks.py`,
-> `src/sccp/chain/timeout.py`) and are tested, and the miner refuses to sign any
-> clock arithmetic it cannot reproduce. The M2 relay API is still the one in
-> [`docs/PROTOCOL.md`](docs/PROTOCOL.md) section 8.4: it verifies turn and SAN
-> legality and abandons silent sessions after `timeout_seconds`, which is a
-> liveness choice and not evidence. Wiring the timed session body
-> (`{network, match_id, seat, ply, san, clock_ms, signature}`) into the relay is
-> the next protocol milestone and is called out in the plan's M5/M6 work.
+> **The relay runs timed sessions.** Every session is a real **30+0** clock game:
+> the second start signature starts both clocks, the relay's monotonic clock is
+> authoritative (a move's `clock_ms` is display data, never trusted), each
+> accepted move is charged to the mover and answered with a signed receipt, and a
+> clock that reaches zero auto-flags the match even if the losing seat never
+> answers. Those receipts are exactly the evidence a bonded `timeout_claim`
+> settles on chain (`src/sccp/protocol/clocks.py`, `src/sccp/chain/timeout.py`):
+> the winner pulls `GET /v1/matches/{id}/receipts`, verifies it against the
+> relay's witness key it was configured with, and the miner refuses to build a
+> claim it cannot reproduce. `sccp matchmaker run --witness-key` signs the
+> receipts, `--round-seconds` adds the opt-in round scheduler, and
+> `sccp miner run --relay-witness-key` trusts that witness. The formats are
+> normative in [`docs/PROTOCOL.md`](docs/PROTOCOL.md) section 8.4; what remains
+> is the on-chain claim transaction (plan section 5.7.1) and the M5/M6 work.
 
 > **Naming.** The repository and project name is `somecryptochessproject`. The
 > Python package and console command use the short form `sccp` (import `sccp`,
@@ -325,8 +329,11 @@ python scripts/fetch_engine.py --engine stockfish-19 --dest ./bin
 # Verify a PGN offline: replays every move and prints the canonical game hash
 sccp verify pgn game.pgn --network testnet
 
-# Run the matchmaking relay (beacon + roster + engine fingerprints in relay.json)
-sccp matchmaker run --config relay.json --store ./relay-state.json
+# Run the matchmaking relay (beacon + roster + engine fingerprints in relay.json).
+# --witness-key makes it sign the clock receipts; --round-seconds opens a round
+# on that interval (0 or omitted disables the scheduler).
+sccp matchmaker run --config relay.json --store ./relay-state.json \
+    --witness-key relay.key --round-seconds 900
 
 # Verify a win proof offline against a public context document
 sccp verify proof proof.json --context context.json --network testnet
@@ -357,12 +364,15 @@ sccp --data-dir ./data miner availability --network testnet \
 sccp --data-dir ./data miner reveal --network testnet \
     --key alice.key --nonce-secret <the-hex-from-the-previous-step>
 
-# Run an engine miner against a relay (repeat for bob.key, with another engine)
+# Run an engine miner against a relay (repeat for bob.key, with another engine).
+# --relay-witness-key is the relay's witness public key (hex): with it the miner
+# verifies the relay's clock receipts and can settle a flag as a timeout claim.
 sccp miner run --network testnet \
     --key alice.key \
     --engine-path ./bin/stockfish-macos-universal \
     --relay http://127.0.0.1:8646 \
-    --node http://127.0.0.1:8645
+    --node http://127.0.0.1:8645 \
+    --relay-witness-key <relay-witness-public-key-hex>
 
 # The whole stack, as containers (node + relay + three mock miners on testnet)
 docker compose up --build
@@ -384,7 +394,7 @@ stops after `N` relay polls, which is how the CLI tests drive it.
 | **M3** | Chain: transactions, wallet, blocks, state, mempool, fork choice, difficulty, block builder | done |
 | **M4** | Node + P2P + miner daemon | done — node API and gossip, pull-sync, `EngineMiner`, the full CLI, `sccp devnet up` and the docker-compose testnet stack |
 | **M5** | Quality verification, challenges, slashing, threat-model tests | not started |
-| **M6** | Testnet launch: funded testnet, faucet operations, timed relay sessions, observability, operator guide | not started |
+| **M6** | Testnet launch: funded testnet, faucet operations, observability, operator guide | not started — timed relay sessions (clocked relay, signed receipts, auto-flag, round scheduler) are already implemented |
 | **M7** | Hardening and mainnet readiness review | not started |
 
 Detailed tasks, file-level deliverables and acceptance criteria are in
@@ -497,8 +507,10 @@ matchups = pair(
 
 Certificates commit both seats, colours, opening and engine fingerprints; both
 seats sign before the first move and again on the result. `sccp matchmaker run`
-serves the relay (`POST /v1/matches/{id}/join|move|resign|result`), and a JSON
-store survives restarts. `sccp verify proof` re-checks the certificate, pairing,
+serves the relay (`POST /v1/matches/{id}/join|move|resign|result`,
+`GET /v1/matches/{id}/receipts`), keeps the 30+0 clock, signs a receipt for every
+accepted move and flags a clock that reaches zero, and a JSON store survives
+restarts. `sccp verify proof` re-checks the certificate, pairing,
 beacon, signatures and PGN offline. drand quicknet verification is a pluggable
 `DrandVerifier` (BLS12-381 is not in the stdlib crypto stack); `drand_used = 0`
 needs no verifier and is always valid.

@@ -21,7 +21,7 @@ docker compose down -v                  # also drops the chain and relay state
 | --- | --- | --- |
 | `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the three keyfiles, the passphrase file and `relay.json` |
 | `node` | `sccp --data-dir /data node run --network testnet` | the section 5.12 API, with the chain in SQLite under the `node-data` volume |
-| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json` | opens round 0 at startup and serves the match protocol |
+| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json` | opens round 0 at startup, runs the 30+0 clock and serves the match protocol |
 | `miner-1..3` | `sccp miner run --engine-profile mock` | joins its assigned matches, plays them and co-signs the results |
 
 ## The keys are public on purpose
@@ -49,6 +49,17 @@ secret for the epoch the relay was configured with.
   play with a real engine, mount a binary and pass
   `--engine-path /path/to/stockfish`.
 - **One round.** The relay opens the round named in `relay.json`
-  (`open_round: 0`). Rounds do not advance by themselves; `POST /v1/rounds`
-  with `{"round": 1}` opens the next one. Round scheduling belongs to the
-  testnet launch (M6).
+  (`open_round: 0`). Pass `--round-seconds 900` (or `"round_seconds": 900` in
+  `relay.json`) to let the relay open the next round on that interval — that is
+  e2e wiring, so the stack keeps one round unless you ask for more.
+
+## Clocks and witnesses
+
+The relay runs timed sessions whether or not the stack asks for them: both
+clocks start on the second join, moves are charged against the mover and every
+accepted move is answered with a receipt. Without `--witness-key` those receipts
+carry no signatures, so they cannot be settled on chain; add a keyfile to the
+relay (`--witness-key /stack/relay.key`) and pass the matching public key hex to
+the miners (`sccp miner run --relay-witness-key <hex>`) to run the full signed
+path. Both are one flag each because a witness identity is an operator decision,
+not a network parameter.

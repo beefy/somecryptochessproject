@@ -282,6 +282,32 @@ def test_timeout_claims_need_witness_receipts(protocol_accounts: Any) -> None:
     assert any("witness receipts" in reason for reason in miner.refusals)
 
 
+def test_a_flagged_loss_is_recorded_without_signing_anything(protocol_accounts: Any) -> None:
+    alice, bob = protocol_accounts["alice"], protocol_accounts["bob"]
+    result = GameResult(
+        network=DEVNET.network_id,
+        match_id=MATCH_ID,
+        game_hash="ef" * 32,
+        result="0-1",
+        termination="time_forfeit",
+        plies=len(OPENING) + 1,
+        result_signatures={},
+    )
+    relay = _StubRelay(_view(alice.address, bob.address))
+    miner = _miner(protocol_accounts, relay)
+    miner.run_once()  # join
+    relay.view = relay.view.model_copy(
+        update={"status": "finished", "san_moves": (*OPENING, "Nf3"), "result": result}
+    )
+    tick = miner.run_once()
+    assert tick.claims == ()
+    assert tick.results == ()
+    assert miner.matches[MATCH_ID].finished
+    assert miner.claims == {}
+    assert any("lost on time" in reason for reason in miner.refusals)
+    assert [call for call in relay.calls if call[0] == "result"] == []
+
+
 def test_close_releases_the_transports(protocol_accounts: Any) -> None:
     alice, bob = protocol_accounts["alice"], protocol_accounts["bob"]
     relay = _StubRelay(_view(alice.address, bob.address))
