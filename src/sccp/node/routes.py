@@ -1,20 +1,23 @@
-"""Read-only node API stubs (section 5.12).
+"""Compatibility entry point for the M2 read-only node stub.
 
-M2 has no chain yet, but the relay and the future node must speak the same
-models. These routes expose exactly what exists -- network parameters, a known
-epoch beacon and stored transcripts -- and nothing that pretends a chain is
-running beyond a ``height`` field.
+M4 moved the API to :mod:`sccp.node.app`, which needs a full
+:class:`~sccp.node.service.NodeService`. This module keeps the old signature
+alive for callers (and the M2 relay test) that only want to serve a genesis
+chain plus a few known beacons and transcripts.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 
+from sccp.chain.chain import Chain
+from sccp.chain.mempool import Mempool
 from sccp.config import NetworkParams
+from sccp.node.app import create_app as create_node_app
+from sccp.node.service import NodeService, default_genesis_path
 from sccp.protocol.models import Beacon, Transcript
-from sccp.version import PROTOCOL_VERSION, __version__
 
 
 def create_app(
@@ -24,43 +27,23 @@ def create_app(
     transcripts: Mapping[str, Transcript] | None = None,
     height: int | None = None,
 ) -> FastAPI:
-    """Build the read-only node stub for ``params``."""
-    known_beacons = dict(beacons or {})
-    known_transcripts = dict(transcripts or {})
-    app = FastAPI(title="sccp node (M2 stub)", version=__version__)
+    """Build a node app over a genesis-only chain seeded with known objects.
 
-    @app.get("/v1/status")
-    def status() -> dict[str, object]:
-        return {
-            "network": params.network_id,
-            "protocol_version": PROTOCOL_VERSION,
-            "height": height,
-            "tip_hash": None,
-            "peers": 0,
-            "mempool": {"transactions": 0, "proofs": 0},
-        }
-
-    @app.get("/v1/params")
-    def network_params() -> dict[str, object]:
-        return params.model_dump(mode="json")
-
-    @app.get("/v1/epochs/{epoch}/beacon", response_model=Beacon)
-    def epoch_beacon(epoch: int) -> Beacon:
-        try:
-            return known_beacons[epoch]
-        except KeyError:
-            raise HTTPException(
-                status_code=404, detail=f"no beacon known for epoch {epoch}"
-            ) from None
-
-    @app.get("/v1/matches/{match_id}", response_model=Transcript)
-    def match_transcript(match_id: str) -> Transcript:
-        try:
-            return known_transcripts[match_id]
-        except KeyError:
-            raise HTTPException(status_code=404, detail=f"unknown match {match_id}") from None
-
-    return app
+    ``height`` is accepted for source compatibility with the M2 stub and
+    ignored: the new API always reports the chain's real height.
+    """
+    del height
+    chain = Chain.from_genesis_file(
+        params, str(default_genesis_path(params.network_id)), params=params
+    )
+    service = NodeService(
+        params=params,
+        chain=chain,
+        mempool=Mempool(params=params, tip_state=chain.state),
+        beacons=dict(beacons or {}),
+        transcripts=dict(transcripts or {}),
+    )
+    return create_node_app(service)
 
 
 __all__ = ["create_app"]

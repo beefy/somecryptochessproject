@@ -94,6 +94,7 @@ class Domain(StrEnum):
     CHALLENGE = "sccp/v1/challenge"
     CLOCK = "sccp/v1/clock"
     GAME = "sccp/v1/game"
+    GOSSIP = "sccp/v1/gossip"
     HEADER = "sccp/v1/header"
     MATCH = "sccp/v1/match"
     MOVE = "sccp/v1/move"

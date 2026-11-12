@@ -130,6 +130,21 @@ class RelayError(ProtocolError):
     """The match relay rejected a request (bad seat, illegal move, wrong state)."""
 
 
+class GossipError(ProtocolError):
+    """A gossip envelope, peer table entry or sync response is invalid."""
+
+
+# --- node --------------------------------------------------------------------
+
+
+class NodeError(SccpError):
+    """A node service request cannot be served."""
+
+
+class NotFoundError(NodeError):
+    """The requested block, account, epoch, match or game is unknown."""
+
+
 # --- ledger ------------------------------------------------------------------
 
 
@@ -188,3 +203,17 @@ class TimeoutClaimError(LedgerError):
 
 class WalletServiceError(LedgerError):
     """A wallet-service request is malformed or not affordable."""
+
+
+# --- devnet ------------------------------------------------------------------
+
+
+class DevnetError(SccpError):
+    """The in-process devnet could not reach its stated goal."""
+
+
+# --- miner -------------------------------------------------------------------
+
+
+class MinerError(SccpError, RuntimeError):
+    """The miner cannot act safely: refused match, clock, or relay response."""
