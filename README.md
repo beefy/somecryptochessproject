@@ -387,6 +387,14 @@ python scripts/play_miner.py --color black --engine stockfish-19 \
 python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 ```
 
+A session never starts at move 1: the relay plays the book line the beacon draws
+for the match and hands you the position after it, so the script opens by
+printing that line (`opening  1. e4 c6 2. d4 d5 3. exd5 cxd5 4. c4 Nf6`), the
+board it left and the move number you are on, and it numbers every move it
+reports (`you played 5.Nc3`, `opponent played 5...g5`). `--seed` derives the
+beacon, so a different seed is a different opening; `--engine-seed` makes a
+given mock opponent replay the same moves.
+
 `--json` works on every command (`sccp --json chain info`, `sccp --json devnet
 up`, ...) and prints one machine-readable document; `miner run --iterations N`
 stops after `N` relay polls, which is how the CLI tests drive it.

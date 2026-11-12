@@ -23,6 +23,18 @@ resign.
 - `RelayClient.resign` posts `POST /v1/matches/{id}/resign` and returns the
   updated `MatchView`, so a client can end its own game on the relay.
 
+### Fixed
+
+- `scripts/play_miner.py` hid the certified opening it started from. A session
+  begins with the book line the beacon draws for the match, so the script's
+  first prompt was really move 3 of a game the player had never seen: no line,
+  no board, no move numbers, and black's reply — a knight that had already
+  developed to f6 — read as an illegal first move. It now prints the line, the
+  position it left and the move number, and numbers every reported move
+  (`you played 5.Nc3`, `opponent played 5...g5`). `--seed` now derives the
+  beacon too, so it changes the opening instead of replaying the same book line
+  in every solo game.
+
 ## [0.6.0] - 2026-11-12
 
 Timed relay sessions, completed: every match now runs the fixed 30+0 control on

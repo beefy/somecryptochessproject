@@ -35,6 +35,12 @@ Two modes:
 
 Type ``help`` at the prompt for the commands. Moves are accepted as SAN
 (``Nf3``, ``O-O``, ``exd5``, ``e8=Q``) or as UCI (``g1f3``).
+
+A session never starts at move 1: the relay plays the book line the beacon draws
+for this match (``sccp.chess.openings``) and hands you the position after it, so
+the first thing this script prints is that line and the board it left. Every
+move it reports carries its move number (``3. e4``, ``3... Nd5``), which is the
+only way to tell a knight that came from f6 from one that cannot have moved.
 """
 
 from __future__ import annotations
@@ -55,7 +61,7 @@ from typing import Final
 import chess
 import httpx
 
-from sccp.chess.engines import Engine, open_engine
+from sccp.chess.engines import MOCK_VERSION, Engine, open_engine
 from sccp.chess.openings import book_for
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address
@@ -106,11 +112,11 @@ OPPONENT_SEED: Final = "a1" * 32
 WITNESS_SEED: Final = "c0" * 32
 """Demo seed of the relay's clock witness, so flag receipts can be trusted."""
 
-HUMAN_NONCE: Final = "11" * 32
-"""Availability nonce the human seat's beacon commitment is built from."""
+HUMAN_NONCE: Final = "human"
+"""Domain tag for the human seat's availability nonce (``solo_nonces`` salts it)."""
 
-OPPONENT_NONCE: Final = "22" * 32
-"""Availability nonce the engine miner's beacon commitment is built from."""
+OPPONENT_NONCE: Final = "opponent"
+"""Domain tag for the engine miner's availability nonce."""
 
 HUMAN_ENGINE: Final = "human-v1:0000000000000000"
 """Engine fingerprint of the human seat: honest, and never a real engine."""
@@ -451,6 +457,20 @@ def choose_session(
     return None
 
 
+def solo_nonces(seed: str) -> tuple[str, str]:
+    """The two availability nonces of a solo table, derived from ``--seed``.
+
+    The beacon is a pure function of the reveals and the opening is a pure
+    function of the beacon, so deriving the nonces from the seed is what makes
+    ``--seed`` draw a *different* certified opening: without it every solo game
+    would start from the same book line.
+    """
+    base = bytes.fromhex(seed)
+    human = hashlib.sha256(base + HUMAN_NONCE.encode()).hexdigest()
+    opponent = hashlib.sha256(base + OPPONENT_NONCE.encode()).hexdigest()
+    return human, opponent
+
+
 def _solo(options: Options) -> SoloTable:
     """Build the solo table, retrying demo keys until the pairing seats you as asked."""
     params = get_network(options.network or SOLO_NETWORK)
@@ -492,11 +512,12 @@ def _solo_table(
     human_address = encode_address(human.public_key_bytes, params)
     opponent_address = encode_address(opponent.public_key_bytes, params)
     witness_address = encode_address(witness.public_key_bytes, params)
+    human_nonce, opponent_nonce = solo_nonces(options.seed)
     reveals = tuple(
         BeaconReveal(miner=address, commitment=commitment(address, SOLO_EPOCH, nonce), nonce=nonce)
         for address, nonce in (
-            (human_address, HUMAN_NONCE),
-            (opponent_address, OPPONENT_NONCE),
+            (human_address, human_nonce),
+            (opponent_address, opponent_nonce),
         )
     )
     beacon = compute_beacon(
@@ -658,6 +679,21 @@ def numbered_moves(sans: Sequence[str]) -> list[str]:
     return rows
 
 
+def move_label(ply: int) -> str:
+    """``3.`` in front of white's move, ``3...`` in front of black's.
+
+    ``ply`` is the zero-based index of the half-move, so the label of the move
+    about to be played in a position is ``move_label(board.ply())``.
+    """
+    number, side = divmod(ply, 2)
+    return f"{number + 1}." if side == 0 else f"{number + 1}..."
+
+
+def move_text(sans: Sequence[str]) -> str:
+    """One line of PGN move text: ``1. c4 e5 2. Nc3 Nf6``."""
+    return " ".join(row.strip() for row in numbered_moves(sans))
+
+
 def parse_move(board: chess.Board, text: str) -> chess.Move | None:
     """Read a SAN or UCI move from human input; ``None`` if it is not legal.
 
@@ -730,6 +766,8 @@ class Game:
         if view.status == "pending":
             self.out("the opponent never joined, so the session never started")
             return 1
+        if view.san_moves:
+            self._announce_opening(view)
         while True:
             view = self.seat.view()
             if view.status == "finished":
@@ -748,18 +786,35 @@ class Game:
     def _banner(self, view: MatchView) -> None:
         """Say who is who, and on which terms, before the first prompt."""
         matchup = self.seat.matchup
+        engine = _engine_name(view, self.seat.opponent)
         self.out("")
         self.out(f"match    {self.seat.match_id}")
         self.out(f"network  {self.seat.network} epoch {matchup.epoch} round {matchup.round}")
         self.out(f"you      {self.seat.color} as {self.seat.address}")
-        self.out(
-            f"opponent {_short(self.seat.opponent)} ({_engine_name(view, self.seat.opponent)})"
-        )
+        self.out(f"opponent {_short(self.seat.opponent)} ({engine})")
         self.out(f"clock    {_control_text(view.time_control)}")
         if self.stack is not None:
             self.out("relay    in-process, witness receipts, auto-flag on zero")
+        if engine.startswith(MOCK_VERSION):
+            self.out("engine   seeded random legal moves, not a real engine:")
+            self.out("         --engine stockfish-19 --engine-path BINARY to play one")
         self.out("type 'help' for the commands; moves are SAN or UCI")
         self.out("")
+
+    def _announce_opening(self, view: MatchView) -> None:
+        """Show the certified book line the game started from, and the position.
+
+        The relay plays the opening the book draws for this beacon and match id
+        before the first prompt; those plies are neither yours nor receipted, so
+        a player who is never told starts from a board they have not seen and
+        reads the next knight move as an illegal one.
+        """
+        board = _board_from(view)
+        self.out("")
+        self.out(f"opening  {move_text(view.san_moves)}")
+        self.out("         certified book plies: no clock, no receipts, not your moves")
+        self.out(f"you play move {board.fullmove_number} as {self.seat.color}")
+        self._show_board(board)
 
     def _wait(
         self,
@@ -820,7 +875,9 @@ class Game:
                     return view
                 board = _board_from(view)
                 continue
-            self.out(f"you played {board.san(move)}    {_clock_line(moved)}")
+            self.out(
+                f"you played {move_label(board.ply())}{board.san(move)}    {_clock_line(moved)}"
+            )
             return moved
 
     def _ask(self, view: MatchView) -> str:
@@ -828,8 +885,9 @@ class Game:
         remaining = _remaining_ms(view, self.seat.color)
         if remaining < LOW_TIME_MS:
             self.out(f"low time: {format_clock(remaining)} left for you")
+        label = move_label(len(view.san_moves))
         try:
-            return input(f"[{_clock_line(view)}] {self.seat.color}> ").strip()
+            return input(f"[{_clock_line(view)}] {label} {self.seat.color}> ").strip()
         except EOFError:
             raise Quit from None
 
@@ -853,7 +911,8 @@ class Game:
             time.sleep(self.options.poll_seconds)
             view = self.seat.view()
             if len(view.san_moves) > last_ply:
-                self.out(f"opponent played {view.san_moves[-1]}    {_clock_line(view)}")
+                label = move_label(len(view.san_moves) - 1)
+                self.out(f"opponent played {label}{view.san_moves[-1]}    {_clock_line(view)}")
                 last_ply = len(view.san_moves)
             elif time.monotonic() - noted >= 15:
                 # Their clock is the one running, so this is information, not a

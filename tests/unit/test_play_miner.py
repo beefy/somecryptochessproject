@@ -87,6 +87,16 @@ def test_clocks_and_move_rows_are_rendered_for_a_player(play: ModuleType) -> Non
     assert play.numbered_moves(["e4", "e5", "Nf3"]) == ["  1. e4 e5", "  2. Nf3"]
 
 
+def test_moves_are_labelled_with_their_move_number(play: ModuleType) -> None:
+    """``3.`` for white, ``3...`` for black: the ply is what makes a move readable."""
+    assert play.move_label(0) == "1."
+    assert play.move_label(1) == "1..."
+    assert play.move_label(4) == "3."
+    assert play.move_label(5) == "3..."
+    assert play.move_text(["c4", "e5", "Nc3", "Nf6"]) == "1. c4 e5 2. Nc3 Nf6"
+    assert play.move_text([]) == ""
+
+
 def test_parse_args_validates_the_seed_and_attached_mode(play: ModuleType) -> None:
     options = play._parse_args([])
     assert options.relay is None
@@ -132,6 +142,59 @@ def test_choose_session_picks_our_seat_and_nothing_else(play: ModuleType) -> Non
         assert play.choose_session(views, table.seat.address, match_id) is not None
         assert play.choose_session(views, table.seat.address, "0" * 64) is None
         assert play.choose_session(views, "sccpt1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq") is None
+
+
+def test_the_certified_opening_is_announced_before_the_first_prompt(
+    play: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The book plies are not the player's and carry no receipts, so they are shown.
+
+    This is the bug a player hits otherwise: the first prompt is move 3 of a game
+    they have never seen, so the opponent's next knight move reads as illegal.
+    """
+    lines: list[str] = []
+    with _solo(play, clock_ms=lambda: 5_000_000, ascii=True) as table:
+        table.start()
+        monkeypatch.setattr("builtins.input", lambda prompt="": "quit")
+        game = play.Game(
+            table.seat, stack=table, options=play.Options(ascii=True), out=lines.append
+        )
+        with pytest.raises(play.Quit):
+            game.run()
+
+        view = table.seat.view()
+        assert view.status == "active"
+        opening = play.move_text(view.san_moves)
+        assert opening
+        assert f"opening  {opening}" in lines
+        assert any(line.startswith("you play move ") for line in lines)
+        # The board is drawn, so the position the book left is on screen too.
+        assert any("a b c d e f g h" in line for line in lines)
+
+
+def test_a_seed_picks_its_own_opening(play: ModuleType) -> None:
+    """``--seed`` derives the beacon, so it also redraws the certified opening."""
+
+    def opening(seed: str) -> tuple[str, ...]:
+        table = play._solo_table(
+            DEVNET,
+            keypair_from_seed(HUMAN_SEED),
+            play.Options(seed=seed),
+            clock_ms=lambda: 5_000_000,
+            engine=MockEngine(seed=11),
+        )
+        try:
+            table.seat.join()
+            for _ in range(3):
+                table.step()
+            return tuple(table.seat.view().san_moves)
+        finally:
+            table.close()
+
+    seeds = (play.HUMAN_SEED, "aa" * 32, "5a" * 32)
+    openings = [opening(seed) for seed in seeds]
+    assert all(openings)
+    assert len(set(openings)) == len(openings)
 
 
 def test_the_game_loop_plays_moves_and_reports(
