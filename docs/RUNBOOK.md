@@ -3,7 +3,8 @@
 This is the short, operational companion to the design docs. It covers the
 stack in `docker-compose.yml`: one node, one relay, the deterministic bootstrap
 and two Stockfish miners. For deployment setup and cost, see
-[`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md).
+[`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md). For the cloud-side resource
+checklist, see [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md).
 
 ## Health checks
 
@@ -74,6 +75,10 @@ when recovering a test wallet.
 
 `--no-faucet` disables the endpoint on a node (it answers HTTP 404). Use it when a
 deployment must not give away coins.
+
+For a copy-paste walkthrough that creates a keyfile, calls the faucet and checks
+the resulting balance, see
+[`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md).
 
 ## Mining and the bootstrap window
 

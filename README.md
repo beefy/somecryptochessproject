@@ -268,6 +268,8 @@ roadmap below; the rest is the target layout for later milestones.
 ├── .github/workflows/deploy-testnet-miners.yml  # image + hosted testnet deploy
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # this project's plan
+│   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
+│   ├── GCP_RESOURCE_SETUP.md     # project, VM, firewall and deploy wiring
 │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
 │   ├── PROTOCOL.md               # normative wire formats (M1–M4)
@@ -424,12 +426,17 @@ chain, starting the node on the right data directory and troubleshooting a
 
 The wallet and miner guides are separate:
 
+- [`docs/CREATE_A_TESTNET_WALLET.md`](docs/CREATE_A_TESTNET_WALLET.md) — create a
+  testnet keyfile, fund it from the faucet and check the balance.
 - [`docs/OPEN_A_WALLET.md`](docs/OPEN_A_WALLET.md) — create a keyfile, back up the
   24-word phrase, restore it and read the address.
 - [`docs/SEND_COINS.md`](docs/SEND_COINS.md) — fund a test wallet from the
   faucet, send a transfer and watch it settle.
 - [`docs/RUN_A_TESTNET_MINER.md`](docs/RUN_A_TESTNET_MINER.md) — run the relay and
   an engine miner, register on chain and commit/reveal availability.
+
+To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
+[`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws
 for the match and hands you the position after it, so the script opens by

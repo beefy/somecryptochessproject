@@ -278,6 +278,8 @@ invalid usage.
 
 ## See also
 
+- [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) — create a keyfile
+  and fund it from the HTTP faucet before sending.
 - [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) — create a keyfile, back it up, read its
   address.
 - [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — register a miner with a

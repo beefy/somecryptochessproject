@@ -262,6 +262,8 @@ unknown network.
 
 ## See also
 
+- [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) — the short
+  keyfile-plus-faucet walkthrough.
 - [`SEND_COINS.md`](SEND_COINS.md) — fund the wallet and transfer coins.
 - [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — register the wallet as a
   miner.

@@ -17,6 +17,9 @@ still useful on a repository without a testnet VM.
 
 ## One-time setup
 
+For the GCP-side checklist (project, API, firewall, VM, Docker and SSH), see
+[`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md).
+
 Create a GitHub Environment named `testnet` and set:
 
 | Kind | Name | Meaning |
