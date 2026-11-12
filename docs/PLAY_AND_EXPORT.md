@@ -7,6 +7,8 @@ There are three commands in this workflow:
 | 1 | `python scripts/play_miner.py --on-chain` | Starts a local devnet, plays your game, and mines its proof into a block. |
 | 2 | `sccp --data-dir data-play node run --network devnet` | Serves the finished chain so the exporter can read it. |
 | 3 | `python scripts/export_block_games.py --block <height>` | Writes the block's game as a PGN plus `manifest.json`. |
+| 4 | `curl -s http://127.0.0.1:8645/v1/blocks/<height> \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["block"]["proofs"][0]["pgn"])'` | Read the PGN directly from the block |
 
 `play_miner.py --on-chain` **starts the devnet itself**. You do not need to start
 a separate devnet or relay first.
