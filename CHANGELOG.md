@@ -7,6 +7,58 @@ summarised in the M0–M2 rows of the README roadmap.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-12
+
+A minor release: M6 makes the testnet deployable, fundable and operable with a
+public faucet, node-side proof settlement, a deterministic two-miner bootstrap
+and an automated deployment workflow.
+
+### Added
+
+- Public testnet faucet: `GET /v1/faucet` describes the grant and limits,
+  `POST /v1/faucet` funds a recipient from the network's published faucet key,
+  and `sccp faucet send` remains the operator path. Each address may receive one
+  grant of up to 1000 coins per hour, and each client five grants per hour; the
+  limits are in memory and reset with the node.
+- Node-side proof settler: `sccp node run --mine` builds blocks around announced
+  proofs, with `--miner-address`, `--no-mine-bootstrap` and
+  `--mine-poll-seconds`.
+- Deterministic testnet bootstrap in `deploy/bootstrap_testnet_stack.py`: it
+  builds the empty bootstrap blocks through the public block API, funds and
+  registers two miners, commits and reveals availability, and writes the relay
+  configuration. `deploy/check_testnet_stack.py` verifies the resulting stack.
+- `docker-compose.yml` now runs the node, relay, bootstrap job and two miners
+  that use the real `stockfish-19` profile; `SCCP_IMAGE` selects a published
+  image for CI while local runs build it.
+- `.github/workflows/deploy-testnet-miners.yml`: builds and publishes the image
+  to GHCR, then deploys it over SSH to the testnet VM without GCP credentials.
+- Operator documentation: `docs/RUNBOOK.md` (restart, faucet, mining and
+  incident procedures), `docs/TESTNET_DEPLOYMENT.md` (CI deployment and cost
+  overview), `docs/CREATE_A_TESTNET_WALLET.md` (wallet and faucet quickstart),
+  `docs/GCP_RESOURCE_SETUP.md` (VM, network, firewall and GitHub wiring), and an
+  expanded `docs/RUN_A_TESTNET_MINER.md`.
+- Tests for the faucet, node miner, faucet CLI, deterministic bootstrap and
+  cross-thread block persistence.
+
+### Fixed
+
+- A node can persist blocks written from FastAPI's sync worker threads: SQLite
+  now permits cross-thread use while `NodeService.write_lock` still serialises
+  every mutation.
+- A block's included transactions and proofs are removed from the mempool after
+  ingestion, so a settled proof cannot be mined again on the next block.
+
+### Changed
+
+- The compose testnet is now the funded, registered two-miner stack rather than
+  three mock miners; each deploy starts from empty volumes and therefore a fresh
+  chain.
+
+### Notes
+
+- M6 remains in progress: the block explorer, metrics and the 72-hour soak are
+  still outstanding.
+
 ## [0.8.0] - 2026-11-12
 
 A minor release: M5 quality verification and bonded challenges, the threat model,
