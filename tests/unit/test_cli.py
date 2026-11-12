@@ -384,3 +384,31 @@ def test_matchmaker_help_lists_run() -> None:
     result = runner.invoke(app, ["matchmaker", "--help"])
     assert result.exit_code == 0
     assert "run" in result.stdout
+
+
+def test_devnet_up_prints_a_summary() -> None:
+    result = runner.invoke(app, ["devnet", "up", "--miners", "2", "--blocks", "4"])
+    assert result.exit_code == 0, result.output
+    assert "height 4" in result.stdout
+    assert "proofs mined" in result.stdout
+
+
+def test_devnet_up_json_payload() -> None:
+    result = runner.invoke(app, ["--json", "devnet", "up", "--miners", "2", "--blocks", "4"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["height"] == 4
+    assert payload["network"] == "devnet"
+    assert payload["proofs"]
+
+
+def test_devnet_up_only_runs_devnet() -> None:
+    result = runner.invoke(app, ["--network", "testnet", "devnet", "up"])
+    assert result.exit_code == 2
+    assert "only runs the devnet network" in result.stderr
+
+
+def test_devnet_help_lists_up() -> None:
+    result = runner.invoke(app, ["devnet", "--help"])
+    assert result.exit_code == 0
+    assert "up" in result.stdout

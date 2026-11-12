@@ -562,8 +562,13 @@ class EngineMiner:
         return state
 
     @staticmethod
-    def _check_pinned(state: MatchState, view: MatchView) -> None:
-        if state.certificate.model_dump(mode="json") != view.certificate.model_dump(mode="json"):
+    def _certificate_body(certificate: MatchCertificate) -> dict[str, object]:
+        """The immutable certificate content, without join signatures."""
+        return certificate.model_dump(mode="json", exclude={"start_signatures"})
+
+    @classmethod
+    def _check_pinned(cls, state: MatchState, view: MatchView) -> None:
+        if cls._certificate_body(state.certificate) != cls._certificate_body(view.certificate):
             state.refused = True
             raise MinerError("relay changed the certificate of an open match")
 
@@ -586,12 +591,16 @@ class EngineMiner:
             Domain.CERTIFICATE,
             certificate_payload(state.certificate),
         ).hex()
-        self.relay.join(
+        view = self.relay.join(
             state.match_id,
             seat=self.address,
             public_key=self.config.keypair.public_key_hex,
             signature=signature,
         )
+        if self._certificate_body(view.certificate) == self._certificate_body(state.certificate):
+            # The relay fills in join signatures; keep the pinned copy current
+            # so the immutability check keeps comparing like with like.
+            state.certificate = view.certificate
 
     # -- clock and board bookkeeping ---------------------------------------
 
@@ -708,13 +717,17 @@ class EngineMiner:
         proofs: list[str] = []
         if state.seat not in result.result_signatures:
             signed = sign_result(result, state.certificate, state.seat, self.config.keypair)
-            self.relay.result(
+            updated = self.relay.result(
                 state.match_id,
                 seat=self.address,
                 signature=signed.result_signatures[state.seat],
             )
             state.result_signed = True
             actions.append(f"{state.match_id}:result")
+            if updated.result is None or len(updated.result.result_signatures) < 2:
+                # Our co-signature is on the relay, but the transcript only
+                # exists once both seats signed; finish on a later poll.
+                return actions, proofs
         transcript = self.relay.transcript(state.match_id)
         if transcript.result.game_hash != result.game_hash:
             state.refused = True

@@ -1,17 +1,19 @@
-# sccp wire protocol, version 1 (M0–M3 subset)
+# sccp wire protocol, version 1 (M0–M4 subset)
 
-Status: **normative** for the parts implemented in milestones M0–M3 (canonical
+Status: **normative** for the parts implemented in milestones M0–M4 (canonical
 encoding, game hash, PGN contract, opening book, engine fingerprints, epoch
 beacons, pairing, certificates, transcripts, clocks and clock evidence, win-proof
-verification, and the M3 ledger: transaction envelopes, account state, block
-headers and bodies, difficulty, fork choice and genesis documents). Sections for
-the node and gossip API and for the quality/challenge lifecycle land in later
-milestones. The M3 clock layer covers the off-chain primitives *and* on-chain
-settlement; the relay's timed-session API remains the M2 API described below.
+verification, the M3 ledger — transaction envelopes, account state, block
+headers and bodies, difficulty, fork choice and genesis documents — and the M4
+node: HTTP API, gossip envelopes, peer scoring and pull-sync). Sections for the
+quality/challenge lifecycle land in a later milestone. The M3 clock layer covers
+the off-chain primitives *and* on-chain settlement; the relay's timed-session API
+remains the M2 API described below.
 
 Reference implementation: `src/sccp/protocol/`, `src/sccp/chess/`,
-`src/sccp/chain/` and `src/sccp/serialization.py`. The plan that motivates these
-rules is [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), sections 5.2–5.11.
+`src/sccp/chain/`, `src/sccp/node/`, `src/sccp/miner/`, `src/sccp/devnet.py` and
+`src/sccp/serialization.py`. The plan that motivates these rules is
+[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), sections 5.2–5.12.
 
 ---
 
@@ -715,7 +717,115 @@ suite; `genesis/testnet.json` and `genesis/mainnet.json` are the pinned networks
 Test-network faucet keys come from published seeds, which is why those networks
 are safe to hand out and mainnet must never gain one.
 
-## 14. Change control
+## 14. Node API and gossip
+
+### 14.1 HTTP API
+
+Every response is a frozen pydantic model with `extra="forbid"` and carries the
+network id where the plan asks for it, so a wallet can refuse a node on the
+wrong network. Errors map as: `NotFoundError` → 404, any other `SccpError` → 400,
+an orphan block on `POST /v1/blocks` → 202.
+
+| Method | Path | Response |
+| --- | --- | --- |
+| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes |
+| GET | `/v1/params` | the network parameters |
+| GET | `/v1/blocks/{height-or-hash}` | `BlockView`: hash, parent, height, work, main-chain flag, block |
+| POST | `/v1/blocks` | `BlockView`, or 202 when the parent is unknown |
+| GET | `/v1/accounts/{address}` | `AccountView`: balance, immature, bonded, nonce, registration, endpoint, engine, key, ban height |
+| GET | `/v1/epochs/{epoch}` | `EpochView`: beacon, roster, availability, quotas, matchable flag |
+| GET | `/v1/epochs/{epoch}/beacon` | `Beacon` (404 when the chain has none) |
+| GET | `/v1/difficulty` | `DifficultyView`: current `wins_required`/`seal_bits` and retarget history |
+| GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, height, mempool flag |
+| GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, certificate, transcript |
+| GET | `/v1/matches/{match_id}/transcript` | `Transcript` |
+| GET | `/v1/mempool` | `MempoolView`: pending txids and proof ids |
+| GET | `/v1/transactions/{txid}` | `TransactionRecord`: type, height, block hash, mempool flag |
+| POST | `/v1/tx` | `TxAccepted`: the recomputed txid |
+| POST | `/v1/proofs` | `ProofAccepted`: the proof id |
+| GET | `/v1/challenges` | placeholder `{network, challenges: []}` until M5 |
+| POST | `/v1/gossip` | `GossipResult`: object id, duplicate flag, fanout |
+| GET | `/v1/peers` | `PeerView[]`: url, address, height, failures, ban and last-seen times |
+
+`POST /v1/tx` and `POST /v1/proofs` run the same checks a block would, so an
+invalid object never reaches the mempool; a duplicate `(sender, nonce)` or proof
+id is rejected instead of replacing the pending one. `POST /v1/blocks` is
+idempotent for a block the node already has and returns 202 for an unknown
+parent so a peer can retry once it receives the ancestor.
+
+### 14.2 Gossip envelopes
+
+```json
+{"network": "testnet",
+ "kind": "transaction" | "proof" | "block" | "peer",
+ "payload": {"transaction": {...}},
+ "sender": "sccpt1...",
+ "signature": "128 hex chars"}
+```
+
+The signature covers the canonical JSON of
+`{"network", "kind", "payload", "sender"}` in the `sccp/v1/gossip` domain, so an
+envelope cannot be replayed on another network or relabelled as another kind.
+`verify_envelope` checks the network id and the signature whenever the sender's
+public key is known — passed by the caller or registered in the ledger. An
+unknown sender may still relay blocks, proofs and transactions because those
+carry their own signatures and are revalidated by the ledger; its identity only
+feeds the abuse score.
+
+Object ids are recomputed from content, never taken from the sender: the txid,
+the proof id, the block hash, or the peer URL. The dedupe cache is a bounded,
+insertion-ordered set of `(kind, object_id)` pairs (4096 entries; the oldest is
+evicted first). A duplicate is acknowledged with `duplicate: true` and is not
+applied again. Fanout picks up to four eligible peers at random and never
+includes the peer the envelope arrived from.
+
+### 14.3 Peer scoring and pull-sync
+
+A peer starts with zero failures. Each failed sync or malformed block response
+adds one; three consecutive failures ban the peer for 300 seconds, and any
+successful response clears the score. Unknown-parent blocks are *not* failures:
+gossip order is not a promise.
+
+Pull-sync asks the peer for `/v1/status`, refuses a peer on another network,
+then requests heights `local_height + 1 .. min(remote_height, local_height +
+max_sync_blocks)` in strict order. Every block is validated and ingested through
+the same path as a gossiped block, so a reorg is adopted only when the peer's
+branch is heavier. A malformed document, a wrong height or a ledger error aborts
+the sync, penalises the peer and leaves the local chain untouched beyond the
+blocks already accepted. A block that cannot be connected (its parent is still
+missing) is counted as `orphaned` and retried by a later sync.
+
+## 15. Devnet parameters and policy
+
+`devnet` is the in-process network used by tests, CI and `sccp devnet up`. It
+inherits testnet and changes only what determinism needs:
+
+| Parameter | Devnet value | Reason |
+| --- | --- | --- |
+| `epoch_length` | 1 | one epoch per block, so a ten-block run exercises several epochs |
+| `target_block_seconds` | 1 | no retargeting pressure |
+| `retarget_enabled` | false | fixed difficulty |
+| `wins_required` | 1 | one proof per block |
+| `min_bond` | 0 | faucet funding is enough to register |
+| `genesis_timestamp` | 1700000000 | fixed median-time-past start |
+| `genesis_hash` | pinned in `NetworkParams` | one chain for every run |
+
+Consensus-defined bootstrap lets the first three blocks be empty, which is
+exactly the window funding, registration and availability commitments need; the
+first matchable epoch is therefore 3. Availability for epoch `e` must be
+committed by epoch `e - 2` and revealed in epoch `e - 1`, so a devnet keeps the
+epochs rolling by submitting both one block ahead.
+
+A devnet run is deterministic: participant keys come from fixed seeds, engines
+are seeded `MockEngine`s with fixed fingerprints, availability nonces are fixed
+strings, and the relay clock is frozen at a fixed timestamp so no game expires.
+Two runs with the same arguments produce the same tip hash and the same proof
+ids. Because two seeded engines can shuffle past the ply ceiling, the devnet
+resigns the side to move once a game reaches 60 plies; resignation is a
+consensus-valid termination, both seats co-sign it, and the winner's proof is
+verified like any other.
+
+## 16. Change control
 
 - Adding a header tag, changing a hash payload key, changing result or
   termination semantics, or changing selection all require a protocol version
@@ -723,4 +833,8 @@ are safe to hand out and mainnet must never gain one.
 - Golden vectors for the game hash and opening hash live in
   `tests/fixtures/chess_vectors.json`; changing them is a deliberate consensus
   change, never a test fix.
+- The gossip envelope fields, the signed payload and the documented HTTP paths
+  and response fields are part of this document: adding a field is a compatible
+  change only if clients ignore unknown fields, and anything else needs a
+  protocol version bump.
 

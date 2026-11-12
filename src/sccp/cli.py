@@ -34,6 +34,7 @@ from sccp.crypto.wallet import (
     read_header,
     read_passphrase_file,
 )
+from sccp.devnet import run_devnet
 from sccp.errors import SccpError
 from sccp.miner.matchmaker import Matchmaker
 from sccp.miner.matchmaker import create_app as create_matchmaker_app
@@ -60,6 +61,8 @@ verify_app = typer.Typer(no_args_is_help=True, help="Verify games and proofs off
 app.add_typer(verify_app, name="verify")
 matchmaker_app = typer.Typer(no_args_is_help=True, help="Run and inspect the matchmaking relay.")
 app.add_typer(matchmaker_app, name="matchmaker")
+devnet_app = typer.Typer(no_args_is_help=True, help="Run a whole network in one process.")
+app.add_typer(devnet_app, name="devnet")
 
 
 @dataclass(frozen=True, slots=True)
@@ -457,3 +460,48 @@ def matchmaker_run(
     import uvicorn
 
     uvicorn.run(create_matchmaker_app(state), host=host, port=port)
+
+
+@devnet_app.command("up")
+def devnet_up(
+    ctx: typer.Context,
+    miners: Annotated[
+        int,
+        typer.Option("--miners", help="How many miners to run (at least two)."),
+    ] = 4,
+    blocks: Annotated[
+        int,
+        typer.Option("--blocks", help="Chain height the devnet must reach."),
+    ] = 10,
+    genesis: Annotated[
+        Path | None,
+        typer.Option("--genesis", help="Genesis document override (tests)."),
+    ] = None,
+) -> None:
+    """Run a full network in-process and report what it produced."""
+    requested = _options(ctx).network
+    if requested is not None and requested != "devnet":
+        _fail(f"devnet up only runs the devnet network, not {requested!r}", code=2)
+    summary = _run(
+        lambda: run_devnet(
+            miners=miners,
+            blocks=blocks,
+            genesis_path=str(genesis) if genesis is not None else None,
+        )
+    )
+    if _options(ctx).json_output:
+        _echo_json(summary.as_dict())
+        return
+    typer.echo(f"devnet up: height {summary.height} after {summary.seconds:.3f}s")
+    typer.echo(f"tip: {summary.tip_hash}")
+    typer.echo(f"genesis: {summary.genesis_hash}")
+    typer.echo(
+        f"epochs: {', '.join(str(epoch) for epoch in summary.epochs) or 'none'}; "
+        f"{len(summary.matches)} matches; {len(summary.proofs)} proofs mined"
+    )
+    for address, balance in summary.balances.items():
+        typer.echo(f"  {address} {balance / 100_000_000:.8f}")
+
+
+if __name__ == "__main__":  # pragma: no cover - console-script parity
+    app()

@@ -24,30 +24,26 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from sccp.chain.block import required_proofs
 from sccp.chain.genesis import faucet_keypair
 from sccp.chain.mempool import Mempool
 from sccp.chess.engines import Engine, MockEngine
-from sccp.chess.openings import OpeningBook, book_for
-from sccp.config import DEVNET, NetworkParams
+from sccp.config import DEVNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, keypair_from_seed
 from sccp.errors import DevnetError, MempoolError, ProtocolError, RelayError
 from sccp.miner.block_builder import BlockBuilder
 from sccp.miner.engine_miner import EngineMiner, MinerConfig, NodeClient, RelayClient
-from sccp.miner.matchmaker import Matchmaker
+from sccp.miner.matchmaker import Matchmaker, ResignRequest
 from sccp.miner.matchmaker import create_app as create_matchmaker_app
 from sccp.node.app import create_app as create_node_app
-from sccp.node.service import NodeService, default_genesis_path
-from sccp.protocol.models import WinProof
+from sccp.node.service import NodeService
+from sccp.protocol.models import Transaction, WinProof
 from sccp.protocol.pairing import RosterEntry
+from sccp.transport import ASGITransport
 from sccp.wallet.service import WalletService
 
 FUNDING = 100 * 100_000_000
 """Coins every devnet miner is funded with, in base units."""
-
-MAX_PLAY_ROUNDS = 8
-"""Safety bound on relay rounds per epoch."""
 
 MAX_PLAY_ITERATIONS = 2000
 """Safety bound on miner polling iterations inside one round."""
@@ -118,7 +114,6 @@ class _RelayPair:
     def close(self) -> None:
         for client in self.http:
             client.close()
-
 
 
 def _participants(count: int) -> list[DevnetMiner]:
@@ -212,20 +207,24 @@ def _bootstrap(service: NodeService, participants: Sequence[DevnetMiner]) -> Non
 
 def _submit_epoch_txs(service: NodeService, participants: Sequence[DevnetMiner]) -> None:
     """Best-effort availability commits and reveals for the epochs ahead."""
+
+    def admit(tx: Transaction) -> None:
+        try:
+            service.mempool.add_transaction(tx)
+        except (MempoolError, ProtocolError):
+            return
+
     for participant in participants:
-        for build in (
-            lambda wallet: wallet.build_availability(
+        wallet = WalletService(service.params, service.mempool.projection)
+        admit(
+            wallet.build_availability(
                 participant.keypair,
                 nonce_secret=participant.nonce_secret,
                 max_games=service.params.rounds_per_epoch,
-            ),
-            lambda wallet: wallet.build_reveal(participant.keypair, participant.nonce_secret),
-        ):
-            wallet = WalletService(service.params, service.mempool.projection)
-            try:
-                service.mempool.add_transaction(build(wallet))
-            except (MempoolError, ProtocolError, RelayError):
-                continue
+            )
+        )
+        wallet = WalletService(service.params, service.mempool.projection)
+        admit(wallet.build_reveal(participant.keypair, participant.nonce_secret))
 
 
 def _relay_for_epoch(
@@ -239,9 +238,7 @@ def _relay_for_epoch(
         address: RosterEntry(address=address, max_games=member.max_games)
         for address, member in record.roster.items()
     }
-    engines = {
-        participant.address: participant.engine.fingerprint for participant in participants
-    }
+    engines = {participant.address: participant.engine.fingerprint for participant in participants}
     relay = Matchmaker(
         service.params,
         beacon=record.beacon,
@@ -253,11 +250,11 @@ def _relay_for_epoch(
         timeout_seconds=3600,
     )
     relay_http = httpx.Client(
-        transport=httpx.ASGITransport(app=create_matchmaker_app(relay)),
+        transport=ASGITransport(create_matchmaker_app(relay)),
         base_url="http://relay",
     )
     node_http = httpx.Client(
-        transport=httpx.ASGITransport(app=create_node_app(service)),
+        transport=ASGITransport(create_node_app(service)),
         base_url="http://node",
     )
     return _RelayPair(
@@ -266,3 +263,207 @@ def _relay_for_epoch(
         node_client=NodeClient("http://node", client=node_http),
         http=[relay_http, node_http],
     )
+
+
+RESIGN_PLIES = 60
+"""Devnet policy: end a long game by resignation so a run always yields proofs.
+
+Two seeded mock engines can shuffle for hundreds of plies and draw, and a draw
+has no winner, so it produces no proof. Resigning is a consensus-valid result
+(``Termination.RESIGNATION``) that both seats can co-sign and the winner can
+prove, so the devnet stops long games instead of waiting for the ply ceiling.
+"""
+
+
+def _all_settled(miners: Sequence[EngineMiner], pair: _RelayPair) -> bool:
+    """Whether every relay session and every miner's view of it is final."""
+    try:
+        views = pair.relay_client.matches()
+    except RelayError:
+        return True
+    for view in views:
+        if view.status in ("pending", "active"):
+            return False
+        if view.result is None or len(view.result.result_signatures) < 2:
+            return False
+    for miner in miners:
+        for state in miner.matches.values():
+            if not (state.finished or state.refused):
+                return False
+    return True
+
+
+def _resign_stalled(pair: _RelayPair) -> int:
+    """Resign the side to move in games that passed ``RESIGN_PLIES``."""
+    resigned = 0
+    for view in pair.relay_client.matches():
+        if view.status != "active" or len(view.san_moves) < RESIGN_PLIES:
+            continue
+        seat = view.matchup.white if len(view.san_moves) % 2 == 0 else view.matchup.black
+        try:
+            pair.relay.resign(view.matchup.match_id, ResignRequest(seat=seat))
+        except RelayError:
+            continue
+        resigned += 1
+    return resigned
+
+
+def _play_round(miners: Sequence[EngineMiner], pair: _RelayPair) -> None:
+    """Poll every miner until the round is settled or nothing can progress."""
+    for _ in range(MAX_PLAY_ITERATIONS):
+        if _all_settled(miners, pair):
+            return
+        acted = _resign_stalled(pair) > 0
+        for miner in miners:
+            tick = miner.run_once()
+            acted = acted or bool(tick.joined or tick.moves or tick.results or tick.proofs)
+        if not acted:
+            return
+
+
+def _play_epoch(
+    service: NodeService,
+    epoch: int,
+    participants: Sequence[DevnetMiner],
+    *,
+    max_rounds: int,
+) -> tuple[list[str], list[WinProof]]:
+    """Open and play every round the relay's quotas still allow."""
+    try:
+        pair = _relay_for_epoch(service, epoch, participants)
+    except DevnetError:
+        return [], []
+    miners = [
+        EngineMiner(
+            MinerConfig(
+                params=service.params,
+                keypair=participant.keypair,
+                max_games_per_epoch=service.params.rounds_per_epoch,
+            ),
+            engine=participant.engine,
+            relay=pair.relay_client,
+            node=pair.node_client,
+        )
+        for participant in participants
+    ]
+    matches: list[str] = []
+    proofs: list[WinProof] = []
+    try:
+        for round_number in range(max_rounds):
+            try:
+                views = pair.relay.open_round(round_number)
+            except RelayError:
+                break
+            if not views:
+                break
+            matches.extend(view.matchup.match_id for view in views)
+            _play_round(miners, pair)
+            for miner in miners:
+                proofs.extend(miner.proofs.values())
+    finally:
+        pair.close()
+    return matches, proofs
+
+
+def _rebase_mempool(service: NodeService) -> None:
+    """Drop what the new tip consumed, keeping everything still admissible."""
+    pending_txs = [entry.tx for entry in service.mempool.transactions.values()]
+    pending_proofs = list(service.mempool.proofs.values())
+    fresh = Mempool(params=service.params, tip_state=service.chain.state, book=service.chain.book)
+    for tx in pending_txs:
+        try:
+            fresh.add_transaction(tx)
+        except MempoolError:
+            continue
+    for proof in pending_proofs:
+        try:
+            fresh.add_proof(proof)
+        except MempoolError:
+            continue
+    service.mempool = fresh
+
+
+def _mine_pending(
+    service: NodeService,
+    keypairs: Mapping[str, Keypair],
+    mined: list[str],
+) -> bool:
+    """Mine one block from a pending proof; return whether the height moved."""
+    for proof in sorted(service.mempool.proofs.values(), key=lambda item: item.proof_id):
+        keypair = keypairs.get(proof.winner)
+        if keypair is None:
+            continue
+        before = service.height
+        _build_and_ingest(service, keypair, pool=service.mempool)
+        if service.height == before:
+            raise DevnetError(f"block at height {before + 1} did not extend the chain")
+        mined.append(proof.proof_id)
+        _rebase_mempool(service)
+        return True
+    return False
+
+
+def run_devnet(
+    *,
+    miners: int = 4,
+    blocks: int = 10,
+    genesis_path: str | None = None,
+    max_epochs: int = 6,
+) -> DevnetSummary:
+    """Run a complete in-process network and return what it produced."""
+    if miners < 2:
+        raise DevnetError("a devnet needs at least two miners")
+    if blocks < 1:
+        raise DevnetError("a devnet needs at least one block")
+
+    started = time.monotonic()
+    params = DEVNET
+    participants = _participants(miners)
+    keypairs = {participant.address: participant.keypair for participant in participants}
+    service = NodeService.open(params, genesis_path=genesis_path)
+    service.check_startup()
+    try:
+        _bootstrap(service, participants)
+        matches: list[str] = []
+        proof_ids: list[str] = []
+        epochs: list[int] = []
+        epoch = GENESIS_EPOCH
+        while service.height < blocks:
+            _submit_epoch_txs(service, participants)
+            if _mine_pending(service, keypairs, proof_ids):
+                continue
+            if len(epochs) >= max_epochs:
+                break
+            epoch_matches, _ = _play_epoch(
+                service, epoch, participants, max_rounds=params.rounds_per_epoch
+            )
+            if not epoch_matches:
+                break
+            matches.extend(epoch_matches)
+            epochs.append(epoch)
+            epoch += 1
+        if service.height < blocks:
+            raise DevnetError(
+                f"the devnet stalled at height {service.height} of {blocks}: "
+                f"{len(matches)} matches, {len(proof_ids)} proofs mined"
+            )
+        state = service.chain.state
+        balances = {
+            participant.address: state.account(participant.address).balance
+            for participant in participants
+        }
+        return DevnetSummary(
+            network=params.network_id,
+            miners=miners,
+            blocks=blocks,
+            height=service.height,
+            tip_hash=service.chain.tip_hash,
+            genesis_hash=service.chain.genesis_hash,
+            epochs=tuple(epochs),
+            matches=tuple(matches),
+            proofs=tuple(proof_ids),
+            balances=balances,
+            seconds=round(time.monotonic() - started, 3),
+        )
+    finally:
+        service.close()

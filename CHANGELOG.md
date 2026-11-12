@@ -7,9 +7,70 @@ summarised in the M0–M2 rows of the README roadmap.
 
 ## [Unreleased]
 
-Milestone M4: the node, P2P gossip, the miner daemon, relay-tracked clocks and
-the `chain`, `miner` and `devnet` CLI commands. Nothing has landed yet; 0.3.0 is
-the M3 baseline.
+Milestone M5: quality verification, challenges and the threat-model tests. The
+`book_version: v1` quality profile, the challenge lifecycle and
+`sccp.node.quality_sampler` are still to come.
+
+## [0.5.0] - 2026-11-12
+
+Milestone M4: the node, P2P gossip, the unattended engine miner and the
+in-process devnet.
+
+### Added
+
+- `sccp.node.service.NodeService`: one node's ledger, mempool, peer table,
+  transcript cache and gossip dedupe, with the reads behind the API
+  (`status`, `block`, `account`, `epoch`, `beacon`, `difficulty`, `game`,
+  `match`, `transcript`, `mempool_view`, `transaction`, `peers_view`), the
+  writes (`submit_transaction`, `announce_proof`, `add_transcript`,
+  `ingest_block` with duplicate/orphan/reorg handling) and pull-sync
+  (`sync_from`). `HttpPeerClient` speaks the peer API over an injected
+  `httpx.Client`.
+- `sccp.node.app`: the complete section 5.12 HTTP API (status, params, blocks by
+  height or hash, accounts, epochs and beacons, difficulty history, games,
+  matches and transcripts, mempool, transactions, transaction and proof
+  submission, the M5 challenges placeholder, gossip and peers), with startup
+  checks, a lifespan that closes storage, and one error handler per exception
+  family so ledger errors become 4xx instead of 500. `sccp.node.routes` keeps
+  the M2 read-only entry point working.
+- `sccp.node.models`: frozen, `extra="forbid"` response models, each carrying
+  the network id.
+- `sccp.node.p2p`: signed gossip envelopes (`sccp/v1/gossip` domain over
+  `network`, `kind`, `payload` and `sender`), content-addressed object ids,
+  a bounded dedupe cache, random fanout that never echoes to the sender, a peer
+  table with failure-based banning, `plan_sync`/`fetch_blocks` pull-sync, and
+  `GossipKind`/`GossipError` handling that penalises peers which serve garbage
+  while leaving unknown-parent blocks unpunished.
+- `sccp.miner.engine_miner`: `EngineMiner`, a synchronous, clock-injected miner
+  loop that joins certified matches, replays and signs moves, co-signs results,
+  stops before drawing the opponent's clock down, assembles bonded timeout
+  claims from verified clock evidence and only announces proofs it can rebuild
+  from a transcript. It refuses matches it was not seated in, certificate
+  swaps, unreproducible results and transcripts whose game hash disagrees.
+- `sccp.devnet` and `sccp devnet up`: a whole network in one process. Funding,
+  registration, availability and reveals are signed transactions, the relay is
+  the production `Matchmaker` behind its real HTTP API, miners are
+  `EngineMiner`s with deterministic mock engines, and the node mines with the
+  production `BlockBuilder`. `--miners`, `--blocks`, `--genesis` and the global
+  `--json` are supported; the default run mines ten blocks from four miners in
+  a couple of seconds without opening a port.
+- `sccp.transport.ASGITransport` and `client_for`: a synchronous ASGI transport
+  for `httpx>=0.28` (whose own `ASGITransport` is async-only), so the node, the
+  relay and the devnet can be exercised in-process.
+- `Domain.GOSSIP` and `sccp.errors.DevnetError`.
+- Unit tests for the new layers: `test_node_p2p.py`, `test_node_service.py`,
+  `test_engine_miner.py`, `test_devnet.py`, plus `devnet up` CLI coverage.
+
+### Fixed
+
+- `EngineMiner` no longer asks the relay for a transcript before the opponent
+  has co-signed the result; it returns after recording its own signature and
+  finishes the match on a later poll.
+- The pinned-certificate check ignores join signatures, and the pinned copy is
+  refreshed after joining, so a legitimate join is not mistaken for a
+  certificate swap.
+- `HttpPeerClient`'s docstring no longer recommends `httpx.ASGITransport`, which
+  cannot drive a synchronous client on httpx 0.28.
 
 ## [0.4.1] - 2026-11-12
 

@@ -620,9 +620,9 @@ class NodeService:
 class HttpPeerClient:
     """``PeerClient`` over HTTP, using an injected ``httpx.Client``.
 
-    Passing ``httpx.Client(transport=httpx.ASGITransport(app=...))`` makes the
-    same code talk to an in-process node, which is how the sync tests run
-    without opening a port.
+    Passing ``httpx.Client(transport=sccp.transport.ASGITransport(app))`` makes
+    the same code talk to an in-process node, which is how the sync tests run
+    without opening a port (httpx's own ``ASGITransport`` is async-only).
     """
 
     def __init__(

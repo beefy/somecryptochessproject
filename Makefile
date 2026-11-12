@@ -74,9 +74,8 @@ dist: venv  ## Build sdist and wheel into dist/ (needs `build`)
 dist-check: dist  ## Validate dist/ with twine check --strict (needs `twine>=7`)
 	$(PYTHON) -m twine check --strict dist/*
 
-devnet: venv  ## Start an in-process devnet (lands with M4)
-	@echo "devnet is not implemented yet; see docs/IMPLEMENTATION_PLAN.md (M4)." >&2
-	@exit 1
+devnet: venv  ## Run the in-process devnet (node + relay + four mock miners)
+	$(PYTHON) -m sccp.cli devnet up --miners 4 --blocks 10
 
 clean:  ## Remove caches and build artefacts
 	rm -rf .mypy_cache .pytest_cache .ruff_cache .hypothesis htmlcov build dist
