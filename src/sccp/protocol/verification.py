@@ -21,7 +21,7 @@ from typing import NoReturn
 from sccp.chess.openings import OpeningBook, book_for
 from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import ParsedGame, validate_pgn
-from sccp.config import NetworkParams, get_network
+from sccp.config import NetworkParams, QualityMode, get_network
 from sccp.crypto.keys import PublicKeyLike
 from sccp.errors import (
     BeaconError,
@@ -74,6 +74,7 @@ class ProofFailure(StrEnum):
     RESULT = "result"
     PROOF_ID = "proof-id"
     DUPLICATE = "duplicate"
+    QUALITY = "quality"
 
 
 def _fail(reason: ProofFailure, message: str) -> NoReturn:
@@ -136,6 +137,16 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         _fail(
             ProofFailure.BEACON,
             f"beacon is for epoch {beacon.epoch}, proof claims epoch {proof.epoch}",
+        )
+
+    # 1b. On a sampled network the compact quality summary is part of the proof's
+    # shape. Its contents are not consensus: a validator samples and re-runs, and a
+    # disagreement is a bonded challenge. Requiring the field stops a miner from
+    # opting out of that audit by leaving it out.
+    if params.quality_mode is QualityMode.SAMPLED and proof.quality_summary is None:
+        _fail(
+            ProofFailure.QUALITY,
+            f"network {params.network_id!r} requires a quality_summary on every proof",
         )
 
     # 2. Beacon: recompute from reveals, availability and (optionally) drand.

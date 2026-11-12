@@ -183,6 +183,8 @@ class ProofRecord:
     game_hash: str
     height: int
     winner: str
+    miner: str = ""
+    """Who announced the proof, used when a challenge slashes its coinbase."""
 
 
 @dataclass(slots=True)
@@ -367,6 +369,88 @@ class TimeoutClaimRecord:
 
 
 @dataclass(slots=True)
+class ChallengeRecord:
+    """A bonded quality challenge against an accepted proof (plan M5).
+
+    The bond is locked when the challenge opens. Upholding the challenge returns
+    the bond and slashes the proof miner; rejecting it burns the bond. A record is
+    immutable once resolved so an adjudication cannot be replayed under a
+    different verdict.
+    """
+
+    challenge_id: str
+    proof_id: str
+    game_hash: str
+    challenger: str
+    miner: str
+    reason: str
+    evidence: str
+    bond: int
+    opened_height: int
+    deadline_height: int
+    status: str = "open"
+    resolved_height: int | None = None
+    panel: tuple[str, ...] = ()
+
+    @property
+    def open(self) -> bool:
+        """Whether the challenge is still awaiting adjudication."""
+        return self.status == "open"
+
+    @property
+    def upheld(self) -> bool:
+        """Whether the challenge invalidated its proof."""
+        return self.status == "upheld"
+
+    def as_dict(self) -> dict[str, object]:
+        """Canonical mapping for snapshots."""
+        return {
+            "challenge_id": self.challenge_id,
+            "proof_id": self.proof_id,
+            "game_hash": self.game_hash,
+            "challenger": self.challenger,
+            "miner": self.miner,
+            "reason": self.reason,
+            "evidence": self.evidence,
+            "bond": self.bond,
+            "opened_height": self.opened_height,
+            "deadline_height": self.deadline_height,
+            "status": self.status,
+            "resolved_height": self.resolved_height,
+            "panel": list(self.panel),
+        }
+
+    @classmethod
+    def from_dict(cls, document: Mapping[str, object]) -> ChallengeRecord:
+        """Rebuild a challenge from :meth:`as_dict` output."""
+        panel_raw = document.get("panel") or []
+        if not isinstance(panel_raw, list):
+            raise StateError("challenge panel must be a list")
+        status = str(document.get("status") or "open")
+        if status not in {"open", "upheld", "rejected"}:
+            raise StateError(f"unknown challenge status: {status!r}")
+        return cls(
+            challenge_id=str(document["challenge_id"]),
+            proof_id=str(document["proof_id"]),
+            game_hash=str(document["game_hash"]),
+            challenger=str(document["challenger"]),
+            miner=str(document.get("miner") or ""),
+            reason=str(document.get("reason") or ""),
+            evidence=str(document.get("evidence") or ""),
+            bond=_as_int(document.get("bond"), "challenge bond"),
+            opened_height=_as_int(document.get("opened_height"), "opened_height"),
+            deadline_height=_as_int(document.get("deadline_height"), "deadline_height"),
+            status=status,
+            resolved_height=(
+                None
+                if document.get("resolved_height") is None
+                else _as_int(document.get("resolved_height"), "resolved_height")
+            ),
+            panel=tuple(str(member) for member in panel_raw),
+        )
+
+
+@dataclass(slots=True)
 class State:
     """The complete ledger state after applying a block.
 
@@ -391,6 +475,8 @@ class State:
     """``epoch -> {miner: nonce}`` revealed during the previous epoch."""
     witnesses: dict[str, WitnessRecord] = field(default_factory=dict)
     timeout_claims: dict[str, TimeoutClaimRecord] = field(default_factory=dict)
+    challenges: dict[str, ChallengeRecord] = field(default_factory=dict)
+    """``challenge_id -> ChallengeRecord`` for every opened quality challenge."""
     difficulty: Difficulty | None = None
     last_k_change_height: int | None = None
     timestamps: list[int] = field(default_factory=list)
@@ -610,6 +696,7 @@ class State:
                     "game_hash": record.game_hash,
                     "height": record.height,
                     "winner": record.winner,
+                    "miner": record.miner,
                 }
                 for game_hash, record in sorted(self.proofs.items())
             },
@@ -657,6 +744,10 @@ class State:
                 claim_id: record.as_dict()
                 for claim_id, record in sorted(self.timeout_claims.items())
             },
+            "challenges": {
+                challenge_id: record.as_dict()
+                for challenge_id, record in sorted(self.challenges.items())
+            },
             "difficulty": self.difficulty.as_dict() if self.difficulty else None,
             "last_k_change_height": self.last_k_change_height,
             "timestamps": list(self.timestamps),
@@ -681,6 +772,7 @@ class State:
         reveals_raw = _as_mapping(document.get("reveals"), "reveals")
         witnesses_raw = _as_mapping(document.get("witnesses"), "witnesses")
         claims_raw = _as_mapping(document.get("timeout_claims"), "timeout_claims")
+        challenges_raw = _as_mapping(document.get("challenges"), "challenges")
 
         accounts = {
             str(address): Account.from_dict(_as_mapping(entry, "account"))
@@ -694,6 +786,7 @@ class State:
                 game_hash=str(item["game_hash"]),
                 height=_as_int(item.get("height"), "proof height"),
                 winner=str(item["winner"]),
+                miner=str(item.get("miner") or item["winner"]),
             )
         matches: dict[str, MatchRecord] = {}
         for match, entry in matches_raw.items():
@@ -751,6 +844,12 @@ class State:
             str(claim_id): TimeoutClaimRecord.from_dict(_as_mapping(entry, "timeout claim"))
             for claim_id, entry in claims_raw.items()
         }
+        challenges = {
+            str(challenge_id): ChallengeRecord.from_dict(
+                _as_mapping(entry, "challenge record")
+            )
+            for challenge_id, entry in challenges_raw.items()
+        }
         difficulty = None
         if document.get("difficulty") is not None:
             item = _as_mapping(document.get("difficulty"), "difficulty")
@@ -775,6 +874,7 @@ class State:
             reveals=reveals,
             witnesses=witnesses,
             timeout_claims=claims,
+            challenges=challenges,
             difficulty=difficulty,
             last_k_change_height=(
                 None

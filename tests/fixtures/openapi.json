@@ -336,6 +336,109 @@
         ],
         "type": "object"
       },
+      "ChallengeList": {
+        "additionalProperties": false,
+        "properties": {
+          "challenges": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ChallengeView"
+            },
+            "type": "array"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "network"
+        ],
+        "type": "object"
+      },
+      "ChallengeView": {
+        "additionalProperties": false,
+        "properties": {
+          "bond": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "challenge_id": {
+            "type": "string"
+          },
+          "challenger": {
+            "type": "string"
+          },
+          "deadline_height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "evidence": {
+            "type": "string"
+          },
+          "game_hash": {
+            "type": "string"
+          },
+          "miner": {
+            "type": "string"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "opened_height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "panel": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "proof_id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "resolved_height": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "open",
+              "upheld",
+              "rejected"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "challenge_id",
+          "network",
+          "proof_id",
+          "game_hash",
+          "challenger",
+          "miner",
+          "reason",
+          "evidence",
+          "bond",
+          "opened_height",
+          "deadline_height",
+          "status"
+        ],
+        "type": "object"
+      },
       "ClockEvidence": {
         "additionalProperties": false,
         "properties": {
@@ -635,7 +738,9 @@
             "default": "none",
             "enum": [
               "none",
-              "open"
+              "open",
+              "upheld",
+              "rejected"
             ],
             "type": "string"
           },
@@ -674,6 +779,30 @@
           "proof_id": {
             "anyOf": [
               {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quality_trace_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "quality_verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pass",
+                  "fail"
+                ],
                 "type": "string"
               },
               {
@@ -1178,6 +1307,22 @@
       "QualitySummary": {
         "additionalProperties": false,
         "properties": {
+          "black_blunders": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "engine_fingerprint": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "policy": {
             "maxLength": 64,
             "minLength": 1,
@@ -1201,6 +1346,16 @@
               "unknown"
             ],
             "type": "string"
+          },
+          "white_blunders": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "worst_cpl": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
           }
         },
         "required": [
@@ -1800,13 +1955,66 @@
     },
     "/v1/challenges": {
       "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "include_resolved",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/components/schemas/ChallengeList"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/challenges/{challenge_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "challenge_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChallengeView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }

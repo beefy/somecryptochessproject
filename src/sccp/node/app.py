@@ -12,17 +12,19 @@ storage and peer clients on shutdown.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from sccp.errors import NotFoundError, SccpError
 from sccp.node.models import (
     AccountView,
     BlockView,
+    ChallengeList,
+    ChallengeView,
     DifficultyView,
     EpochView,
     GameView,
@@ -167,11 +169,15 @@ def create_app(service: NodeService) -> FastAPI:
     def submit_proof(proof: WinProof) -> ProofAccepted:
         return service.announce_proof(proof)
 
-    @app.get("/v1/challenges")
-    def challenges() -> Mapping[str, object]:
-        # Quality challenges arrive with M5; the endpoint exists so clients can
-        # poll it without special-casing an older node.
-        return {"network": service.params.network_id, "challenges": []}
+    @app.get("/v1/challenges", response_model=ChallengeList)
+    def challenges(
+        include_resolved: bool = Query(default=False),
+    ) -> ChallengeList:
+        return service.challenges(include_resolved=include_resolved)
+
+    @app.get("/v1/challenges/{challenge_id}", response_model=ChallengeView)
+    def challenge(challenge_id: str) -> ChallengeView:
+        return service.challenge(challenge_id)
 
     @app.post("/v1/gossip", response_model=GossipResult)
     def gossip(envelope: GossipEnvelope) -> GossipResult:

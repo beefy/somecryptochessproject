@@ -179,6 +179,26 @@ class UciEngine:
             raise EngineError(f"{self.name} returned no move in {board.fen()}")
         return result.move
 
+    def analyse(
+        self,
+        board: chess.Board,
+        limit: chess.engine.Limit,
+        *,
+        multipv: int = 1,
+    ) -> chess.engine.InfoDict | list[chess.engine.InfoDict]:
+        """Return scored principal variations for quality analysis.
+
+        ``multipv`` is passed through to python-chess, which configures the
+        engine's ``MultiPV`` option. The caller owns ``limit``; the quality
+        profile pins depth so a re-run is reproducible.
+        """
+        if self._closed:
+            raise EngineError(f"{self.name} is closed")
+        try:
+            return self._engine.analyse(board, limit, multipv=max(1, multipv))
+        except chess.engine.EngineError as exc:
+            raise EngineError(f"{self.name} failed analysing {board.fen()}: {exc}") from None
+
     def close(self) -> None:
         if self._closed:
             return

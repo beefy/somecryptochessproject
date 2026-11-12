@@ -101,6 +101,7 @@ class Domain(StrEnum):
     OPENING = "sccp/v1/opening"
     PAIR = "sccp/v1/pair"
     PROOF = "sccp/v1/proof"
+    QUALITY = "sccp/v1/quality"
     RESULT = "sccp/v1/result"
     TX = "sccp/v1/tx"
 

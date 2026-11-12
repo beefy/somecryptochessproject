@@ -440,6 +440,7 @@ def _apply_proof(
         game_hash=proof.game_hash,
         height=header.height,
         winner=proof.winner,
+        miner=header.miner,
     )
     work.proof_ids[proof.proof_id] = proof.game_hash
     work.matches[proof.match_id] = MatchRecord(

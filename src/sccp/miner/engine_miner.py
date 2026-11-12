@@ -30,10 +30,17 @@ import httpx
 
 from sccp.chain.state import State
 from sccp.chess.engines import Engine
-from sccp.config import NetworkParams, get_network
+from sccp.chess.pgn import validate_pgn
+from sccp.chess.quality import (
+    QUALITY_V1,
+    AnalysisCache,
+    AnalysisEngine,
+    analyse_game,
+)
+from sccp.config import NetworkParams, QualityMode, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, sign_domain
-from sccp.errors import ClockError, MinerError, RelayError
+from sccp.errors import ClockError, MinerError, QualityError, RelayError
 from sccp.miner.matchmaker import ClockBundle, MatchView
 from sccp.protocol.clocks import (
     MatchClock,
@@ -49,6 +56,7 @@ from sccp.protocol.models import (
     MatchCertificate,
     MoveMessage,
     MoveReceipt,
+    QualitySummary,
     ResultValue,
     TimeoutClaim,
     Transaction,
@@ -439,9 +447,17 @@ class EngineMiner:
         relay: RelayClient | None = None,
         node: NodeClient | None = None,
         clock_ms: Callable[[], int] = monotonic_ms,
+        quality_engine: AnalysisEngine | None = None,
     ) -> None:
         self.config = config
         self.engine = engine
+        if quality_engine is not None:
+            self.quality_engine: AnalysisEngine | None = quality_engine
+        elif hasattr(engine, "analyse"):
+            self.quality_engine = engine  # type: ignore[assignment]
+        else:
+            self.quality_engine = None
+        self.quality_cache = AnalysisCache()
         self.relay = relay if relay is not None else RelayClient(config.relay_url)
         if node is not None:
             self.node: NodeClient | None = node
@@ -797,6 +813,29 @@ class EngineMiner:
         self._apply_local(state, san, now)
         return [f"{state.match_id}:{san}"]
 
+    def _quality_summary(self, proof: WinProof) -> QualitySummary | None:
+        """Analyse a proof locally when the network asks for a summary."""
+        if self.config.params.quality_mode is not QualityMode.SAMPLED:
+            return None
+        if self.quality_engine is None:
+            raise MinerError(
+                "this network requires a quality_summary and the configured engine "
+                "cannot analyse positions"
+            )
+        try:
+            parsed = validate_pgn(proof.pgn, params=self.config.params, require_win=True)
+            if parsed.game_hash != proof.game_hash:
+                raise QualityError("proof PGN does not match its game hash")
+            report = analyse_game(
+                parsed,
+                self.quality_engine,
+                profile=QUALITY_V1,
+                cache=self.quality_cache,
+            )
+        except (QualityError, ValueError) as exc:
+            raise MinerError(f"quality analysis failed: {exc}") from None
+        return report.summary()
+
     def _finish(self, view: MatchView, state: MatchState) -> tuple[list[str], list[str], list[str]]:
         result = view.result
         if result is None:
@@ -831,6 +870,9 @@ class EngineMiner:
         state.finished = True
         if self._winner_seat(result.result) == state.seat:
             proof = proof_from_transcript(transcript, params=self.config.params)
+            summary = self._quality_summary(proof)
+            if summary is not None:
+                proof = proof.model_copy(update={"quality_summary": summary})
             self.proofs[proof.proof_id] = proof
             proofs.append(proof.proof_id)
             if self.node is not None:

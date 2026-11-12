@@ -359,14 +359,13 @@ def _validate_reveal(params: NetworkParams, state: State, tx: Transaction, heigh
 
 
 def _validate_challenge(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
-    _check_unknown_keys(tx.payload, ALLOWED[TxType.CHALLENGE])
-    _field_digest(tx.payload, "proof_id")
-    _field_text(tx.payload, "reason")
-    _field_int(tx.payload, "bond", minimum=1)
-    _fail(
-        TxFailure.TYPE,
-        "quality challenges are an M5 deliverable; this chain rejects them explicitly",
-    )
+    from sccp.errors import ChallengeError
+    from sccp.protocol import challenges
+
+    try:
+        challenges.validate_challenge(state, tx, height)
+    except ChallengeError as exc:
+        _fail(TxFailure.TYPE, str(exc))
 
 
 VALIDATORS = {
@@ -495,6 +494,16 @@ def _apply_slash_evidence(state: State, tx: Transaction, height: int) -> None:
     timeout.apply_slash(state, tx, height)
 
 
+def _apply_challenge(state: State, tx: Transaction, height: int) -> None:
+    from sccp.errors import ChallengeError
+    from sccp.protocol import challenges
+
+    try:
+        challenges.apply_challenge(state, tx, height)
+    except ChallengeError as exc:
+        _fail(TxFailure.TYPE, str(exc))
+
+
 APPLIERS = {
     TxType.TRANSFER: _apply_transfer,
     TxType.REGISTER: _apply_register,
@@ -506,6 +515,7 @@ APPLIERS = {
     TxType.REVEAL: _apply_reveal,
     TxType.TIMEOUT_CLAIM: _apply_timeout_claim,
     TxType.TIMEOUT_DISPUTE: _apply_timeout_dispute,
+    TxType.CHALLENGE: _apply_challenge,
     TxType.SLASH_EVIDENCE: _apply_slash_evidence,
 }
 """State transitions for every accepted transaction type."""
@@ -579,9 +589,6 @@ def validate_transaction(
     size = tx_size(tx)
     if size > params.max_tx_bytes:
         _fail(TxFailure.SIZE, f"transaction is {size} bytes, cap is {params.max_tx_bytes}")
-
-    if for_mempool and tx.type is TxType.CHALLENGE:  # pragma: no cover - rejected above
-        _fail(TxFailure.TYPE, "quality challenges are an M5 deliverable")
 
     if account.public_key is None and tx.payload.get("public_key") != key_hex:
         _fail(TxFailure.SIGNATURE, "first use must reveal the sender's public key")

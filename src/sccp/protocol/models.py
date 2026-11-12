@@ -301,11 +301,21 @@ class GameResult(ProtocolModel):
 
 
 class QualitySummary(ProtocolModel):
-    """Optional quality verdict attached to a proof; filled in by M5."""
+    """Optional quality verdict attached to a proof (plan section 5.9).
+
+    The summary is non-consensus evidence: it names the policy, records the
+    compact counters a validator can compare against a re-run, and commits to the
+    full trace by hash. Every counter defaults to zero so older proofs and
+    malformed-but-parseable summaries remain structurally valid.
+    """
 
     policy: str = Field(min_length=1, max_length=64)
     verdict: Verdict
     trace_hash: DigestHex | None = None
+    engine_fingerprint: str | None = Field(default=None, max_length=128)
+    white_blunders: int = Field(default=0, ge=0)
+    black_blunders: int = Field(default=0, ge=0)
+    worst_cpl: int = Field(default=0, ge=0)
 
 
 class WinProof(ProtocolModel):

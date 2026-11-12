@@ -19,6 +19,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 import httpx
 
@@ -26,6 +27,7 @@ from sccp.chain.block import block_hash
 from sccp.chain.chain import Chain, StoredBlock
 from sccp.chain.genesis import load_genesis
 from sccp.chain.mempool import Mempool
+from sccp.chain.state import ChallengeRecord
 from sccp.chain.storage import Storage, restore_chain
 from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
@@ -43,6 +45,8 @@ from sccp.node.models import (
     AccountView,
     BlockIngest,
     BlockView,
+    ChallengeList,
+    ChallengeView,
     DifficultyPoint,
     DifficultyView,
     EpochView,
@@ -71,7 +75,7 @@ from sccp.node.p2p import (
     plan_sync,
     verify_envelope,
 )
-from sccp.protocol.models import Beacon, Block, Transaction, Transcript, WinProof
+from sccp.protocol.models import Beacon, Block, QualitySummary, Transaction, Transcript, WinProof
 from sccp.version import PROTOCOL_VERSION
 
 GENESIS_DIR_ENV = "SCCP_GENESIS_DIR"
@@ -107,6 +111,17 @@ def default_genesis_path(network: str) -> Path:
         f"no genesis document for {network!r}; set {GENESIS_DIR_ENV} or pass an explicit path "
         f"(searched: {searched})"
     )
+
+
+def _quality_verdict(summary: QualitySummary | None) -> Literal["pass", "fail"] | None:
+    """Narrow a summary verdict to the two values the games API exposes."""
+    if summary is None:
+        return None
+    if summary.verdict == "pass":
+        return "pass"
+    if summary.verdict == "fail":
+        return "fail"
+    return None
 
 
 @dataclass(slots=True)
@@ -348,9 +363,14 @@ class NodeService:
 
     def game(self, game_hash: str) -> GameView:
         """Proof and challenge status for ``game_hash``."""
+        from sccp.protocol.challenges import challenge_status
+
+        status = challenge_status(self.chain.state, game_hash)
         record = self.chain.state.proofs.get(game_hash)
         if record is not None:
             transcript = self._transcript_for_game(game_hash)
+            proof = self._proof_for_record(record.height, game_hash)
+            summary = proof.quality_summary if proof is not None else None
             return GameView(
                 game_hash=game_hash,
                 network=self.params.network_id,
@@ -358,9 +378,13 @@ class NodeService:
                 match_id=transcript.certificate.match_id if transcript else None,
                 winner=record.winner,
                 height=record.height,
+                challenge_status=status,  # type: ignore[arg-type]
+                quality_verdict=_quality_verdict(summary),
+                quality_trace_hash=summary.trace_hash if summary is not None else None,
             )
         for proof in self.mempool.proofs.values():
             if proof.game_hash == game_hash:
+                summary = proof.quality_summary
                 return GameView(
                     game_hash=game_hash,
                     network=self.params.network_id,
@@ -368,8 +392,60 @@ class NodeService:
                     match_id=proof.match_id,
                     winner=proof.winner,
                     in_mempool=True,
+                    challenge_status=status,  # type: ignore[arg-type]
+                    quality_verdict=_quality_verdict(summary),
+                    quality_trace_hash=summary.trace_hash if summary is not None else None,
                 )
         raise NotFoundError(f"unknown game {game_hash!r}")
+
+    def _proof_for_record(self, height: int, game_hash: str) -> WinProof | None:
+        """Find the full proof in its block, if this node still has that block."""
+        stored = self.chain.block_at_height(height)
+        if stored is None:
+            return None
+        for proof in stored.block.proofs:
+            if proof.game_hash == game_hash:
+                return proof
+        return None
+
+    def challenges(self, *, include_resolved: bool = False) -> ChallengeList:
+        """Quality challenges, open ones by default (``GET /v1/challenges``)."""
+        records = [
+            record
+            for record in self.chain.state.challenges.values()
+            if include_resolved or record.open
+        ]
+        records.sort(key=lambda record: (record.opened_height, record.challenge_id))
+        return ChallengeList(
+            network=self.params.network_id,
+            challenges=tuple(self._challenge_view(record) for record in records),
+        )
+
+    def challenge(self, challenge_id: str) -> ChallengeView:
+        """One challenge by id, resolved or open."""
+        record = self.chain.state.challenges.get(challenge_id)
+        if record is None:
+            raise NotFoundError(f"unknown challenge {challenge_id!r}")
+        return self._challenge_view(record)
+
+    def _challenge_view(self, record: ChallengeRecord) -> ChallengeView:
+        """Map a :class:`ChallengeRecord` to its wire form."""
+        return ChallengeView(
+            challenge_id=record.challenge_id,
+            network=self.params.network_id,
+            proof_id=record.proof_id,
+            game_hash=record.game_hash,
+            challenger=record.challenger,
+            miner=record.miner,
+            reason=record.reason,
+            evidence=record.evidence,
+            bond=record.bond,
+            opened_height=record.opened_height,
+            deadline_height=record.deadline_height,
+            status=record.status,  # type: ignore[arg-type]
+            resolved_height=record.resolved_height,
+            panel=record.panel,
+        )
 
     def match(self, match_id: str) -> MatchInfo:
         """Transcript metadata for ``match_id``, from the chain or the cache."""

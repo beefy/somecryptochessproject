@@ -90,6 +90,10 @@ class EngineFetchError(EngineError):
     """An engine download failed its integrity check."""
 
 
+class QualityError(ChessError):
+    """A quality profile, analysis trace or summary is invalid or inconsistent."""
+
+
 # --- protocol ----------------------------------------------------------------
 
 
@@ -199,6 +203,10 @@ class StorageError(LedgerError):
 
 class TimeoutClaimError(LedgerError):
     """A bonded timeout claim or dispute is invalid in the current state."""
+
+
+class ChallengeError(LedgerError):
+    """A bonded quality challenge is invalid in the current state."""
 
 
 class WalletServiceError(LedgerError):
