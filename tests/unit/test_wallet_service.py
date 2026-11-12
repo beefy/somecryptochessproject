@@ -7,7 +7,7 @@ from typing import Any
 import pytest
 
 from sccp.chain.tx import validate_transaction
-from sccp.config import DEVNET
+from sccp.config import DEVNET, format_coins
 from sccp.crypto.address import encode_address
 from sccp.errors import WalletServiceError
 from sccp.protocol.models import TxType
@@ -79,6 +79,24 @@ def test_transfer_guards(live_chain: Any) -> None:
         wallet.build_transfer(alice.keypair, "sccpt1nope", COINS)
     with pytest.raises(WalletServiceError, match="nonce"):
         wallet.build_transfer(alice.keypair, bob.address, COINS, nonce=9)
+
+
+def test_a_refused_transfer_names_coins_and_the_local_chain(live_chain: Any) -> None:
+    """Base units in a refusal look like coins; print coins and say what to check."""
+    chain = live_chain.chain
+    wallet = WalletService(DEVNET, chain.state)
+    alice = live_chain.accounts["alice"]
+    bob = live_chain.accounts["bob"]
+    spendable = chain.state.spendable(alice.address)
+    with pytest.raises(WalletServiceError) as caught:
+        wallet.build_transfer(alice.keypair, bob.address, 100 * COINS)
+    message = str(caught.value)
+    assert f"has {format_coins(spendable)} spendable" in message
+    assert (
+        f"needs {format_coins(100 * COINS + DEVNET.min_fee)} "
+        f"({format_coins(100 * COINS)} plus a {format_coins(DEVNET.min_fee)} fee)"
+    ) in message
+    assert "--data-dir" in message
 
 
 def test_register_respects_the_minimum_bond(live_chain: Any) -> None:

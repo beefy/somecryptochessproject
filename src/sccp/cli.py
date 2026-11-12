@@ -33,7 +33,7 @@ from sccp.chain.tx import txid
 from sccp.chess.engines import open_engine
 from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
-from sccp.config import UNITS_PER_COIN, NetworkParams, coins_to_units, get_network
+from sccp.config import NetworkParams, coins_to_units, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.wallet import (
     DEFAULT_KDF,
@@ -47,7 +47,7 @@ from sccp.crypto.wallet import (
     read_passphrase_file,
 )
 from sccp.devnet import run_devnet
-from sccp.errors import SccpError
+from sccp.errors import SccpError, WalletServiceError
 from sccp.miner.engine_miner import EngineMiner, MinerConfig, NodeClient
 from sccp.miner.epoch_follower import EpochFollower
 from sccp.miner.matchmaker import Matchmaker
@@ -279,9 +279,7 @@ def _emit_wallet(ctx: typer.Context, wallet: Wallet) -> None:
 
 def _coins(units: int) -> str:
     """Format base units as a fixed-point coin amount; never a float."""
-    whole, fraction = divmod(abs(units), UNITS_PER_COIN)
-    sign = "-" if units < 0 else ""
-    return f"{sign}{whole}.{fraction:08d}"
+    return format_coins(units)
 
 
 @contextmanager
@@ -310,6 +308,22 @@ def _local_node(ctx: typer.Context, network: str | None) -> Iterator[NodeService
             storage.close()
         else:
             service.close()
+
+
+def _warn_empty_chain(path: Path) -> None:
+    """Explain a zero balance that was read from a chain with no blocks.
+
+    A genesis-only database is valid and opens cleanly, so nothing else about it
+    looks wrong: the wallet reports every balance as zero while the node the
+    user is watching reports real coins. Say why, and how to fix it.
+    """
+    typer.secho(
+        f"note: {path} holds only the genesis block, so it knows no other balances. "
+        "A node that serves another chain keeps its blocks in its own data directory: "
+        f"pass that one as --data-dir (a copy taken while the node runs also needs "
+        f"{path.name}-wal).",
+        err=True,
+    )
 
 
 def _submit_transaction(node: str, tx: Transaction) -> Mapping[str, object]:
@@ -468,6 +482,9 @@ def wallet_balance(
                 header.address
             )
         )
+        empty_chain = service.height == 0 and balance.total == 0
+    if empty_chain:
+        _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
     payload = {
         "address": balance.address,
         "network": params.network_id,
@@ -512,11 +529,13 @@ def wallet_send(
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
     with _local_node(ctx, params.network_id) as service:
-        tx = _run(
-            lambda: WalletService(params, service.chain.state, chain=service.chain).build_transfer(
-                wallet.keypair, to, coins_to_units(amount), fee=fee
-            )
-        )
+        wallet_service = WalletService(params, service.chain.state, chain=service.chain)
+        try:
+            tx = wallet_service.build_transfer(wallet.keypair, to, coins_to_units(amount), fee=fee)
+        except WalletServiceError as exc:
+            if service.height == 0:
+                _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
+            _fail(str(exc))
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
     payload = {
         "txid": txid(tx),

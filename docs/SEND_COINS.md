@@ -46,6 +46,24 @@ keyfile's network. If the chain is not there, you get:
 error: no chain database at data/chain.sqlite; run `sccp --data-dir data node run --network testnet` first
 ```
 
+A `chain.sqlite` that exists but holds no blocks is not an error: the command
+runs, and every balance it reports is `0.00000000`, because the balances it
+reads are the ones that chain knows about. When such an empty result is what you
+are looking at — a wallet balance of zero, or a refused transfer — the CLI says
+so on stderr:
+
+```text
+note: data/chain.sqlite holds only the genesis block, so it knows no other balances.
+A node that serves another chain keeps its blocks in its own data directory: pass
+that one as --data-dir (a copy taken while the node runs also needs chain.sqlite-wal).
+```
+
+A node keeps recent blocks in `chain.sqlite-wal` until it checkpoints, so a copy
+of the database taken **while the node runs** must include `chain.sqlite-wal`
+too; otherwise the copy opens at height 0. Pointing `--data-dir` straight at the
+node's directory is simpler and always current — SQLite's write-ahead log lets
+the wallet read the file the node is writing.
+
 ### Start a node
 
 ```bash
@@ -109,7 +127,16 @@ One coin is `100_000_000` base units. `--fee` is in base units:
 
 ```bash
 --fee 1000         # 0.00001000 coins; the default and the network minimum
---fee 1            # error: fee 1 is below the network minimum of 1000
+--fee 1            # error: fee 1 base units is below the network minimum of 1000 base units
+```
+
+Both units appear in a single send, so the arithmetic in an error message can
+look odd: `--amount 12` is `12 * 100_000_000 = 1_200_000_000` base units, and
+with the minimum fee the transfer needs `1_200_001_000` base units. The CLI
+prints both sides in coins:
+
+```text
+error: sccpt1... has 0.00000000 spendable, the transfer needs 12.00001000 (12.00000000 plus a 0.00001000 fee); the local chain in --data-dir may be behind the node's
 ```
 
 The fee is paid to the miner whose block includes the transfer.
@@ -253,8 +280,9 @@ one object per transaction (`txid`, `height`, `type`, `delta`, `fee`,
 | Message | Cause | Fix |
 | --- | --- | --- |
 | `no chain database at ...` | `--data-dir` is wrong or the node never ran there. | Start the node with that `--data-dir`, or pass the right one. |
-| `... has N spendable, the transfer needs M` | `amount + fee` exceeds spendable coins (bonded/immature do not count). | Lower the amount, wait for maturity, or use another address. |
-| `fee N is below the network minimum of 1000` | `--fee` is too small. | Omit `--fee` or use at least `1000`. |
+| `... has 0.00000000 spendable` although the node reports a balance | `--data-dir` points at another chain, often one at height 0 or a copy taken without `chain.sqlite-wal`. A note on stderr says so. | Point `--data-dir` at the node's own data directory, or run the node with the `--data-dir` you pass here. |
+| `... has N.NNNNNNNN spendable, the transfer needs M.MMMMMMMM` | `amount + fee` exceeds spendable coins (bonded/immature do not count). | Lower the amount, wait for maturity, or use another address. |
+| `fee N base units is below the network minimum of M base units` | `--fee` is too small. | Omit `--fee` or use at least `1000`. |
 | `a transfer amount must be positive` | `--amount` is zero or negative. | Use a positive integer. |
 | `a transfer must name a different recipient` | `--to` is the sender's own address. | Send to another address. |
 | `'...' is not a valid testnet address` | Typo, checksum error, or another network's address. | Re-copy the address; check the prefix. |

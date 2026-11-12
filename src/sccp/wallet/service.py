@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from sccp.chain.chain import Chain
 from sccp.chain.state import Account, State, epoch_of
 from sccp.chain.tx import sign_transaction, txid
-from sccp.config import NetworkParams, get_network
+from sccp.config import NetworkParams, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.keys import Keypair
 from sccp.errors import WalletServiceError
@@ -101,7 +101,8 @@ class WalletService:
             return self.params.min_fee
         if fee < self.params.min_fee:
             raise WalletServiceError(
-                f"fee {fee} is below the network minimum of {self.params.min_fee}"
+                f"fee {fee} base units is below the network minimum of "
+                f"{self.params.min_fee} base units ({format_coins(self.params.min_fee)} coins)"
             )
         return fee
 
@@ -165,7 +166,10 @@ class WalletService:
         spendable = self.state.spendable(sender)
         if spendable < total:
             raise WalletServiceError(
-                f"{sender} has {spendable} spendable, the transfer needs {total}"
+                f"{sender} has {format_coins(spendable)} spendable, the transfer needs "
+                f"{format_coins(total)} ({format_coins(amount)} plus a "
+                f"{format_coins(resolved_fee)} fee); the local chain in --data-dir may "
+                f"be behind the node's"
             )
         tx = Transaction(
             network=self.params.network_id,
@@ -201,7 +205,8 @@ class WalletService:
         resolved_fee = self.required_fee(fee)
         if self.state.spendable(sender) < resolved_bond + resolved_fee:
             raise WalletServiceError(
-                f"{sender} cannot cover a {resolved_bond} bond plus a {resolved_fee} fee"
+                f"{sender} cannot cover a {format_coins(resolved_bond)} bond plus a "
+                f"{format_coins(resolved_fee)} fee"
             )
         tx = Transaction(
             network=self.params.network_id,

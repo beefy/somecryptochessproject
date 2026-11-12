@@ -29,6 +29,17 @@ def coins_to_units(coins: int) -> int:
     return coins * UNITS_PER_COIN
 
 
+def format_coins(units: int) -> str:
+    """Format base units as fixed-point coins for a human; never a float.
+
+    A bare ``1200001000`` in an error message reads like an amount of coins, so
+    every user-facing message prints through this instead: ``12.00001000``.
+    """
+    whole, fraction = divmod(abs(units), UNITS_PER_COIN)
+    sign = "-" if units < 0 else ""
+    return f"{sign}{whole}.{fraction:08d}"
+
+
 class QualityMode(StrEnum):
     """Whether the quality policy is enforced for a network."""
 

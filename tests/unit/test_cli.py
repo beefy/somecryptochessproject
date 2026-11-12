@@ -1208,6 +1208,93 @@ def test_wallet_send_transfers_between_two_new_wallets(
     assert balances["bob"]["spendable"] == 10 * UNITS_PER_COIN
 
 
+def test_wallet_send_refuses_an_empty_chain_in_coins(
+    tmp_path: Path, data_dir: Path, env: dict[str, str], recorded_node: list[Any]
+) -> None:
+    """A genesis-only chain reports zero spendable; say why, in coins."""
+    key = tmp_path / "empty.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "send",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--to",
+            MINER_ADDRESS,
+            "--amount",
+            "12",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 1
+    # 12 coins plus the minimum fee, printed as coins rather than base units.
+    assert "has 0.00000000 spendable" in result.stderr
+    assert "needs 12.00001000 (12.00000000 plus a 0.00001000 fee)" in result.stderr
+    assert "holds only the genesis block" in result.stderr
+    assert recorded_node == []
+
+
+def test_wallet_balance_points_out_a_chain_with_no_blocks(
+    tmp_path: Path, data_dir: Path, env: dict[str, str]
+) -> None:
+    key = tmp_path / "empty.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "balance",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "spendable 0.00000000" in result.stdout
+    assert "holds only the genesis block" in result.stderr
+
+
+def test_wallet_balance_is_quiet_on_a_funded_genesis_chain(
+    data_dir: Path, faucet_key: Path, env: dict[str, str]
+) -> None:
+    """The note explains an empty balance only; genesis funds are not a puzzle."""
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "balance",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "spendable 1000000.00000000" in result.stdout
+    assert result.stderr == ""
+
+
 def test_miner_register_availability_and_reveal(
     data_dir: Path,
     faucet_key: Path,

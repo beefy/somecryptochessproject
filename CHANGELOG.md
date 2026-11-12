@@ -7,6 +7,23 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- `wallet send` and `wallet balance` print amounts in coins, not base units: a
+  refused `--amount 12` now reads `has 0.00000000 spendable, the transfer needs
+  12.00001000 (12.00000000 plus a 0.00001000 fee)` instead of the bare
+  `1200001000`, and a fee below the floor says "base units" so the two units a
+  single command mixes are not confused. `--bond` failures are quoted in coins
+  too (`sccp.config.format_coins` is now the one formatter the CLI and the
+  wallet share).
+- When the empty balance behind a refusal or a `wallet balance` reading was read
+  from a `chain.sqlite` that holds only its genesis block, both commands print a
+  note on stderr: that database knows no other balances, a node serving another
+  chain keeps its blocks in its own data directory, and a copy taken while the
+  node runs also needs `chain.sqlite-wal` (a copy of `chain.sqlite` alone opens
+  at height 0 while the node reports a full chain). See
+  [`docs/SEND_COINS.md`](docs/SEND_COINS.md).
+
 ## [0.10.0] - 2026-11-12
 
 A minor release: the testnet chain now stays self-sustaining after its bootstrap.
