@@ -253,8 +253,8 @@ All values above are provisional and live in `src/sccp/config.py`.
 
 ## 5. Repository layout
 
-Modules marked *(M0)*, *(M1)*, *(M2)*, *(M3)*, *(M4)* and *(M5)* exist; the rest
-is the target layout for later milestones.
+Modules marked *(M0)* through *(M6)* exist to the extent described by the
+roadmap below; the rest is the target layout for later milestones.
 
 ```text
 .
@@ -263,13 +263,16 @@ is the target layout for later milestones.
 ├── pyproject.toml                # packaging, deps, ruff/mypy/pytest config
 ├── Makefile                      # test / lint / typecheck / devnet / stack / dist
 ├── Dockerfile                    # image used by every stack service
-├── docker-compose.yml            # node + relay + 3 miners on testnet (M4)
+├── docker-compose.yml            # node + relay + bootstrap + 2 miners (M6)
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
+├── .github/workflows/deploy-testnet-miners.yml  # image + hosted testnet deploy
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # this project's plan
 │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
 │   ├── PROTOCOL.md               # normative wire formats (M1–M4)
+│   ├── RUNBOOK.md                # restart, faucet, mining, incidents
+│   ├── TESTNET_DEPLOYMENT.md     # CI deployment and monthly cost estimate
 │   ├── RUN_A_TESTNET_MINER.md    # operator guide: relay, miner and registration
 │   ├── SEND_COINS.md             # fund a wallet and send a transfer
 │   └── THREAT_MODEL.md           # security analysis (M5)
@@ -468,7 +471,7 @@ stops after `N` relay polls, which is how the CLI tests drive it.
 | **M3** | Chain: transactions, wallet, blocks, state, mempool, fork choice, difficulty, block builder | done |
 | **M4** | Node + P2P + miner daemon | done — node API and gossip, pull-sync, `EngineMiner`, the full CLI, `sccp devnet up` and the docker-compose testnet stack |
 | **M5** | Quality verification, challenges, slashing, threat-model tests | done — pinned quality profile, deterministic sampling, bonded challenges with beacon-ranked panels, adversarial suite, [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) |
-| **M6** | Testnet launch: funded testnet, faucet operations, observability, operator guide | not started — timed relay sessions (clocked relay, signed receipts, auto-flag, round scheduler) are already implemented |
+| **M6** | Testnet launch: funded testnet, faucet operations, observability, operator guide | in progress — faucet endpoint, node proof settler, deterministic bootstrap, two-miner deploy workflow, runbook and cost estimate; block explorer, metrics and the 72-hour soak remain |
 | **M7** | Hardening and mainnet readiness review | not started |
 
 Detailed tasks, file-level deliverables and acceptance criteria are in
@@ -693,9 +696,11 @@ Two tests pin the parts a unit test could otherwise drift from:
   that a signed envelope crosses the wire.
 
 `docker-compose.yml` (with `Dockerfile` and `deploy/`) runs the same software as
-one node, one relay and three miners on testnet; `deploy/README.md` spells out
-what the stack does, which keys it publishes, and what it deliberately leaves to
-M6 (on-chain funding and registration, round scheduling, real engines).
+one node, one relay, a deterministic bootstrap and two Stockfish miners on
+testnet. `deploy/README.md` explains the stack and its published keys,
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md) covers operations and
+[`docs/TESTNET_DEPLOYMENT.md`](docs/TESTNET_DEPLOYMENT.md) documents the merge-to-
+deploy workflow and its monthly cost.
 
 ### Releasing
 

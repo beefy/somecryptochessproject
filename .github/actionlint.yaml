@@ -1,0 +1,7 @@
+# The SSH deploy commands deliberately expand paths, image tags and Docker
+# credentials on the GitHub runner before the remote shell sees them. ShellCheck
+# flags that as SC2029, which is the intended behaviour here.
+paths:
+  .github/workflows/deploy-testnet-miners.yml:
+    ignore:
+      - SC2029

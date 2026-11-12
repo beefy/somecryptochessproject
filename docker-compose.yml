@@ -1,15 +1,23 @@
-# Local testnet stack: one node, one matchmaking relay and three miners
-# (docs/IMPLEMENTATION_PLAN.md M4). See deploy/README.md for what it does and
-# what it deliberately does not do yet.
+# The two-miner testnet deployment: one node, one relay, one bootstrap job and
+# two miners. `deploy/bootstrap_testnet_stack.py` builds the funded, registered,
+# matchable chain once; see deploy/README.md and docs/RUNBOOK.md.
 #
 #   docker compose up --build
 #   curl http://127.0.0.1:8645/v1/status
 #   curl http://127.0.0.1:8646/v1/status
+#
+# SCCP_IMAGE selects the published image in CI; local runs build it. The deploy
+# workflow always starts from empty volumes so the deterministic bootstrap can
+# run; reset with `docker compose down -v` before changing the image.
 name: sccp-testnet
+
+x-sccp-service: &sccp-service
+  image: ${SCCP_IMAGE:-sccp-testnet:local}
+  build: .
 
 services:
   init:
-    build: .
+    <<: *sccp-service
     entrypoint: ["python", "/app/deploy/init_testnet_stack.py"]
     command: ["--out", "/stack"]
     environment:
@@ -19,7 +27,7 @@ services:
     restart: "no"
 
   node:
-    build: .
+    <<: *sccp-service
     command:
       - --data-dir
       - /data
@@ -31,6 +39,14 @@ services:
       - 0.0.0.0
       - --port
       - "8645"
+      # Settle proofs the miners announce. The bootstrap chain is pre-built, so
+      # the background miner must not also extend the empty bootstrap window.
+      - --mine
+      - --miner-address
+      - sccpt1qrvwy92u2es34fnpwnddkhtpw8wzqjpy6u6yszpz
+      - --no-mine-bootstrap
+      - --mine-poll-seconds
+      - "2"
     ports:
       - "8645:8645"
     volumes:
@@ -43,14 +59,32 @@ services:
         - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8645/v1/status', timeout=2)"
       interval: 5s
       timeout: 3s
-      retries: 12
+      retries: 24
+      start_period: 10s
     depends_on:
       init:
         condition: service_completed_successfully
     restart: unless-stopped
 
+  bootstrap:
+    <<: *sccp-service
+    entrypoint: ["python", "/app/deploy/bootstrap_testnet_stack.py"]
+    command:
+      - --stack
+      - /stack
+      - --node
+      - http://node:8645
+      - --engine-path
+      - /usr/games/stockfish
+    volumes:
+      - stack:/stack
+    depends_on:
+      node:
+        condition: service_healthy
+    restart: "no"
+
   relay:
-    build: .
+    <<: *sccp-service
     command:
       - matchmaker
       - run
@@ -78,12 +112,12 @@ services:
       timeout: 3s
       retries: 12
     depends_on:
-      init:
+      bootstrap:
         condition: service_completed_successfully
     restart: unless-stopped
 
   miner-1:
-    build: .
+    <<: *sccp-service
     command:
       - --passphrase-file
       - /stack/passphrase
@@ -94,11 +128,18 @@ services:
       - --key
       - /stack/keys/miner-1.key
       - --engine-profile
-      - mock
+      - stockfish-19
+      - --engine-path
+      - /usr/games/stockfish
+      # Testnet only: a 5k-node search keeps games fast enough for a demo.
+      - --nodes-per-move
+      - "5000"
       - --relay
       - http://relay:8646
+      - --node
+      - http://node:8645
       - --poll-seconds
-      - "2"
+      - "0.1"
     volumes:
       - stack:/stack
     depends_on:
@@ -107,7 +148,7 @@ services:
     restart: unless-stopped
 
   miner-2:
-    build: .
+    <<: *sccp-service
     command:
       - --passphrase-file
       - /stack/passphrase
@@ -118,35 +159,17 @@ services:
       - --key
       - /stack/keys/miner-2.key
       - --engine-profile
-      - mock
+      - stockfish-19
+      - --engine-path
+      - /usr/games/stockfish
+      - --nodes-per-move
+      - "5000"
       - --relay
       - http://relay:8646
+      - --node
+      - http://node:8645
       - --poll-seconds
-      - "2"
-    volumes:
-      - stack:/stack
-    depends_on:
-      relay:
-        condition: service_healthy
-    restart: unless-stopped
-
-  miner-3:
-    build: .
-    command:
-      - --passphrase-file
-      - /stack/passphrase
-      - miner
-      - run
-      - --network
-      - testnet
-      - --key
-      - /stack/keys/miner-3.key
-      - --engine-profile
-      - mock
-      - --relay
-      - http://relay:8646
-      - --poll-seconds
-      - "2"
+      - "0.1"
     volumes:
       - stack:/stack
     depends_on:

@@ -5,19 +5,19 @@ matchmaking relay, plays the games the relay assigns, co-signs the result and
 announces the win proof to a node. The engine is the work: a miner that cannot
 win games cannot produce blocks.
 
-There are two ways to see a miner run:
+There are three ways to see a miner run:
 
 | Path | Command | What it proves |
 | --- | --- | --- |
 | In-process demo | `sccp devnet up --miners 4 --blocks 10 --engines mock` | The whole loop (pairing, play, proofs, blocks) in one process. |
+| Hosted-style stack | `docker compose up --build` | Funded/registered miners, real engines, SQLite, and proof settlement. |
 | Relay + miner processes | `sccp matchmaker run` and `sccp miner run` | The real multi-process wiring, over HTTP, with real clocks. |
 
-> **Status.** Relay play, engine mining, win-proof construction and the wallet
-> and miner commands work today. On-chain settlement on a live testnet
-> (funding, registration inclusion, proof inclusion) is still milestone M6 work;
-> [`deploy/README.md`](../deploy/README.md) is explicit about the boundary. Use
-> `sccp devnet up` for a settled chain, and the relay flow below for the miner
-> itself.
+> **Status.** Relay play, engine mining, win-proof construction, faucet funding
+> and on-chain proof settlement work today. [`deploy/README.md`](../deploy/README.md)
+> runs the whole loop with two Stockfish miners, and
+> [`RUNBOOK.md`](RUNBOOK.md) covers operating it. Use `sccp devnet up` for the
+> fast in-process demo, and the relay flow below for a miner you run yourself.
 
 ---
 
@@ -91,27 +91,40 @@ python deploy/init_testnet_stack.py --out ./stack
 
 ```text
 stack for testnet in stack
-beacon: defe1940...
   miner-1: sccpt1qrvwy92...
   miner-2: sccpt1qrrx3yp3...
-  miner-3: sccpt1qqre4fx...
 ```
 
 It writes:
 
 | Path | Contents |
 | --- | --- |
-| `stack/relay.json` | Network, epoch beacon, roster (address, public key, engine, quota), timeout. |
-| `stack/keys/miner-1..3.key` | Three encrypted keyfiles, derived from fixed, published seeds. |
+| `stack/keys/miner-1..2.key` | Two encrypted keyfiles, derived from fixed, published seeds. |
 | `stack/passphrase` | The published stack passphrase, mode `0600`. |
 | `stack/stack.json` | Addresses, keyfile paths and availability nonce secrets. |
 
 These keys and that passphrase are **public on purpose**. Testnet coins have no
 value. Never reuse them on another network.
 
-Two roster entries are the minimum for a match; three is convenient because the
-odd miner waits while the other two play. The relay in `relay.json` opens round
-`0` at startup.
+Two roster entries are the minimum for a match. The bootstrap rewrites
+`stack/relay.json` after it has funded/registered both miners and opened a
+matchable epoch.
+
+A fresh testnet has no proofs to mine, so start a local node and run the
+deterministic bootstrap once:
+
+```bash
+sccp --data-dir ./data node run --network testnet --port 8645 &
+python deploy/bootstrap_testnet_stack.py \
+    --stack ./stack \
+    --node http://127.0.0.1:8645 \
+    --engine-path /path/to/stockfish
+```
+
+The bootstrap writes 19 blocks (`height 19`) and `stack/relay.json` for epoch 3.
+It funds each miner with 100 test coins, registers a 10-coin bond and commits
+availability for three games. `--dry-run` builds the same chain in memory without
+touching the node.
 
 ### 4.2 Start the relay
 
@@ -125,7 +138,7 @@ sccp matchmaker run \
 ```
 
 ```text
-matchmaker on 127.0.0.1:8646 for testnet epoch 1 (1 matches, round 0, witness none)
+matchmaker on 127.0.0.1:8646 for testnet epoch 3 (1 matches, round 0, witness none)
 ```
 
 - `--store` persists sessions and reputation across a relay restart.
@@ -150,23 +163,31 @@ In one terminal per miner:
 sccp --passphrase-file ./stack/passphrase miner run \
     --network testnet \
     --key ./stack/keys/miner-1.key \
-    --engine-profile mock \
-    --relay http://127.0.0.1:8646
+    --engine-profile stockfish-19 \
+    --engine-path ./bin/stockfish-macos-universal \
+    --nodes-per-move 5000 \
+    --relay http://127.0.0.1:8646 \
+    --node http://127.0.0.1:8645
 ```
 
 The first line names the identity and the engine fingerprint:
 
 ```text
-miner sccpt1qrvwy92u2es34fnpwnddkhtpw8wzqjpy6u6yszpz on testnet polling http://127.0.0.1:8646 with mock-v1:8c86f2e3eaa26cba
+miner sccpt1qrvwy92u2es34fnpwnddkhtpw8wzqjpy6u6yszpz on testnet polling http://127.0.0.1:8646 with 8eed61129d1493c5...
 ```
 
-Start `miner-2` and `miner-3` the same way. A match needs both seats, so a lone
-miner joins and waits; two miners that the beacon paired play, and the third
-waits for another round. Progress looks like this:
+Start `miner-2` the same way. A match needs both seats, so a lone miner joins and
+waits; two miners that the beacon paired play. Use the same `--engine-path` the
+bootstrap registered, otherwise the relay refuses the certificate. Progress
+looks like this:
 
 ```text
 stopped after 30 polls (6.22s): 1 joins, 32 moves, 0 results, 0 proofs, 0 timeout claims
 ```
+
+When a game ends decisively, the winner announces its proof to `--node`; a node
+started with `--mine --miner-address ADDRESS --no-mine-bootstrap` then settles it
+in the next block. A draw produces no proof.
 
 Stop a miner with `Ctrl-C`; it closes the engine and prints the summary. Useful
 options while testing:
@@ -365,9 +386,11 @@ chain and submit to the node, exactly like `wallet send`. The node validates the
 and puts them in its mempool. Registration and availability take effect when a
 block includes them.
 
-In this snapshot a live node does not mine automatically; the in-process
-`sccp devnet up` is the settled demo, and testnet settlement is M6. Treat the
-three commands above as correctly signed and admitted, not as instantly final.
+A node accepts blocks from any miner; on the two-miner deployment,
+`node run --mine --miner-address ADDRESS --no-mine-bootstrap` also settles a
+proof that is already in the mempool. Registration and availability still take
+effect only when a block includes them, so check the mempool and block height
+rather than assuming a submitted transaction is instantly final.
 
 ---
 
@@ -380,7 +403,8 @@ win proofs local; with it, every verified proof is announced to the node:
 sccp --passphrase-file ./stack/passphrase miner run \
     --network testnet \
     --key ./stack/keys/miner-1.key \
-    --engine-profile mock \
+    --engine-profile stockfish-19 \
+    --engine-path ./bin/stockfish-macos-universal \
     --relay http://127.0.0.1:8646 \
     --node http://127.0.0.1:8645
 ```

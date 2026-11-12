@@ -9,6 +9,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Debian's packaged Stockfish is the testnet stack's engine. The bootstrap and
+# both miners use this exact binary, so the registered engine fingerprint is the
+# one the running miners report. The package installs /usr/games/stockfish.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends stockfish \
+    && rm -rf /var/lib/apt/lists/*
+
 # Only what the wheel build and the runtime commands need.
 COPY pyproject.toml README.md LICENSE ./
 COPY src ./src

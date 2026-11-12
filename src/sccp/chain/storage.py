@@ -58,7 +58,13 @@ class Storage:
     def __init__(self, path: str | Path = ":memory:") -> None:
         self.path = str(path)
         try:
-            self._connection = sqlite3.connect(self.path, isolation_level=None)
+            # A node opens the store on its main thread and accepts blocks from
+            # FastAPI's sync worker threads. NodeService.write_lock serialises
+            # every mutation, so the connection may safely be shared across
+            # threads; without this flag SQLite refuses those writes outright.
+            self._connection = sqlite3.connect(
+                self.path, isolation_level=None, check_same_thread=False
+            )
         except sqlite3.Error as exc:  # pragma: no cover - platform dependent
             raise StorageError(f"cannot open {self.path}: {exc}") from exc
         self._connection.execute("PRAGMA journal_mode=WAL")

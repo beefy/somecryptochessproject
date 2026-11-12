@@ -23,6 +23,7 @@ from sccp.protocol.transcript import (
     render_transcript_pgn,
     sign_result,
 )
+from sccp.transport import client_for
 from sccp.version import version_string
 
 runner = CliRunner()
@@ -665,8 +666,10 @@ def test_node_run_can_hide_the_faucet(data_dir: Path, monkeypatch: pytest.Monkey
         ["--data-dir", str(data_dir), "node", "run", "--network", "devnet", "--no-faucet"],
     )
     assert result.exit_code == 0, result.output
-    paths = {getattr(route, "path", None) for route in served["app"].routes}
-    assert "/v1/faucet" not in paths
+    with client_for(served["app"]) as client:
+        response = client.get("/v1/faucet")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "the faucet is disabled"
 
 
 def _devnet_address() -> str:

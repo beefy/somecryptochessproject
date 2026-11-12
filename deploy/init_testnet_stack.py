@@ -1,14 +1,17 @@
-"""Write the keys and relay config for the local testnet docker-compose stack.
+"""Write the keys for the local testnet docker-compose stack.
 
-``docker compose up`` runs one ``init`` container with this script, then starts
-the node, the relay and three miners, all on the test network. Everything the
-relay needs (a beacon, a roster with public keys and engine fingerprints) is
-derived here from fixed seeds, so the stack is reproducible: the same three
-addresses and the same beacon on every run.
+``docker compose up`` runs one ``init`` container with this script, then the
+bootstrap service builds the first chain blocks, followed by the node, the relay
+and two miners, all on the test network. Everything here is derived from fixed
+seeds, so the stack is reproducible: the same two addresses on every run.
 
 Those seeds and the passphrase are published on purpose. Testnet coins have no
 value and a predictable stack is what makes ``docker compose up`` work without a
 coordination step. Never reuse this file or its keys on another network.
+
+The relay config is written by ``deploy/bootstrap_testnet_stack.py`` after it has
+built the chain: the beacon and roster come from the chain itself, not from a
+stand-in document here.
 
 Usage::
 
@@ -27,16 +30,17 @@ from sccp.config import TESTNET, NetworkParams
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, keypair_from_seed
 from sccp.crypto.wallet import KdfParams, create_wallet
-from sccp.protocol.beacon import commitment, compute_beacon
+from sccp.protocol.beacon import commitment
 
 PASSPHRASE_ENV = "SCCP_STACK_PASSPHRASE"
 DEFAULT_PASSPHRASE = "sccp-testnet-stack"
 """The published stack passphrase; see the module docstring."""
 
-MINER_COUNT = 3
-STACK_EPOCH = 1
-ENGINE = "mock-v1"
-"""The engine fingerprint the stack's mock engines report."""
+MINER_COUNT = 2
+"""Two miners are the minimum for one match and match the deployment target."""
+
+AVAILABILITY_EPOCH = 2
+"""First epoch for which availability can exist on a fresh testnet."""
 
 KDF = KdfParams(n=2**14)
 """scrypt cost for the stack keyfiles: 16 MiB, fast enough for a container start."""
@@ -81,34 +85,8 @@ def _write_keyfile(miner: StackMiner, params: NetworkParams, passphrase: str) ->
     )
 
 
-def build_relay_document(miners: list[StackMiner], params: NetworkParams) -> dict[str, object]:
-    """The relay config: beacon, roster, timeout and the first round to open."""
-    assert params.genesis_hash is not None  # testnet pins one
-    beacon = compute_beacon(
-        network=params.network_id,
-        epoch=STACK_EPOCH,
-        block_hash=params.genesis_hash,
-        reveals=(),  # the stack has no on-chain reveals yet; the beacon still derives
-    )
-    roster = {
-        miner.address: {
-            "public_key": miner.keypair.public_key_hex,
-            "engine": ENGINE,
-            "max_games": params.rounds_per_epoch,
-        }
-        for miner in miners
-    }
-    return {
-        "network": params.network_id,
-        "beacon": beacon.model_dump(mode="json"),
-        "roster": roster,
-        "timeout_seconds": 900,
-        "open_round": 0,
-    }
-
-
 def write_stack(out: Path, *, passphrase: str) -> dict[str, object]:
-    """Create ``out`` with keyfiles, a passphrase file and ``relay.json``."""
+    """Create ``out`` with keyfiles, a passphrase file and ``stack.json``."""
     params = TESTNET
     out.mkdir(parents=True, exist_ok=True)
     (out / "keys").mkdir(exist_ok=True)
@@ -120,16 +98,9 @@ def write_stack(out: Path, *, passphrase: str) -> dict[str, object]:
     passphrase_file.write_text(passphrase + "\n", encoding="utf-8")
     passphrase_file.chmod(0o600)
 
-    relay_document = build_relay_document(miners, params)
-    (out / "relay.json").write_text(
-        json.dumps(relay_document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-
     summary: dict[str, object] = {
         "network": params.network_id,
-        "epoch": STACK_EPOCH,
-        "beacon": relay_document["beacon"]["hash"],
-        "relay_config": str(out / "relay.json"),
+        "availability_epoch": AVAILABILITY_EPOCH,
         "passphrase_file": str(passphrase_file),
         "miners": [
             {
@@ -137,7 +108,7 @@ def write_stack(out: Path, *, passphrase: str) -> dict[str, object]:
                 "address": miner.address,
                 "keyfile": str(miner.keyfile),
                 "nonce_secret": miner.nonce_secret,
-                "commitment": commitment(miner.address, STACK_EPOCH, miner.nonce_secret),
+                "commitment": commitment(miner.address, AVAILABILITY_EPOCH, miner.nonce_secret),
             }
             for miner in miners
         ],
@@ -160,7 +131,6 @@ def main() -> None:
     arguments = parser.parse_args()
     summary = write_stack(arguments.out, passphrase=arguments.passphrase)
     print(f"stack for {summary['network']} in {arguments.out}")
-    print(f"beacon: {summary['beacon']}")
     for miner in summary["miners"]:
         assert isinstance(miner, dict)
         print(f"  {miner['name']}: {miner['address']}")

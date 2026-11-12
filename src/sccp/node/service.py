@@ -609,6 +609,15 @@ class NodeService:
                 reorg.orphaned_proofs,
                 tip_state=self.chain.state,
             )
+        else:
+            self.mempool.reset(self.chain.state)
+        # ``reset`` keeps proofs that are still inside their claim window, and a
+        # transaction can survive if the same sender has a later pending nonce.
+        # Anything this block already included is settled, so drop it explicitly.
+        for transaction in block.transactions:
+            self.mempool.remove_transaction(txid(transaction))
+        for proof in block.proofs:
+            self.mempool.remove_proof(proof.proof_id)
         self.mempool.prune(self.height)
         self._persist(stored)
         return BlockIngest(

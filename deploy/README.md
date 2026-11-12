@@ -1,65 +1,75 @@
-# The local testnet stack
+# The two-miner testnet stack
 
-`docker-compose.yml` runs the M4 network on one machine: a full node, the
-matchmaking relay and three miners, all on the `testnet` parameters. It exists
-to exercise the multi-process wiring (startup order, shared state, real ports,
-graceful shutdown) that the in-process devnet cannot: `sccp devnet up` remains
-the fast, deterministic, one-command demo.
+`docker-compose.yml` runs the M6 deployment on one machine: a full node, the
+matchmaking relay, one deterministic bootstrap job and two Stockfish miners. It
+starts from the pinned `testnet` genesis, funds and registers both miners,
+commits/reveals availability, opens a matchable epoch, plays games and settles
+the winning proofs on chain. `sccp devnet up` remains the fast in-process demo;
+this stack exercises the real multi-process, HTTP and SQLite path. The merge-to-
+deploy workflow and its monthly cost are in
+[`docs/TESTNET_DEPLOYMENT.md`](../docs/TESTNET_DEPLOYMENT.md).
 
 ```bash
 docker compose up --build
-curl http://127.0.0.1:8645/v1/status    # node
-curl http://127.0.0.1:8646/v1/status    # relay: beacon, matches, reputation
-curl http://127.0.0.1:8646/v1/matches   # what the miners are playing
-docker compose logs -f miner-1
-docker compose down -v                  # also drops the chain and relay state
+curl http://127.0.0.1:8645/v1/status    # node: height, mempool, peers
+curl http://127.0.0.1:8646/v1/status     # relay: beacon, matches, reputation
+curl http://127.0.0.1:8646/v1/matches    # what the miners are playing
+docker compose logs -f bootstrap miner-1
+docker compose down -v                   # resets the chain and relay state
 ```
+
+The first run takes a minute or two: the bootstrap writes 19 blocks, then the
+relay opens round 0 and the miners play. When a game is decisive, a settled
+proof appears as `mined height 20: 1 proof(s) ...` in the node log; a draw has no
+proof to settle.
 
 ## What each container does
 
 | Service | Command | Purpose |
 | --- | --- | --- |
-| `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the three keyfiles, the passphrase file and `relay.json` |
-| `node` | `sccp --data-dir /data node run --network testnet` | the section 5.12 API, with the chain in SQLite under the `node-data` volume |
-| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json` | opens round 0 at startup, runs the 30+0 clock and serves the match protocol |
-| `miner-1..3` | `sccp miner run --engine-profile mock` | joins its assigned matches, plays them and co-signs the results |
+| `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the two keyfiles, the passphrase file and `stack.json` |
+| `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --no-mine-bootstrap` | section 5.12 API plus the proof settler; chain in SQLite under `node-data` |
+| `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers both miners, commits and reveals availability, writes `relay.json` from epoch 3 |
+| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json` | opens round 0, runs the 30+0 clock, opens a new round every 60 s |
+| `miner-1`, `miner-2` | `sccp miner run --engine-profile stockfish-19 --nodes-per-move 5000` | join, play, co-sign and announce win proofs to the node |
 
-## The keys are public on purpose
+The bootstrap is deliberately separate from mining. It builds each block with
+the same `BlockBuilder` a miner uses and submits it through the node's public
+`POST /v1/blocks`; the node re-validates everything. The only privileged input is
+the published testnet faucet key, which pays each stack miner 100 test coins.
 
-`deploy/init_testnet_stack.py` derives the three miners from fixed seeds and the
-stack passphrase is published (`sccp-testnet-stack`). Testnet coins have no
-value, and a reproducible stack is what makes `docker compose up` work without a
-coordination step. **Never reuse these seeds or that passphrase on mainnet.**
+## The keys and engine are reproducible on purpose
+
+`deploy/init_testnet_stack.py` derives both miners from fixed seeds and the stack
+passphrase is published (`sccp-testnet-stack`). The image installs Debian's
+Stockfish as `/usr/games/stockfish`; the bootstrap registers that binary's
+fingerprint and both miners run it. Testnet coins have no value, and a
+reproducible stack is what makes `docker compose up` work without a coordination
+step. **Never reuse these seeds, that passphrase or that bond on mainnet.**
 
 `/stack/stack.json` lists each miner's address, keyfile and availability nonce
-secret for the epoch the relay was configured with.
+secret. The bootstrap rewrites `/stack/relay.json` from the chain's epoch 3
+beacon and roster every time it runs.
 
-## What this stack does not do yet
+## Reset behaviour and limits
 
-- **No on-chain settlement.** Testnet genesis funds the public faucet, not these
-  keys, so the stack's miners are not registered and have no availability on
-  chain; the node stays at the genesis block. Funding, registration and proof
-  inclusion are M6 work (`docs/RUN_A_TESTNET_MINER.md`), and the full loop is
-  demonstrated today by `sccp devnet up`. For the same reason the miners are
-  started without `--node`: a proof announcement the chain cannot accept would
-  only produce refusals in the log.
-- **Mock engines.** The image ships no UCI binary, so the miners use the seeded
-  mock engine. Two random movers often shuffle: a game ends by checkmate,
-  stalemate or resignation, and mock engines may reach the ply ceiling first. To
-  play with a real engine, mount a binary and pass
-  `--engine-path /path/to/stockfish`.
-- **One round.** The relay opens the round named in `relay.json`
-  (`open_round: 0`). Pass `--round-seconds 900` (or `"round_seconds": 900` in
-  `relay.json`) to let the relay open the next round on that interval — that is
-  e2e wiring, so the stack keeps one round unless you ask for more.
+- The deploy workflow runs `docker compose down -v` before every `up`, so each
+  merge starts a fresh deterministic chain. Do the same locally when testing a
+  new image.
+- The bootstrap registers three games per miner (the testnet epoch quota) and
+  the relay opens one round every minute. Once those games are played the chain
+  stops advancing until another deployment/reset: this is a demonstration
+  network, not a long-lived public testnet yet.
+- The faucet's limits are in memory and reset with the node. See
+  [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for the exact policy.
 
 ## Clocks and witnesses
 
 The relay runs timed sessions whether or not the stack asks for them: both
 clocks start on the second join, moves are charged against the mover and every
 accepted move is answered with a receipt. Without `--witness-key` those receipts
-carry no signatures, so they cannot be settled on chain; add a keyfile to the
-relay (`--witness-key /stack/relay.key`) and pass the matching public key hex to
-the miners (`sccp miner run --relay-witness-key <hex>`) to run the full signed
-path. Both are one flag each because a witness identity is an operator decision,
-not a network parameter.
+carry no signatures, so a flagged game cannot become a timeout claim. Add a
+keyfile to the relay (`--witness-key /stack/relay.key`) and pass the matching
+public key hex to the miners (`sccp miner run --relay-witness-key <hex>`) to run
+the full signed path. Both are one flag each because a witness identity is an
+operator decision, not a network parameter.

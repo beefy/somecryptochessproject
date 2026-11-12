@@ -42,6 +42,8 @@ def test_node_miner_settles_a_pending_proof(live_chain: Any, chain_match: Any) -
     assert block is not None
     assert [proof.proof_id for proof in block.proofs] == [match.proof.proof_id]
     assert service.height == 4
+    assert not service.mempool.proofs
+    assert miner.mine_once() is None
     service.close()
 
 

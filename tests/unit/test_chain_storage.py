@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -157,3 +158,15 @@ def test_an_incompatible_schema_fails_loudly(tmp_path: Path) -> None:
     storage.close()
     with pytest.raises(StorageError, match="expects"):
         Storage(path)
+
+
+def test_a_node_worker_thread_can_persist_a_block(stored: tuple[Chain, Storage]) -> None:
+    """FastAPI runs sync endpoints on worker threads, so the store must accept them."""
+    chain, storage = stored
+    block = chain.main_chain()[-1]
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(storage.save_block, block, tip=True).result()
+        assert storage.tip_hash() == block.block_hash
+    finally:
+        storage.close()

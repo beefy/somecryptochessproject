@@ -80,7 +80,7 @@ dist-check: dist  ## Validate dist/ with twine check --strict (needs `twine>=7`)
 devnet: venv  ## Run the in-process devnet (node + relay + four mock miners)
 	$(PYTHON) -m sccp.cli devnet up --miners 4 --blocks 10
 
-stack: venv  ## Write the docker-compose stack into .stack and validate it
+stack: venv  ## Write the deterministic stack keys into .stack
 	$(PYTHON) deploy/init_testnet_stack.py --out .stack
 	@if command -v docker >/dev/null 2>&1; then \
 		docker compose config --quiet && echo "compose config ok"; \
