@@ -29,15 +29,19 @@ Three modes:
     a verified ``TimeoutClaim``.
 
 ``python scripts/play_miner.py --on-chain``
-    **On-chain.** Builds a fresh local devnet chain in ``--chain-dir`` (default
-    ``./data-play``), funds and registers both seats, opens epoch 3 and then
-    seats you through the same relay API. When the game ends it co-signs the
-    result, turns the relay transcript into a ``WinProof`` and mines that proof
-    into a block with the production block builder. The chain is written to
-    SQLite, so ``sccp --data-dir ./data-play node run --network devnet`` can
-    serve it and ``scripts/export_block_games.py`` can export the game. A draw,
-    a time forfeit (there is no claim-transaction path in this demo yet) or a
-    game shorter than devnet's 20-ply minimum produces no block.
+    **On-chain.** Builds or resumes a local devnet chain in ``--chain-dir``
+    (default ``./data-play``), funds and registers your seat and three opponent
+    miners, opens the current epoch and then seats you through the same relay
+    API. A second run resumes the same chain at its next epoch; ``--fresh``
+    discards it, and ``--games N`` plays several games in one sitting. When the
+    game ends it co-signs the result, turns the relay transcript into a
+    ``WinProof`` and mines that proof into a block with the production block
+    builder. The chain is written to SQLite, so ``sccp --data-dir ./data-play
+    node run --network devnet`` can serve it and ``scripts/export_block_games.py``
+    can export the game. A draw, a time forfeit (there is no claim-transaction
+    path in this demo yet) or a game shorter than devnet's 20-ply minimum
+    produces no block. A loss is still decisive: the winner's proof is mined,
+    whichever seat won.
 
 ``python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key``
     **Attached.** The same human seat, pointed at a relay that is already
@@ -66,19 +70,21 @@ from __future__ import annotations
 import argparse
 import getpass
 import hashlib
+import json
 import os
 import sys
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Final, cast
 
 import chess
 import httpx
 
+from sccp.chain.state import EpochRecord
 from sccp.chain.storage import Storage
 from sccp.chess.engines import MOCK_VERSION, Engine, open_engine
 from sccp.chess.openings import book_for
@@ -92,6 +98,7 @@ from sccp.devnet import (
     _bootstrap,
     _mine_pending,
     _relay_for_epoch,
+    _submit_epoch_txs,
 )
 from sccp.errors import SccpError
 from sccp.miner.engine_miner import (
@@ -115,6 +122,7 @@ from sccp.protocol.models import (
     Transcript,
 )
 from sccp.protocol.pairing import RosterEntry
+from sccp.protocol.pairing import pair as pair_miners
 from sccp.protocol.transcript import (
     certificate_payload,
     proof_from_transcript,
@@ -147,7 +155,16 @@ HUMAN_SEED: Final = "5e" * 32
 """Demo seed of the human seat; ``--seed`` overrides it."""
 
 OPPONENT_SEED: Final = "a1" * 32
-"""Demo seed of the engine miner's seat."""
+"""Demo seed of the engine miner's seat in solo mode."""
+
+CHAIN_OPPONENT_SEEDS: Final = ("a1" * 32, "a2" * 32, "a3" * 32)
+"""Three chain opponents, so consecutive games are not the same pairing.
+
+Devnet enforces an ``opponent_cooldown`` of one epoch. With a single opponent a
+second proof would be rejected, because the next game's epoch is always only one
+block after the previous proof. Rotating distinct, funded opponents lets a
+single chain host any number of games.
+"""
 
 WITNESS_SEED: Final = "c0" * 32
 """Demo seed of the relay's clock witness, so flag receipts can be trusted."""
@@ -176,6 +193,12 @@ DEFAULT_CHAIN_DIR: Final = Path("data-play")
 CHAIN_DB_NAME: Final = "chain.sqlite"
 """The SQLite file ``sccp node run`` also reads from ``--data-dir``."""
 
+CHAIN_META_NAME: Final = "play.json"
+"""A small sidecar recording which demo key owns the chain in ``--chain-dir``."""
+
+CHAIN_META_VERSION: Final = 1
+"""Version of :data:`CHAIN_META_NAME`; unknown versions are ignored."""
+
 CHAIN_NETWORK: Final = "devnet"
 """``--on-chain`` is devnet-only: its one-block epochs and zero seal are deterministic."""
 
@@ -190,7 +213,9 @@ examples:
   python scripts/play_miner.py                          # solo, you are white
   python scripts/play_miner.py --color black            # solo, you are black
   python scripts/play_miner.py --on-chain               # play a devnet game, mine the proof
+  python scripts/play_miner.py --on-chain --games 3     # three games, three blocks
   python scripts/play_miner.py --on-chain --chain-dir ./data-play
+  python scripts/play_miner.py --on-chain --fresh       # discard that chain and bootstrap
   python scripts/play_miner.py --engine stockfish-19 --engine-path ./bin/stockfish-19
   python scripts/play_miner.py --pgn-out game.pgn        # keep the relay's PGN
   python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
@@ -203,7 +228,7 @@ moves      print the whole game so far
 clocks     print both clocks and whose turn it is
 receipts   print the relay's witness receipts for this match
 resign     resign on your turn
-quit       leave the game (the relay keeps running)
+quit       leave the game (on-chain: no finished result, so no block)
 """
 
 
@@ -218,6 +243,8 @@ class Options:
     network: str | None = None
     on_chain: bool = False
     chain_dir: Path | None = None
+    fresh: bool = False
+    games: int = 1
     color: str = "white"
     seed: str = HUMAN_SEED
     round: int = 0
@@ -365,8 +392,10 @@ class SoloTable:
     closed: bool = False
     chain: NodeService | None = None
     chain_dir: Path | None = None
+    participants: tuple[DevnetMiner, ...] = ()
     keypairs: dict[str, Keypair] = field(default_factory=dict)
     mined: list[str] = field(default_factory=list)
+    prepared: bool = False
     settlement: ChainSettlement | None = None
 
     def step(self) -> None:
@@ -421,9 +450,10 @@ class SoloTable:
             )
             return self.settlement
         try:
+            self._prepare_next_epoch()
             signed_view = self._co_sign_result(view)
             if signed_view is None:
-                self.settlement = ChainSettlement(False, "both seats did not co-sign the result")
+                self.settlement = ChainSettlement(False, self._missing_signature_reason())
                 return self.settlement
             transcript = self.seat.transcript()
             proof = proof_from_transcript(transcript, params=self.chain.params)
@@ -476,6 +506,29 @@ class SoloTable:
                 return None
             view = self.seat.view()
         return None
+
+    def _prepare_next_epoch(self) -> None:
+        """Add the availability/reveal transactions the *next* game will need.
+
+        Devnet epochs are one block long. A proof from epoch ``e`` is mined at
+        height ``e + 1``, so the next game needs epoch ``e + 1`` to be matchable
+        by then. The block that carries this game's proof also carries those
+        transactions, which is what lets a resumed chain host another game.
+        """
+        if self.prepared or self.chain is None or not self.participants:
+            return
+        _submit_epoch_txs(self.chain, self.participants)
+        self.prepared = True
+
+    def _missing_signature_reason(self) -> str:
+        """Explain a co-sign failure with the opponent's own refusal, if it has one."""
+        result = self.seat.view().result
+        present = "none" if result is None else ", ".join(sorted(result.result_signatures))
+        if result is None:
+            return "the relay no longer reports a result to co-sign"
+        if self.miner.refusals:
+            return f"the opponent refused to co-sign: {self.miner.refusals[-1]}"
+        return f"both seats did not co-sign the result (signatures: {present or 'none'})"
 
     def pause(self) -> None:
         """Stop the background service loop so settlement owns the miner.
@@ -543,8 +596,8 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
         "--on-chain",
         action="store_true",
         help=(
-            "Build a fresh devnet chain and mine the finished game's proof into a block "
-            "(writes --chain-dir)."
+            "Build or resume a devnet chain and mine the finished game's proof into a "
+            "block (writes --chain-dir; --fresh discards an existing one)."
         ),
     )
     parser.add_argument(
@@ -552,6 +605,18 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
         type=Path,
         metavar="DIR",
         help=f"Data directory for --on-chain (default: ./{DEFAULT_CHAIN_DIR}).",
+    )
+    parser.add_argument(
+        "--fresh",
+        action="store_true",
+        help="With --on-chain, discard an existing chain in --chain-dir and bootstrap again.",
+    )
+    parser.add_argument(
+        "--games",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Play N games in a row on the same chain (on-chain only, default: 1).",
     )
     parser.add_argument(
         "--color",
@@ -632,6 +697,14 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
         parser.error("--on-chain opens its own round; drop --match")
     if namespace.chain_dir is not None and not namespace.on_chain:
         parser.error("--chain-dir only applies to --on-chain")
+    if namespace.fresh and not namespace.on_chain:
+        parser.error("--fresh only applies to --on-chain")
+    if namespace.games < 1:
+        parser.error("--games must be at least 1")
+    if namespace.games > 1 and not namespace.on_chain:
+        parser.error("playing several games in a row needs --on-chain")
+    if namespace.games > 1 and namespace.pgn_out is not None:
+        parser.error("--pgn-out names one game; leave it off when --games is greater than 1")
     if namespace.on_chain and namespace.network not in (None, CHAIN_NETWORK):
         parser.error(f"--on-chain is devnet-only; drop --network {namespace.network}")
     return Options(
@@ -642,6 +715,8 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
         network=namespace.network,
         on_chain=namespace.on_chain,
         chain_dir=namespace.chain_dir,
+        fresh=namespace.fresh,
+        games=namespace.games,
         color=namespace.color,
         seed=seed,
         round=namespace.round,
@@ -692,6 +767,20 @@ def solo_nonces(seed: str) -> tuple[str, str]:
     human = hashlib.sha256(base + HUMAN_NONCE.encode()).hexdigest()
     opponent = hashlib.sha256(base + OPPONENT_NONCE.encode()).hexdigest()
     return human, opponent
+
+
+def chain_opponents() -> tuple[Keypair, ...]:
+    """The deterministic opponent keys a chain bootstraps."""
+    return tuple(keypair_from_seed(bytes.fromhex(seed)) for seed in CHAIN_OPPONENT_SEEDS)
+
+
+def chain_opponent_nonces(seed: str) -> tuple[str, ...]:
+    """One availability nonce per chain opponent, all derived from ``--seed``."""
+    base = bytes.fromhex(seed)
+    return tuple(
+        hashlib.sha256(base + f"{OPPONENT_NONCE}:{index}".encode()).hexdigest()
+        for index in range(len(CHAIN_OPPONENT_SEEDS))
+    )
 
 
 def _solo(options: Options) -> SoloTable:
@@ -800,6 +889,62 @@ def _solo_matchup(relay: Matchmaker, address: str) -> Matchup:
     raise SystemExit(f"the relay paired no match containing {address}")
 
 
+def _seat_matchup(
+    record: EpochRecord,
+    human_address: str,
+    options: Options,
+    *,
+    opponent_addresses: set[str],
+    blocked_opponents: set[str],
+    params: NetworkParams,
+    epoch: int,
+) -> Matchup:
+    """Choose a pairing that contains the human and an available opponent.
+
+    Any round of the epoch is equally valid to the chain: the certificate and
+    the proof carry the match, not the round number. Pairings are deterministic,
+    so computing them before opening a round means the engine never sees a
+    discarded session.
+    """
+    if record.beacon is None:  # the caller checks this for a clearer error
+        raise SystemExit(f"epoch {epoch} has no beacon to pair in")
+    roster = [
+        RosterEntry(address=address, max_games=member.max_games)
+        for address, member in record.roster.items()
+    ]
+    rounds = [options.round]
+    rounds.extend(number for number in range(params.rounds_per_epoch) if number != options.round)
+    fallback: Matchup | None = None
+    for round_number in rounds:
+        matchups = pair_miners(
+            roster,
+            bytes.fromhex(record.beacon.hash),
+            network=params.network_id,
+            epoch=epoch,
+            round_number=round_number,
+            rounds_per_epoch=params.rounds_per_epoch,
+            opponent_cooldown=params.opponent_cooldown,
+        )
+        for matchup in matchups:
+            if human_address not in (matchup.white, matchup.black):
+                continue
+            opponent = matchup.black if human_address == matchup.white else matchup.white
+            if opponent not in opponent_addresses or opponent in blocked_opponents:
+                continue
+            if fallback is None:
+                fallback = matchup
+            if options.color == "auto":
+                return matchup
+            if (human_address == matchup.white) == (options.color == "white"):
+                return matchup
+    if fallback is not None:
+        return fallback
+    raise SystemExit(
+        "this chain has no opponent outside the devnet cooldown that can seat you "
+        f"as {options.color}; use --color auto or --fresh"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _HumanFingerprint:
     """The fake engine identity a human seat registers on chain."""
@@ -808,7 +953,7 @@ class _HumanFingerprint:
 
 
 def _chain(options: Options) -> SoloTable:
-    """Build a fresh devnet chain, retrying until the pairing seats you as asked."""
+    """Build or resume the devnet chain, seating you in the requested colour."""
     params = get_network(options.network or SOLO_NETWORK)
     if params.network_id != CHAIN_NETWORK:
         raise SystemExit(
@@ -817,11 +962,11 @@ def _chain(options: Options) -> SoloTable:
         )
     data_dir = options.chain_dir or DEFAULT_CHAIN_DIR
     database = data_dir / CHAIN_DB_NAME
-    if database.exists():
-        raise SystemExit(
-            f"{database} already exists; --on-chain always starts a fresh devnet. "
-            "Pick a new --chain-dir or remove that directory."
-        )
+    if database.exists() and not options.fresh:
+        return _resume_chain(params, options, data_dir)
+    if options.fresh:
+        _remove_chain(database)
+        _remove_chain_meta(data_dir)
     data_dir.mkdir(parents=True, exist_ok=True)
     base = bytes.fromhex(options.seed)
     for attempt in range(COLOUR_ATTEMPTS):
@@ -830,6 +975,7 @@ def _chain(options: Options) -> SoloTable:
         seed = base if attempt == 0 else hashlib.sha256(base + attempt.to_bytes(4, "big")).digest()
         table = _chain_table(params, keypair_from_seed(seed), options)
         if options.color in ("auto", table.seat.color):
+            _write_chain_meta(data_dir, seed)
             return table
         table.close()
     _remove_chain(database)
@@ -839,10 +985,129 @@ def _chain(options: Options) -> SoloTable:
     )
 
 
+def _resume_chain(params: NetworkParams, options: Options, data_dir: Path) -> SoloTable:
+    """Open the chain in ``data_dir`` again and seat the person on its next epoch."""
+    database = data_dir / CHAIN_DB_NAME
+    meta = _read_chain_meta(data_dir)
+    recorded_network = meta.get("network") if meta is not None else None
+    if recorded_network is not None and recorded_network != params.network_id:
+        raise SystemExit(
+            f"{database} is a {recorded_network!r} chain, not {params.network_id!r}; "
+            "use a different --chain-dir"
+        )
+    service = NodeService.open(params, storage=Storage(database))
+    try:
+        service.check_startup()
+        found = _human_keypair_for_chain(service, options, meta)
+        if found is None:
+            raise SystemExit(
+                f"{database} already exists, but it has no human seat derived from --seed. "
+                "Pass the --seed used to create it, or use --fresh to start over."
+            )
+        seed, human = found
+        epoch = _next_chain_epoch(service)
+        table = _chain_table(params, human, options, service=service, epoch=epoch)
+    except BaseException:
+        service.close()
+        raise
+    if options.color not in ("auto", table.seat.color):
+        table.close()
+        raise SystemExit(
+            f"the next epoch of this chain does not seat you as {options.color}; "
+            "use --color auto, or start a new chain with --fresh"
+        )
+    _write_chain_meta(data_dir, seed)
+    return table
+
+
+def _next_chain_epoch(service: NodeService) -> int:
+    """The epoch the next game must use: the tip's own, and it must be matchable."""
+    state = service.chain.state
+    epoch = state.current_epoch()
+    record = state.epoch_record(epoch)
+    if record is None or not record.matchable:
+        raise SystemExit(
+            f"the chain tip at height {state.height} has no matchable epoch {epoch} roster; "
+            "use --fresh to start a new devnet"
+        )
+    return epoch
+
+
+def _candidate_seeds(options: Options, meta: dict[str, object] | None) -> list[bytes]:
+    """The stored seed first, then every seed this command line could have used."""
+    seeds: list[bytes] = []
+    recorded = meta.get("human_seed") if meta is not None else None
+    if isinstance(recorded, str):
+        try:
+            seed = bytes.fromhex(recorded)
+        except ValueError:
+            seed = b""
+        if len(seed) == 32:
+            seeds.append(seed)
+    base = bytes.fromhex(options.seed)
+    for attempt in range(COLOUR_ATTEMPTS):
+        seed = base if attempt == 0 else hashlib.sha256(base + attempt.to_bytes(4, "big")).digest()
+        if seed not in seeds:
+            seeds.append(seed)
+    return seeds
+
+
+def _human_keypair_for_chain(
+    service: NodeService, options: Options, meta: dict[str, object] | None
+) -> tuple[bytes, Keypair] | None:
+    """Find the human key already registered on a resumed chain."""
+    state = service.chain.state
+    human_addresses = {
+        address
+        for address, account in state.accounts.items()
+        if account.engine == HUMAN_ENGINE and account.public_key is not None
+    }
+    for seed in _candidate_seeds(options, meta):
+        keypair = keypair_from_seed(seed)
+        if encode_address(keypair.public_key_bytes, service.params) in human_addresses:
+            return seed, keypair
+    return None
+
+
+def _chain_meta_path(data_dir: Path) -> Path:
+    """Where a chain records the demo key that owns its human seat."""
+    return data_dir / CHAIN_META_NAME
+
+
+def _read_chain_meta(data_dir: Path) -> dict[str, object] | None:
+    """Read the sidecar, treating an old or malformed one as absent."""
+    path = _chain_meta_path(data_dir)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(document, dict) or document.get("version") != CHAIN_META_VERSION:
+        return None
+    return document
+
+
+def _write_chain_meta(data_dir: Path, seed: bytes) -> None:
+    """Remember which seed to use the next time this chain is resumed."""
+    payload = {
+        "version": CHAIN_META_VERSION,
+        "network": CHAIN_NETWORK,
+        "human_seed": seed.hex(),
+    }
+    with suppress(OSError):
+        _chain_meta_path(data_dir).write_text(
+            json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+        )
+
+
 def _remove_chain(database: Path) -> None:
     """Remove the SQLite files a discarded colour attempt wrote."""
     for suffix in ("", "-wal", "-shm"):
         Path(f"{database}{suffix}").unlink(missing_ok=True)
+
+
+def _remove_chain_meta(data_dir: Path) -> None:
+    """Remove the sidecar that belongs to a discarded chain."""
+    _chain_meta_path(data_dir).unlink(missing_ok=True)
 
 
 def _chain_table(
@@ -852,51 +1117,90 @@ def _chain_table(
     *,
     clock_ms: Callable[[], int] = monotonic_ms,
     engine: Engine | None = None,
+    service: NodeService | None = None,
+    epoch: int = GENESIS_EPOCH,
 ) -> SoloTable:
-    """A fresh devnet chain plus the relay, miner and seat on top of it.
+    """A devnet chain (fresh or resumed) plus the relay, miner and seat on top of it.
 
     This is the library path ``sccp devnet up`` uses: ``_bootstrap`` funds and
-    registers both seats, ``_relay_for_epoch`` builds the real epoch-3 relay
-    (beacon, pairing, receipts), and the chain is persisted in ``chain.sqlite``
-    so ``sccp node run`` can serve it after the game.
+    registers both seats, ``_relay_for_epoch`` builds the real relay for
+    ``epoch`` (beacon, pairing, receipts), and the chain is persisted in
+    ``chain.sqlite`` so ``sccp node run`` can serve it after the game.
     """
     engine = (
         engine
         if engine is not None
         else open_engine(options.engine, binary=options.engine_path, seed=options.engine_seed)
     )
-    opponent = keypair_from_seed(bytes.fromhex(OPPONENT_SEED))
+    opponents = chain_opponents()
+    opponent_nonces = chain_opponent_nonces(options.seed)
     witness = keypair_from_seed(bytes.fromhex(WITNESS_SEED))
     human_address = encode_address(human.public_key_bytes, params)
-    opponent_address = encode_address(opponent.public_key_bytes, params)
     witness_address = encode_address(witness.public_key_bytes, params)
-    human_nonce, opponent_nonce = solo_nonces(options.seed)
-    participants = [
+    human_nonce, _ = solo_nonces(options.seed)
+    opponents_by_address = {
+        encode_address(opponent.public_key_bytes, params): opponent for opponent in opponents
+    }
+    participants = (
         DevnetMiner(
             keypair=human,
             engine=cast(Engine, _HumanFingerprint(HUMAN_ENGINE)),
             nonce_secret=human_nonce,
         ),
-        DevnetMiner(keypair=opponent, engine=engine, nonce_secret=opponent_nonce),
-    ]
+        *(
+            DevnetMiner(keypair=opponent, engine=engine, nonce_secret=nonce)
+            for opponent, nonce in zip(opponents, opponent_nonces, strict=True)
+        ),
+    )
     data_dir = options.chain_dir or DEFAULT_CHAIN_DIR
     data_dir.mkdir(parents=True, exist_ok=True)
-    database = data_dir / CHAIN_DB_NAME
-    service = NodeService.open(params, storage=Storage(database))
+    owns_service = service is None
+    if service is None:
+        database = data_dir / CHAIN_DB_NAME
+        service = NodeService.open(params, storage=Storage(database))
     clients: list[httpx.Client] = []
     try:
         service.check_startup()
-        _bootstrap(service, participants)
+        if owns_service:
+            _bootstrap(service, participants)
+        record = service.chain.state.epoch_record(epoch)
+        if record is None or record.beacon is None:  # _relay_for_epoch checks this too
+            raise SystemExit(f"epoch {epoch} has no beacon to pair in")
+        active = tuple(
+            participant for participant in participants if participant.address in record.roster
+        )
+        opponent_addresses = set(opponents_by_address) & set(record.roster)
+        stats = service.chain.state.miner_stats.get(human_address)
+        blocked = (
+            {
+                opponent
+                for opponent, last_epoch in stats.last_opponent_epoch.items()
+                if epoch - last_epoch <= params.opponent_cooldown
+            }
+            if stats is not None
+            else set()
+        )
+        matchup = _seat_matchup(
+            record,
+            human_address,
+            options,
+            opponent_addresses=opponent_addresses,
+            blocked_opponents=blocked,
+            params=params,
+            epoch=epoch,
+        )
+        opponent_address = matchup.black if human_address == matchup.white else matchup.white
+        opponent = opponents_by_address[opponent_address]
         pair = _relay_for_epoch(
             service,
-            GENESIS_EPOCH,
-            participants,
+            epoch,
+            active,
             clock=lambda: clock_ms() // 1000,
             clock_ms=clock_ms,
             timeout_seconds=SOLO_TIMEOUT_SECONDS,
             witness_keypair=witness,
         )
-        pair.relay.open_round(options.round)
+        pair.relay.open_round(matchup.round)
         human_http = client_for(create_relay_app(pair.relay), base_url=SOLO_URL)
         clients.append(human_http)
         clients.extend(pair.http)
@@ -904,7 +1208,7 @@ def _chain_table(
             client=RelayClient(SOLO_URL, client=human_http),
             address=human_address,
             keypair=human,
-            matchup=_solo_matchup(pair.relay, human_address),
+            matchup=matchup,
         )
         config = MinerConfig(
             params=params,
@@ -922,7 +1226,8 @@ def _chain_table(
     except BaseException:
         for client in clients:
             client.close()
-        service.close()
+        if owns_service:
+            service.close()
         raise
     return SoloTable(
         relay=pair.relay,
@@ -931,7 +1236,8 @@ def _chain_table(
         clients=clients,
         chain=service,
         chain_dir=data_dir,
-        keypairs={human_address: human, opponent_address: opponent},
+        participants=active,
+        keypairs={human_address: human, **opponents_by_address},
     )
 
 
@@ -1166,6 +1472,7 @@ class Game:
                     f"chain    devnet at {self.stack.chain_dir} (height {self.stack.chain.height})"
                 )
                 self.out("         the finished result is co-signed, proved and mined here")
+                self.out("         another run resumes this chain; --fresh resets it")
             else:
                 self.out("chain    off-chain demo: no proof announced, no block mined")
         if engine.startswith(MOCK_VERSION):
@@ -1375,6 +1682,10 @@ class Game:
                     )
                 else:
                     self.out(f"chain    not mined: {settlement.summary}")
+                    self.out(
+                        f"         chain stays at height {self.stack.chain.height}; "
+                        "a decisive game is required for a proof"
+                    )
             if self.stack.errors:
                 self.out(f"relay    {len(self.stack.errors)} service error(s), last: ")
                 self.out(f"         {self.stack.errors[-1]}")
@@ -1409,10 +1720,24 @@ class Game:
         return "no claim needed"
 
 
+def _play_chain_games(options: Options) -> int:
+    """Play ``--games`` games in a row, reopening the same chain between them."""
+    code = 0
+    for index in range(options.games):
+        run_options = replace(options, fresh=options.fresh if index == 0 else False)
+        with _seat(run_options) as (seat, stack):
+            code = Game(seat, stack=stack, options=run_options).run()
+        if code != 0:
+            return code
+    return code
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Play one game, from the command line to the final report."""
     options = _parse_args(argv)
     try:
+        if options.on_chain and options.games > 1:
+            return _play_chain_games(options)
         with _seat(options) as (seat, stack):
             return Game(seat, stack=stack, options=options).run()
     except Quit:

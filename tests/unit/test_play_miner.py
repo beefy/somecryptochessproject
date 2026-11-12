@@ -24,6 +24,7 @@ import pytest
 from sccp.chess.engines import MockEngine
 from sccp.config import DEVNET
 from sccp.crypto.keys import keypair_from_seed
+from sccp.miner.matchmaker import ResignRequest
 from sccp.protocol.clocks import FIXED_TIME_CONTROL
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "play_miner.py"
@@ -419,6 +420,154 @@ def test_chain_settlement_explains_why_it_did_not_mine(play: ModuleType, tmp_pat
         assert table.settle(no_result).summary == "the relay has not finished the game"
     finally:
         table.close()
+
+
+def test_a_human_win_mines_the_humans_proof(play: ModuleType, tmp_path: Path) -> None:
+    """When the opponent resigns, the human winner's key signs the block."""
+    table = _chain_table(play, tmp_path / "chain")
+    try:
+        view = table.seat.join()
+        for _ in range(400):
+            table.step()
+            view = table.seat.view()
+            if view.status == "finished":
+                break
+            if view.status != "active" or view.turn != table.seat.color:
+                continue
+            if view.last_ply >= DEVNET.min_plies:
+                break
+            board = play._board_from(view)
+            view = table.seat.play(
+                board,
+                next(iter(board.legal_moves)),
+                clock_ms=FIXED_TIME_CONTROL.initial_ms,
+            )
+        assert view.status == "active"
+        if view.turn == table.seat.color:
+            board = play._board_from(view)
+            view = table.seat.play(
+                board,
+                next(iter(board.legal_moves)),
+                clock_ms=FIXED_TIME_CONTROL.initial_ms,
+            )
+        opponent_color = "black" if table.seat.color == "white" else "white"
+        assert view.turn == opponent_color
+        table.relay.resign(view.matchup.match_id, ResignRequest(seat=table.seat.opponent))
+        finished = table.seat.view()
+        assert finished.status == "finished"
+        assert finished.result is not None
+        assert finished.result.result == ("1-0" if table.seat.color == "white" else "0-1")
+
+        settlement = table.settle(finished)
+
+        assert settlement.mined, settlement.summary
+        assert table.chain is not None
+        stored = table.chain.chain.block_at_height(table.chain.height)
+        assert stored is not None
+        assert stored.block.proofs[0].winner == table.seat.address
+    finally:
+        table.close()
+
+
+def test_on_chain_resumes_the_same_chain_for_another_game(play: ModuleType, tmp_path: Path) -> None:
+    """A second run reopens the chain and mines the next game's proof into block 5."""
+    chain_dir = tmp_path / "chain"
+    options = play.Options(on_chain=True, chain_dir=chain_dir, color="auto", ascii=True)
+    settlements: list[Any] = []
+    opponents: list[str] = []
+    for expected_height in (4, 5):
+        table = play._chain(options)
+        try:
+            assert table.chain is not None
+            assert table.chain.height == expected_height - 1
+            view = _play_to_minimum(play, table)
+            settlement = table.settle(view)
+            assert settlement.mined, settlement.summary
+            assert settlement.height == expected_height
+            stored = table.chain.chain.block_at_height(expected_height)
+            assert stored is not None
+            assert stored.block.proofs
+            opponents.append(stored.block.proofs[0].winner)
+            settlements.append(settlement)
+        finally:
+            table.close()
+
+    assert (chain_dir / play.CHAIN_DB_NAME).exists()
+    assert (chain_dir / play.CHAIN_META_NAME).exists()
+    assert len(set(opponents)) == 2
+    assert settlements[0].proof_id != settlements[1].proof_id
+
+
+def test_on_chain_fresh_reboots_an_existing_chain(play: ModuleType, tmp_path: Path) -> None:
+    """``--fresh`` is the explicit way to throw a chain away; normal runs resume."""
+    chain_dir = tmp_path / "chain"
+    options = play.Options(on_chain=True, chain_dir=chain_dir, color="auto", ascii=True)
+    table = play._chain(options)
+    try:
+        view = _play_to_minimum(play, table)
+        assert table.settle(view).mined
+        assert table.chain is not None
+        assert table.chain.height == 4
+    finally:
+        table.close()
+
+    fresh = play.Options(on_chain=True, chain_dir=chain_dir, fresh=True, color="auto", ascii=True)
+    table = play._chain(fresh)
+    try:
+        assert table.chain is not None
+        assert table.chain.height == play.GENESIS_EPOCH
+    finally:
+        table.close()
+
+
+def test_parse_args_accepts_fresh_only_with_on_chain(play: ModuleType) -> None:
+    """``--fresh`` belongs to the on-chain mode and nowhere else."""
+    assert play._parse_args(["--on-chain", "--fresh"]).fresh is True
+    with pytest.raises(SystemExit):
+        play._parse_args(["--fresh"])
+
+
+def test_play_chain_games_reopens_the_chain_between_games(
+    play: ModuleType, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """``--games`` uses ``--fresh`` once, then resumes the same chain."""
+    seen: list[tuple[bool, int]] = []
+
+    class FakeGame:
+        def __init__(self, seat: Any, *, stack: Any, options: Any) -> None:
+            self.stack = stack
+            self.options = options
+
+        def run(self) -> int:
+            seen.append((self.options.fresh, self.stack.chain.height))
+            return 0
+
+    monkeypatch.setattr(play, "Game", FakeGame)
+    options = play.Options(
+        on_chain=True,
+        chain_dir=tmp_path / "chain",
+        fresh=True,
+        games=3,
+        color="auto",
+        ascii=True,
+    )
+    assert play._play_chain_games(options) == 0
+    assert len(seen) == 3
+    assert [fresh for fresh, _ in seen] == [True, False, False]
+    assert [height for _, height in seen] == [3, 3, 3]
+    assert (tmp_path / "chain" / play.CHAIN_DB_NAME).exists()
+
+
+def test_parse_args_accepts_games_only_with_on_chain(play: ModuleType) -> None:
+    """``--games`` is a chain feature; one PGN file cannot name several games."""
+    assert play._parse_args(["--on-chain", "--games", "3"]).games == 3
+    for argv in (
+        ["--games", "2"],
+        ["--on-chain", "--games", "0"],
+        ["--on-chain", "--games", "2", "--pgn-out", "one.pgn"],
+    ):
+        with pytest.raises(SystemExit):
+            play._parse_args(argv)
 
 
 def test_main_reports_a_missing_keyfile_rather_than_crashing(

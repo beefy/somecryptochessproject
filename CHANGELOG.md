@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 summarised in the M0–M2 rows of the README roadmap.
 
+## [Unreleased]
+
+### Added
+
+- `scripts/play_miner.py --on-chain`: runs now **resume** an existing
+  `--chain-dir` at its next epoch instead of refusing to start; `--fresh`
+  explicitly discards it. `--games N` plays several games on that one chain.
+  Each proof block also carries the availability/reveal transactions the next
+  game's epoch needs, and the demo chain bootstraps three funded opponents so
+  consecutive proofs do not trip devnet's `opponent_cooldown`. This removes the
+  old "delete `data-play` between games" step.
+- The on-chain settlement now names the opponent's refusal when it will not
+  co-sign, and the final report states that a non-mined game left the chain
+  height unchanged and that a decisive result is required for a proof.
+
 ## [0.6.1] - 2026-11-12
 
 A patch release: the timed relay became playable by hand, and the client can now
