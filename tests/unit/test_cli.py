@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 
 from sccp.chess.pgn import validate_pgn
 from sccp.cli import PASSPHRASE_ENV, app
-from sccp.config import DEVNET
+from sccp.config import DEVNET, UNITS_PER_COIN
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import keypair_from_seed
 from sccp.protocol.transcript import (
@@ -817,6 +817,119 @@ def test_wallet_send_submits_a_signed_transfer(
     tx = recorded_node[0]
     assert tx.type == "transfer"
     assert tx.payload["amount"] == 1_000_000_000
+
+
+def test_wallet_send_transfers_between_two_new_wallets(
+    tmp_path: Path,
+    data_dir: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+) -> None:
+    """Create two wallets, fund one, and send coins to the other through the CLI."""
+    from sccp.chain.genesis import faucet_keypair
+    from sccp.chain.mempool import Mempool
+    from sccp.chain.storage import Storage
+    from sccp.config import coins_to_units
+    from sccp.miner.block_builder import BlockBuilder
+    from sccp.node.service import NodeService
+    from sccp.wallet.service import WalletService
+
+    alice_key = tmp_path / "alice.key"
+    bob_key = tmp_path / "bob.key"
+    wallets = (("alice", alice_key), ("bob", bob_key))
+    addresses: dict[str, str] = {}
+    for name, path in wallets:
+        created = runner.invoke(
+            app,
+            ["wallet", "new", "--out", str(path), "--network", "devnet", *FAST],
+            env=env,
+        )
+        assert created.exit_code == 0, created.output
+        addresses[name] = created.stdout.strip()
+
+    # New wallets start empty, so mine a faucet transfer that funds Alice.
+    faucet = faucet_keypair("devnet")
+    miner = keypair_from_seed(bytes([9]) * 32)
+    service = NodeService.open(DEVNET, storage=Storage(data_dir / "chain.sqlite"))
+    try:
+        pool = Mempool(params=DEVNET, tip_state=service.chain.state, book=service.chain.book)
+        pool.add_transaction(
+            WalletService(DEVNET, pool.projection).build_transfer(
+                faucet, addresses["alice"], coins_to_units(100)
+            )
+        )
+        funding = BlockBuilder(
+            params=DEVNET, chain=service.chain, mempool=pool, keypair=miner
+        ).build(timestamp=1_700_000_001)
+        assert funding is not None
+        assert service.ingest_block(funding).accepted
+    finally:
+        service.close()
+
+    sent = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "send",
+            "--network",
+            "devnet",
+            "--key",
+            str(alice_key),
+            "--to",
+            addresses["bob"],
+            "--amount",
+            "10",
+        ],
+        env=env,
+    )
+    assert sent.exit_code == 0, sent.output
+    assert f"sent 10.00000000 to {addresses['bob']}" in sent.stdout
+    assert len(recorded_node) == 1
+    transfer = recorded_node[0]
+    assert transfer.sender == addresses["alice"]
+    assert transfer.payload["to"] == addresses["bob"]
+    assert transfer.payload["amount"] == 10 * UNITS_PER_COIN
+
+    # The recording node does not mine, so put the submitted transfer in a block
+    # before reading the balances back through the CLI.
+    service = NodeService.open(DEVNET, storage=Storage(data_dir / "chain.sqlite"))
+    try:
+        pool = Mempool(params=DEVNET, tip_state=service.chain.state, book=service.chain.book)
+        pool.add_transaction(transfer)
+        block = BlockBuilder(params=DEVNET, chain=service.chain, mempool=pool, keypair=miner).build(
+            timestamp=1_700_000_002
+        )
+        assert block is not None
+        assert service.ingest_block(block).accepted
+    finally:
+        service.close()
+
+    balances: dict[str, Any] = {}
+    for name, path in wallets:
+        result = runner.invoke(
+            app,
+            [
+                "--json",
+                "--data-dir",
+                str(data_dir),
+                "wallet",
+                "balance",
+                "--network",
+                "devnet",
+                "--key",
+                str(path),
+            ],
+            env=env,
+        )
+        assert result.exit_code == 0, result.output
+        balances[name] = json.loads(result.stdout)
+
+    assert balances["alice"]["spendable"] == (
+        100 * UNITS_PER_COIN - 10 * UNITS_PER_COIN - DEVNET.min_fee
+    )
+    assert balances["bob"]["spendable"] == 10 * UNITS_PER_COIN
 
 
 def test_miner_register_availability_and_reveal(
