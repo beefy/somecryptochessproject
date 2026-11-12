@@ -277,6 +277,11 @@ class RelayClient:
         document = self._http.post(f"/v1/matches/{match_id}/move", body)
         return MatchView.model_validate(document)
 
+    def resign(self, match_id: str, *, seat: str) -> MatchView:
+        """Resign the match on ``seat``'s turn (``POST /v1/matches/{id}/resign``)."""
+        document = self._http.post(f"/v1/matches/{match_id}/resign", {"seat": seat})
+        return MatchView.model_validate(document)
+
     def receipts(self, match_id: str) -> ClockBundle | None:
         """The relay's clock bundle for ``match_id``, or ``None`` if unsupported.
 

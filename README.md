@@ -279,6 +279,7 @@ target layout for later milestones.
 │   ├── fetch_engine.py           # verified Stockfish download
 │   ├── make_genesis.py
 │   ├── make_openapi_fixture.py   # regenerate the API contract snapshot
+│   ├── play_miner.py             # play a timed relay match by hand
 │   └── check_release_version.py  # pyproject/version.py/tag agreement
 ├── src/sccp/
 │   ├── config.py                 # network parameters, settings
@@ -376,6 +377,14 @@ sccp miner run --network testnet \
 
 # The whole stack, as containers (node + relay + three mock miners on testnet)
 docker compose up --build
+
+# Play a timed relay match yourself, by hand: solo mode builds the relay and one
+# mock miner in-process, so the clocks, receipts and auto-flag are the real ones
+python scripts/play_miner.py                     # you are white; SAN or UCI moves
+python scripts/play_miner.py --color black --engine stockfish-19 \
+    --engine-path ./bin/stockfish-macos-universal
+# …or take a seat on a relay that is already serving, with your own keyfile
+python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 ```
 
 `--json` works on every command (`sccp --json chain info`, `sccp --json devnet
