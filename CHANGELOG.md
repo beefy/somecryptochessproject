@@ -7,6 +7,11 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-12
+
+A patch release: the testnet deployment workflow and public documentation use
+the public DNS name.
+
 ### Changed
 
 - The testnet deploy workflow now targets the public DNS name
