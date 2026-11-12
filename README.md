@@ -336,7 +336,7 @@ sccp devnet up --miners 4 --blocks 10 --engines mock
 sccp --json devnet up --miners 2 --blocks 4
 
 # Serve a full node (chain in ./data/chain.sqlite, API on port 8645)
-sccp node run --network testnet --port 8645 --data-dir ./data
+sccp --data-dir ./data node run --network testnet --port 8645
 
 # Read that node's chain from the same data directory
 sccp --data-dir ./data chain info --network testnet
