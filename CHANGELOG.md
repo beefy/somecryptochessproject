@@ -7,8 +7,16 @@ summarised in the M0–M2 rows of the README roadmap.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-12
+
+A minor release: the end-to-end whitepaper, resumable on-chain demo runs and
+clearer export and refusal diagnostics.
+
 ### Added
 
+- `docs/WHITEPAPER.md`: a descriptive end-to-end whitepaper covering the chain,
+  chess proof layer, matchmaking, mining, node/gossip, storage and operations,
+  with implemented and planned behaviour kept explicit.
 - `scripts/play_miner.py --on-chain`: runs now **resume** an existing
   `--chain-dir` at its next epoch instead of refusing to start; `--fresh`
   explicitly discards it. `--games N` plays several games on that one chain.
