@@ -928,15 +928,16 @@ Gossip:
 ```text
 sccp wallet new|address|balance|send|history|export-mnemonic|import-mnemonic
 sccp node run --network testnet --port 8645 --data-dir ./data
-sccp matchmaker run --network testnet --node http://127.0.0.1:8645 --port 8646
+sccp matchmaker run --config relay.json [--store relay-state.json]
+                    [--host 127.0.0.1] [--port 8646] [--round N]
 sccp miner run --network testnet --key alice.key --relay URL
-             [--engine-path PATH | --engine-profile stockfish-17|stockfish-11|mock]
+             [--engine-path PATH | --engine-profile stockfish-19|stockfish-18|mock]
              [--nodes-per-move N] [--depth D] [--max-games-per-epoch N]
 sccp miner register --key alice.key --bond 10 --endpoint https://...
 sccp miner availability --key alice.key --epoch 42 --max-games 3
 sccp chain info | blocks | account ADDRESS | verify
 sccp verify pgn FILE [--reference-engine PATH] [--network testnet]
-sccp verify proof FILE [--network testnet]
+sccp verify proof FILE --context context.json [--book openings.json] [--network testnet]
 sccp devnet up --miners 4 --blocks 10 --engines mock
 sccp faucet send --to ADDRESS --amount 1000   # testnet only
 ```
@@ -1338,6 +1339,11 @@ Full version in `docs/THREAT_MODEL.md` at M5.
   makes cheating *cost as much as competing honestly*, not impossible.
 - Sybil resistance without stake: identity is economic, not biometric.
 - Real-time play: no clocks, no human tournament integration.
+- drand quicknet BLS verification is pluggable rather than built in; until M4
+  wires the pinned chain key, `drand_used = 1` fails offline verification and
+  `drand_used = 0` is the only verifiable choice.
+- Relay reputation (no-shows, abandons) is a local convenience signal, never
+  consensus and never evidence for slashing.
 
 
 ---
@@ -1432,9 +1438,12 @@ Before mainnet:
 
 ## 12. Immediate next steps
 
-1. Review this plan and the README for naming and scope agreement.
-2. Start M0: `pyproject.toml`, `src/sccp/{config,serialization,crypto,cli}.py`,
-   tests, CI.
-3. Then M1, which is where the chess-specific risk lives: PGN validation and the
-   engine abstraction. Everything else depends on getting those two right.
+1. M0 (foundations), M1 (chess core) and M2 (beacons, pairing, certificates,
+   transcripts, relay, offline proof verification) are implemented and covered by
+   unit and ASGI integration tests; `docs/PROTOCOL.md` is normative for them.
+2. Start M3: chain transactions, state, blocks, mempool, difficulty and storage,
+   then the wallet service and block builder. Proof verification from M2 is the
+   admission rule for `WinProof` transactions.
+3. Wire the pinned drand quicknet BLS verifier when the node exists (M4); until
+   then `drand_used = 1` is rejected offline and `drand_used = 0` is valid.
 

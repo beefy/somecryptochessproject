@@ -93,5 +93,34 @@ class EngineFetchError(EngineError):
 # --- protocol ----------------------------------------------------------------
 
 
-class ProtocolError(SccpError):
-    """Base class for protocol-level validation failures (later milestones)."""
+class ProtocolError(SccpError, ValueError):
+    """Base class for protocol-level validation failures."""
+
+
+class BeaconError(ProtocolError):
+    """A beacon, commitment or reveal set is malformed or fails verification."""
+
+
+class PairingError(ProtocolError):
+    """A matchup cannot be recomputed from the roster and beacon."""
+
+
+class TranscriptError(ProtocolError):
+    """A certificate, result attestation or transcript is inconsistent."""
+
+
+class ProofVerificationError(ProtocolError):
+    """A win proof failed verification.
+
+    ``reason`` is a stable machine-readable code from
+    :class:`sccp.protocol.verification.ProofFailure`; callers should branch on
+    that rather than on the message text.
+    """
+
+    def __init__(self, reason: object, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+class RelayError(ProtocolError):
+    """The match relay rejected a request (bad seat, illegal move, wrong state)."""

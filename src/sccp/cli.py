@@ -1,8 +1,9 @@
 """``sccp`` command line interface (docs/IMPLEMENTATION_PLAN.md section 5.13).
 
-M0 shipped ``--version`` and the wallet basics; M1 adds the offline PGN
-verifier (``verify pgn``). Every command is a thin wrapper over a library call
-so the same behaviour is testable in-process.
+M0 shipped ``--version`` and the wallet basics; M1 added the offline PGN
+verifier (``verify pgn``); M2 adds offline proof verification (``verify proof``)
+and the matchmaking relay (``matchmaker run``). Every command is a thin wrapper
+over a library call so the same behaviour is testable in-process.
 
 Global options may be passed before or after the subcommand; an explicitly
 passed ``--network`` always wins over the global default of ``testnet``.
@@ -12,7 +13,7 @@ from __future__ import annotations
 
 import json as jsonlib
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, NoReturn, TypeVar
@@ -20,6 +21,7 @@ from typing import Annotated, NoReturn, TypeVar
 import typer
 
 from sccp import version as version_module
+from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.wallet import (
@@ -33,6 +35,14 @@ from sccp.crypto.wallet import (
     read_passphrase_file,
 )
 from sccp.errors import SccpError
+from sccp.miner.matchmaker import Matchmaker
+from sccp.miner.matchmaker import create_app as create_matchmaker_app
+from sccp.protocol.models import WinProof
+from sccp.protocol.verification import (
+    ProofContext,
+    context_from_document,
+    verify_win_proof,
+)
 
 DEFAULT_NETWORK = "testnet"
 PASSPHRASE_ENV = "SCCP_WALLET_PASSPHRASE"
@@ -48,6 +58,8 @@ wallet_app = typer.Typer(no_args_is_help=True, help="Create, inspect and back up
 app.add_typer(wallet_app, name="wallet")
 verify_app = typer.Typer(no_args_is_help=True, help="Verify games and proofs offline.")
 app.add_typer(verify_app, name="verify")
+matchmaker_app = typer.Typer(no_args_is_help=True, help="Run and inspect the matchmaking relay.")
+app.add_typer(matchmaker_app, name="matchmaker")
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +181,18 @@ def _passphrase(ctx: typer.Context, *, confirm: bool) -> str:
 
 def _echo_json(payload: object) -> None:
     typer.echo(jsonlib.dumps(payload, sort_keys=True))
+
+
+def _read_json(path: Path) -> object:
+    """Read a JSON document, turning I/O and syntax errors into a clean exit."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        _fail(f"cannot read {path}: {exc}")
+    try:
+        return jsonlib.loads(text)
+    except jsonlib.JSONDecodeError as exc:
+        _fail(f"{path} is not valid JSON: {exc}")
 
 
 def _emit_wallet(ctx: typer.Context, wallet: Wallet) -> None:
@@ -340,3 +364,96 @@ def verify_pgn(
     typer.echo(f"game hash: {payload['game_hash']}")
     typer.echo(f"result: {payload['result']} ({payload['termination']}, {payload['plies']} plies)")
     typer.echo(f"match: {payload['match_id']} opening {payload['opening_id']}")
+
+
+@verify_app.command("proof")
+def verify_proof(
+    ctx: typer.Context,
+    file: Annotated[Path, typer.Argument(help="WinProof JSON file to verify.")],
+    context: Annotated[
+        Path,
+        typer.Option(
+            "--context",
+            help="Public verification context JSON (beacon, roster, keys).",
+        ),
+    ],
+    book_path: Annotated[
+        Path | None,
+        typer.Option("--book", help="Opening book JSON override for the context."),
+    ] = None,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Network to verify against."),
+    ] = None,
+) -> None:
+    """Verify a win proof offline against a public context document."""
+    params = _resolve_network(ctx, network)
+    proof_document = _read_json(file)
+    context_document = _read_json(context)
+    book = None
+    if book_path is not None:
+        book = _run(lambda: load_book(params.book_version, book_path))
+    try:
+        proof = WinProof.model_validate(proof_document)
+    except ValueError as exc:
+        _fail(f"{file} is not a valid win proof: {exc}")
+    if not isinstance(context_document, Mapping):
+        _fail(f"{context} must contain a JSON object")
+    verification_context: ProofContext = _run(
+        lambda: context_from_document(context_document, params=params, book=book)
+    )
+    verified = _run(lambda: verify_win_proof(proof, verification_context))
+    payload = {
+        "proof_id": verified.proof.proof_id,
+        "game_hash": verified.proof.game_hash,
+        "match_id": verified.proof.match_id,
+        "winner": verified.proof.winner,
+        "winner_seat": verified.proof.winner_seat,
+        "result": verified.proof.result,
+        "termination": verified.proof.termination,
+        "plies": verified.proof.plies,
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"proof: {payload['proof_id']}")
+    typer.echo(f"game: {payload['game_hash']}")
+    typer.echo(
+        f"winner: {payload['winner']} ({payload['winner_seat']}, "
+        f"{payload['result']} by {payload['termination']}, {payload['plies']} plies)"
+    )
+
+
+@matchmaker_app.command("run")
+def matchmaker_run(
+    ctx: typer.Context,
+    config: Annotated[
+        Path,
+        typer.Option("--config", help="Relay config JSON: network, beacon, roster, engines."),
+    ],
+    host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port to bind.")] = 8646,
+    store: Annotated[
+        Path | None,
+        typer.Option("--store", help="JSON store that survives a relay restart."),
+    ] = None,
+    round_number: Annotated[
+        int | None,
+        typer.Option("--round", help="Open this round at startup."),
+    ] = None,
+) -> None:
+    """Serve the matchmaking relay over HTTP (uvicorn)."""
+    params = _resolve_network(ctx, None)
+    document = _read_json(config)
+    if not isinstance(document, Mapping):
+        _fail(f"{config} must contain a JSON object")
+    if round_number is not None:
+        document = {**document, "open_round": round_number}
+    state = _run(lambda: Matchmaker.from_document(document, params=params, store=store))
+    typer.echo(
+        f"matchmaker on {host}:{port} for {params.network_id} epoch {state.beacon.epoch} "
+        f"({len(state.matches())} matches)"
+    )
+    import uvicorn
+
+    uvicorn.run(create_matchmaker_app(state), host=host, port=port)

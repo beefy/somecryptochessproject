@@ -1,13 +1,14 @@
-# sccp wire protocol, version 1 (M1 subset)
+# sccp wire protocol, version 1 (M0–M2 subset)
 
-Status: **normative** for the parts implemented in milestones M0 and M1
-(canonical encoding, game hash, PGN contract, opening book, engine
-fingerprints). Sections for matchmaking, transactions, blocks and proofs land in
-later milestones.
+Status: **normative** for the parts implemented in milestones M0, M1 and M2
+(canonical encoding, game hash, PGN contract, opening book, engine fingerprints,
+epoch beacons, pairing, certificates, transcripts and win-proof verification).
+Sections for transactions, blocks, proofs-on-chain and the node API land in later
+milestones.
 
-Reference implementation: `src/sccp/chess/` and `src/sccp/serialization.py`.
-The plan that motivates these rules is
-[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), sections 5.2, 5.6 and 5.8.
+Reference implementation: `src/sccp/protocol/`, `src/sccp/chess/` and
+`src/sccp/serialization.py`. The plan that motivates these rules is
+[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), sections 5.2–5.10.
 
 ---
 
@@ -17,9 +18,11 @@ The plan that motivates these rules is
   0x00 || canonical_json(payload))`, where `canonical_json` is sorted-key,
   compact, UTF-8, NFC-normalized JSON with no floats and integers in
   `[-2**63, 2**64 - 1]`. `src/sccp/serialization.py` is the only encoder.
-- **Domains.** Every domain starts with `sccp/v1/`. The chess domains are
-  `sccp/v1/game` and `sccp/v1/opening`; M2 adds `certificate`, `match`,
-  `result` and the matchmaking domains.
+  The beacon and pairing-score constructions in sections 6 and 7 are byte-level
+  concatenations instead and specify their own input encoding.
+- **Domains.** Every domain starts with `sccp/v1/`. Chess uses `game` and
+  `opening`; matchmaking uses `beacon`, `beacon-commit`, `pair`, `match`,
+  `certificate`, `result` and `proof`.
 - **Digests.** Lowercase hex, 32 bytes (64 characters).
 - **Ints, never floats.** All numeric protocol values are integers. No
   wall-clock value enters a game hash.
@@ -179,7 +182,233 @@ whose digest does not match is never extracted. Profiles in this release:
 `mock`, `stockfish-19` (current) and `stockfish-18` (older reference). Engine
 binaries are GPL-3.0 and are not redistributed with this package.
 
-## 6. Change control
+## 6. Epoch beacon
+
+A miner commits in epoch `e-2` and reveals in `e-1`:
+
+```text
+commitment = H("sccp/v1/beacon-commit", {address, epoch, nonce})
+```
+
+`nonce` is a 32-byte value as 64 lowercase hex characters. The payload has no
+network field because the address already commits to its network.
+
+The beacon for epoch `e` is a byte-level hash over public data:
+
+```text
+digest = SHA256("sccp/v1/beacon" || 0x00 || network || 0x00 || u64(epoch)
+                || block_hash
+                || concat(sorted(commitment_bytes || nonce_bytes)))
+B_e    = digest                                   when drand_used = 0
+B_e    = SHA256(digest || drand_signature_bytes)  when drand_used = 1
+```
+
+`block_hash` is the 32-byte hash of `H_e`, the last block of `e-1`. Each reveal
+contributes 64 bytes (32-byte commitment + 32-byte nonce); entries are sorted as
+byte strings, so reveal order never affects the result. `u64(x)` is 8-byte
+big-endian.
+
+Validation:
+
+1. `network` is the verifier's network and `epoch` is the epoch being checked.
+2. Every reveal's address belongs to the network, is unique, and recomputes its
+   commitment. When availability transactions are supplied, the commitment must
+   equal the availability commitment, and a reveal without availability is
+   rejected.
+3. Availability with no reveal is **not** a beacon error: the miner is omitted
+   from the epoch roster and the withholding is public, so the chain or relay can
+   record it.
+4. `drand_used = 1` requires both `drand_round` and a 48-byte (96 hex chars)
+   `drand_signature`, plus a pinned verifier that accepts `(round, signature)`.
+   A flag with no signature, a signature with the flag clear, or a missing
+   verifier is invalid. `drand_used = 0` is always valid and needs no verifier.
+5. The round is deterministic:
+   `round(e) = mtp(H_e) // drand_period_seconds + drand_round_offset`, where
+   `mtp` is the median of the last 11 block timestamps ending at `H_e` (lower
+   median for an even count). quicknet uses 3 s and offset 1.
+6. Recompute `B_e` and compare it with the declared `hash`.
+
+drand quicknet signs with BLS12-381. The reference implementation injects a
+`DrandVerifier` rather than pulling in a second crypto stack; M4 supplies the
+verifier pinned to the quicknet chain key. A verifier that has not been wired
+rejects `drand_used = 1` instead of accepting it blindly.
+
+## 7. Pairing
+
+Pairing is a pure function of the roster, the 32-byte beacon and the round:
+
+```text
+score(m) = SHA256("sccp/v1/pair" || network || beacon || u64(round) || address)
+```
+
+Candidates with a positive quota are sorted by `(score, address)`. Adjacent
+candidates are paired from the front; when a pair breaks a soft constraint the
+second seat is swapped with the first later candidate that satisfies it, and the
+violation is accepted if no swap exists. An odd miner sits the round out.
+
+- Hard constraints: distinct addresses, both in the roster, both with quota.
+- Soft constraints: shared funder, subnet or ASN, and a recent opponent when
+  `opponent_cooldown > 0`.
+- Quota defaults to `max(0, min(max_games, rounds_per_epoch) - round)`: one game
+  per miner per round, so a booked quota of `g` allows `g` rounds. Explicit
+  quotas override the default.
+- `match_id = H("sccp/v1/match", {network, epoch, round, seats})` with `seats` the
+  sorted address list. It deliberately excludes the opening.
+- Colour draw: `int.from_bytes(SHA256(beacon || "color" || match_id)[:8], "big")
+  & 1`; 0 means the lexicographically first seat is White.
+- Opening: `book.select(beacon, match_id)`, the same formula as section 4.
+- `verify_pairing(matchup, roster, beacon)` recomputes the round and requires an
+  exact match on match id, colours, epoch and round.
+
+## 8. Certificates, transcripts and the relay
+
+### 8.1 Start certificate
+
+A certificate carries the opening line itself, so a verifier needs no local book
+to check the prefix:
+
+```json
+{"network": "testnet", "match_id": "hex", "epoch": 3, "round": 0,
+ "white": "sccpt1...", "black": "sccpt1...",
+ "opening": {"book_version": "v1", "line_id": 17, "hash": "hex",
+             "moves": ["e4", "e5", "Nf3"]},
+ "engine_white": "sha256-or-mock-id", "engine_black": "...",
+ "start_signatures": {"white": "hex", "black": "hex"}}
+```
+
+Both seats sign this payload with `H("sccp/v1/certificate", …)`:
+
+```json
+{"network": "...", "match_id": "...", "epoch": 3, "round": 0,
+ "seats": ["<sorted seat A>", "<sorted seat B>"],
+ "colors": {"white": "<address>", "black": "<address>"},
+ "opening_hash": "hex",
+ "engine_fingerprints": {"white": "...", "black": "..."}}
+```
+
+`start_signatures` is excluded from the payload. A certificate is valid only
+when both signatures verify against the addresses' registered Ed25519 keys, the
+colour draw matches the beacon, and `match_id` recomputes from the seats.
+
+### 8.2 Result attestation
+
+When the board is terminal or a seat resigns, both seats sign:
+
+```json
+{"network": "...", "match_id": "...", "game_hash": "hex",
+ "result": "1-0" | "0-1" | "1/2-1/2",
+ "termination": "checkmate" | "draw" | "resignation",
+ "plies": 87,
+ "result_signatures": {"white": "hex", "black": "hex"}}
+```
+
+The signature domain is `sccp/v1/result`; `result_signatures` is excluded from
+the signed payload. `game_hash` is the canonical game hash from section 2, so the
+two seats also attest the exact move list.
+
+### 8.3 PGN assembly
+
+A transcript PGN is the game plus the required tags of section 3.1, with
+`White`/`Black` = seat addresses, `MatchID`, `Epoch`, `RoundNumber`,
+`SeatWhite`, `SeatBlack`, `EngineWhite`, `EngineBlack`, `OpeningID`,
+`OpeningHash` and `Rules = chess`. `Termination` and `Result` come from the
+result attestation. The opening prefix is included in the move list.
+
+### 8.4 Relay API
+
+The relay is untrusted. It derives the round from public data and stores
+signatures; it never signs anything itself.
+
+| Method | Path | Body |
+| --- | --- | --- |
+| POST | `/v1/rounds` | `{"round": 0}` — derive and create that round's sessions |
+| GET | `/v1/matches` | all sessions |
+| GET | `/v1/matches/{id}` | one session: certificate, SAN list, result, PGN |
+| GET | `/v1/matches/{id}/transcript` | co-signed transcript, 404 until both signs |
+| POST | `/v1/matches/{id}/join` | `{"seat", "public_key", "signature"}` |
+| POST | `/v1/matches/{id}/move` | `{"seat", "san"}` |
+| POST | `/v1/matches/{id}/resign` | `{"seat"}` |
+| POST | `/v1/matches/{id}/result` | `{"seat", "signature"}` |
+| GET | `/v1/status`, `/v1/reputation` | relay status and no-show counts |
+
+Illegal moves, wrong turns, duplicate joins and bad signatures are rejected with
+HTTP 400 and never change the session. A relay may abandon a silent session after
+its timeout; that is a liveness choice, not evidence. Restart-safe state is a
+JSON list of sessions (certificate, SAN list, result, signatures); pending
+sessions replay their SAN list on load.
+
+`sccp matchmaker run --config relay.json` reads:
+
+```json
+{"network": "testnet",
+ "beacon": {"network": "testnet", "epoch": 3, "hash": "hex", "block_hash": "hex",
+             "reveals": [...], "drand_used": false},
+ "roster": {"sccpt1...": {"public_key": "hex", "engine": "sha256-or-mock-id",
+                           "max_games": 3}},
+ "timeout_seconds": 300,
+ "open_round": 0}
+```
+
+`engine` is the fingerprint the seat committed to at registration; `open_round`
+is optional and opens one round at startup.
+
+## 9. Win proofs and offline verification
+
+A proof wraps the co-signed transcript:
+
+```json
+{"network": "testnet", "proof_id": "hex", "game_hash": "hex",
+ "match_id": "hex", "epoch": 3, "round": 0,
+ "winner": "sccpt1...", "loser": "sccpt1...", "winner_seat": "white",
+ "result": "1-0", "termination": "checkmate", "plies": 87,
+ "opening": {...}, "pgn": "[Event ...] ...",
+ "certificate": {...}, "result_signatures": {"white": "hex", "black": "hex"},
+ "quality_summary": null}
+```
+
+`proof_id = H("sccp/v1/proof", {game_hash, match_id, winner})`. The optional
+`quality_summary` belongs to M5 and is ignored by structural verification.
+
+Verification runs cheap checks first and stops at the first typed failure:
+
+| Reason | Check |
+| --- | --- |
+| `network` | proof, certificate and beacon all name the verifier's network |
+| `beacon` | epoch matches and `B_e` recomputes from reveals/availability/drand |
+| `certificate` | match id, epoch, round, seats, winner seat, colour draw |
+| `opening` | line hash, canonical SAN, book version and beacon-selected line |
+| `roster` | both seats are in the verifier's roster |
+| `pairing` | the matchup is exactly what the beacon and roster produce |
+| `signature` | both start and both result signatures verify and cover these fields |
+| `pgn` | section 5.8 replay, headers and opening prefix |
+| `game-hash` | the replayed SAN list hashes to `game_hash` |
+| `result` | result, termination, plies and winner seat match the replay |
+| `proof-id` | `proof_id` recomputes from its fields |
+| `duplicate` | neither hash has already been seen by the caller |
+
+A proof that passes is structurally and cryptographically valid. It says nothing
+about how well the moves were played; quality sampling and challenges are M5.
+
+### 9.1 Context document
+
+`sccp verify proof FILE --context FILE` reads public data only:
+
+```json
+{"network": "testnet",
+ "beacon": {"network": "testnet", "epoch": 3, "hash": "hex",
+             "block_hash": "hex", "reveals": [...], "drand_used": false},
+ "roster": {"sccpt1...": {"public_key": "hex", "max_games": 3}},
+ "availability": {"sccpt1...": "commitment-hex"},
+ "quotas": {"sccpt1...": 2},
+ "seen_game_hashes": [], "seen_proof_ids": []}
+```
+
+`availability`, `quotas`, `drand_round` and the seen sets are optional. The
+opening book is loaded from the installed package unless `--book` names an
+override. drand needs a callable verifier, so a `drand_used = 1` beacon fails
+offline verification until M4 wires the pinned verifier.
+
+## 10. Change control
 
 - Adding a header tag, changing a hash payload key, changing result or
   termination semantics, or changing selection all require a protocol version

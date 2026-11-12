@@ -9,11 +9,13 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
-> **Status: M1 complete.** M0 (packaging, config, crypto, wallets, CLI, CI) and
+> **Status: M2 complete.** M0 (packaging, config, crypto, wallets, CLI, CI),
 > M1 (PGN validation, canonical game hash, opening book, engine abstraction,
-> game runner, offline `sccp verify pgn`) are implemented and tested. The
-> matchmaking, chain, node and miner milestones are next; their commands are
-> still intended UX, not working software. Normative formats are in
+> game runner, offline `sccp verify pgn`) and M2 (commit/reveal beacons,
+> deterministic pairing, signed match certificates and transcripts, the relay,
+> offline `sccp verify proof`) are implemented and tested. The chain, node and
+> miner daemon milestones are next; their commands are still intended UX, not
+> working software. Normative formats are in
 > [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan lives in
 > [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
@@ -230,8 +232,8 @@ All values above are provisional and live in `src/sccp/config.py`.
 
 ## 5. Repository layout
 
-Modules marked *(M0)* and *(M1)* exist; the rest is the target layout for later
-milestones.
+Modules marked *(M0)*, *(M1)* and *(M2)* exist; the rest is the target layout for
+later milestones.
 
 ```text
 .
@@ -243,7 +245,7 @@ milestones.
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # this project's plan
-│   ├── PROTOCOL.md               # normative wire formats (M1)
+│   ├── PROTOCOL.md               # normative wire formats (M1–M2)
 │   ├── RUN_A_TESTNET_MINER.md    # operator guide (written in M6)
 │   └── THREAT_MODEL.md           # security analysis (written in M5)
 ├── data/
@@ -279,8 +281,8 @@ milestones.
 
 ## 6. Quickstart
 
-M0/M1 commands work today; the node, matchmaker, miner and devnet commands are
-the intended UX for later milestones.
+M0/M1/M2 commands work today; the node, miner and devnet commands are the
+intended UX for later milestones.
 
 ```bash
 git clone git@github.com:beefy/somecryptochessproject.git
@@ -298,11 +300,14 @@ python scripts/fetch_engine.py --engine stockfish-19 --dest ./bin
 # Verify a PGN offline: replays every move and prints the canonical game hash
 sccp verify pgn game.pgn --network testnet
 
+# Run the matchmaking relay (beacon + roster + engine fingerprints in relay.json)
+sccp matchmaker run --config relay.json --store ./relay-state.json
+
+# Verify a win proof offline against a public context document
+sccp verify proof proof.json --context context.json --network testnet
+
 # Run a full node / API server on the testnet (M4)
 sccp node run --network testnet --port 8645
-
-# Run a relay (matchmaker) on the same node (M2)
-sccp matchmaker run --network testnet --node http://127.0.0.1:8645
 
 # Run an engine miner with a real Stockfish (M4)
 sccp miner run --network testnet \
@@ -318,9 +323,6 @@ sccp miner run --network testnet \
 
 # Spin up everything locally with mock engines (M5)
 sccp devnet up --miners 4 --blocks 10
-
-# Verify a proof offline (M2)
-sccp verify proof proof.json --network testnet
 ```
 
 ---
@@ -331,7 +333,7 @@ sccp verify proof proof.json --network testnet
 | --- | --- | --- |
 | **M0** | Foundations: packaging, config, crypto, CLI skeleton, CI | done |
 | **M1** | Chess core: PGN validation, canonical hashing, opening book, engine abstraction, game runner | done |
-| **M2** | Matchmaking: beacon, deterministic pairing, certificates, relay | not started |
+| **M2** | Matchmaking: beacon, deterministic pairing, certificates, transcripts, relay, offline proof verification | done |
 | **M3** | Chain: transactions, wallet, blocks, state, mempool, fork choice, difficulty, block builder | not started |
 | **M4** | Node + P2P + miner daemon | not started |
 | **M5** | Quality verification, challenges, slashing, threat-model tests | not started |
@@ -420,6 +422,38 @@ print(raw.pgn)
 `Board.is_legal`, checks the result and termination against the board, and hashes
 only `(network, start position, SAN list, result)`. The opening book and engine
 pins are described in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+
+### Matchmaking and proofs (M2)
+
+Beacons and pairings are pure functions, so a relay cannot invent either:
+
+```python
+from sccp.protocol.beacon import compute_beacon
+from sccp.protocol.pairing import RosterEntry, pair
+
+beacon = compute_beacon(
+    network="testnet",
+    epoch=3,
+    block_hash="ab" * 32,
+    reveals=revealed_beacon_entries,
+)
+matchups = pair(
+    [RosterEntry(address="sccpt1...", max_games=3)],
+    bytes.fromhex(beacon.hash),
+    network="testnet",
+    epoch=3,
+    round_number=0,
+    rounds_per_epoch=3,
+)
+```
+
+Certificates commit both seats, colours, opening and engine fingerprints; both
+seats sign before the first move and again on the result. `sccp matchmaker run`
+serves the relay (`POST /v1/matches/{id}/join|move|resign|result`), and a JSON
+store survives restarts. `sccp verify proof` re-checks the certificate, pairing,
+beacon, signatures and PGN offline. drand quicknet verification is a pluggable
+`DrandVerifier` (BLS12-381 is not in the stdlib crypto stack); `drand_used = 0`
+needs no verifier and is always valid.
 
 ### Releasing
 

@@ -7,10 +7,20 @@ import stat
 from pathlib import Path
 from typing import Any
 
+import chess
 import pytest
 from typer.testing import CliRunner
 
+from sccp.chess.pgn import validate_pgn
 from sccp.cli import PASSPHRASE_ENV, app
+from sccp.config import DEVNET
+from sccp.protocol.transcript import (
+    build_win_proof,
+    create_result,
+    expected_from_certificate,
+    render_transcript_pgn,
+    sign_result,
+)
 from sccp.version import version_string
 
 runner = CliRunner()
@@ -203,3 +213,174 @@ def test_verify_pgn_require_win(tmp_path: Path, match_tags: dict[str, str]) -> N
     result = runner.invoke(app, ["verify", "pgn", str(pgn), "--require-win"])
     assert result.exit_code == 1
     assert "at least" in result.stderr
+
+
+def _proof_files(signed_match, tmp_path: Path, proof_document=None) -> dict[str, Path]:
+    proof = tmp_path / "proof.json"
+    document = proof_document or signed_match.proof.model_dump(mode="json")
+    proof.write_text(json.dumps(document), encoding="utf-8")
+
+    context = tmp_path / "context.json"
+    context.write_text(
+        json.dumps(
+            {
+                "network": signed_match.params.network_id,
+                "beacon": signed_match.beacon.model_dump(mode="json"),
+                "roster": {
+                    address: {
+                        "public_key": signed_match.public_keys[address],
+                        "max_games": 3,
+                    }
+                    for address in signed_match.roster
+                },
+                "availability": {
+                    availability.miner: availability.commitment
+                    for availability in signed_match.availability.values()
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    book = tmp_path / "openings.json"
+    book.write_text(
+        json.dumps(
+            {
+                "format": 1,
+                "books": {
+                    signed_match.params.book_version: {
+                        "lines": [
+                            {
+                                "name": "Test Italian",
+                                "moves": ["e4", "e5", "Bc4", "Bc5"],
+                            }
+                        ]
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {"proof": proof, "context": context, "book": book}
+
+
+def _devnet_resignation_proof(signed_match) -> dict[str, Any]:
+    """A 21-ply, decisive resignation proof valid under stock devnet params."""
+    certificate = signed_match.certificate
+    moves = (
+        "e4",
+        "e5",
+        "Bc4",
+        "Bc5",
+        "Nf3",
+        "Nc6",
+        "d3",
+        "d6",
+        "Nc3",
+        "Nf6",
+        "Be3",
+        "Be6",
+        "Qd2",
+        "Qd7",
+        "O-O",
+        "O-O-O",
+        "a3",
+        "a6",
+        "b3",
+        "h6",
+        "h3",
+    )
+    board = chess.Board()
+    for san in moves:
+        board.push(board.parse_san(san))
+    assert board.outcome(claim_draw=False) is None
+    assert board.turn == chess.BLACK
+    pgn = render_transcript_pgn(
+        certificate,
+        board,
+        result="1-0",
+        termination="resignation",
+    )
+    parsed = validate_pgn(
+        pgn,
+        params=DEVNET,
+        expected=expected_from_certificate(certificate),
+        require_win=True,
+    )
+    result = create_result(certificate, parsed)
+    by_address = {account.address: account for account in signed_match.accounts.values()}
+    result = sign_result(result, certificate, "white", by_address[certificate.white].keypair)
+    result = sign_result(result, certificate, "black", by_address[certificate.black].keypair)
+    proof = build_win_proof(
+        certificate,
+        pgn,
+        result.result_signatures,
+        params=DEVNET,
+    )
+    return proof.model_dump(mode="json")
+
+
+def test_verify_proof_cli(signed_match, tmp_path: Path) -> None:
+    document = _devnet_resignation_proof(signed_match)
+    paths = _proof_files(signed_match, tmp_path, document)
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "verify",
+            "proof",
+            str(paths["proof"]),
+            "--context",
+            str(paths["context"]),
+            "--book",
+            str(paths["book"]),
+            "--network",
+            "devnet",
+        ],
+    )
+    assert result.exit_code == 0, result.output + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["proof_id"] == document["proof_id"]
+    assert payload["game_hash"] == document["game_hash"]
+    assert payload["winner_seat"] == document["winner_seat"]
+
+
+def test_verify_proof_cli_rejects_a_tampered_proof(signed_match, tmp_path: Path) -> None:
+    document = _devnet_resignation_proof(signed_match)
+    document["proof_id"] = "00" * 32
+    paths = _proof_files(signed_match, tmp_path, document)
+
+    result = runner.invoke(
+        app,
+        [
+            "verify",
+            "proof",
+            str(paths["proof"]),
+            "--context",
+            str(paths["context"]),
+            "--book",
+            str(paths["book"]),
+            "--network",
+            "devnet",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "error:" in result.stderr
+    assert "proof id" in result.stderr
+
+
+def test_verify_proof_cli_rejects_bad_json(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    result = runner.invoke(
+        app,
+        ["verify", "proof", str(bad), "--context", str(bad)],
+    )
+    assert result.exit_code == 1
+    assert "not valid JSON" in result.stderr
+
+
+def test_matchmaker_help_lists_run() -> None:
+    result = runner.invoke(app, ["matchmaker", "--help"])
+    assert result.exit_code == 0
+    assert "run" in result.stdout
