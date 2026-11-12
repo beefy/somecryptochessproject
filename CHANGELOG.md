@@ -5,6 +5,24 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 summarised in the M0–M2 rows of the README roadmap.
 
+## [0.6.1] - 2026-11-12
+
+A patch release: the timed relay became playable by hand, and the client can now
+resign.
+
+### Added
+
+- `scripts/play_miner.py`: play one timed relay match by hand. Solo mode builds
+  a relay, a witness key and one real `EngineMiner` in-process (devnet
+  parameters, deterministic demo keys, no port, nothing on disk) and drives the
+  human's seat over the same HTTP API `sccp devnet up` uses: signed joins,
+  seat-signed moves, live clocks, `receipts` on demand, auto-flag and, when the
+  human runs out of time, a verified `TimeoutClaim` from the opponent.
+  `--relay/--key` instead takes a seat on a relay that is already serving.
+  `tests/unit/test_play_miner.py` drives the loop headlessly with a fake clock.
+- `RelayClient.resign` posts `POST /v1/matches/{id}/resign` and returns the
+  updated `MatchView`, so a client can end its own game on the relay.
+
 ## [0.6.0] - 2026-11-12
 
 Timed relay sessions, completed: every match now runs the fixed 30+0 control on
@@ -40,16 +58,6 @@ and an opt-in round scheduler.
   issuance, forged-body refusal, flag-on-zero, late-move flagging, restart
   re-basing, the round schedule, the replay-independent reaper and a two-miner
   run that ends in a verified timeout claim.
-- `RelayClient.resign` posts `POST /v1/matches/{id}/resign` and returns the
-  updated `MatchView`, so a client can end its own game on the relay.
-- `scripts/play_miner.py`: play one timed relay match by hand. Solo mode builds
-  a relay, a witness key and one real `EngineMiner` in-process (devnet
-  parameters, deterministic demo keys, no port, nothing on disk) and drives the
-  human's seat over the same HTTP API `sccp devnet up` uses: signed joins,
-  seat-signed moves, live clocks, `receipts` on demand, auto-flag and, when the
-  human runs out of time, a verified `TimeoutClaim` from the opponent.
-  `--relay/--key` instead takes a seat on a relay that is already serving.
-  `tests/unit/test_play_miner.py` drives the loop headlessly with a fake clock.
 
 ### Changed
 
