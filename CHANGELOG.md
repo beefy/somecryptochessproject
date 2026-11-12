@@ -7,7 +7,7 @@ not itemised here.
 
 ## [Unreleased]
 
-## [0.11.0] - 2026-11-12
+## [0.12.0] - 2026-11-12
 
 A minor release: the wallet reads the account it spends from out of `--node`, so
 `wallet send`, `wallet balance` and `faucet send` work against a remote testnet

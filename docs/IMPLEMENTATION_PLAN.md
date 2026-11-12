@@ -1,6 +1,6 @@
 # Next steps and improvement areas
 
-> Status: protocol v1 and the 0.11.0 testnet release are implemented. This is a
+> Status: protocol v1 and the 0.12.0 testnet release are implemented. This is a
 > forward-looking engineering document. It lists the work still needed, in
 > priority order, and the areas where the current implementation should be
 > improved. Wire formats and consensus rules are normative in
