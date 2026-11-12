@@ -4,12 +4,12 @@
 Compares the static version in ``pyproject.toml`` with ``__version__`` in
 ``src/sccp/version.py`` and, when ``RELEASE_TAG`` is set (as it is for GitHub
 ``release`` events), with the tag itself. A leading ``v`` is ignored, so
-``v0.1.0`` matches version ``0.1.0``.
+``v0.1.1`` matches version ``0.1.1``.
 
 Exits with status 1 and a message on the first mismatch, which makes it usable
 both as a CI gate and as a local pre-tag check::
 
-    RELEASE_TAG=v0.1.0 python scripts/check_release_version.py
+    RELEASE_TAG=v0.1.1 python scripts/check_release_version.py
 """
 
 from __future__ import annotations
