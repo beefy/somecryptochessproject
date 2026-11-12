@@ -276,8 +276,8 @@ def _local_node(ctx: typer.Context, network: str | None) -> Iterator[NodeService
     path = _options(ctx).data_dir / "chain.sqlite"
     if not path.is_file():
         _fail(
-            f"no chain database at {path}; run `sccp node run --network "
-            f"{params.network_id} --data-dir {_options(ctx).data_dir}` first"
+            f"no chain database at {path}; run `sccp --data-dir "
+            f"{_options(ctx).data_dir} node run --network {params.network_id}` first"
         )
     storage = _run(lambda: Storage(path))
     service: NodeService | None = None

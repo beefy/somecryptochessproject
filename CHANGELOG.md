@@ -20,6 +20,11 @@ the public DNS name.
   The README and operator docs publish that endpoint instead of an IP-shaped
   example.
 
+### Fixed
+
+- The missing-chain-database error hint now places the global `--data-dir`
+  option before `node run`, matching the CLI syntax it tells you to run.
+
 ## [0.9.1] - 2026-11-12
 
 A patch release: documentation and source comments now describe the shipped

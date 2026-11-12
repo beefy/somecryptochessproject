@@ -558,7 +558,9 @@ def test_chain_commands_read_the_local_database(
 def test_chain_commands_need_a_database(tmp_path: Path) -> None:
     result = runner.invoke(app, ["--data-dir", str(tmp_path / "empty"), "chain", "info"])
     assert result.exit_code == 1
-    assert "no chain database" in result.output
+    output = " ".join(result.output.split())
+    assert "no chain database" in output
+    assert f"run `sccp --data-dir {tmp_path / 'empty'} node run --network testnet` first" in output
 
 
 def test_node_run_serves_the_app(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

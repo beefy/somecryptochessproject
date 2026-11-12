@@ -43,7 +43,7 @@ it on the node's host (or point it at a copy of that database). Always pass
 keyfile's network. If the chain is not there, you get:
 
 ```text
-error: no chain database at data/chain.sqlite; run `sccp node run --network testnet --data-dir data` first
+error: no chain database at data/chain.sqlite; run `sccp --data-dir data node run --network testnet` first
 ```
 
 ### Start a node
