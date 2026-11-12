@@ -1879,6 +1879,11 @@ the engine-marked tests.
   milestones and design rationale.
 - [`docs/PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — on-chain play and game
   export walkthrough.
+- [`docs/OPEN_A_WALLET.md`](OPEN_A_WALLET.md) — wallet creation, backup and
+  restore.
+- [`docs/SEND_COINS.md`](SEND_COINS.md) — transfers, fees and settlement.
+- [`docs/RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — relay and miner
+  operator guide.
 - [`README.md`](../README.md) — overview, quickstart and command examples.
 - `data/openings.json` — the shipped opening book.
 - `data/engines.json` — pinned engine profiles and checksums.

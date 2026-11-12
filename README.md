@@ -265,9 +265,11 @@ is the target layout for later milestones.
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # this project's plan
+│   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
 │   ├── PROTOCOL.md               # normative wire formats (M1–M4)
-│   ├── RUN_A_TESTNET_MINER.md    # operator guide (written in M6)
+│   ├── RUN_A_TESTNET_MINER.md    # operator guide: relay, miner and registration
+│   ├── SEND_COINS.md             # fund a wallet and send a transfer
 │   └── THREAT_MODEL.md           # security analysis (M5)
 ├── data/
 │   ├── openings.json             # curated opening lines, shipped in the wheel
@@ -414,6 +416,15 @@ For a step-by-step walkthrough — including the settlement report, resuming the
 chain, starting the node on the right data directory and troubleshooting a
 `block 0 (0 games)` export — see
 [`docs/PLAY_AND_EXPORT.md`](docs/PLAY_AND_EXPORT.md).
+
+The wallet and miner guides are separate:
+
+- [`docs/OPEN_A_WALLET.md`](docs/OPEN_A_WALLET.md) — create a keyfile, back up the
+  24-word phrase, restore it and read the address.
+- [`docs/SEND_COINS.md`](docs/SEND_COINS.md) — fund a test wallet from the
+  faucet, send a transfer and watch it settle.
+- [`docs/RUN_A_TESTNET_MINER.md`](docs/RUN_A_TESTNET_MINER.md) — run the relay and
+  an engine miner, register on chain and commit/reveal availability.
 
 A session never starts at move 1: the relay plays the book line the beacon draws
 for the match and hands you the position after it, so the script opens by

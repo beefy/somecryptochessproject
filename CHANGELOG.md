@@ -32,6 +32,11 @@ summarised in the M0–M2 rows of the README roadmap.
     strict engine-output parsing and `summary_matches`).
   - `docs/THREAT_MODEL.md`: assets, adversaries, attack → mitigation → residual
     risk tables, attack trees and explicit non-goals, with code references.
+  - Operator guides: `docs/OPEN_A_WALLET.md` (create, back up, restore and
+    inspect a keyfile), `docs/SEND_COINS.md` (faucet funding, transfers, fees,
+    mempool settlement and troubleshooting) and `docs/RUN_A_TESTNET_MINER.md`
+    (relay + miner quickstart, real engines, roster edits, registration,
+    availability/reveal and operational safety), linked from the README.
 
 ## [0.7.0] - 2026-11-12
 
