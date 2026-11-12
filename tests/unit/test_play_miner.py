@@ -461,6 +461,8 @@ def test_a_human_win_mines_the_humans_proof(play: ModuleType, tmp_path: Path) ->
         settlement = table.settle(finished)
 
         assert settlement.mined, settlement.summary
+        assert settlement.winner == table.seat.address
+        assert settlement.winner_seat == table.seat.color
         assert table.chain is not None
         stored = table.chain.chain.block_at_height(table.chain.height)
         assert stored is not None

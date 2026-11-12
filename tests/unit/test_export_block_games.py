@@ -122,6 +122,22 @@ def test_a_block_without_games_exports_an_empty_manifest(
     assert list(output.iterdir()) == [result.manifest]
 
 
+def test_the_report_names_the_node_and_flags_a_genesis_tip(
+    export: ModuleType, devnet_chain: Any, tmp_path: Path
+) -> None:
+    output = tmp_path / "genesis"
+    with client_for(create_app(_service(devnet_chain))) as client:
+        result = export.export_block_games(client, output_dir=output)
+
+    assert result.node == str(client.base_url)
+    lines: list[str] = []
+    export._report(result, lines.append)
+
+    assert lines[0].startswith(f"node     {result.node} devnet tip 0 ")
+    assert lines[1].startswith("block    0 ")
+    assert any("tip is genesis" in line for line in lines)
+
+
 def test_an_unknown_block_is_reported(
     export: ModuleType, proof_block: tuple[Any, Any, Any], tmp_path: Path
 ) -> None:

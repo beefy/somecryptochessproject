@@ -83,6 +83,7 @@ class ExportedGame:
 class ExportResult:
     """Everything the export produced, for reporting and for tests."""
 
+    node: str
     status: NodeStatus
     block: BlockView
     directory: Path
@@ -302,6 +303,7 @@ def export_block_games(
         raise ExportError(f"cannot write {manifest_path}: {exc}") from None
 
     return ExportResult(
+        node=str(client.base_url),
         status=status,
         block=block,
         directory=output_dir,
@@ -311,10 +313,12 @@ def export_block_games(
 
 
 def _report(result: ExportResult, out: Callable[[str], None] = print) -> None:
-    """Print a short summary of what was written."""
+    """Print the node, the block and a short summary of what was written."""
+    status = result.status
     block = result.block
     plural = "s" if len(result.games) != 1 else ""
-    out(f"block {block.height} {block.hash} ({len(result.games)} game{plural})")
+    out(f"node     {result.node} {status.network} tip {status.height} {status.tip_hash[:12]}…")
+    out(f"block    {block.height} {block.hash} ({len(result.games)} game{plural})")
     for game in result.games:
         proof = game.proof
         certificate = proof.certificate
@@ -323,6 +327,12 @@ def _report(result: ExportResult, out: Callable[[str], None] = print) -> None:
             f"{proof.result} by {proof.termination} ({proof.plies} plies)"
         )
     out(f"manifest {result.manifest}")
+    if block.height == 0 and status.height == 0 and not result.games:
+        out(
+            "note: this node's tip is genesis (block 0), so it has no games; "
+            "if you mined a game, start the node on that chain (--network/--data-dir) "
+            "or point --node at the right port"
+        )
 
 
 def _parser() -> argparse.ArgumentParser:

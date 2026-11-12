@@ -376,6 +376,8 @@ class ChainSettlement:
     height: int | None = None
     block_hash: str | None = None
     proof_id: str | None = None
+    winner: str | None = None
+    winner_seat: Color | None = None
 
 
 @dataclass(slots=True)
@@ -476,6 +478,8 @@ class SoloTable:
                 height=stored.height,
                 block_hash=stored.block_hash,
                 proof_id=proof.proof_id,
+                winner=proof.winner,
+                winner_seat=proof.winner_seat,
             )
         except SccpError as exc:
             self.settlement = ChainSettlement(False, f"settlement failed: {exc}")
@@ -1675,7 +1679,8 @@ class Game:
                     self.out(f"chain    mined {settlement.summary}")
                     self.out(
                         f"proof    {settlement.proof_id} "
-                        f"(winner {result.result}, network {result.network})"
+                        f"(winner {settlement.winner_seat}: {settlement.winner}, "
+                        f"network {result.network})"
                     )
                     self.out(
                         f"node     sccp --data-dir {self.stack.chain_dir} node run --network devnet"

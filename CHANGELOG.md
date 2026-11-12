@@ -18,7 +18,13 @@ summarised in the M0–M2 rows of the README roadmap.
   old "delete `data-play` between games" step.
 - The on-chain settlement now names the opponent's refusal when it will not
   co-sign, and the final report states that a non-mined game left the chain
-  height unchanged and that a decisive result is required for a proof.
+  height unchanged and that a decisive result is required for a proof. When the
+  proof is mined, the report names the winning seat and address instead of
+  printing the result score next to `winner`.
+- `scripts/export_block_games.py` now prints the node URL, network and tip
+  before the exported block, and warns when it exports genesis because the node
+  it reached serves no games. This makes the common `--network`/`--data-dir`
+  mismatch (or an old node still holding port 8645) visible in the output.
 
 ## [0.6.1] - 2026-11-12
 

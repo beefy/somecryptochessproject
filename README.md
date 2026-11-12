@@ -399,10 +399,12 @@ python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 
 # Export every game in a node's latest block as PGN, with a manifest.json.
 # The exporter reads the node API, so start `sccp node run` in another terminal
-# first; `--block` may name any other height or hash. It only sees proofs that
-# are already in a block, so a solo play_miner game cannot appear here.
+# first; it must serve the same chain you played on (`--data-dir ./data-play
+# --network devnet`). Without `--block` it asks that node for its tip, so a
+# node left on another chain exports that chain's genesis instead. `--block`
+# may name any other height or hash, e.g. block 5 for the second game.
 python scripts/export_block_games.py --node http://127.0.0.1:8645 --out ./games
-python scripts/export_block_games.py --block 42 --out ./games   # another block
+python scripts/export_block_games.py --block 5 --out ./games   # game 2 on a resumed chain
 ```
 
 A session never starts at move 1: the relay plays the book line the beacon draws
