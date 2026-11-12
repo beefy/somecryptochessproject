@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+
 import chess
 import pytest
 
+from sccp.chain.state import ProofRecord, State
 from sccp.chess.pgn import validate_pgn
 from sccp.chess.quality import QUALITY_V1, QualityProfile, analyse_game
 from sccp.config import NetworkParams, QualityMode
@@ -12,11 +16,15 @@ from sccp.errors import QualityError
 from sccp.node.quality_sampler import (
     QualityJob,
     QualitySampler,
+    SamplerResult,
     sample_bucket,
+    sampling_decision,
     select_samples,
     should_sample,
 )
-from sccp.protocol.models import WinProof
+from sccp.protocol import challenges
+from sccp.protocol.challenges import MAX_EVIDENCE_LENGTH, MAX_REASON_LENGTH
+from sccp.protocol.models import Transaction, TxType, WinProof
 
 PROFILE = QualityProfile(
     policy=QUALITY_V1.policy,
@@ -109,7 +117,6 @@ def test_select_samples_preserves_order() -> None:
     assert select_samples(block, proofs, sample_rate=0) == ()
 
 
-
 def test_enqueue_is_sampled_and_deduplicated(signed_match, protocol_params) -> None:
     params = _sampled(protocol_params)
     sampler = QualitySampler(params=params, profile=PROFILE)
@@ -128,9 +135,7 @@ def test_unsampled_proofs_never_enter_the_queue(signed_match, protocol_params) -
     assert sampler.pending == ()
 
 
-def test_agreement_with_the_summary_is_not_a_disagreement(
-    signed_match, protocol_params
-) -> None:
+def test_agreement_with_the_summary_is_not_a_disagreement(signed_match, protocol_params) -> None:
     params = _sampled(protocol_params)
     report = _report(signed_match.proof, params)
     proof = signed_match.proof.model_copy(update={"quality_summary": report.summary()})
@@ -150,9 +155,7 @@ def test_agreement_with_the_summary_is_not_a_disagreement(
     assert sampler.disagreements() == ()
 
 
-def test_missing_summary_is_a_substantive_disagreement(
-    signed_match, protocol_params
-) -> None:
+def test_missing_summary_is_a_substantive_disagreement(signed_match, protocol_params) -> None:
     params = _sampled(protocol_params)
     sampler = QualitySampler(params=params, profile=PROFILE)
     sampler.enqueue("11" * 32, signed_match.proof)
@@ -193,9 +196,7 @@ def test_missing_summary_is_fine_when_quality_is_off(signed_match, protocol_para
     assert reasons == ()
 
 
-def test_engine_failure_is_retried_and_never_challenges(
-    signed_match, protocol_params
-) -> None:
+def test_engine_failure_is_retried_and_never_challenges(signed_match, protocol_params) -> None:
     params = _sampled(protocol_params)
     sampler = QualitySampler(params=params, profile=PROFILE, max_attempts=2)
     sampler.enqueue("11" * 32, signed_match.proof)
@@ -237,3 +238,194 @@ def test_analyse_proof_rejects_a_pgn_that_does_not_match_the_claim(
     assert job is not None
     with pytest.raises(QualityError, match="hashes to"):
         sampler.analyse_proof(job, _UniformEngine())
+
+
+def test_a_disagreement_becomes_a_parseable_challenge(signed_match, protocol_params) -> None:
+    params = _sampled(protocol_params)
+    report = _report(signed_match.proof, params)
+    summary = report.summary().model_copy(update={"black_blunders": 9})
+    proof = signed_match.proof.model_copy(update={"quality_summary": summary})
+    sampler = QualitySampler(params=params, profile=PROFILE, sample_rate=1_000)
+    sampler.enqueue("11" * 32, proof)
+
+    (result,) = sampler.run(_UniformEngine())
+    (request,) = sampler.challenge_requests()
+
+    assert result.needs_challenge is True
+    assert result.summary == summary
+    assert request.proof_id == proof.proof_id
+    assert request.game_hash == proof.game_hash
+    assert "black blunders" in request.reason
+    assert len(request.reason) <= MAX_REASON_LENGTH
+    assert len(request.evidence) <= MAX_EVIDENCE_LENGTH
+
+    document = json.loads(request.evidence)
+    assert document["proof_id"] == proof.proof_id
+    assert document["verdict"] == "pass"
+    assert document["policy"] == PROFILE.policy
+    assert document["reported_trace_hash"] == summary.trace_hash
+    assert document["observed_trace_hash"] == report.trace_hash
+
+    payload = request.as_payload(bond=5_000, public_key=proof.certificate.white)
+    assert set(payload) <= challenges.CHALLENGE_KEYS
+    tx = Transaction(
+        network=params.network_id,
+        type=TxType.CHALLENGE,
+        sender=proof.certificate.white,
+        nonce=0,
+        fee=params.min_fee,
+        payload=payload,
+    )
+    decoded = challenges.parse_challenge(tx)
+    assert decoded.proof_id == proof.proof_id
+    assert decoded.reason == request.reason
+    assert decoded.evidence == request.evidence
+    assert decoded.bond == 5_000
+
+
+def test_engine_failures_are_not_challenge_requests(signed_match, protocol_params) -> None:
+    params = _sampled(protocol_params)
+    sampler = QualitySampler(params=params, profile=PROFILE, max_attempts=1)
+    sampler.enqueue("11" * 32, signed_match.proof)
+
+    (result,) = sampler.run(_BrokenEngine())
+
+    assert result.error is not None
+    assert result.challenge() is None
+    assert sampler.challenge_requests() == ()
+
+
+def test_challenge_requests_are_sorted_and_bounded(signed_match, protocol_params) -> None:
+    params = _sampled(protocol_params)
+    report = _report(signed_match.proof, params)
+    summary = report.summary().model_copy(update={"black_blunders": 9})
+    sampler = QualitySampler(params=params, profile=PROFILE)
+    for suffix in ("02", "01"):
+        proof = signed_match.proof.model_copy(
+            update={"proof_id": suffix * 32, "quality_summary": summary}
+        )
+        assert sampler.enqueue("11" * 32, proof) is not None
+
+    sampler.run(_UniformEngine())
+    requests = sampler.challenge_requests()
+
+    assert [request.proof_id for request in requests] == ["01" * 32, "02" * 32]
+    assert all(len(request.reason) <= MAX_REASON_LENGTH for request in requests)
+    assert all(len(request.evidence) <= MAX_EVIDENCE_LENGTH for request in requests)
+
+
+def test_reason_is_truncated_to_the_protocol_limit() -> None:
+    result = SamplerResult(
+        proof_id="02" * 32,
+        game_hash="bb" * 32,
+        agrees=False,
+        verdict="fail",
+        reasons=("x" * (MAX_REASON_LENGTH * 2),),
+    )
+    assert len(result.reason) == MAX_REASON_LENGTH
+    assert result.reason.endswith("...")
+    assert json.loads(result.evidence)["reported_trace_hash"] is None
+
+
+def test_sampling_decision_reports_the_bucket(protocol_params: NetworkParams) -> None:
+    decision = sampling_decision("11" * 32, "22" * 32, sample_rate=1_000)
+
+    assert decision.proof_id == "22" * 32
+    assert decision.block_hash == "11" * 32
+    assert decision.sample_rate == 1_000
+    assert decision.bucket == sample_bucket("11" * 32, "22" * 32)
+    assert decision.sampled is True
+
+
+def test_sampler_rejects_impossible_configuration(protocol_params: NetworkParams) -> None:
+    with pytest.raises(QualityError, match="sample_rate"):
+        QualitySampler(params=_sampled(protocol_params), sample_rate=1_001)
+    with pytest.raises(QualityError, match="max_attempts"):
+        QualitySampler(params=_sampled(protocol_params), max_attempts=0)
+
+
+def test_enqueue_block_keeps_only_sampled_proofs(signed_match, protocol_params) -> None:
+    off = QualitySampler(params=_sampled(protocol_params, 0), profile=PROFILE)
+    assert off.enqueue_block("11" * 32, [signed_match.proof]) == ()
+
+    sampler = QualitySampler(params=_sampled(protocol_params), profile=PROFILE)
+    jobs = sampler.enqueue_block("11" * 32, [signed_match.proof, signed_match.proof])
+
+    assert [job.proof_id for job in jobs] == [signed_match.proof.proof_id]
+
+
+def test_evidence_is_bounded_by_the_protocol_limit() -> None:
+    result = SamplerResult(
+        proof_id="02" * 32,
+        game_hash="bb" * 32,
+        agrees=False,
+        verdict="fail",
+        reasons=tuple("x" * 1_000 for _ in range(5)),
+    )
+
+    with pytest.raises(QualityError, match="evidence is"):
+        _ = result.evidence
+
+
+def test_a_failing_analysis_verdict_is_a_disagreement(signed_match, protocol_params) -> None:
+    params = _sampled(protocol_params)
+    sampler = QualitySampler(params=params, profile=PROFILE)
+    report = _report(signed_match.proof, params)
+    job = QualityJob(
+        block_hash="11" * 32,
+        proof=signed_match.proof.model_copy(update={"quality_summary": report.summary()}),
+    )
+
+    agrees, reasons = sampler.compare(job, replace(report, verdict="fail"))
+
+    assert agrees is False
+    assert "quality analysis verdict is 'fail'" in reasons
+
+
+def test_analyse_proof_rejects_a_wrong_ply_count(signed_match, protocol_params) -> None:
+    sampler = QualitySampler(params=_sampled(protocol_params), profile=PROFILE)
+    bad = signed_match.proof.model_copy(update={"plies": signed_match.proof.plies + 1})
+    job = sampler.enqueue("11" * 32, bad)
+    assert job is not None
+
+    with pytest.raises(QualityError, match="PGN has"):
+        sampler.analyse_proof(job, _UniformEngine())
+
+
+def test_a_sampler_challenge_can_be_opened_on_the_ledger(signed_match, protocol_params) -> None:
+    params = _sampled(protocol_params)
+    report = _report(signed_match.proof, params)
+    summary = report.summary().model_copy(update={"black_blunders": 9})
+    proof = signed_match.proof.model_copy(update={"quality_summary": summary})
+    sampler = QualitySampler(params=params, profile=PROFILE, sample_rate=1_000)
+    sampler.enqueue("11" * 32, proof)
+
+    sampler.run(_UniformEngine())
+    (request,) = sampler.challenge_requests()
+
+    state = State(params=params, height=1, timestamps=[1_700_000_000])
+    state.proofs[proof.game_hash] = ProofRecord(
+        proof_id=proof.proof_id,
+        game_hash=proof.game_hash,
+        height=0,
+        winner=proof.certificate.white,
+        miner=proof.certificate.white,
+    )
+    state.proof_ids[proof.proof_id] = proof.game_hash
+    challenger = proof.certificate.black
+    state.ensure(challenger).balance = 10_000
+
+    record = challenges.open_challenge(
+        state,
+        challenger=challenger,
+        proof_id=request.proof_id,
+        reason=request.reason,
+        evidence=request.evidence,
+        bond=5_000,
+        height=1,
+    )
+
+    assert record.game_hash == request.game_hash
+    assert record.miner == proof.certificate.white
+    assert state.ensure(challenger).balance == 5_000
+    assert challenges.challenge_status(state, request.game_hash) == "open"

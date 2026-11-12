@@ -136,7 +136,6 @@ class AnalysisEngine(Protocol):
         ...
 
 
-
 @dataclass(frozen=True, slots=True)
 class MoveAssessment:
     """One analysed ply."""
@@ -231,9 +230,9 @@ class AnalysisCache:
         if max_entries < 1:
             raise QualityError("an analysis cache needs at least one entry")
         self.max_entries = max_entries
-        self._entries: OrderedDict[
-            tuple[int, int, str], tuple[chess.engine.InfoDict, ...]
-        ] = OrderedDict()
+        self._entries: OrderedDict[tuple[int, int, str], tuple[chess.engine.InfoDict, ...]] = (
+            OrderedDict()
+        )
 
     def __len__(self) -> int:
         """Number of cached positions."""
@@ -254,7 +253,6 @@ class AnalysisCache:
         self._entries[key] = lines
         while len(self._entries) > self.max_entries:
             self._entries.popitem(last=False)
-
 
 
 def _pov_cp(line: Mapping[str, object], color: chess.Color) -> int:
@@ -468,9 +466,7 @@ def analyse_game(
         and black_blunders <= profile.max_blunders_per_side
     )
     verdict: Verdict = (
-        "pass"
-        if blunders_ok and resignation_ok and parsed.plies >= profile.min_plies
-        else "fail"
+        "pass" if blunders_ok and resignation_ok and parsed.plies >= profile.min_plies else "fail"
     )
     return QualityReport(
         profile=profile,
@@ -489,8 +485,6 @@ def analyse_game(
 
 analyze_game = analyse_game
 """American-spelling alias for callers that expect ``analyze_game``."""
-
-
 
 
 def engine_fingerprint_matches(profile: QualityProfile, engine: AnalysisEngine) -> bool:
@@ -531,13 +525,11 @@ def summary_matches(
         return False, f"verdict is {summary.verdict!r}, analysis says {report.verdict!r}"
     if summary.white_blunders != report.white_blunders:
         return False, (
-            f"white blunders are {summary.white_blunders}, analysis says "
-            f"{report.white_blunders}"
+            f"white blunders are {summary.white_blunders}, analysis says {report.white_blunders}"
         )
     if summary.black_blunders != report.black_blunders:
         return False, (
-            f"black blunders are {summary.black_blunders}, analysis says "
-            f"{report.black_blunders}"
+            f"black blunders are {summary.black_blunders}, analysis says {report.black_blunders}"
         )
     if summary.worst_cpl != report.worst_cpl:
         return False, f"worst CPL is {summary.worst_cpl}, analysis says {report.worst_cpl}"

@@ -47,6 +47,9 @@ jobs:
       - name: Test
         run: pytest --cov=sccp --cov-report=term-missing --cov-fail-under=85
 
+      - name: Adversarial suites
+        run: pytest -m adversarial -q
+
       - name: Coverage gate (crypto and serialization >= 95%)
         run: pytest -q --cov=sccp.crypto --cov=sccp.serialization --cov-fail-under=95
 

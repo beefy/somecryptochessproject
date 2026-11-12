@@ -36,7 +36,7 @@ reward.
 > receipts, `--round-seconds` adds the opt-in round scheduler, and
 > `sccp miner run --relay-witness-key` trusts that witness. The formats are
 > normative in [`docs/PROTOCOL.md`](docs/PROTOCOL.md) section 8.4; what remains
-> is the on-chain claim transaction (plan section 5.7.1) and the M5/M6 work.
+> is the on-chain claim transaction (plan section 5.7.1) and the M6 work.
 
 > **Naming.** The repository and project name is `somecryptochessproject`. The
 > Python package and console command use the short form `sccp` (import `sccp`,
@@ -251,8 +251,8 @@ All values above are provisional and live in `src/sccp/config.py`.
 
 ## 5. Repository layout
 
-Modules marked *(M0)*, *(M1)*, *(M2)*, *(M3)* and *(M4)* exist; the rest is the
-target layout for later milestones.
+Modules marked *(M0)*, *(M1)*, *(M2)*, *(M3)*, *(M4)* and *(M5)* exist; the rest
+is the target layout for later milestones.
 
 ```text
 .
@@ -268,7 +268,7 @@ target layout for later milestones.
 │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
 │   ├── PROTOCOL.md               # normative wire formats (M1–M4)
 │   ├── RUN_A_TESTNET_MINER.md    # operator guide (written in M6)
-│   └── THREAT_MODEL.md           # security analysis (written in M5)
+│   └── THREAT_MODEL.md           # security analysis (M5)
 ├── data/
 │   ├── openings.json             # curated opening lines, shipped in the wheel
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
@@ -288,12 +288,14 @@ target layout for later milestones.
 │   ├── serialization.py          # canonical JSON, domain-separated hashing
 │   ├── crypto/                   # keys, bech32 addresses, encrypted wallets
 │   ├── chess/                    # pgn, openings, engines, gameplay (M1);
-│   │                             # quality policy lands with M5
-│   ├── protocol/                 # models, beacon, pairing, transcripts, verification
+│   │                             # quality policy (M5)
+│   ├── protocol/                 # models, beacon, pairing, transcripts, verification,
+│   │                             # bonded challenges and panels (M5)
 │   ├── chain/                    # tx, blocks, state, mempool, fork choice, storage,
 │   │                             # difficulty, bonded timeouts, genesis (M3);
-│   │                             # quality slashing lands with M5
-│   ├── node/                     # FastAPI app, gossip, services (M4)
+│   │                             # quality slashing (M5)
+│   ├── node/                     # FastAPI app, gossip, services (M4);
+│   │                             # quality sampler (M5)
 │   ├── miner/                    # matchmaker/relay (M2), block builder (M3),
 │   │                             # engine miner (M4)
 │   ├── wallet/                   # M0 key files, M3 wallet service
@@ -452,7 +454,7 @@ stops after `N` relay polls, which is how the CLI tests drive it.
 | **M2** | Matchmaking: beacon, deterministic pairing, certificates, transcripts, relay, offline proof verification | done |
 | **M3** | Chain: transactions, wallet, blocks, state, mempool, fork choice, difficulty, block builder | done |
 | **M4** | Node + P2P + miner daemon | done — node API and gossip, pull-sync, `EngineMiner`, the full CLI, `sccp devnet up` and the docker-compose testnet stack |
-| **M5** | Quality verification, challenges, slashing, threat-model tests | not started |
+| **M5** | Quality verification, challenges, slashing, threat-model tests | done — pinned quality profile, deterministic sampling, bonded challenges with beacon-ranked panels, adversarial suite, [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) |
 | **M6** | Testnet launch: funded testnet, faucet operations, observability, operator guide | not started — timed relay sessions (clocked relay, signed receipts, auto-flag, round scheduler) are already implemented |
 | **M7** | Hardening and mainnet readiness review | not started |
 
@@ -471,6 +473,10 @@ Detailed tasks, file-level deliverables and acceptance criteria are in
 - **Quality checking is expensive and hardware-sensitive.** It is therefore
   sampled and challengeable, not consensus-critical, so heterogeneous hardware
   cannot fork the chain over a 3-centipawn disagreement.
+- **Challenge panels are derived, not yet voted on chain.** Panel selection and
+  verdict aggregation are deterministic and pure, but there is no `panel_vote`
+  transaction yet, so adjudication is operator-triggered and its honesty is a
+  documented assumption in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
 - **Sybil resistance is economic.** Bonds, diversity constraints and detection
   raise the cost of self-play; they do not make it impossible.
 - **Reward variance is high.** Draws earn nothing, so a miner wins maybe one

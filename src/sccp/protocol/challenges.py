@@ -12,18 +12,20 @@ pinned quality profile and resolves it:
 * **rejected** - the proof was good. The challenger's bond is burned.
 
 The module never runs an engine. Adjudication receives the panel's verdict, and
-the panel itself is selected from the beacon by the node (or by an operator key
-on testnet while panel selection is not yet deployed). That keeps this file a
-deterministic state transition, which is what lets it live inside the ledger.
+the panel itself is selected from the beacon by :func:`select_panel` (or by an
+operator key on testnet while panel selection is not yet deployed). That keeps
+this file a deterministic state transition, which is what lets it live inside
+the ledger: every node derives the same panel from the same beacon, replays the
+same pinned profile, and resolves the challenge with :func:`adjudicate_with_panel`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import NoReturn
 
-from sccp.chain.state import ChallengeRecord, State
+from sccp.chain.state import ZERO_HASH, ChallengeRecord, State
 from sccp.errors import ChallengeError
 from sccp.protocol.models import Transaction
 from sccp.serialization import Domain, domain_hex
@@ -33,6 +35,13 @@ CHALLENGE_KEYS = frozenset({"proof_id", "reason", "evidence", "bond", "public_ke
 
 MAX_REASON_LENGTH: int = 120
 MAX_EVIDENCE_LENGTH: int = 4_096
+
+PANEL_SIZE: int = 3
+"""How many bonded miners re-run the pinned profile for one challenge.
+
+Odd, so a majority always exists and no vote can tie. Testnet may use a smaller
+operator-run panel by passing ``size=1`` explicitly.
+"""
 
 
 def _fail(message: str) -> NoReturn:
@@ -248,9 +257,7 @@ def open_challenge(
     if account.balance < bond:
         _fail(f"{challenger} cannot cover the challenge bond of {bond}")
     account.balance -= bond
-    request = ChallengeRequest(
-        proof_id=proof_id, reason=reason, evidence=evidence, bond=bond
-    )
+    request = ChallengeRequest(proof_id=proof_id, reason=reason, evidence=evidence, bond=bond)
     record = _record_for(state, request, challenger, height)
     state.challenges[record.challenge_id] = record
     return record
@@ -329,6 +336,131 @@ adjudicate_challenge = resolve_challenge
 """Alias used by panel tooling and tests."""
 
 
+def _panel_rank(beacon_hash: str, proof_id: str, member: str) -> str:
+    """``H("sccp/v1/challenge", {kind: "panel", ...})`` for one candidate."""
+    return domain_hex(
+        Domain.CHALLENGE,
+        {
+            "kind": "panel",
+            "beacon": beacon_hash,
+            "proof_id": proof_id,
+            "member": member,
+        },
+    )
+
+
+def _check_digest(name: str, digest: str) -> None:
+    try:
+        raw = bytes.fromhex(digest)
+    except ValueError:
+        _fail(f"{name} must be hex: {digest!r}")
+    if len(raw) != 32:
+        _fail(f"{name} must be a 32-byte digest")
+
+
+def select_panel(
+    beacon_hash: str,
+    proof_id: str,
+    candidates: Iterable[str],
+    *,
+    size: int = PANEL_SIZE,
+    exclude: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Pick the adjudication panel for one challenge, deterministically.
+
+    Candidates are ranked by
+    ``H("sccp/v1/challenge", {kind: "panel", beacon, proof_id, member})``, so every
+    node that sees the same beacon and the same bonded set picks the same panel
+    without coordination. ``exclude`` carries the challenge's parties, who may
+    never adjudicate their own case. The result is sorted by rank, so it is also
+    stable under differing candidate iteration order.
+    """
+    if size < 1 or size % 2 == 0:
+        _fail("an adjudication panel needs an odd, positive size")
+    _check_digest("beacon_hash", beacon_hash)
+    _check_digest("proof_id", proof_id)
+    banned = {str(member) for member in exclude}
+    unique = {str(member) for member in candidates if str(member) not in banned}
+    if len(unique) < size:
+        _fail(f"only {len(unique)} eligible adjudicator(s) for a panel of {size}")
+    ranked = sorted(unique, key=lambda member: _panel_rank(beacon_hash, proof_id, member))
+    return tuple(ranked[:size])
+
+
+def panel_verdict(panel: Sequence[str], votes: Mapping[str, bool]) -> bool:
+    """Aggregate a panel's re-run verdicts into ``upheld`` (``True``) or not.
+
+    Every panel member must vote and nobody else may: a missing vote would let a
+    node resolve a case with a minority, and an extra vote would let a stranger
+    stuff the panel. Votes must be booleans so ``"false"`` cannot read as true.
+    """
+    members = tuple(str(member) for member in panel)
+    if not members or len(members) % 2 == 0:
+        _fail("a panel verdict needs an odd number of members")
+    if len(set(members)) != len(members):
+        _fail("the adjudication panel contains duplicate members")
+    for member, vote in votes.items():
+        if not isinstance(vote, bool):
+            _fail(f"panel vote from {member} must be a boolean")
+    missing = sorted(set(members) - set(votes))
+    unknown = sorted(set(votes) - set(members))
+    if missing or unknown:
+        _fail(f"panel votes do not match the panel (missing {missing}, unknown {unknown})")
+    upheld = sum(1 for member in members if votes[member])
+    return upheld * 2 > len(members)
+
+
+def challenge_panel(
+    state: State,
+    challenge: str,
+    *,
+    size: int = PANEL_SIZE,
+) -> tuple[str, ...]:
+    """The deterministic panel for ``challenge``, from the current bonded set.
+
+    The beacon is the one recorded for the tip's epoch, so the panel for a
+    challenge resolved at height ``h`` is a pure function of the state at ``h``.
+    Candidates are accounts with a bond; the challenge's own parties are excluded
+    by :func:`select_panel`. A resolved challenge keeps the panel it was decided
+    by, because re-deriving it later could name a different set.
+    """
+    record = state.challenges.get(challenge)
+    if record is None:
+        _fail(f"no challenge {challenge}")
+    if record.panel:
+        return record.panel
+    epoch = state.epochs.get(state.current_epoch())
+    beacon_hash = epoch.beacon.hash if epoch is not None and epoch.beacon else ZERO_HASH
+    candidates = [address for address, account in state.accounts.items() if account.bonded > 0]
+    return select_panel(
+        beacon_hash,
+        record.proof_id,
+        candidates,
+        size=size,
+        exclude=(record.challenger, record.miner),
+    )
+
+
+def adjudicate_with_panel(
+    state: State,
+    challenge: str,
+    votes: Mapping[str, bool],
+    *,
+    height: int,
+    size: int = PANEL_SIZE,
+) -> ChallengeRecord:
+    """Resolve ``challenge`` from a majority of its panel's re-run verdicts.
+
+    ``votes`` maps every selected panel member to whether its re-run of the pinned
+    profile found the proof bad. The majority becomes the ``upheld`` flag handed
+    to :func:`resolve_challenge`, which is where bonds move, so an upheld verdict
+    slashes the proof miner and a rejected one burns the challenger's bond.
+    """
+    panel = challenge_panel(state, challenge, size=size)
+    upheld = panel_verdict(panel, votes)
+    return resolve_challenge(state, challenge, upheld=upheld, height=height, panel=panel)
+
+
 def challenge_for_proof(
     state: State,
     proof_id: str,
@@ -364,15 +496,19 @@ __all__ = [
     "CHALLENGE_KEYS",
     "MAX_EVIDENCE_LENGTH",
     "MAX_REASON_LENGTH",
+    "PANEL_SIZE",
     "ChallengeRequest",
     "adjudicate_challenge",
+    "adjudicate_with_panel",
     "apply_challenge",
     "challenge_for_proof",
     "challenge_id",
+    "challenge_panel",
     "challenge_status",
     "open_challenge",
+    "panel_verdict",
     "parse_challenge",
     "resolve_challenge",
+    "select_panel",
     "validate_challenge",
 ]
-

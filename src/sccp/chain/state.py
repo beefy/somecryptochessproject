@@ -845,9 +845,7 @@ class State:
             for claim_id, entry in claims_raw.items()
         }
         challenges = {
-            str(challenge_id): ChallengeRecord.from_dict(
-                _as_mapping(entry, "challenge record")
-            )
+            str(challenge_id): ChallengeRecord.from_dict(_as_mapping(entry, "challenge record"))
             for challenge_id, entry in challenges_raw.items()
         }
         difficulty = None

@@ -20,6 +20,7 @@ or owns an engine.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -37,6 +38,7 @@ from sccp.chess.quality import (
 )
 from sccp.config import NetworkParams, QualityMode
 from sccp.errors import QualityError
+from sccp.protocol.challenges import MAX_EVIDENCE_LENGTH, MAX_REASON_LENGTH
 from sccp.protocol.models import QualitySummary, WinProof
 
 SAMPLE_BUCKETS: int = 1_000
@@ -134,6 +136,31 @@ class QualityJob:
 
 
 @dataclass(frozen=True, slots=True)
+class SamplerChallenge:
+    """Everything a node needs to build one bonded ``challenge`` transaction.
+
+    The sampler never submits anything: it produces the reason and evidence, and
+    the node decides the bond and pays the fee. Keeping the two apart is what
+    makes a local engine crash harmless and a substantive disagreement explicit.
+    """
+
+    proof_id: str
+    game_hash: str
+    reason: str
+    evidence: str
+
+    def as_payload(self, *, bond: int, public_key: str) -> dict[str, object]:
+        """The payload of a ``challenge`` transaction, with the node's bond."""
+        return {
+            "proof_id": self.proof_id,
+            "reason": self.reason,
+            "evidence": self.evidence,
+            "bond": bond,
+            "public_key": public_key,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class SamplerResult:
     """The outcome of analysing one sampled proof.
 
@@ -150,11 +177,61 @@ class SamplerResult:
     report: QualityReport | None = None
     attempts: int = 1
     error: str | None = None
+    summary: QualitySummary | None = None
+    """The summary the proof claimed, when it carried one."""
 
     @property
     def needs_challenge(self) -> bool:
         """Whether a persistent, substantive disagreement exists."""
         return not self.agrees and self.error is None
+
+    @property
+    def reason(self) -> str:
+        """A challenge-sized explanation, bounded by ``MAX_REASON_LENGTH``."""
+        text = self.reasons[0] if self.reasons else "quality re-run disagrees with the proof"
+        if len(text) <= MAX_REASON_LENGTH:
+            return text
+        return text[: MAX_REASON_LENGTH - 3] + "..."
+
+    @property
+    def evidence(self) -> str:
+        """Canonical JSON evidence for a challenge payload.
+
+        Contains the claimed and observed trace hashes plus the disagreement
+        reasons, which is what an adjudication panel needs to reproduce the
+        finding without trusting the challenger's prose. The result is bounded by
+        ``MAX_EVIDENCE_LENGTH``; a node must not submit evidence a block would
+        reject.
+        """
+        document: dict[str, object] = {
+            "proof_id": self.proof_id,
+            "game_hash": self.game_hash,
+            "verdict": self.verdict,
+            "reasons": list(self.reasons[:5]),
+            "policy": self.report.profile.policy if self.report is not None else None,
+            "reported_trace_hash": self.summary.trace_hash if self.summary else None,
+            "observed_trace_hash": self.report.trace_hash if self.report is not None else None,
+            "engine_fingerprint": (
+                self.report.engine_fingerprint if self.report is not None else None
+            ),
+        }
+        text = json.dumps(document, sort_keys=True, separators=(",", ":"))
+        if len(text) > MAX_EVIDENCE_LENGTH:
+            raise QualityError(
+                f"challenge evidence is {len(text)} characters, the limit is {MAX_EVIDENCE_LENGTH}"
+            )
+        return text
+
+    def challenge(self) -> SamplerChallenge | None:
+        """A challenge request, or ``None`` when there is nothing to challenge."""
+        if not self.needs_challenge:
+            return None
+        return SamplerChallenge(
+            proof_id=self.proof_id,
+            game_hash=self.game_hash,
+            reason=self.reason,
+            evidence=self.evidence,
+        )
 
 
 @dataclass
@@ -290,6 +367,7 @@ class QualitySampler:
                     reasons=(f"analysis failed after {attempts} attempts: {exc}",),
                     attempts=attempts,
                     error=str(exc),
+                    summary=job.proof.quality_summary,
                 )
             else:
                 agrees, reasons = self.compare(job, report)
@@ -301,6 +379,7 @@ class QualitySampler:
                     reasons=reasons,
                     report=report,
                     attempts=job.attempts + 1,
+                    summary=job.proof.quality_summary,
                 )
             self._results[job.proof_id] = result
             produced.append(result)
@@ -310,12 +389,28 @@ class QualitySampler:
         """Substantive disagreements suitable for a bonded challenge."""
         return tuple(result for result in self._results.values() if result.needs_challenge)
 
+    def challenge_requests(self) -> tuple[SamplerChallenge, ...]:
+        """Challenge payloads for every disagreement, in deterministic order.
+
+        Sorted by ``(game_hash, proof_id)`` so a node that processes two blocks in
+        a different order still submits the same set of challenges. An engine
+        failure is excluded by :attr:`SamplerResult.needs_challenge`.
+        """
+        requests = [result.challenge() for result in self.disagreements()]
+        return tuple(
+            sorted(
+                (request for request in requests if request is not None),
+                key=lambda request: (request.game_hash, request.proof_id),
+            )
+        )
+
 
 __all__ = [
     "DEFAULT_MAX_ATTEMPTS",
     "SAMPLE_BUCKETS",
     "QualityJob",
     "QualitySampler",
+    "SamplerChallenge",
     "SamplerResult",
     "SamplingDecision",
     "sample_bucket",
@@ -323,4 +418,3 @@ __all__ = [
     "select_samples",
     "should_sample",
 ]
-

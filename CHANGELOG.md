@@ -7,6 +7,32 @@ summarised in the M0–M2 rows of the README roadmap.
 
 ## [Unreleased]
 
+### Added
+
+- Milestone M5: quality verification, bonded challenges and the threat model.
+  - `sccp.protocol.challenges` now selects adjudication panels itself:
+    `select_panel` ranks the bonded set by
+    `H("sccp/v1/challenge", {beacon, proof_id, member})` (odd `PANEL_SIZE = 3`,
+    parties excluded), `panel_verdict` aggregates a complete ballot with no
+    stuffing or silence, `challenge_panel` derives the panel from the ledger, and
+    `adjudicate_with_panel` resolves the challenge through `resolve_challenge`, so
+    bonds and slashing settle deterministically.
+  - `sccp.node.quality_sampler` turns a persistent disagreement into a challenge:
+    `SamplerResult.summary` keeps the claimed summary, `.reason` is bounded by the
+    protocol limit, `.evidence` is canonical JSON with the claimed and observed
+    trace hashes, and `challenge_requests()` returns sorted `SamplerChallenge`
+    payloads. An engine failure is still never a challenge.
+  - `tests/adversarial/test_quality_attacks.py`: fabricated summaries, poisoned
+    local engines, self-jury, panel divergence between nodes, weak-loser
+    self-play that fails quality and is upheld on a panel vote, and stuffed or
+    silent ballots; run with the new `make adversarial` target.
+  - `tests/unit/test_quality.py`: scripted-engine coverage of the quality policy
+    (blunder counting on each side, the reply-based fallback for moves outside
+    MultiPV, decided positions, resignation bounds, the bounded LRU cache,
+    strict engine-output parsing and `summary_matches`).
+  - `docs/THREAT_MODEL.md`: assets, adversaries, attack → mitigation → residual
+    risk tables, attack trees and explicit non-goals, with code references.
+
 ## [0.7.0] - 2026-11-12
 
 A minor release: the end-to-end whitepaper, resumable on-chain demo runs and

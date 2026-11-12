@@ -6,7 +6,7 @@ PYTEST_ARGS ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help venv install test test-all cov cov-gate lint format typecheck check lock dist dist-check release-check devnet stack clean
+.PHONY: help venv install test test-all adversarial cov cov-gate lint format typecheck check lock dist dist-check release-check devnet stack clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -35,6 +35,9 @@ test-all: test  ## Add the integration/e2e tests that exist (engine tests stay d
 		exit 0; \
 	fi; \
 	exit $$status
+
+adversarial: venv  ## Run the cheat/self-play/tamper suites (-m adversarial)
+	$(PYTHON) -m pytest -m adversarial $(PYTEST_ARGS)
 
 cov: venv  ## Whole-package report with the project-wide 85% gate
 	$(PYTHON) -m pytest --cov=sccp --cov-report=term-missing \

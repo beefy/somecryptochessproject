@@ -1591,7 +1591,8 @@ version, the plan is wrong and gets updated with the test that proved it.
 
 ## 8. Threat model (outline)
 
-Full version in `docs/THREAT_MODEL.md` at M5.
+Full version, with code references, residual risks and verification status, in
+[`THREAT_MODEL.md`](THREAT_MODEL.md).
 
 ### 8.1 Assets
 
