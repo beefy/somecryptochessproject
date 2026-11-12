@@ -9,9 +9,13 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
-> **Status: design phase.** There is no implementation yet. The engineering plan
-> lives in [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md). The CLI
-> commands shown below are the intended UX, not working software.
+> **Status: M1 complete.** M0 (packaging, config, crypto, wallets, CLI, CI) and
+> M1 (PGN validation, canonical game hash, opening book, engine abstraction,
+> game runner, offline `sccp verify pgn`) are implemented and tested. The
+> matchmaking, chain, node and miner milestones are next; their commands are
+> still intended UX, not working software. Normative formats are in
+> [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan lives in
+> [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
 > **Naming.** The repository and project name is `somecryptochessproject`. The
 > Python package and console command use the short form `sccp` (import `sccp`,
@@ -224,31 +228,37 @@ All values above are provisional and live in `src/sccp/config.py`.
 
 ---
 
-## 5. Repository layout (target)
+## 5. Repository layout
+
+Modules marked *(M0)* and *(M1)* exist; the rest is the target layout for later
+milestones.
 
 ```text
 .
 ├── README.md
 ├── LICENSE                       # Unlicense (public domain)
 ├── pyproject.toml                # packaging, deps, ruff/mypy/pytest config
-├── Makefile                      # test / lint / typecheck / devnet
+├── Makefile                      # test / lint / typecheck / dist
 ├── docker-compose.yml            # node + relay + miners (M6)
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # this project's plan
-│   ├── PROTOCOL.md               # normative wire formats (written in M1)
+│   ├── PROTOCOL.md               # normative wire formats (M1)
 │   ├── RUN_A_TESTNET_MINER.md    # operator guide (written in M6)
 │   └── THREAT_MODEL.md           # security analysis (written in M5)
-├── data/openings.json            # curated, balanced opening lines
+├── data/
+│   ├── openings.json             # curated opening lines, shipped in the wheel
+│   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
 ├── genesis/{testnet,mainnet}.json
 ├── scripts/
-│   ├── fetch_engine.py           # download + SHA-256 pin Stockfish builds
+│   ├── fetch_engine.py           # verified Stockfish download
 │   └── make_genesis.py
 ├── src/sccp/
 │   ├── config.py                 # network parameters, settings
 │   ├── serialization.py          # canonical JSON, domain-separated hashing
 │   ├── crypto/                   # keys, bech32 addresses, encrypted wallets
-│   ├── chess/                    # PGN validation, openings, engines, quality
+│   ├── chess/                    # pgn, openings, engines, gameplay (M1);
+│   │                             # quality policy lands with M5
 │   ├── protocol/                 # models, beacon, pairing, transcripts, verification
 │   ├── chain/                    # tx, blocks, state, mempool, fork choice, storage
 │   ├── node/                     # FastAPI app, gossip, services
@@ -259,15 +269,18 @@ All values above are provisional and live in `src/sccp/config.py`.
 └── tests/
     ├── unit/
     ├── property/                 # hypothesis
-    ├── integration/
+    ├── integration/              # Stockfish smoke test (-m engine)
     ├── e2e/
     ├── adversarial/                # cheat / self-play / tamper suites (M5)
-    └── fixtures/                 # PGNs, key vectors, mock engines
+    └── fixtures/                 # PGN/hash vectors, key vectors
 ```
 
 ---
 
-## 6. Quickstart (target UX)
+## 6. Quickstart
+
+M0/M1 commands work today; the node, matchmaker, miner and devnet commands are
+the intended UX for later milestones.
 
 ```bash
 git clone git@github.com:beefy/somecryptochessproject.git
@@ -278,29 +291,35 @@ pip install -e ".[dev]"
 # Create a wallet (writes an encrypted keyfile)
 sccp wallet new --network testnet --out alice.key
 
-# Run a full node / API server on the testnet
+# Download a pinned Stockfish (verifies the archive SHA-256 first)
+python scripts/fetch_engine.py --list
+python scripts/fetch_engine.py --engine stockfish-19 --dest ./bin
+
+# Verify a PGN offline: replays every move and prints the canonical game hash
+sccp verify pgn game.pgn --network testnet
+
+# Run a full node / API server on the testnet (M4)
 sccp node run --network testnet --port 8645
 
-# Run a relay (matchmaker) on the same node
+# Run a relay (matchmaker) on the same node (M2)
 sccp matchmaker run --network testnet --node http://127.0.0.1:8645
 
-# Run an engine miner with a real Stockfish
+# Run an engine miner with a real Stockfish (M4)
 sccp miner run --network testnet \
     --key alice.key \
-    --engine-path /opt/homebrew/bin/stockfish \
+    --engine-path ./bin/stockfish-macos-universal \
     --relay http://127.0.0.1:8646
 
 # Run a second miner with an older Stockfish, for testing
 sccp miner run --network testnet \
     --key bob.key \
-    --engine-path ./bin/stockfish-11 \
+    --engine-path ./bin/stockfish-ubuntu-x86-64 \
     --relay http://127.0.0.1:8646
 
-# Spin up everything locally with mock engines
+# Spin up everything locally with mock engines (M5)
 sccp devnet up --miners 4 --blocks 10
 
-# Verify a PGN or a proof offline
-sccp verify pgn game.pgn --network testnet
+# Verify a proof offline (M2)
 sccp verify proof proof.json --network testnet
 ```
 
@@ -310,8 +329,8 @@ sccp verify proof proof.json --network testnet
 
 | Milestone | Deliverable | Status |
 | --- | --- | --- |
-| **M0** | Foundations: packaging, config, crypto, CLI skeleton, CI | not started |
-| **M1** | Chess core: PGN validation, canonical hashing, opening book, engine abstraction, game runner | not started |
+| **M0** | Foundations: packaging, config, crypto, CLI skeleton, CI | done |
+| **M1** | Chess core: PGN validation, canonical hashing, opening book, engine abstraction, game runner | done |
 | **M2** | Matchmaking: beacon, deterministic pairing, certificates, relay | not started |
 | **M3** | Chain: transactions, wallet, blocks, state, mempool, fork choice, difficulty, block builder | not started |
 | **M4** | Node + P2P + miner daemon | not started |
@@ -356,10 +375,18 @@ pip install -e ".[dev]"
 
 make check         # ruff check + format --check + mypy + pytest
 make test          # pytest (unit + property; mock engines only)
+make cov           # whole-package report with the 85% gate
 make cov-gate      # crypto/ and serialization.py must stay >= 95% covered
 make test-all      # adds integration/e2e; skips if Stockfish is absent
 make dist-check    # build sdist+wheel and run `twine check --strict` (twine>=7)
 make devnet        # in-process node + relay + mock miners (lands with M5)
+```
+
+Real-engine tests are marked `engine` and deselected by default:
+
+```bash
+python scripts/fetch_engine.py --engine stockfish-19 --dest ./bin
+pytest -m engine tests/integration          # or SCCP_STOCKFISH=/path/to/stockfish
 ```
 
 Requirements: Python 3.11+ (developed against 3.13), `python-chess`, `pydantic`,
@@ -367,6 +394,32 @@ Requirements: Python 3.11+ (developed against 3.13), `python-chess`, `pydantic`,
 `rich`, with `pytest`, `pytest-asyncio`, `hypothesis`, `ruff` and `mypy` for
 development. Real-engine tests need a Stockfish binary; see
 `scripts/fetch_engine.py`.
+
+### Chess core (M1)
+
+The chess pipeline is import-light and engine-free until you ask for one:
+
+```python
+from pathlib import Path
+
+from sccp.chess.engines import MockEngine
+from sccp.chess.gameplay import play_game
+from sccp.chess.openings import book_for
+from sccp.chess.pgn import validate_pgn
+from sccp.config import TESTNET
+
+game = validate_pgn(Path("game.pgn").read_bytes(), params=TESTNET, require_win=True)
+print(game.game_hash, game.result, game.termination, game.plies)
+
+opening = book_for(TESTNET).select(beacon=bytes(32), match_id="demo")
+raw = play_game(MockEngine(seed=1), MockEngine(seed=2), params=TESTNET, opening=opening)
+print(raw.pgn)
+```
+
+`validate_pgn` enforces the 18 required sccp headers, replays every move with
+`Board.is_legal`, checks the result and termination against the board, and hashes
+only `(network, start position, SAN list, result)`. The opening book and engine
+pins are described in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
 ### Releasing
 

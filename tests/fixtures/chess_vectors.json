@@ -1,0 +1,14 @@
+{
+  "fools_mate": {
+    "moves": ["f3", "e5", "g4", "Qh4#"],
+    "result": "0-1",
+    "testnet_hash": "0ad57cfa7ab0779a5a4c75a3387d7c6da9df9a08405a6b5345a0370ec4900ffe"
+  },
+  "opening": {
+    "book_version": "v1",
+    "line_id": 0,
+    "name": "Italian Game: Giuoco Piano",
+    "moves": ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"],
+    "hash": "dbb418f4d48428575ff67420dec6b89a586aae39a1938af8c260e662b261b627"
+  }
+}

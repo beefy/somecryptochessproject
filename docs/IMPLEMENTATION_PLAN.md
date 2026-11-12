@@ -148,6 +148,7 @@ somecryptochessproject/
 │   ├── RUN_A_TESTNET_MINER.md     # operator guide (M6 deliverable)
 │   └── THREAT_MODEL.md            # security analysis (M5 deliverable)
 ├── data/openings.json             # curated balanced opening lines
+├── data/engines.json              # pinned engine URLs + SHA-256 digests
 ├── genesis/testnet.json
 ├── genesis/mainnet.json
 ├── scripts/
@@ -1001,12 +1002,14 @@ Deliverables:
 - `src/sccp/chess/engines.py`: `Engine` protocol, `UciEngine` (wraps
   `chess.engine.SimpleEngine.popen_uci`), `MockEngine` (random legal mover,
   seeded), `ScriptedEngine` (predefined moves for tests), engine profiles
-  (`stockfish-17`, `stockfish-11`, `mock`), `engine_fingerprint()`.
+  (`stockfish-19`, `stockfish-18`, `mock` — binaries pinned in
+  `data/engines.json`), `engine_fingerprint()`.
 - `src/sccp/chess/gameplay.py`: `play_game(white, black, opening, limits, hooks)`
   producing `RawGame` (SAN list, PGN, result, termination, plies), with move
   validation, max-ply guard, resignation hook, and no wall-clock in the result.
-- `scripts/fetch_engine.py`: pinned URL + SHA-256 for current and older
-  Stockfish; `--dest ./bin`; refuses checksum mismatches.
+- `src/sccp/chess/fetch.py` + `data/engines.json` + `scripts/fetch_engine.py`:
+  pinned URL + SHA-256 per platform for current (Stockfish 19) and older
+  (Stockfish 18) releases; `--dest ./bin`; refuses checksum mismatches.
 - Tests: `test_pgn_valid.py`, `test_pgn_invalid.py`, `test_game_hash.py`,
   `test_openings.py`, `test_engines_mock.py`, `test_gameplay.py`;
   `tests/integration/test_stockfish_smoke.py` (skipped when no binary).

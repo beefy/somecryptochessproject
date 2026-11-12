@@ -1,0 +1,57 @@
+{
+  "format": 1,
+  "engines": {
+    "stockfish-19": {
+      "version": "Stockfish 19",
+      "assets": {
+        "macos": {
+          "url": "https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-macos-universal.tar.gz",
+          "sha256": "a1f0e3bcc5a6927a11fe6fc8e54a779754645f3c2bae2cf13420fd1957adaa77",
+          "size": 82323876,
+          "member": "stockfish/stockfish-macos-universal"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-x86-64-universal.tar.gz",
+          "sha256": "9defc0d4e55d49c65a6d042f3e571a39fcea499ade6dbe741b53b8c65e03611f",
+          "size": 81388977,
+          "member": "stockfish/stockfish-linux-x86-64-universal"
+        },
+        "linux-arm64": {
+          "url": "https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-linux-arm64-universal.tar.gz",
+          "sha256": "fe26cfd1d9db4c8af3d21e24d9ff34cacb31c1f940085a7583da11796f2bac01",
+          "size": 80181250,
+          "member": "stockfish/stockfish-linux-arm64-universal"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/official-stockfish/Stockfish/releases/download/sf_19/stockfish-windows-x86-64-universal.zip",
+          "sha256": "3c8bf1f9ea66a09350a40df4f632288285ac206d99f33ab5842c408fc30b48a7",
+          "size": 81431614,
+          "member": "stockfish/stockfish-windows-x86-64-universal.exe"
+        }
+      }
+    },
+    "stockfish-18": {
+      "version": "Stockfish 18",
+      "assets": {
+        "macos": {
+          "url": "https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-macos-x86-64.tar",
+          "sha256": "e7d7a2bca13915419d41ac6cb8cedb123dd2ba1c39a22c574df7a2aa3f526592",
+          "size": 114452480,
+          "member": "stockfish/stockfish-macos-x86-64"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-ubuntu-x86-64.tar",
+          "sha256": "5c6f38b02a4da5f3ffe763f27da6c3e743eebefd92b50cb3661623b96696adff",
+          "size": 114391040,
+          "member": "stockfish/stockfish-ubuntu-x86-64"
+        },
+        "windows-x86_64": {
+          "url": "https://github.com/official-stockfish/Stockfish/releases/download/sf_18/stockfish-windows-x86-64.zip",
+          "sha256": "40cc975817e7eee270b03f354810d20956df565420d320f6dd37d454dc81a139",
+          "size": 76949606,
+          "member": "stockfish/stockfish-windows-x86-64.exe"
+        }
+      }
+    }
+  }
+}

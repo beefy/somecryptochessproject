@@ -160,3 +160,46 @@ def test_wrong_passphrase_is_reported(tmp_path: Path, env: dict[str, str]) -> No
     )
     assert wrong.exit_code == 1
     assert "cannot decrypt" in wrong.stderr
+
+
+def test_help_lists_verify_commands() -> None:
+    result = runner.invoke(app, ["verify", "--help"])
+    assert result.exit_code == 0
+    assert "pgn" in result.stdout
+
+
+def test_verify_pgn(tmp_path: Path, match_tags: dict[str, str]) -> None:
+    pgn = tmp_path / "game.pgn"
+    headers = "".join(f'[{tag} "{value}"]\n' for tag, value in match_tags.items())
+    pgn.write_text(f"{headers}\n1. f3 e5 2. g4 Qh4# 0-1\n", encoding="utf-8")
+
+    human = runner.invoke(app, ["verify", "pgn", str(pgn)])
+    assert human.exit_code == 0, human.output
+    assert "game hash:" in human.stdout
+    assert "0-1" in human.stdout
+
+    machine = runner.invoke(app, ["--json", "verify", "pgn", str(pgn), "--network", "testnet"])
+    assert machine.exit_code == 0, machine.output
+    payload = json.loads(machine.stdout)
+    assert payload["result"] == "0-1"
+    assert payload["winner"] == "black"
+    assert payload["plies"] == 4
+    assert len(payload["game_hash"]) == 64
+
+
+def test_verify_pgn_rejects_a_bad_game(tmp_path: Path) -> None:
+    pgn = tmp_path / "bad.pgn"
+    pgn.write_text("1. e4 e5 2. Ke3 1-0\n", encoding="utf-8")
+    result = runner.invoke(app, ["verify", "pgn", str(pgn)])
+    assert result.exit_code == 1
+    assert "error:" in result.stderr
+
+
+def test_verify_pgn_require_win(tmp_path: Path, match_tags: dict[str, str]) -> None:
+    pgn = tmp_path / "short.pgn"
+    headers = "".join(f'[{tag} "{value}"]\n' for tag, value in match_tags.items())
+    pgn.write_text(f"{headers}\n1. f3 e5 2. g4 Qh4# 0-1\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["verify", "pgn", str(pgn), "--require-win"])
+    assert result.exit_code == 1
+    assert "at least" in result.stderr

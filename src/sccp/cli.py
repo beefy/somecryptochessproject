@@ -1,8 +1,8 @@
 """``sccp`` command line interface (docs/IMPLEMENTATION_PLAN.md section 5.13).
 
-M0 ships ``--version`` and the wallet basics: ``wallet new``, ``wallet address``,
-``wallet export-mnemonic`` and ``wallet import-mnemonic``. Every command is a thin
-wrapper over a library call so the same behaviour is testable in-process.
+M0 shipped ``--version`` and the wallet basics; M1 adds the offline PGN
+verifier (``verify pgn``). Every command is a thin wrapper over a library call
+so the same behaviour is testable in-process.
 
 Global options may be passed before or after the subcommand; an explicitly
 passed ``--network`` always wins over the global default of ``testnet``.
@@ -20,6 +20,7 @@ from typing import Annotated, NoReturn, TypeVar
 import typer
 
 from sccp import version as version_module
+from sccp.chess.pgn import GameResult, validate_pgn_file
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.wallet import (
     DEFAULT_KDF,
@@ -45,6 +46,8 @@ app = typer.Typer(
 )
 wallet_app = typer.Typer(no_args_is_help=True, help="Create, inspect and back up wallets.")
 app.add_typer(wallet_app, name="wallet")
+verify_app = typer.Typer(no_args_is_help=True, help="Verify games and proofs offline.")
+app.add_typer(verify_app, name="verify")
 
 
 @dataclass(frozen=True, slots=True)
@@ -301,3 +304,39 @@ def wallet_import_mnemonic(
         )
     )
     _emit_wallet(ctx, wallet)
+
+
+@verify_app.command("pgn")
+def verify_pgn(
+    ctx: typer.Context,
+    file: Annotated[Path, typer.Argument(help="PGN file to verify.")],
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Network whose game domain the hash uses."),
+    ] = None,
+    require_win: Annotated[
+        bool,
+        typer.Option("--require-win", help="Apply the win-proof rules (decisive, min_plies)."),
+    ] = False,
+) -> None:
+    """Replay a PGN, check its headers and print its canonical game hash."""
+    params = _resolve_network(ctx, network)
+    parsed = _run(lambda: validate_pgn_file(file, params=params, require_win=require_win))
+    winner = None
+    if parsed.winner is not None:
+        winner = "white" if parsed.winner is GameResult.WHITE else "black"
+    payload = {
+        "game_hash": parsed.game_hash,
+        "result": parsed.result.value,
+        "termination": parsed.termination.value,
+        "plies": parsed.plies,
+        "winner": winner,
+        "opening_id": int(parsed.tags["OpeningID"]),
+        "match_id": parsed.tags["MatchID"],
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"game hash: {payload['game_hash']}")
+    typer.echo(f"result: {payload['result']} ({payload['termination']}, {payload['plies']} plies)")
+    typer.echo(f"match: {payload['match_id']} opening {payload['opening_id']}")

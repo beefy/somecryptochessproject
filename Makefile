@@ -22,13 +22,19 @@ install: venv  ## Install the package with dev extras
 test: venv  ## Run the unit/property test suite
 	$(PYTHON) -m pytest $(PYTEST_ARGS)
 
-test-all: test  ## Add integration/e2e tests (skipped while none exist)
-	@files=$$(find tests/integration tests/e2e -name 'test_*.py' 2>/dev/null); \
-	if [ -n "$$files" ]; then \
-		$(PYTHON) -m pytest tests/integration tests/e2e $(PYTEST_ARGS); \
-	else \
-		echo "no integration/e2e tests yet; nothing extra to run"; \
-	fi
+test-all: test  ## Add the integration/e2e tests that exist (engine tests stay deselected)
+	@dirs=""; \
+	for dir in tests/integration tests/e2e; do \
+		[ -d "$$dir" ] && dirs="$$dirs $$dir"; \
+	done; \
+	if [ -z "$$dirs" ]; then echo "no integration/e2e tests yet; nothing extra to run"; exit 0; fi; \
+	$(PYTHON) -m pytest $$dirs $(PYTEST_ARGS); \
+	status=$$?; \
+	if [ $$status -eq 5 ]; then \
+		echo "only engine-marked tests exist; run: $(PYTHON) -m pytest -m engine $$dirs"; \
+		exit 0; \
+	fi; \
+	exit $$status
 
 cov: venv  ## Whole-package report with the project-wide 85% gate
 	$(PYTHON) -m pytest --cov=sccp --cov-report=term-missing \

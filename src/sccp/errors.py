@@ -63,6 +63,33 @@ class PassphraseError(KeyfileError):
     """The supplied passphrase cannot decrypt the keyfile."""
 
 
+# --- chess -------------------------------------------------------------------
+
+
+class ChessError(SccpError, ValueError):
+    """Base class for chess-core failures."""
+
+
+class PgnValidationError(ChessError):
+    """A PGN is malformed, inconsistent or not a valid sccp game."""
+
+
+class GameError(ChessError):
+    """The game runner observed a rule violation, such as an illegal move."""
+
+
+class OpeningBookError(ChessError):
+    """The opening book is missing, malformed or violates the book rules."""
+
+
+class EngineError(SccpError, RuntimeError):
+    """A chess engine crashed, violated UCI or returned an illegal move."""
+
+
+class EngineFetchError(EngineError):
+    """An engine download failed its integrity check."""
+
+
 # --- protocol ----------------------------------------------------------------
 
 

@@ -1,0 +1,2541 @@
+{
+  "format": 1,
+  "books": {
+    "v1": {
+      "description": "Mainnet book: balanced, legal opening lines of at most 12 plies. Selected from the epoch beacon; see docs/PROTOCOL.md section 4.",
+      "lines": [
+        {
+          "name": "Italian Game: Giuoco Piano",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5"
+          ]
+        },
+        {
+          "name": "Italian Game: Two Knights",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Italian Game: Evans Gambit",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "b4"
+          ]
+        },
+        {
+          "name": "Italian Game: Hungarian",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Be7"
+          ]
+        },
+        {
+          "name": "Italian Game: quiet d3",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "d3",
+            "d6"
+          ]
+        },
+        {
+          "name": "Italian Game: quiet c3",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "c3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Italian Game: classical d3",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "d3",
+            "Nf6",
+            "c3",
+            "d6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Morphy",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "a6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Berlin",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Steinitz",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "d6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Classical",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "Bc5"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Exchange",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "a6",
+            "Bxc6",
+            "dxc6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Closed",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "a6",
+            "Ba4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Breyer",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "a6",
+            "Ba4",
+            "Nf6",
+            "O-O",
+            "Be7"
+          ]
+        },
+        {
+          "name": "Scotch Game",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "exd4"
+          ]
+        },
+        {
+          "name": "Scotch Game: Mieses",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "exd4",
+            "Nxd4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Scotch Four Knights",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Nc3",
+            "Nf6",
+            "d4",
+            "exd4"
+          ]
+        },
+        {
+          "name": "Four Knights Game",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Four Knights: Spanish",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Nc3",
+            "Nf6",
+            "Bb5",
+            "Bb4"
+          ]
+        },
+        {
+          "name": "Petrov Defence",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Petrov: Classical",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nf6",
+            "Nxe5",
+            "d6"
+          ]
+        },
+        {
+          "name": "Petrov: Steinitz",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nf6",
+            "d4",
+            "Nxe4"
+          ]
+        },
+        {
+          "name": "Philidor Defence",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "d6",
+            "d4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Philidor: Exchange",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "d6",
+            "d4",
+            "exd4",
+            "Nxd4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Sicilian: Najdorf",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "a6"
+          ]
+        },
+        {
+          "name": "Sicilian: Dragon",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "g6"
+          ]
+        },
+        {
+          "name": "Sicilian: Classical",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "Sicilian: Scheveningen",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "e6"
+          ]
+        },
+        {
+          "name": "Sicilian: Accelerated Dragon",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "g6"
+          ]
+        },
+        {
+          "name": "Sicilian: Sveshnikov",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "e5"
+          ]
+        },
+        {
+          "name": "Sicilian: Taimanov",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "e6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "Sicilian: Kan",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "e6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "a6"
+          ]
+        },
+        {
+          "name": "Sicilian: Rossolimo",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "g6"
+          ]
+        },
+        {
+          "name": "Sicilian: Moscow",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "Bb5+",
+            "Bd7"
+          ]
+        },
+        {
+          "name": "Sicilian: Alapin",
+          "moves": [
+            "e4",
+            "c5",
+            "c3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Sicilian: Closed",
+          "moves": [
+            "e4",
+            "c5",
+            "Nc3",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "French: Classical",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "French: Winawer",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nc3",
+            "Bb4"
+          ]
+        },
+        {
+          "name": "French: Tarrasch",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nd2",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "French: Advance",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "e5",
+            "c5"
+          ]
+        },
+        {
+          "name": "French: Exchange",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "exd5",
+            "exd5"
+          ]
+        },
+        {
+          "name": "French: Rubinstein",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nc3",
+            "dxe4",
+            "Nxe4",
+            "Nd7"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Classical",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "Nc3",
+            "dxe4",
+            "Nxe4",
+            "Bf5"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Advance",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "e5",
+            "Bf5"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Exchange",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "exd5",
+            "cxd5"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Panov",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "exd5",
+            "cxd5",
+            "c4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Two Knights",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "Nc3",
+            "dxe4",
+            "Nxe4",
+            "Nd7"
+          ]
+        },
+        {
+          "name": "Scandinavian Defence",
+          "moves": [
+            "e4",
+            "d5",
+            "exd5",
+            "Qxd5"
+          ]
+        },
+        {
+          "name": "Scandinavian: main line",
+          "moves": [
+            "e4",
+            "d5",
+            "exd5",
+            "Qxd5",
+            "Nc3",
+            "Qa5"
+          ]
+        },
+        {
+          "name": "Alekhine: Modern",
+          "moves": [
+            "e4",
+            "Nf6",
+            "e5",
+            "Nd5"
+          ]
+        },
+        {
+          "name": "Alekhine: Four Pawns",
+          "moves": [
+            "e4",
+            "Nf6",
+            "e5",
+            "Nd5",
+            "d4",
+            "d6"
+          ]
+        },
+        {
+          "name": "Alekhine: Exchange",
+          "moves": [
+            "e4",
+            "Nf6",
+            "e5",
+            "Nd5",
+            "c4",
+            "Nb6"
+          ]
+        },
+        {
+          "name": "Pirc Defence",
+          "moves": [
+            "e4",
+            "d6",
+            "d4",
+            "Nf6",
+            "Nc3",
+            "g6"
+          ]
+        },
+        {
+          "name": "Pirc: Austrian Attack",
+          "moves": [
+            "e4",
+            "d6",
+            "d4",
+            "Nf6",
+            "Nc3",
+            "g6",
+            "Be3",
+            "Bg7"
+          ]
+        },
+        {
+          "name": "Modern Defence",
+          "moves": [
+            "e4",
+            "g6",
+            "d4",
+            "Bg7"
+          ]
+        },
+        {
+          "name": "Modern: Averbakh",
+          "moves": [
+            "e4",
+            "g6",
+            "d4",
+            "Bg7",
+            "Nc3",
+            "d6"
+          ]
+        },
+        {
+          "name": "King's Indian: Classical",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "Bg7",
+            "e4",
+            "d6"
+          ]
+        },
+        {
+          "name": "King's Indian: Fianchetto",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nf3",
+            "Bg7",
+            "g3",
+            "d6"
+          ]
+        },
+        {
+          "name": "King's Indian: Four Pawns",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "Bg7",
+            "e4",
+            "d6",
+            "f4"
+          ]
+        },
+        {
+          "name": "Nimzo-Indian",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nc3",
+            "Bb4"
+          ]
+        },
+        {
+          "name": "Nimzo-Indian: Rubinstein",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nc3",
+            "Bb4",
+            "e3",
+            "O-O"
+          ]
+        },
+        {
+          "name": "Queen's Indian",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nf3",
+            "b6"
+          ]
+        },
+        {
+          "name": "Queen's Gambit Declined",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "e6"
+          ]
+        },
+        {
+          "name": "QGD: Orthodox",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "e6",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "QGD: Exchange",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "e6",
+            "Nc3",
+            "Nf6",
+            "cxd5",
+            "exd5"
+          ]
+        },
+        {
+          "name": "Slav Defence",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "c6",
+            "Nf3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Semi-Slav",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "c6",
+            "Nf3",
+            "Nf6",
+            "Nc3",
+            "e6"
+          ]
+        },
+        {
+          "name": "Catalan Opening",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nf3",
+            "d5",
+            "g3"
+          ]
+        },
+        {
+          "name": "Gruenfeld Defence",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "d5"
+          ]
+        },
+        {
+          "name": "Gruenfeld: Exchange",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "d5",
+            "cxd5",
+            "Nxd5"
+          ]
+        },
+        {
+          "name": "Benoni Defence",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "c5",
+            "d5",
+            "e6"
+          ]
+        },
+        {
+          "name": "Benko Gambit",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "c5",
+            "d5",
+            "b5"
+          ]
+        },
+        {
+          "name": "Dutch Defence",
+          "moves": [
+            "d4",
+            "f5",
+            "g3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "London System",
+          "moves": [
+            "d4",
+            "d5",
+            "Nf3",
+            "Nf6",
+            "Bf4",
+            "e6"
+          ]
+        },
+        {
+          "name": "Trompowsky Attack",
+          "moves": [
+            "d4",
+            "Nf6",
+            "Bg5",
+            "e6"
+          ]
+        },
+        {
+          "name": "English: Symmetrical",
+          "moves": [
+            "c4",
+            "c5",
+            "Nc3",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "English: Reversed Sicilian",
+          "moves": [
+            "c4",
+            "e5",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "English: Four Knights",
+          "moves": [
+            "c4",
+            "e5",
+            "Nc3",
+            "Nf6",
+            "Nf3",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "English: King's Indian",
+          "moves": [
+            "c4",
+            "g6",
+            "Nc3",
+            "Bg7"
+          ]
+        },
+        {
+          "name": "Reti Opening",
+          "moves": [
+            "Nf3",
+            "d5",
+            "c4",
+            "e6"
+          ]
+        },
+        {
+          "name": "Reti: King's Indian",
+          "moves": [
+            "Nf3",
+            "Nf6",
+            "c4",
+            "g6"
+          ]
+        },
+        {
+          "name": "Vienna Game",
+          "moves": [
+            "e4",
+            "e5",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Vienna Gambit",
+          "moves": [
+            "e4",
+            "e5",
+            "Nc3",
+            "Nf6",
+            "f4",
+            "d5"
+          ]
+        },
+        {
+          "name": "King's Gambit Accepted",
+          "moves": [
+            "e4",
+            "e5",
+            "f4",
+            "exf4",
+            "Nf3",
+            "d5"
+          ]
+        },
+        {
+          "name": "Bishop's Opening",
+          "moves": [
+            "e4",
+            "e5",
+            "Bc4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Bishop's: Berlin",
+          "moves": [
+            "e4",
+            "e5",
+            "Bc4",
+            "Nf6",
+            "d3",
+            "c6"
+          ]
+        },
+        {
+          "name": "Center Game",
+          "moves": [
+            "e4",
+            "e5",
+            "d4",
+            "exd4",
+            "Qxd4",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "Danish Gambit",
+          "moves": [
+            "e4",
+            "e5",
+            "d4",
+            "exd4",
+            "c3",
+            "dxc3"
+          ]
+        },
+        {
+          "name": "Ponziani Opening",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "c3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Italian: Greco",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "b4",
+            "Bb6"
+          ]
+        },
+        {
+          "name": "Two Knights: quiet",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Nf6",
+            "d3",
+            "Be7"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Bird",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "Nd4"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Cozio",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "Nge7"
+          ]
+        },
+        {
+          "name": "Sicilian: Nimzowitsch",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nf6",
+            "e5",
+            "Nd5"
+          ]
+        },
+        {
+          "name": "Sicilian: Four Knights",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "French: King's Indian",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nd2",
+            "c5"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Modern",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "Nd2",
+            "dxe4",
+            "Nxe4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Pirc: Classical",
+          "moves": [
+            "e4",
+            "d6",
+            "d4",
+            "Nf6",
+            "Nc3",
+            "g6",
+            "Nf3",
+            "Bg7"
+          ]
+        },
+        {
+          "name": "King's Indian: Saemisch",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "Bg7",
+            "e4",
+            "d6",
+            "f3"
+          ]
+        },
+        {
+          "name": "Nimzo: Leningrad",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nc3",
+            "Bb4",
+            "Bg5",
+            "h6"
+          ]
+        },
+        {
+          "name": "Queen's Indian: Classical",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nf3",
+            "b6",
+            "g3",
+            "Bb7"
+          ]
+        },
+        {
+          "name": "QGD: Tartakower",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "e6",
+            "Nc3",
+            "Nf6",
+            "Bg5",
+            "Be7"
+          ]
+        },
+        {
+          "name": "Slav: main line",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "c6",
+            "Nf3",
+            "Nf6",
+            "Nc3",
+            "dxc4"
+          ]
+        },
+        {
+          "name": "Catalan: Closed",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "g3",
+            "d5",
+            "Bg2",
+            "Be7"
+          ]
+        },
+        {
+          "name": "English: Symmetrical Four Knights",
+          "moves": [
+            "c4",
+            "c5",
+            "Nc3",
+            "Nc6",
+            "Nf3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "English: Botvinnik",
+          "moves": [
+            "c4",
+            "e5",
+            "Nc3",
+            "Nc6",
+            "g3",
+            "g6"
+          ]
+        },
+        {
+          "name": "Bird Opening",
+          "moves": [
+            "f4",
+            "d5",
+            "Nf3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Trompowsky: main",
+          "moves": [
+            "d4",
+            "Nf6",
+            "Bg5",
+            "Ne4"
+          ]
+        },
+        {
+          "name": "London: early e3",
+          "moves": [
+            "d4",
+            "d5",
+            "Nf3",
+            "Nf6",
+            "e3",
+            "e6"
+          ]
+        }
+      ]
+    },
+    "dev-1": {
+      "description": "Testnet/devnet book. Deliberately identical to v1 so a game practised on testnet replays on mainnet.",
+      "lines": [
+        {
+          "name": "Italian Game: Giuoco Piano",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5"
+          ]
+        },
+        {
+          "name": "Italian Game: Two Knights",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Italian Game: Evans Gambit",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "b4"
+          ]
+        },
+        {
+          "name": "Italian Game: Hungarian",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Be7"
+          ]
+        },
+        {
+          "name": "Italian Game: quiet d3",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "d3",
+            "d6"
+          ]
+        },
+        {
+          "name": "Italian Game: quiet c3",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "c3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Italian Game: classical d3",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "d3",
+            "Nf6",
+            "c3",
+            "d6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Morphy",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "a6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Berlin",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Steinitz",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "d6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Classical",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "Bc5"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Exchange",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "a6",
+            "Bxc6",
+            "dxc6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Closed",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "a6",
+            "Ba4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Breyer",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "a6",
+            "Ba4",
+            "Nf6",
+            "O-O",
+            "Be7"
+          ]
+        },
+        {
+          "name": "Scotch Game",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "exd4"
+          ]
+        },
+        {
+          "name": "Scotch Game: Mieses",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "exd4",
+            "Nxd4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Scotch Four Knights",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Nc3",
+            "Nf6",
+            "d4",
+            "exd4"
+          ]
+        },
+        {
+          "name": "Four Knights Game",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Four Knights: Spanish",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Nc3",
+            "Nf6",
+            "Bb5",
+            "Bb4"
+          ]
+        },
+        {
+          "name": "Petrov Defence",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Petrov: Classical",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nf6",
+            "Nxe5",
+            "d6"
+          ]
+        },
+        {
+          "name": "Petrov: Steinitz",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nf6",
+            "d4",
+            "Nxe4"
+          ]
+        },
+        {
+          "name": "Philidor Defence",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "d6",
+            "d4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Philidor: Exchange",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "d6",
+            "d4",
+            "exd4",
+            "Nxd4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Sicilian: Najdorf",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "a6"
+          ]
+        },
+        {
+          "name": "Sicilian: Dragon",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "g6"
+          ]
+        },
+        {
+          "name": "Sicilian: Classical",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "Sicilian: Scheveningen",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "e6"
+          ]
+        },
+        {
+          "name": "Sicilian: Accelerated Dragon",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "g6"
+          ]
+        },
+        {
+          "name": "Sicilian: Sveshnikov",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6",
+            "Nc3",
+            "e5"
+          ]
+        },
+        {
+          "name": "Sicilian: Taimanov",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "e6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "Sicilian: Kan",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "e6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "a6"
+          ]
+        },
+        {
+          "name": "Sicilian: Rossolimo",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "g6"
+          ]
+        },
+        {
+          "name": "Sicilian: Moscow",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "d6",
+            "Bb5+",
+            "Bd7"
+          ]
+        },
+        {
+          "name": "Sicilian: Alapin",
+          "moves": [
+            "e4",
+            "c5",
+            "c3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Sicilian: Closed",
+          "moves": [
+            "e4",
+            "c5",
+            "Nc3",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "French: Classical",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "French: Winawer",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nc3",
+            "Bb4"
+          ]
+        },
+        {
+          "name": "French: Tarrasch",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nd2",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "French: Advance",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "e5",
+            "c5"
+          ]
+        },
+        {
+          "name": "French: Exchange",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "exd5",
+            "exd5"
+          ]
+        },
+        {
+          "name": "French: Rubinstein",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nc3",
+            "dxe4",
+            "Nxe4",
+            "Nd7"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Classical",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "Nc3",
+            "dxe4",
+            "Nxe4",
+            "Bf5"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Advance",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "e5",
+            "Bf5"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Exchange",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "exd5",
+            "cxd5"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Panov",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "exd5",
+            "cxd5",
+            "c4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Two Knights",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "Nc3",
+            "dxe4",
+            "Nxe4",
+            "Nd7"
+          ]
+        },
+        {
+          "name": "Scandinavian Defence",
+          "moves": [
+            "e4",
+            "d5",
+            "exd5",
+            "Qxd5"
+          ]
+        },
+        {
+          "name": "Scandinavian: main line",
+          "moves": [
+            "e4",
+            "d5",
+            "exd5",
+            "Qxd5",
+            "Nc3",
+            "Qa5"
+          ]
+        },
+        {
+          "name": "Alekhine: Modern",
+          "moves": [
+            "e4",
+            "Nf6",
+            "e5",
+            "Nd5"
+          ]
+        },
+        {
+          "name": "Alekhine: Four Pawns",
+          "moves": [
+            "e4",
+            "Nf6",
+            "e5",
+            "Nd5",
+            "d4",
+            "d6"
+          ]
+        },
+        {
+          "name": "Alekhine: Exchange",
+          "moves": [
+            "e4",
+            "Nf6",
+            "e5",
+            "Nd5",
+            "c4",
+            "Nb6"
+          ]
+        },
+        {
+          "name": "Pirc Defence",
+          "moves": [
+            "e4",
+            "d6",
+            "d4",
+            "Nf6",
+            "Nc3",
+            "g6"
+          ]
+        },
+        {
+          "name": "Pirc: Austrian Attack",
+          "moves": [
+            "e4",
+            "d6",
+            "d4",
+            "Nf6",
+            "Nc3",
+            "g6",
+            "Be3",
+            "Bg7"
+          ]
+        },
+        {
+          "name": "Modern Defence",
+          "moves": [
+            "e4",
+            "g6",
+            "d4",
+            "Bg7"
+          ]
+        },
+        {
+          "name": "Modern: Averbakh",
+          "moves": [
+            "e4",
+            "g6",
+            "d4",
+            "Bg7",
+            "Nc3",
+            "d6"
+          ]
+        },
+        {
+          "name": "King's Indian: Classical",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "Bg7",
+            "e4",
+            "d6"
+          ]
+        },
+        {
+          "name": "King's Indian: Fianchetto",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nf3",
+            "Bg7",
+            "g3",
+            "d6"
+          ]
+        },
+        {
+          "name": "King's Indian: Four Pawns",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "Bg7",
+            "e4",
+            "d6",
+            "f4"
+          ]
+        },
+        {
+          "name": "Nimzo-Indian",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nc3",
+            "Bb4"
+          ]
+        },
+        {
+          "name": "Nimzo-Indian: Rubinstein",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nc3",
+            "Bb4",
+            "e3",
+            "O-O"
+          ]
+        },
+        {
+          "name": "Queen's Indian",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nf3",
+            "b6"
+          ]
+        },
+        {
+          "name": "Queen's Gambit Declined",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "e6"
+          ]
+        },
+        {
+          "name": "QGD: Orthodox",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "e6",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "QGD: Exchange",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "e6",
+            "Nc3",
+            "Nf6",
+            "cxd5",
+            "exd5"
+          ]
+        },
+        {
+          "name": "Slav Defence",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "c6",
+            "Nf3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Semi-Slav",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "c6",
+            "Nf3",
+            "Nf6",
+            "Nc3",
+            "e6"
+          ]
+        },
+        {
+          "name": "Catalan Opening",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nf3",
+            "d5",
+            "g3"
+          ]
+        },
+        {
+          "name": "Gruenfeld Defence",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "d5"
+          ]
+        },
+        {
+          "name": "Gruenfeld: Exchange",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "d5",
+            "cxd5",
+            "Nxd5"
+          ]
+        },
+        {
+          "name": "Benoni Defence",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "c5",
+            "d5",
+            "e6"
+          ]
+        },
+        {
+          "name": "Benko Gambit",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "c5",
+            "d5",
+            "b5"
+          ]
+        },
+        {
+          "name": "Dutch Defence",
+          "moves": [
+            "d4",
+            "f5",
+            "g3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "London System",
+          "moves": [
+            "d4",
+            "d5",
+            "Nf3",
+            "Nf6",
+            "Bf4",
+            "e6"
+          ]
+        },
+        {
+          "name": "Trompowsky Attack",
+          "moves": [
+            "d4",
+            "Nf6",
+            "Bg5",
+            "e6"
+          ]
+        },
+        {
+          "name": "English: Symmetrical",
+          "moves": [
+            "c4",
+            "c5",
+            "Nc3",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "English: Reversed Sicilian",
+          "moves": [
+            "c4",
+            "e5",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "English: Four Knights",
+          "moves": [
+            "c4",
+            "e5",
+            "Nc3",
+            "Nf6",
+            "Nf3",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "English: King's Indian",
+          "moves": [
+            "c4",
+            "g6",
+            "Nc3",
+            "Bg7"
+          ]
+        },
+        {
+          "name": "Reti Opening",
+          "moves": [
+            "Nf3",
+            "d5",
+            "c4",
+            "e6"
+          ]
+        },
+        {
+          "name": "Reti: King's Indian",
+          "moves": [
+            "Nf3",
+            "Nf6",
+            "c4",
+            "g6"
+          ]
+        },
+        {
+          "name": "Vienna Game",
+          "moves": [
+            "e4",
+            "e5",
+            "Nc3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Vienna Gambit",
+          "moves": [
+            "e4",
+            "e5",
+            "Nc3",
+            "Nf6",
+            "f4",
+            "d5"
+          ]
+        },
+        {
+          "name": "King's Gambit Accepted",
+          "moves": [
+            "e4",
+            "e5",
+            "f4",
+            "exf4",
+            "Nf3",
+            "d5"
+          ]
+        },
+        {
+          "name": "Bishop's Opening",
+          "moves": [
+            "e4",
+            "e5",
+            "Bc4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Bishop's: Berlin",
+          "moves": [
+            "e4",
+            "e5",
+            "Bc4",
+            "Nf6",
+            "d3",
+            "c6"
+          ]
+        },
+        {
+          "name": "Center Game",
+          "moves": [
+            "e4",
+            "e5",
+            "d4",
+            "exd4",
+            "Qxd4",
+            "Nc6"
+          ]
+        },
+        {
+          "name": "Danish Gambit",
+          "moves": [
+            "e4",
+            "e5",
+            "d4",
+            "exd4",
+            "c3",
+            "dxc3"
+          ]
+        },
+        {
+          "name": "Ponziani Opening",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "c3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Italian: Greco",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Bc5",
+            "b4",
+            "Bb6"
+          ]
+        },
+        {
+          "name": "Two Knights: quiet",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bc4",
+            "Nf6",
+            "d3",
+            "Be7"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Bird",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "Nd4"
+          ]
+        },
+        {
+          "name": "Ruy Lopez: Cozio",
+          "moves": [
+            "e4",
+            "e5",
+            "Nf3",
+            "Nc6",
+            "Bb5",
+            "Nge7"
+          ]
+        },
+        {
+          "name": "Sicilian: Nimzowitsch",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nf6",
+            "e5",
+            "Nd5"
+          ]
+        },
+        {
+          "name": "Sicilian: Four Knights",
+          "moves": [
+            "e4",
+            "c5",
+            "Nf3",
+            "Nc6",
+            "d4",
+            "cxd4",
+            "Nxd4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "French: King's Indian",
+          "moves": [
+            "e4",
+            "e6",
+            "d4",
+            "d5",
+            "Nd2",
+            "c5"
+          ]
+        },
+        {
+          "name": "Caro-Kann: Modern",
+          "moves": [
+            "e4",
+            "c6",
+            "d4",
+            "d5",
+            "Nd2",
+            "dxe4",
+            "Nxe4",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Pirc: Classical",
+          "moves": [
+            "e4",
+            "d6",
+            "d4",
+            "Nf6",
+            "Nc3",
+            "g6",
+            "Nf3",
+            "Bg7"
+          ]
+        },
+        {
+          "name": "King's Indian: Saemisch",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "g6",
+            "Nc3",
+            "Bg7",
+            "e4",
+            "d6",
+            "f3"
+          ]
+        },
+        {
+          "name": "Nimzo: Leningrad",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nc3",
+            "Bb4",
+            "Bg5",
+            "h6"
+          ]
+        },
+        {
+          "name": "Queen's Indian: Classical",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "Nf3",
+            "b6",
+            "g3",
+            "Bb7"
+          ]
+        },
+        {
+          "name": "QGD: Tartakower",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "e6",
+            "Nc3",
+            "Nf6",
+            "Bg5",
+            "Be7"
+          ]
+        },
+        {
+          "name": "Slav: main line",
+          "moves": [
+            "d4",
+            "d5",
+            "c4",
+            "c6",
+            "Nf3",
+            "Nf6",
+            "Nc3",
+            "dxc4"
+          ]
+        },
+        {
+          "name": "Catalan: Closed",
+          "moves": [
+            "d4",
+            "Nf6",
+            "c4",
+            "e6",
+            "g3",
+            "d5",
+            "Bg2",
+            "Be7"
+          ]
+        },
+        {
+          "name": "English: Symmetrical Four Knights",
+          "moves": [
+            "c4",
+            "c5",
+            "Nc3",
+            "Nc6",
+            "Nf3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "English: Botvinnik",
+          "moves": [
+            "c4",
+            "e5",
+            "Nc3",
+            "Nc6",
+            "g3",
+            "g6"
+          ]
+        },
+        {
+          "name": "Bird Opening",
+          "moves": [
+            "f4",
+            "d5",
+            "Nf3",
+            "Nf6"
+          ]
+        },
+        {
+          "name": "Trompowsky: main",
+          "moves": [
+            "d4",
+            "Nf6",
+            "Bg5",
+            "Ne4"
+          ]
+        },
+        {
+          "name": "London: early e3",
+          "moves": [
+            "d4",
+            "d5",
+            "Nf3",
+            "Nf6",
+            "e3",
+            "e6"
+          ]
+        }
+      ]
+    }
+  }
+}
