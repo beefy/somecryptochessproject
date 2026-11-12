@@ -6,7 +6,7 @@ PYTEST_ARGS ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help venv install test test-all cov cov-gate lint format typecheck check lock dist release-check devnet clean
+.PHONY: help venv install test test-all cov cov-gate lint format typecheck check lock dist dist-check release-check devnet clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -64,6 +64,9 @@ release-check: venv  ## Verify pyproject/version.py/RELEASE_TAG agree
 
 dist: venv  ## Build sdist and wheel into dist/ (needs `build`)
 	$(PYTHON) -m build
+
+dist-check: dist  ## Validate dist/ with twine check --strict (needs `twine>=7`)
+	$(PYTHON) -m twine check --strict dist/*
 
 devnet: venv  ## Start an in-process devnet (lands with M5)
 	@echo "devnet is not implemented yet; see docs/IMPLEMENTATION_PLAN.md (M5)." >&2

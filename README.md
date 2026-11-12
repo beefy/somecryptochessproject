@@ -358,6 +358,7 @@ make check         # ruff check + format --check + mypy + pytest
 make test          # pytest (unit + property; mock engines only)
 make cov-gate      # crypto/ and serialization.py must stay >= 95% covered
 make test-all      # adds integration/e2e; skips if Stockfish is absent
+make dist-check    # build sdist+wheel and run `twine check --strict` (twine>=7)
 make devnet        # in-process node + relay + mock miners (lands with M5)
 ```
 
@@ -375,8 +376,9 @@ Publishing is automated by [`.github/workflows/publish.yml`](.github/workflows/p
    workflow refuses to publish if the two disagree or if the tag does not match.
 2. Run `make check`, commit, then tag `vX.Y.Z` and push the tag.
 3. Create a GitHub **release** for that tag. Publishing the release builds the
-   sdist and wheel, re-runs lint/typecheck/tests, runs `twine check --strict`,
-   smoke-tests the wheel in a clean venv, and uploads to PyPI with
+   sdist and wheel, re-runs lint/typecheck/tests, runs `twine check --strict`
+   (twine 7+ — current hatchling emits `Metadata-Version: 2.5`, which twine 6
+   cannot read), smoke-tests the wheel in a clean venv, and uploads to PyPI with
    [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) (OIDC — no
    API token is stored in the repository). Releases marked as pre-release are
    never uploaded to PyPI.
