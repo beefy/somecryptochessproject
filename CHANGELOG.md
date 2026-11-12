@@ -5,11 +5,11 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 summarised in the M0–M2 rows of the README roadmap.
 
-## [Unreleased]
+## [0.6.0] - 2026-11-12
 
-Timed relay sessions: every match now runs the fixed 30+0 control on the relay's
-own monotonic clock, with witness-signed receipts, automatic flags and an opt-in
-round scheduler.
+Timed relay sessions, completed: every match now runs the fixed 30+0 control on
+the relay's own monotonic clock, with witness-signed receipts, automatic flags
+and an opt-in round scheduler.
 
 ### Added
 
@@ -62,7 +62,9 @@ round scheduler.
 
 The next milestone, M5, is quality verification, challenges and the threat-model
 tests. The `book_version: v1` quality profile, the challenge lifecycle and
-`sccp.node.quality_sampler` are still to come.
+`sccp.node.quality_sampler` are still to come. What is left of the timed-session
+work is the on-chain claim transaction (plan section 5.7.1): the miner already
+builds and verifies the `TimeoutClaim` that transaction will carry.
 
 ## [0.5.1] - 2026-11-12
 
