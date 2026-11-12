@@ -380,8 +380,10 @@ sccp miner run --network testnet \
 docker compose up --build
 
 # Play a timed relay match yourself, by hand: solo mode builds the relay and one
-# mock miner in-process, so the clocks, receipts and auto-flag are the real ones
+# mock miner in-process, so the clocks, receipts and auto-flag are the real ones.
+# Solo is an off-chain protocol demo: no node, no proof, no block.
 python scripts/play_miner.py                     # you are white; SAN or UCI moves
+python scripts/play_miner.py --pgn-out game.pgn   # also keep the relay's PGN
 python scripts/play_miner.py --color black --engine stockfish-19 \
     --engine-path ./bin/stockfish-macos-universal
 # …or take a seat on a relay that is already serving, with your own keyfile
@@ -389,7 +391,8 @@ python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 
 # Export every game in a node's latest block as PGN, with a manifest.json.
 # The exporter reads the node API, so start `sccp node run` in another terminal
-# first; `--block` may name any other height or hash.
+# first; `--block` may name any other height or hash. It only sees proofs that
+# are already in a block, so a solo play_miner game cannot appear here.
 python scripts/export_block_games.py --node http://127.0.0.1:8645 --out ./games
 python scripts/export_block_games.py --block 42 --out ./games   # another block
 ```

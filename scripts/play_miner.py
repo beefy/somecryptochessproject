@@ -20,7 +20,9 @@ Two modes:
     **Solo.** An in-process relay and one real ``EngineMiner`` are built on the
     devnet parameters with deterministic demo keys, and you play the other seat
     through the relay's HTTP API using the same synchronous ASGI transport
-    ``sccp devnet up`` uses. No port is opened and nothing is written to disk.
+    ``sccp devnet up`` uses. No port is opened, nothing is written to disk, no
+    proof is announced to a node and no block is mined: this is an off-chain
+    protocol demo, not a miner on a running chain.
     The relay's service loop (clock sweeps plus engine polling) runs in a
     background thread, so the clocks really run: sit on your hands for thirty
     minutes and you are flagged, and the engine turns the relay's receipts into
@@ -41,6 +43,10 @@ for this match (``sccp.chess.openings``) and hands you the position after it, so
 the first thing this script prints is that line and the board it left. Every
 move it reports carries its move number (``3. e4``, ``3... Nd5``), which is the
 only way to tell a knight that came from f6 from one that cannot have moved.
+
+The finished game's PGN is printed at the end; ``--pgn-out FILE`` also writes it
+to disk. That is the relay's game record, not a win proof: it does not put the
+game on a chain and it will not appear in ``export_block_games.py``.
 """
 
 from __future__ import annotations
@@ -138,6 +144,7 @@ examples:
   python scripts/play_miner.py                          # solo, you are white
   python scripts/play_miner.py --color black            # solo, you are black
   python scripts/play_miner.py --engine stockfish-19 --engine-path ./bin/stockfish-19
+  python scripts/play_miner.py --pgn-out game.pgn        # keep the relay's PGN
   python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 """
 
@@ -170,6 +177,7 @@ class Options:
     poll_seconds: float = 0.25
     join_seconds: float = 30.0
     ascii: bool = False
+    pgn_out: Path | None = None
 
 
 class Quit(Exception):
@@ -402,6 +410,12 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
         action="store_true",
         help="Print the board as ASCII instead of Unicode.",
     )
+    parser.add_argument(
+        "--pgn-out",
+        type=Path,
+        metavar="FILE",
+        help="Write the finished game's PGN to FILE (the relay's record, not a proof).",
+    )
     namespace = parser.parse_args(argv)
     seed = str(namespace.seed).lower()
     if len(seed) != 64 or any(char not in "0123456789abcdef" for char in seed):
@@ -429,6 +443,7 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
         poll_seconds=namespace.poll_seconds,
         join_seconds=namespace.join_seconds,
         ascii=namespace.ascii,
+        pgn_out=namespace.pgn_out,
     )
 
 
@@ -795,6 +810,7 @@ class Game:
         self.out(f"clock    {_control_text(view.time_control)}")
         if self.stack is not None:
             self.out("relay    in-process, witness receipts, auto-flag on zero")
+            self.out("chain    off-chain demo: no proof announced, no block mined")
         if engine.startswith(MOCK_VERSION):
             self.out("engine   seeded random legal moves, not a real engine:")
             self.out("         --engine stockfish-19 --engine-path BINARY to play one")
@@ -995,7 +1011,22 @@ class Game:
             self.out("pgn:")
             for line in view.pgn.splitlines():
                 self.out(f"  {line}")
+            if self.options.pgn_out is not None and not self._save_pgn(view.pgn):
+                return 1
         return 0
+
+    def _save_pgn(self, pgn: str) -> bool:
+        """Write the relay's PGN; report and return ``False`` if it cannot."""
+        path = self.options.pgn_out
+        assert path is not None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(pgn, encoding="utf-8")
+        except OSError as exc:
+            self.out(f"error: cannot write {path}: {exc}")
+            return False
+        self.out(f"pgn file {path}")
+        return True
 
     def _settlement(self) -> str:
         """What the opponent miner did with the relay's clock evidence."""

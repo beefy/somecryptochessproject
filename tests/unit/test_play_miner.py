@@ -103,6 +103,8 @@ def test_parse_args_validates_the_seed_and_attached_mode(play: ModuleType) -> No
     assert options.color == "white"
     assert options.engine == "mock"
     assert options.seed == play.HUMAN_SEED
+    assert options.pgn_out is None
+    assert play._parse_args(["--pgn-out", "game.pgn"]).pgn_out == Path("game.pgn")
     with pytest.raises(SystemExit):
         play._parse_args(["--seed", "not-hex"])
     with pytest.raises(SystemExit):
@@ -198,10 +200,11 @@ def test_a_seed_picks_its_own_opening(play: ModuleType) -> None:
 
 
 def test_the_game_loop_plays_moves_and_reports(
-    play: ModuleType, monkeypatch: pytest.MonkeyPatch
+    play: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A whole game, headless: the loop joins, moves, waits, then reports."""
     lines: list[str] = []
+    pgn_file = tmp_path / "game.pgn"
     with _solo(play, clock_ms=lambda: 5_000_000, ascii=True) as table:
         table.start()
         ours: list[str] = []
@@ -215,21 +218,28 @@ def test_the_game_loop_plays_moves_and_reports(
 
         monkeypatch.setattr("builtins.input", answer)
         game = play.Game(
-            table.seat, stack=table, options=play.Options(ascii=True), out=lines.append
+            table.seat,
+            stack=table,
+            options=play.Options(ascii=True, pgn_out=pgn_file),
+            out=lines.append,
         )
         assert game.run() == 0
 
         view = table.seat.view()
         assert view.status == "finished"
         assert view.result is not None
+        assert view.pgn is not None
+        assert pgn_file.read_text(encoding="utf-8") == view.pgn
         bundle = table.seat.receipts()
         assert bundle is not None
         assert view.receipts == len(bundle.receipts)
         assert all(receipt.witnesses for receipt in bundle.receipts)
         assert any("joined as" in line for line in lines)
+        assert any(line.startswith("chain    off-chain demo") for line in lines)
         assert any(line.startswith("you played") for line in lines)
         assert any(line.startswith("opponent played") for line in lines)
         assert any(line.startswith("result ") for line in lines)
+        assert any(line == f"pgn file {pgn_file}" for line in lines)
         assert any(line == "=== finished ===" for line in lines)
 
 
