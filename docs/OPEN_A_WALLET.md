@@ -202,11 +202,12 @@ address by default; each supports `--json` with the fields above.
 
 ## 5. Check the balance and fund the wallet
 
-Balances live on the chain, not in the keyfile. This reads the node's chain
-database, so start the node or point `--data-dir` at its data first:
+Balances live on the chain, not in the keyfile. This reads the account from a node
+(the default is `http://127.0.0.1:8645`), so a running node is enough:
 
 ```bash
-sccp --data-dir ./data wallet balance --network testnet --key alice.key
+sccp wallet balance --network testnet --key alice.key \
+    --node http://127.0.0.1:8645
 ```
 
 ```text
@@ -220,11 +221,11 @@ sccpt1... 0.00000000 (spendable 0.00000000, bonded 0.00000000, immature 0.000000
 On `testnet` and `devnet` the genesis faucet can fund a fresh wallet:
 
 ```bash
-sccp --data-dir ./data faucet send --network testnet --to sccpt1... --amount 1000
+sccp faucet send --network testnet --to sccpt1... --amount 1000
 ```
 
-The faucet needs a running node and a chain database (see
-[`SEND_COINS.md`](SEND_COINS.md)).
+The faucet needs a running node: like `wallet send`, it reads the sender's balance
+and next nonce from `--node` (see [`SEND_COINS.md`](SEND_COINS.md)).
 
 ---
 

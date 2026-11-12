@@ -245,20 +245,21 @@ curl -sS "$SCCP_NODE/v1/status" | jq '{height, mempool}'
 Amounts from the HTTP API are integer **base units**, and
 `1 coin = 100,000,000` units. The example balance is 1,000 coins.
 
-If you run the node yourself and have its `chain.sqlite`, the CLI formats the
-same account:
+The CLI formats the same account, and asks a node for it, so this works from any
+machine against a hosted node:
 
 ```bash
-sccp --data-dir ./data wallet balance --network testnet \
-    --key ~/.sccp/testnet-alice.key
+sccp wallet balance --network testnet \
+    --key ~/.sccp/testnet-alice.key --node "$SCCP_NODE"
 ```
 
 ```text
 sccpt1qrvk... 1000.00000000 (spendable 1000.00000000, bonded 0.00000000, immature 0.00000000)
 ```
 
-`wallet balance` reads the local chain database. It cannot read a remote
-`SCCP_NODE`; use `/v1/accounts/{address}` for a hosted node.
+`wallet balance` reads `GET /v1/accounts/{address}` from `--node` (default
+`http://127.0.0.1:8645`) and falls back to `<data-dir>/chain.sqlite` only when no
+node answers. `--json` reports which one it used in the `source` field.
 
 
 ### Why a faucet transfer can stay pending
@@ -288,17 +289,14 @@ and the node log before assuming the faucet failed.
 
 ## 6. Alternative: operator CLI faucet
 
-`sccp faucet send` is the offline/operator path. It builds the same transfer from
-the published faucet key, but it needs a local chain database to read the
-faucet's nonce and balance, and it **bypasses the HTTP rate limits**:
+`sccp faucet send` is the operator path. It builds the same transfer from the
+published faucet key, reads the faucet's balance and next nonce from `--node`
+(falling back to `--data-dir` when that node does not answer), and it **bypasses
+the HTTP rate limits**:
 
 ```bash
-sccp --data-dir ./data faucet send --network testnet \
-    --to "$ADDRESS" --amount 1000
-
-# send to a different node than the default http://127.0.0.1:8645
-sccp --data-dir ./data faucet send --network testnet \
-    --to "$ADDRESS" --amount 1000 --node "$SCCP_NODE"
+sccp faucet send --network testnet --to "$ADDRESS" --amount 1000 \
+    --node "$SCCP_NODE"
 ```
 
 ```text
@@ -306,8 +304,9 @@ faucet sent 1000.00000000 to sccpt1qrvk...
 txid: 9a2b...
 ```
 
-Use this only when you operate the node and hold its data directory. It still
-only admits the transaction; inclusion follows the same proof-driven rule.
+Use this only when you operate the node: it spends from the faucet key with no
+rate limit. It still only admits the transaction; inclusion follows the same
+proof-driven rule.
 
 ---
 

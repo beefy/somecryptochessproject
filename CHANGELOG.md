@@ -9,28 +9,49 @@ not itemised here.
 
 ## [0.11.0] - 2026-11-12
 
-A minor release: the wallet now answers in coins. `wallet send` and
-`wallet balance` print amounts in coins rather than base units, so a refused
-transfer reads as the amount you typed, and both commands name the one cause they
-cannot see for themselves -- a `--data-dir` holding a chain with no blocks, whose
-balances are all zero however much the node reports.
+A minor release: the wallet reads the account it spends from out of `--node`, so
+`wallet send`, `wallet balance` and `faucet send` work against a remote testnet
+with nothing synced and no local chain, and every refusal names the account view
+it judged. Amounts are printed in coins rather than base units, so a refused
+transfer reads as the amount you typed.
+
+### Added
+
+- `wallet send`, `wallet balance` and `faucet send` read the spendable balance and
+  the next nonce from `GET /v1/accounts/{address}` on `--node` (default
+  `http://127.0.0.1:8645`). That is the node that will judge the transaction, so
+  signing against its answer is the only way the two agree, and it means none of
+  the three commands needs a local `chain.sqlite` or a sync. A `--node` named
+  explicitly is fatal when it cannot be read; the default one is not, because
+  `--data-dir` is still the fallback for building a transfer offline.
+- `wallet balance --node`: the balance command accepts a node URL, so the same
+  numbers a transfer would spend from are the ones it prints.
+- `source` in `wallet balance --json` and `wallet send --json`: the node URL the
+  account was read from, or the `chain.sqlite` path used instead.
+- `WalletService.from_account_view()` builds a wallet over a single account
+  exactly as a node reported it, refusing a document whose `network` or `address`
+  is not the one being spent on -- which is what catches a `--node` that serves
+  another chain. `WalletService.source` records where its state came from and the
+  spendable-balance refusal quotes it.
 
 ### Changed
 
 - `wallet send` and `wallet balance` print amounts in coins, not base units: a
   refused `--amount 12` now reads `has 0.00000000 spendable, the transfer needs
-  12.00001000 (12.00000000 plus a 0.00001000 fee)` instead of the bare
-  `1200001000`, and a fee below the floor says "base units" so the two units a
-  single command mixes are not confused. `--bond` failures are quoted in coins
-  too (`sccp.config.format_coins` is now the one formatter the CLI and the
-  wallet share).
+  12.00001000 (12.00000000 plus a 0.00001000 fee); this balance came from the
+  node at http://127.0.0.1:8645` instead of the bare `1200001000`, and a fee below
+  the floor says "base units" so the two units a single command mixes are not
+  confused. `--bond` failures are quoted in coins too (`sccp.config.format_coins`
+  is now the one formatter the CLI and the wallet share).
 - When the empty balance behind a refusal or a `wallet balance` reading was read
   from a `chain.sqlite` that holds only its genesis block, both commands print a
-  note on stderr: that database knows no other balances, a node serving another
-  chain keeps its blocks in its own data directory, and a copy taken while the
-  node runs also needs `chain.sqlite-wal` (a copy of `chain.sqlite` alone opens
-  at height 0 while the node reports a full chain). See
-  [`docs/SEND_COINS.md`](docs/SEND_COINS.md).
+  note on stderr: no node answered, that database knows no other balances, and
+  passing the URL of the node that holds the coins as `--node` is the fix (a copy
+  taken while the node runs also needs `chain.sqlite-wal`, since a copy of
+  `chain.sqlite` alone opens at height 0). See
+  [`docs/SEND_COINS.md`](docs/SEND_COINS.md), which also documents the case of two
+  chains started from the same genesis, where both sides look the same to a wallet
+  but only one holds the coins.
 
 ## [0.10.0] - 2026-11-12
 

@@ -315,15 +315,109 @@ def _warn_empty_chain(path: Path) -> None:
 
     A genesis-only database is valid and opens cleanly, so nothing else about it
     looks wrong: the wallet reports every balance as zero while the node the
-    user is watching reports real coins. Say why, and how to fix it.
+    user is watching reports real coins. Say why, and how to fix it. This is only
+    reachable when no node answered, because a node is asked first.
     """
     typer.secho(
-        f"note: {path} holds only the genesis block, so it knows no other balances. "
-        "A node that serves another chain keeps its blocks in its own data directory: "
-        f"pass that one as --data-dir (a copy taken while the node runs also needs "
-        f"{path.name}-wal).",
+        f"note: {path} holds only the genesis block, so it knows no other balances, and "
+        f"no node answered with one. Start the node that holds the coins and pass its "
+        f"URL as --node: the wallet reads balances and nonces from that node, and "
+        f"--data-dir is only the fallback for building a transfer offline.",
         err=True,
     )
+
+
+NODE_READ_TIMEOUT = 5.0
+"""Seconds a wallet command waits for one account read from a node."""
+
+
+@dataclass(frozen=True, slots=True)
+class _AccountSource:
+    """The account a wallet command will spend from, and where it was read."""
+
+    service: WalletService
+    origin: str
+    """The node URL, or the ``chain.sqlite`` path, the numbers came from."""
+    chain_height: int | None = None
+    """The local chain's tip height, or ``None`` when a node answered."""
+
+
+def _node_account(node: str, address: str) -> Mapping[str, object] | None:
+    """One account as ``node`` reports it, or ``None`` when it cannot answer.
+
+    A wallet command reads the account from a node before falling back, so a
+    node that is down must not look like a node that holds nothing.
+    """
+    client = NodeClient(node, timeout=NODE_READ_TIMEOUT, retries=1)
+    try:
+        return client.account(address)
+    except (SccpError, ValueError):
+        return None
+    finally:
+        client.close()
+
+
+def _node_wallet(
+    params: NetworkParams,
+    document: Mapping[str, object],
+    url: str,
+    *,
+    explicit: bool,
+) -> WalletService | None:
+    """A wallet built from a node's account document, or ``None`` to fall back.
+
+    A node serving another network is a mistake worth stopping for when the user
+    named it with ``--node``, and a reason to use ``--data-dir`` when the URL was
+    only the default.
+    """
+    try:
+        return WalletService.from_account_view(params, document, source=f"the node at {url}")
+    except WalletServiceError as exc:
+        if explicit:
+            _fail(str(exc))
+        return None
+
+
+@contextmanager
+def _account_source(
+    ctx: typer.Context,
+    params: NetworkParams,
+    address: str,
+    node: str | None,
+) -> Iterator[_AccountSource]:
+    """Read ``address`` from the node in ``--node`` when it answers, else locally.
+
+    Whoever builds a transfer signs against one balance and one nonce, and a node
+    checks them against its own chain: reading them from that node is the only
+    way the two agree. Doing so also means a wallet on testnet needs no chain
+    database and no sync. ``--data-dir`` stays as the fallback, so a transfer can
+    still be built offline.
+    """
+    url = node or DEFAULT_NODE_URL
+    document = _node_account(url, address)
+    if document is not None:
+        wallet = _node_wallet(params, document, url, explicit=node is not None)
+        if wallet is not None:
+            yield _AccountSource(service=wallet, origin=url)
+            return
+    if node is not None:
+        _fail(
+            f"cannot read {address} from the node at {node}: it did not answer. Pass the "
+            f"URL of the node that serves the chain you are spending on, or drop --node "
+            f"and pass --data-dir with that chain's database"
+        )
+    with _local_node(ctx, params.network_id) as local:
+        path = _options(ctx).data_dir / "chain.sqlite"
+        yield _AccountSource(
+            service=WalletService(
+                params,
+                local.chain.state,
+                chain=local.chain,
+                source=f"the local chain in {path}",
+            ),
+            origin=str(path),
+            chain_height=local.height,
+        )
 
 
 def _submit_transaction(node: str, tx: Transaction) -> Mapping[str, object]:
@@ -467,22 +561,22 @@ def wallet_import_mnemonic(
 def wallet_balance(
     ctx: typer.Context,
     key: Annotated[Path, typer.Option("--key", help="Keyfile whose address to inspect.")],
+    node: Annotated[
+        str | None,
+        typer.Option("--node", help="Node to read the balance from, when it answers."),
+    ] = None,
     network: Annotated[
         str | None,
         typer.Option("--network", help="Require the keyfile to belong to this network."),
     ] = None,
 ) -> None:
-    """Print spendable, immature and bonded balances from the local chain."""
+    """Print spendable, immature and bonded balances for the keyfile's address."""
     header = _run(lambda: read_header(key))
     _check_network(ctx, network, header.network)
     params = _resolve_network(ctx, network)
-    with _local_node(ctx, params.network_id) as service:
-        balance = _run(
-            lambda: WalletService(params, service.chain.state, chain=service.chain).balance(
-                header.address
-            )
-        )
-        empty_chain = service.height == 0 and balance.total == 0
+    with _account_source(ctx, params, header.address, node) as accounts:
+        balance = _run(lambda: accounts.service.balance(header.address))
+        empty_chain = accounts.chain_height == 0 and balance.total == 0
     if empty_chain:
         _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
     payload = {
@@ -492,6 +586,7 @@ def wallet_balance(
         "immature": balance.immature,
         "bonded": balance.bonded,
         "total": balance.total,
+        "source": accounts.origin,
     }
     if _options(ctx).json_output:
         _echo_json(payload)
@@ -511,7 +606,10 @@ def wallet_send(
     amount: Annotated[int, typer.Option("--amount", help="Amount to send, in whole coins.")],
     node: Annotated[
         str | None,
-        typer.Option("--node", help="Node base URL that receives the transaction."),
+        typer.Option(
+            "--node",
+            help="Node that reports your balance and nonce and receives the transfer.",
+        ),
     ] = None,
     fee: Annotated[
         int | None,
@@ -522,18 +620,19 @@ def wallet_send(
         typer.Option("--network", help="Require the keyfile to belong to this network."),
     ] = None,
 ) -> None:
-    """Sign a transfer against the local chain and submit it to a node."""
+    """Sign a transfer against the node's account view and submit it to that node."""
     header = _run(lambda: read_header(key))
     _check_network(ctx, network, header.network)
     params = _resolve_network(ctx, network)
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
-    with _local_node(ctx, params.network_id) as service:
-        wallet_service = WalletService(params, service.chain.state, chain=service.chain)
+    with _account_source(ctx, params, header.address, node) as accounts:
         try:
-            tx = wallet_service.build_transfer(wallet.keypair, to, coins_to_units(amount), fee=fee)
+            tx = accounts.service.build_transfer(
+                wallet.keypair, to, coins_to_units(amount), fee=fee
+            )
         except WalletServiceError as exc:
-            if service.height == 0:
+            if accounts.chain_height == 0:
                 _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
             _fail(str(exc))
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
@@ -547,6 +646,7 @@ def wallet_send(
         "fee": int(tx.fee),
         "nonce": tx.nonce,
         "accepted": receipt.get("accepted"),
+        "source": accounts.origin,
     }
     if _options(ctx).json_output:
         _echo_json(payload)
@@ -1478,7 +1578,10 @@ def faucet_send(
     amount: Annotated[int, typer.Option("--amount", help="Amount to send, in whole coins.")] = 1000,
     node: Annotated[
         str | None,
-        typer.Option("--node", help="Node base URL that receives the transaction."),
+        typer.Option(
+            "--node",
+            help="Node that reports the faucet's balance and nonce and receives the transfer.",
+        ),
     ] = None,
     network: Annotated[
         str | None,
@@ -1489,20 +1592,23 @@ def faucet_send(
     params = _resolve_network(ctx, network)
     _require_test_network(params)
     keypair = _run(lambda: faucet_keypair(params.network_id))
-    with _local_node(ctx, params.network_id) as service:
-        tx = _run(
-            lambda: WalletService(params, service.chain.state, chain=service.chain).build_transfer(
-                keypair, to, coins_to_units(amount)
-            )
-        )
+    sender = encode_address(keypair.public_key_bytes, params)
+    with _account_source(ctx, params, sender, node) as accounts:
+        try:
+            tx = _run(lambda: accounts.service.build_transfer(keypair, to, coins_to_units(amount)))
+        except WalletServiceError as exc:
+            if accounts.chain_height == 0:
+                _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
+            _fail(str(exc))
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
     payload = {
         "txid": txid(tx),
         "network": params.network_id,
-        "from": encode_address(keypair.public_key_bytes, params),
+        "from": sender,
         "to": to,
         "amount": coins_to_units(amount),
         "accepted": receipt.get("accepted"),
+        "source": accounts.origin,
     }
     if _options(ctx).json_output:
         _echo_json(payload)

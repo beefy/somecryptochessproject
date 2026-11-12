@@ -373,9 +373,12 @@ sccp --data-dir ./data chain blocks --limit 5 --network testnet
 sccp --data-dir ./data chain account sccpt1... --network testnet
 sccp --data-dir ./data chain verify --network testnet
 
-# Send testnet coins from the public faucet, then check a balance
-sccp --data-dir ./data faucet send --network testnet --to sccpt1... --amount 1000
-sccp --data-dir ./data wallet balance --network testnet --key alice.key
+# Fund this wallet from the public faucet and check its balance. Both read the
+# account from the node: no sync and no --data-dir needed.
+sccp faucet send --network testnet --to sccpt1... --amount 1000
+sccp wallet balance --network testnet --key alice.key
+
+# history walks the adopted chain, so it still reads the data directory
 sccp --data-dir ./data wallet history --network testnet --key alice.key
 
 # Register the wallet as a miner and commit availability for the epoch ahead
@@ -710,7 +713,8 @@ the requested height and that two runs produce the same tip hash.
 The CLI is the whole operator surface: `node run` serves the API and
 pull-syncs from `--peer` URLs at startup, `miner run` is the unattended loop
 (with `--iterations` for scripted runs), `miner register|availability|reveal`
-sign the on-chain lifecycle, `wallet balance|send|history` and
+sign the on-chain lifecycle, `wallet balance|send` ask `--node` for the account
+(falling back to `--data-dir`), `wallet history` and
 `chain info|blocks|account|verify` read the ledger in `--data-dir`, and
 `faucet send` is the public test faucet. Every command takes `--json` and is a
 thin wrapper over a library call, so the same behaviour is exercised in-process.

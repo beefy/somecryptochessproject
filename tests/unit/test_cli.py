@@ -16,6 +16,7 @@ from sccp.cli import PASSPHRASE_ENV, app
 from sccp.config import DEVNET, UNITS_PER_COIN
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import keypair_from_seed
+from sccp.errors import RelayError
 from sccp.protocol.transcript import (
     build_win_proof,
     create_result,
@@ -457,12 +458,24 @@ def faucet_key(tmp_path: Path, passphrase: str) -> Path:
 
 
 class _RecordingNode:
-    """Stand-in for ``NodeClient`` that records what the CLI would submit."""
+    """Stand-in for ``NodeClient`` that records what the CLI would submit.
+
+    ``accounts`` models ``GET /v1/accounts/{address}``. An address that is not
+    registered raises, which is what a node that is not running does: the command
+    then falls back to ``--data-dir``.
+    """
 
     submitted: ClassVar[list[Any]] = []
+    accounts: ClassVar[dict[str, dict[str, object]]] = {}
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str = "", **_: Any) -> None:
         self.url = url
+
+    def account(self, address: str) -> dict[str, object]:
+        try:
+            return _RecordingNode.accounts[address]
+        except KeyError:
+            raise RelayError(f"cannot reach {self.url}: no account for {address}") from None
 
     def submit_transaction(self, tx: Any) -> dict[str, object]:
         _RecordingNode.submitted.append(tx)
@@ -484,8 +497,34 @@ def recorded_node(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     import sccp.cli as cli
 
     _RecordingNode.submitted = []
+    _RecordingNode.accounts = {}
     monkeypatch.setattr(cli, "NodeClient", _RecordingNode)
     return _RecordingNode.submitted
+
+
+@pytest.fixture()
+def node_accounts(recorded_node: list[Any]) -> dict[str, dict[str, object]]:
+    """The accounts the stand-in node answers ``/v1/accounts`` with."""
+    assert recorded_node == []
+    return _RecordingNode.accounts
+
+
+def account_document(address: str, *, spendable: int, nonce: int) -> dict[str, object]:
+    """The document ``GET /v1/accounts/{address}`` returns for a funded account."""
+    return {
+        "network": DEVNET.network_id,
+        "address": address,
+        "balance": spendable,
+        "immature": 0,
+        "bonded": 0,
+        "total": spendable,
+        "nonce": nonce,
+        "registered_until_epoch": None,
+        "endpoint": None,
+        "engine": None,
+        "public_key": None,
+        "banned_until": 0,
+    }
 
 
 MINER_ADDRESS = encode_address(keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
@@ -1095,6 +1134,258 @@ def test_wallet_send_submits_a_signed_transfer(
     assert tx.payload["amount"] == 1_000_000_000
 
 
+def test_wallet_send_works_with_only_a_node_and_no_chain_database(
+    tmp_path: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    """A node that answers supplies the balance and nonce: no sync, no --data-dir."""
+    data_dir = tmp_path / "no-chain"
+    data_dir.mkdir()
+    key = tmp_path / "alice.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+    address = created.stdout.strip()
+    node_accounts[address] = account_document(address, spendable=50 * UNITS_PER_COIN, nonce=7)
+
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "send",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--to",
+            MINER_ADDRESS,
+            "--amount",
+            "10",
+            "--node",
+            "http://testnet.example:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "sent 10.00000000" in result.stdout
+    assert not (data_dir / "chain.sqlite").exists()
+    assert len(recorded_node) == 1
+    transfer = recorded_node[0]
+    assert transfer.nonce == 7
+    assert transfer.payload["amount"] == 10 * UNITS_PER_COIN
+
+
+def test_wallet_send_takes_the_nonce_from_the_node_not_the_local_chain(
+    data_dir: Path,
+    faucet_key: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    """The node checks the nonce, so its answer wins over a chain that lags it."""
+    from sccp.chain.genesis import faucet_keypair
+
+    address = encode_address(faucet_keypair("devnet").public_key_bytes, DEVNET)
+    node_accounts[address] = account_document(address, spendable=5 * UNITS_PER_COIN, nonce=9)
+
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "send",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+            "--to",
+            MINER_ADDRESS,
+            "--amount",
+            "4",
+            "--node",
+            "http://testnet.example:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert recorded_node[0].nonce == 9
+
+
+def test_wallet_send_refusal_names_the_node_it_read_the_balance_from(
+    data_dir: Path,
+    faucet_key: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    """A refusal built on a node's numbers quotes the node, not --data-dir."""
+    from sccp.chain.genesis import faucet_keypair
+
+    address = encode_address(faucet_keypair("devnet").public_key_bytes, DEVNET)
+    node_accounts[address] = account_document(address, spendable=5 * UNITS_PER_COIN, nonce=0)
+
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "send",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+            "--to",
+            MINER_ADDRESS,
+            "--amount",
+            "12",
+            "--node",
+            "http://testnet.example:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 1
+    assert "has 5.00000000 spendable" in result.stderr
+    assert "this balance came from the node at http://testnet.example:8645" in result.stderr
+    assert recorded_node == []
+
+
+def test_wallet_send_reports_a_node_it_cannot_read(
+    data_dir: Path, faucet_key: Path, env: dict[str, str], recorded_node: list[Any]
+) -> None:
+    """An explicit --node that does not answer stops the command; it does not sign."""
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "send",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+            "--to",
+            MINER_ADDRESS,
+            "--amount",
+            "10",
+            "--node",
+            "http://testnet.example:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 1
+    assert "cannot read" in result.stderr
+    assert "http://testnet.example:8645" in result.stderr
+    assert recorded_node == []
+
+
+def test_wallet_balance_reads_the_node_without_a_chain_database(
+    tmp_path: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    """`wallet balance --node` works off a node alone, and says where it read."""
+    data_dir = tmp_path / "no-chain"
+    data_dir.mkdir()
+    key = tmp_path / "bob.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+    address = created.stdout.strip()
+    node_accounts[address] = account_document(address, spendable=50 * UNITS_PER_COIN, nonce=2)
+
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "balance",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--node",
+            "http://testnet.example:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["spendable"] == 50 * UNITS_PER_COIN
+    assert payload["source"] == "http://testnet.example:8645"
+    assert not (data_dir / "chain.sqlite").exists()
+    assert recorded_node == []
+
+
+def test_wallet_balance_falls_back_when_the_default_node_is_another_network(
+    data_dir: Path,
+    faucet_key: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    """A default node on another network must not hide the chain --data-dir holds."""
+    from sccp.chain.genesis import faucet_keypair
+
+    address = encode_address(faucet_keypair("devnet").public_key_bytes, DEVNET)
+    node_accounts[address] = {
+        **account_document(address, spendable=0, nonce=0),
+        "network": "mainnet",
+    }
+
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "balance",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["spendable"] == 1_000_000 * UNITS_PER_COIN
+    assert payload["source"] == str(data_dir / "chain.sqlite")
+
+    # Named explicitly, the same node is a mistake worth stopping for.
+    rejected = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "wallet",
+            "balance",
+            "--network",
+            "devnet",
+            "--key",
+            str(faucet_key),
+            "--node",
+            "http://mainnet.example:8645",
+        ],
+        env=env,
+    )
+    assert rejected.exit_code == 1
+    assert "serves mainnet, not devnet" in rejected.stderr
+    assert recorded_node == []
+
+
 def test_wallet_send_transfers_between_two_new_wallets(
     tmp_path: Path,
     data_dir: Path,
@@ -1245,7 +1536,7 @@ def test_wallet_send_refuses_an_empty_chain_in_coins(
 
 
 def test_wallet_balance_points_out_a_chain_with_no_blocks(
-    tmp_path: Path, data_dir: Path, env: dict[str, str]
+    tmp_path: Path, data_dir: Path, env: dict[str, str], recorded_node: list[Any]
 ) -> None:
     key = tmp_path / "empty.key"
     created = runner.invoke(
@@ -1273,7 +1564,7 @@ def test_wallet_balance_points_out_a_chain_with_no_blocks(
 
 
 def test_wallet_balance_is_quiet_on_a_funded_genesis_chain(
-    data_dir: Path, faucet_key: Path, env: dict[str, str]
+    data_dir: Path, faucet_key: Path, env: dict[str, str], recorded_node: list[Any]
 ) -> None:
     """The note explains an empty balance only; genesis funds are not a puzzle."""
     result = runner.invoke(
@@ -1395,6 +1686,75 @@ def test_faucet_send_is_limited_to_test_networks(
     )
     assert rejected.exit_code == 2
     assert "has no faucet" in rejected.output
+
+
+def test_faucet_send_reads_the_faucet_account_from_the_node(
+    tmp_path: Path,
+    env: dict[str, str],
+    node_accounts: dict[str, dict[str, object]],
+    recorded_node: list[Any],
+) -> None:
+    from sccp.chain.genesis import faucet_keypair
+
+    sender = encode_address(faucet_keypair(DEVNET.network_id).public_key_bytes, DEVNET)
+    node_accounts[sender] = account_document(sender, spendable=500_000_000_000, nonce=5)
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(tmp_path / "no-chain-here"),
+            "faucet",
+            "send",
+            "--network",
+            "devnet",
+            "--to",
+            MINER_ADDRESS,
+            "--amount",
+            "10",
+            "--node",
+            "http://node.test:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    assert "faucet sent 10.00000000" in result.stdout
+    assert recorded_node[0].nonce == 5, "the nonce must be the one the node reported"
+    assert recorded_node[0].sender == sender
+
+
+def test_faucet_send_cites_the_node_that_reported_no_coins(
+    data_dir: Path,
+    env: dict[str, str],
+    node_accounts: dict[str, dict[str, object]],
+    recorded_node: list[Any],
+) -> None:
+    from sccp.chain.genesis import faucet_keypair
+
+    sender = encode_address(faucet_keypair(DEVNET.network_id).public_key_bytes, DEVNET)
+    node_accounts[sender] = account_document(sender, spendable=0, nonce=0)
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "faucet",
+            "send",
+            "--network",
+            "devnet",
+            "--to",
+            MINER_ADDRESS,
+            "--amount",
+            "10",
+            "--node",
+            "http://node.test:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 1
+    assert "0.00000000 spendable" in result.output
+    assert "this balance came from the node at http://node.test:8645" in result.output
+    assert "genesis block" not in result.output, "a node answered, so --data-dir is not at fault"
+    assert recorded_node == []
 
 
 def test_devnet_up_accepts_only_mock_engines() -> None:

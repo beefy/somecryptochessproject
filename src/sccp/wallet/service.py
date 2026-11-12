@@ -8,10 +8,16 @@ Everything is derived from a :class:`~sccp.chain.state.State`, so the same calls
 work against the tip, a fork or a test fixture. History additionally needs a
 chain, because the state alone keeps balances, not the transactions that produced
 them.
+
+A transfer needs two things from that state -- the spendable balance and the next
+nonce -- so :meth:`WalletService.from_account_view` rebuilds them from one node's
+``GET /v1/accounts/{address}`` answer. A wallet can then be used against a node
+whose chain it has never synced.
 """
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from sccp.chain.chain import Chain
@@ -20,8 +26,11 @@ from sccp.chain.tx import sign_transaction, txid
 from sccp.config import NetworkParams, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.keys import Keypair
-from sccp.errors import WalletServiceError
+from sccp.errors import StateError, WalletServiceError
 from sccp.protocol.models import Transaction, TxType
+
+DEFAULT_SOURCE = "the local chain in --data-dir"
+"""Where a wallet's state came from, when the caller does not say."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,10 +69,54 @@ class WalletService:
         state: State,
         *,
         chain: Chain | None = None,
+        source: str = DEFAULT_SOURCE,
     ) -> None:
         self.params = get_network(params)
         self.state = state
         self.chain = chain
+        self.source = source
+        """Where the state came from, quoted in refusals so the user can check it."""
+
+    @classmethod
+    def from_account_view(
+        cls,
+        params: NetworkParams | str,
+        document: Mapping[str, object],
+        *,
+        height: int = 0,
+        source: str = "the node's account view",
+    ) -> WalletService:
+        """A wallet over one account exactly as a node reported it.
+
+        A transfer needs a spendable balance and the next nonce, and both are in
+        ``GET /v1/accounts/{address}``: the blocks that produced them are not
+        consulted, so no chain database and no sync is needed. The document is
+        validated against ``params``, which is what catches a ``--node`` that
+        serves another network. The result has no chain, so :meth:`history` is
+        not available on it.
+        """
+        network = get_network(params)
+        reported = document.get("network")
+        if not isinstance(reported, str):
+            raise WalletServiceError("the node's account document names no network")
+        if reported != network.network_id:
+            raise WalletServiceError(
+                f"the node serves {reported}, not {network.network_id}: pass --network "
+                f"{reported} with a {reported} keyfile, or point --node at a "
+                f"{network.network_id} node"
+            )
+        address = document.get("address")
+        if not isinstance(address, str):
+            raise WalletServiceError("the node's account document names no address")
+        try:
+            account = Account.from_dict(document)
+        except StateError as exc:
+            raise WalletServiceError(f"the node's account document is unreadable: {exc}") from exc
+        return cls(
+            network,
+            State(network, height=height, accounts={address: account}),
+            source=source,
+        )
 
     # -- reads --------------------------------------------------------------
 
@@ -168,8 +221,7 @@ class WalletService:
             raise WalletServiceError(
                 f"{sender} has {format_coins(spendable)} spendable, the transfer needs "
                 f"{format_coins(total)} ({format_coins(amount)} plus a "
-                f"{format_coins(resolved_fee)} fee); the local chain in --data-dir may "
-                f"be behind the node's"
+                f"{format_coins(resolved_fee)} fee); this balance came from {self.source}"
             )
         tx = Transaction(
             network=self.params.network_id,

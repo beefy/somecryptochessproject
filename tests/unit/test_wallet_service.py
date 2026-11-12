@@ -9,6 +9,7 @@ import pytest
 from sccp.chain.tx import validate_transaction
 from sccp.config import DEVNET, format_coins
 from sccp.crypto.address import encode_address
+from sccp.crypto.keys import keypair_from_seed
 from sccp.errors import WalletServiceError
 from sccp.protocol.models import TxType
 from sccp.wallet.service import Balance, WalletService
@@ -163,3 +164,52 @@ def test_history_rejects_a_foreign_address(live_chain: Any) -> None:
     wallet = WalletService(DEVNET, live_chain.chain.state, chain=live_chain.chain)
     with pytest.raises(WalletServiceError, match="not a valid"):
         wallet.history("mainnet1nope")
+
+
+def _account_view(address: str, *, spendable: int = 50 * COINS, nonce: int = 4) -> dict[str, Any]:
+    """The document ``GET /v1/accounts/{address}`` returns, minus the extras."""
+    return {
+        "network": "devnet",
+        "address": address,
+        "balance": spendable,
+        "immature": 0,
+        "bonded": 0,
+        "total": spendable,
+        "nonce": nonce,
+    }
+
+
+def test_a_wallet_can_be_built_from_a_nodes_account_view() -> None:
+    """Balance and nonce are all a transfer needs, so one node answer is enough."""
+    keypair = keypair_from_seed(bytes([7]) * 32)
+    address = encode_address(keypair.public_key_bytes, DEVNET)
+    document = {**_account_view(address, nonce=4), "public_key": keypair.public_key_hex}
+    wallet = WalletService.from_account_view(DEVNET, document, source="the node at http://n")
+
+    assert wallet.network == "devnet"
+    assert wallet.chain is None
+    assert wallet.balance(address).spendable == 50 * COINS
+    assert wallet.next_nonce(address) == 4
+    tx = wallet.build_transfer(keypair, encode_address(b"\x09" * 32, DEVNET), COINS)
+    assert tx.nonce == 4
+    validate_transaction(tx, DEVNET, wallet.state, height=1)
+    with pytest.raises(WalletServiceError, match="needs a chain"):
+        wallet.history(address)
+
+
+def test_an_account_view_must_belong_to_the_requested_network() -> None:
+    """A --node on another chain is caught before anything is signed."""
+    address = encode_address(bytes([7]) * 32, DEVNET)
+    document = {**_account_view(address), "network": "mainnet"}
+    with pytest.raises(WalletServiceError, match="serves mainnet, not devnet"):
+        WalletService.from_account_view(DEVNET, document)
+
+
+def test_an_account_view_must_be_readable() -> None:
+    address = encode_address(bytes([7]) * 32, DEVNET)
+    with pytest.raises(WalletServiceError, match="names no network"):
+        WalletService.from_account_view(DEVNET, {"address": address})
+    with pytest.raises(WalletServiceError, match="names no address"):
+        WalletService.from_account_view(DEVNET, {"network": "devnet"})
+    with pytest.raises(WalletServiceError, match="unreadable"):
+        WalletService.from_account_view(DEVNET, {**_account_view(address), "balance": "plenty"})

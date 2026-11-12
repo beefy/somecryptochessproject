@@ -7,12 +7,12 @@ a block includes it. Nothing about your private key leaves the host.
 `wallet send` is one command:
 
 ```bash
-sccp --data-dir ./data wallet send \
+sccp wallet send \
     --network testnet \
     --key alice.key \
     --to sccpt1qrrx3yp3ufmfsqk6l9u0wg7xpjd7670v5v85vgp9 \
     --amount 12 \
-    --node http://127.0.0.1:8645
+    --node http://testnet.somecryptochessproject.com:8645
 ```
 
 ```text
@@ -20,9 +20,10 @@ sent 12.00000000 to sccpt1qrrx3yp3ufmfsqk6l9u0wg7xpjd7670v5v85vgp9 (fee 0.000010
 txid: 4f0c1a...
 ```
 
-If you created the wallet already, this is the whole flow. The rest of this
-guide explains the prerequisites, what the command checks, and how to prove the
-coins moved.
+If you created the wallet already, this is the whole flow, on any machine: the
+node supplies your balance and next nonce, so there is nothing to sync and no
+chain database to find first. The rest of this guide explains the prerequisites,
+what the command checks, and how to prove the coins moved.
 
 ---
 
@@ -31,16 +32,21 @@ coins moved.
 | Item | Why |
 | --- | --- |
 | A keyfile | `wallet send` signs with it and refuses a keyfile from another network. |
-| A chain database under `--data-dir` | The command reads your nonce and spendable balance from the local chain. |
-| A running node | The signed transaction is POSTed to `--node` (default `http://127.0.0.1:8645`). Use `http://testnet.somecryptochessproject.com:8645` for the hosted testnet. |
+| A running node | The command reads your balance and next nonce from it and POSTs the signed transfer back to it. The default is `http://127.0.0.1:8645`; the hosted testnet is `http://testnet.somecryptochessproject.com:8645`. |
 | A recipient address | A `sccpt1...` address on testnet/devnet, `sccp1...` on mainnet. |
 | Spendable coins | `amount + fee` must be **spendable**; `bonded` and `immature` coins cannot be spent. |
 
-The data directory must be the one the node is serving. The CLI reads
-`<data-dir>/chain.sqlite` directly instead of trusting a remote balance, so run
-it on the node's host (or point it at a copy of that database). Always pass
-`--network`: without it the CLI falls back to its default (`testnet`), not to the
-keyfile's network. If the chain is not there, you get:
+A transfer needs two numbers -- the spendable balance and the next nonce -- and
+only the node that will judge the transaction has the ones that count. So the
+wallet asks it (`GET /v1/accounts/{address}`) and signs against that answer,
+which is why nothing has to be synced and why the command works from any machine.
+Add `--json` to see the source it used in the `source` field.
+
+`--data-dir` is the fallback for when no node answers, and it is what makes an
+offline build possible: the same two numbers are then read from
+`<data-dir>/chain.sqlite`, so that database must be the chain the node will
+accept. Always pass `--network`: without it the CLI falls back to its default
+(`testnet`), not to the keyfile's network. When neither answers, you get:
 
 ```text
 error: no chain database at data/chain.sqlite; run `sccp --data-dir data node run --network testnet` first
@@ -50,12 +56,13 @@ A `chain.sqlite` that exists but holds no blocks is not an error: the command
 runs, and every balance it reports is `0.00000000`, because the balances it
 reads are the ones that chain knows about. When such an empty result is what you
 are looking at — a wallet balance of zero, or a refused transfer — the CLI says
-so on stderr:
+so on stderr, because only a node that stayed silent can get you there:
 
 ```text
-note: data/chain.sqlite holds only the genesis block, so it knows no other balances.
-A node that serves another chain keeps its blocks in its own data directory: pass
-that one as --data-dir (a copy taken while the node runs also needs chain.sqlite-wal).
+note: data/chain.sqlite holds only the genesis block, so it knows no other balances,
+and no node answered with one. Start the node that holds the coins and pass its URL
+as --node: the wallet reads balances and nonces from that node, and --data-dir is
+only the fallback for building a transfer offline.
 ```
 
 A node keeps recent blocks in `chain.sqlite-wal` until it checkpoints, so a copy
@@ -77,10 +84,11 @@ the API on `127.0.0.1:8645`.
 
 ## 2. Fund a test wallet
 
-On `testnet` and `devnet`, genesis funds a public faucet. With the node running:
+On `testnet` and `devnet`, genesis funds a public faucet. With a node running:
 
 ```bash
-sccp --data-dir ./data faucet send --network testnet --to sccpt1qrvk... --amount 1000
+sccp faucet send --network testnet --to sccpt1qrvk... --amount 1000 \
+    --node http://127.0.0.1:8645
 ```
 
 ```text
@@ -88,13 +96,17 @@ faucet sent 1000.00000000 to sccpt1qrvk...
 txid: 9a2b...
 ```
 
+Like `wallet send`, the faucet reads its own balance and next nonce from
+`--node` and falls back to `--data-dir` only if that node does not answer.
+
 The faucet is unauthenticated by design and exists only on test networks. Use it
 only for coins with no value.
 
 Check the balance:
 
 ```bash
-sccp --data-dir ./data wallet balance --network testnet --key alice.key
+sccp wallet balance --network testnet --key alice.key \
+    --node http://127.0.0.1:8645
 ```
 
 ```text
@@ -136,8 +148,12 @@ with the minimum fee the transfer needs `1_200_001_000` base units. The CLI
 prints both sides in coins:
 
 ```text
-error: sccpt1... has 0.00000000 spendable, the transfer needs 12.00001000 (12.00000000 plus a 0.00001000 fee); the local chain in --data-dir may be behind the node's
+error: sccpt1... has 0.00000000 spendable, the transfer needs 12.00001000 (12.00000000 plus a 0.00001000 fee); this balance came from the node at http://127.0.0.1:8645
 ```
+
+The trailing clause names where the number came from, so an empty balance is easy
+to attribute: a node that reports zero is a node serving a chain where that
+address has not been funded (see section 7 for the two-fork case).
 
 The fee is paid to the miner whose block includes the transfer.
 
@@ -163,11 +179,12 @@ reversed. There is no memo field and no refund path.
 ## 4. What the command does
 
 1. Reads the keyfile header and refuses it if `--network` names another network.
-2. Loads the chain from `--data-dir` and derives the sender address from the
-   keypair.
+2. Asks `--node` for `GET /v1/accounts/<sender>`; only if that node does not
+   answer does it load the chain from `<data-dir>/chain.sqlite`. The sender
+   address is derived from the keypair either way.
 3. Checks the recipient address, `amount > 0`, `recipient != sender`, the fee
    floor, and `spendable >= amount + fee`.
-4. Uses the account's current **nonce**.
+4. Uses the nonce the node reported (or the local chain's, when building offline).
 5. Signs the transaction locally with Ed25519.
 6. POSTs it to `<node>/v1/tx` and prints the txid and whether the node accepted
    it.
@@ -178,9 +195,9 @@ would from any peer.
 
 ### One transfer at a time per address
 
-The nonce comes from the adopted chain, not from the mempool. If you submit two
-transfers before the first is mined, both use the same nonce and the node refuses
-the second:
+The nonce comes from the account's chain state, not from the mempool. If you
+submit two transfers before the first is mined, both use the same nonce and the
+node refuses the second:
 
 ```text
 transaction rejected (...): sccpt1... already has a pending transaction with nonce 3
@@ -216,23 +233,27 @@ After a miner includes it in a block, the same transaction reports a `height`,
 and the balances move:
 
 ```bash
-sccp --data-dir ./data wallet balance --network testnet --key alice.key
+sccp wallet balance --network testnet --key alice.key --node http://127.0.0.1:8645
 sccp --data-dir ./data wallet history --network testnet --key alice.key
 sccp --data-dir ./data chain blocks --limit 5
 ```
 
-`wallet history` reads the adopted chain, not the mempool, so a pending transfer
-does not appear there yet. Once mined, each row shows the height, type, signed
-delta, fee, counterparty and txid:
+`wallet balance` asks the node, so it is current the moment the block lands.
+`wallet history` and `chain blocks` walk the adopted chain in `--data-dir` and do
+not consult the node, so those two need that database; a transfer still in the
+mempool appears in neither. Once mined, each history row shows the height, type,
+signed delta, fee, counterparty and txid:
 
 ```text
      7 transfer           -12.00001000 sccpt1qrrx... 4f0c1a...
 ```
 
-`wallet balance` and `chain account` show the same numbers:
+`wallet balance`, `chain account` and `GET /v1/accounts/{address}` show the same
+numbers:
 
 ```bash
 sccp --data-dir ./data chain account sccpt1qrvk... --network testnet
+curl -s http://127.0.0.1:8645/v1/accounts/sccpt1qrvk...
 ```
 
 ```text
@@ -260,18 +281,22 @@ it every epoch, a transfer normally confirms well within one epoch. See
 ## 6. Machine-readable output
 
 ```bash
-sccp --json --data-dir ./data wallet send \
-    --network testnet --key alice.key --to sccpt1... --amount 12
+sccp --json wallet send \
+    --network testnet --key alice.key --to sccpt1... --amount 12 \
+    --node http://127.0.0.1:8645
 ```
 
 ```json
-{"accepted": true, "amount": 1200000000, "fee": 1000, "from": "sccpt1...", "network": "testnet", "nonce": 3, "to": "sccpt1...", "txid": "...", "type": "transfer"}
+{"accepted": true, "amount": 1200000000, "fee": 1000, "from": "sccpt1...", "network": "testnet", "nonce": 3, "source": "http://127.0.0.1:8645", "to": "sccpt1...", "txid": "...", "type": "transfer"}
 ```
 
 `wallet history --json` returns `{"address", "network", "history": [...]}`, with
 one object per transaction (`txid`, `height`, `type`, `delta`, `fee`,
 `counterparty`). `wallet balance --json` returns `address`, `network`,
-`spendable`, `immature`, `bonded` and `total`, all in base units.
+`spendable`, `immature`, `bonded`, `total` (those three amounts in base units) and
+`source`. In both commands `source` is where the numbers came from: the node's
+URL when it answered, otherwise the path of the chain database that was used
+instead.
 
 ---
 
@@ -279,8 +304,11 @@ one object per transaction (`txid`, `height`, `type`, `delta`, `fee`,
 
 | Message | Cause | Fix |
 | --- | --- | --- |
-| `no chain database at ...` | `--data-dir` is wrong or the node never ran there. | Start the node with that `--data-dir`, or pass the right one. |
-| `... has 0.00000000 spendable` although the node reports a balance | `--data-dir` points at another chain, often one at height 0 or a copy taken without `chain.sqlite-wal`. A note on stderr says so. | Point `--data-dir` at the node's own data directory, or run the node with the `--data-dir` you pass here. |
+| `no chain database at ...` | No node answered (the default is `http://127.0.0.1:8645`) and `--data-dir` holds no `chain.sqlite`. | Pass `--node` with the node's URL, or start the node with that `--data-dir`. |
+| `note: ... holds only the genesis block ...` | No node answered and the fallback database has no blocks. Every balance read from it is zero. | Pass `--node` with the URL of the node that holds the coins. |
+| `... has 0.00000000 spendable` although the node reports a balance | The trailing clause says where the number came from. If it names the local chain, `--data-dir` points at another chain -- often one at height 0, or a copy taken without `chain.sqlite-wal`. | Pass `--node` with the URL of the node that holds the coins, or point `--data-dir` at that node's own data directory. |
+| `cannot read sccpt1... from the node at <url>: it did not answer` | A `--node` you named is unreachable, so the command refuses rather than guess. | Start that node, fix the URL (`http://host:port`), or drop `--node` to build from `--data-dir`. |
+| `the node serves mainnet, not testnet: ...` | `--node` serves another network's chain, so its balance and nonce would be wrong for this keyfile. | Use the matching `--network` and keyfile, or point `--node` at a node serving your network. |
 | `... has N.NNNNNNNN spendable, the transfer needs M.MMMMMMMM` | `amount + fee` exceeds spendable coins (bonded/immature do not count). | Lower the amount, wait for maturity, or use another address. |
 | `fee N base units is below the network minimum of M base units` | `--fee` is too small. | Omit `--fee` or use at least `1000`. |
 | `a transfer amount must be positive` | `--amount` is zero or negative. | Use a positive integer. |
@@ -294,6 +322,19 @@ one object per transaction (`txid`, `height`, `type`, `delta`, `fee`,
 Exit codes: `0` signed and submitted, `1` refused by the CLI or the node, `2`
 invalid usage.
 
+### Two chains from one genesis
+
+Testnet and devnet addresses share a prefix, and genesis funds the same faucet key
+on both. Two chains started from the same genesis but never peered therefore look
+identical to a wallet -- same address, same faucet -- while holding different
+coins. A node only pull-syncs from `--peer` **at startup**, so a node that was
+started without a peer never learns about blocks mined elsewhere, and a wallet
+that reads it faithfully reports that fork's balances.
+
+Choose the side that holds the coins and stay on it: pass `--node` with that
+node's URL for every wallet command, and restart a node you started without
+`--peer` so it pulls the chain it is missing on the way up.
+
 ---
 
 ## 8. Safety checklist
@@ -303,7 +344,8 @@ invalid usage.
 - [ ] Keep the passphrase out of the command line; use a mode-0600
       `--passphrase-file` or `SCCP_WALLET_PASSPHRASE`.
 - [ ] Send a small amount first when using a new address.
-- [ ] Do not hand-edit nonces; the CLI already reads the next one from the chain.
+- [ ] Do not hand-edit nonces; the CLI reads the next one from the node (or from
+      `--data-dir` when it builds offline).
 - [ ] Remember that `bonded` coins are a miner bond, not spendable balance.
 
 ---
