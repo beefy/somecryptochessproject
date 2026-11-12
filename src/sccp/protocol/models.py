@@ -15,7 +15,9 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+
+from sccp.config import MAX_PLIES_LIMIT
 
 DigestHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 """A 32-byte digest or 32-byte nonce, lowercase hex."""
@@ -40,14 +42,41 @@ EngineFingerprint = Annotated[
 
 Color = Literal["white", "black"]
 ResultValue = Literal["1-0", "0-1", "1/2-1/2"]
-TerminationValue = Literal["checkmate", "draw", "resignation"]
+TerminationValue = Literal["checkmate", "draw", "resignation", "time_forfeit"]
 Verdict = Literal["pass", "fail", "unknown"]
+
+MAX_CLOCK_MS = 24 * 60 * 60 * 1000
+"""Upper bound for a clock value (24 hours), from plan section 5.7.1."""
 
 
 class ProtocolModel(BaseModel):
     """Base class: immutable, strict about unknown fields, JSON-friendly."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class TimeControl(ProtocolModel):
+    """One fixed chess clock control (plan section 5.7.1).
+
+    Both values are whole seconds expressed in milliseconds, so the PGN
+    ``TimeControl`` tag is lossless. The complete ``initial + increment * plies``
+    bound is checked against the network's ``max_plies`` by
+    :func:`sccp.protocol.clocks.validate_time_control`; this model enforces the
+    protocol-wide worst case as soon as it is constructed.
+    """
+
+    initial_ms: int = Field(ge=1_000, multiple_of=1_000)
+    increment_ms: int = Field(ge=0, multiple_of=1_000)
+
+    @model_validator(mode="after")
+    def _check_worst_case(self) -> TimeControl:
+        if self.initial_ms + self.increment_ms * MAX_PLIES_LIMIT > MAX_CLOCK_MS:
+            raise ValueError(
+                "time control exceeds MAX_CLOCK_MS for max_plies="
+                f"{MAX_PLIES_LIMIT}: {self.initial_ms} + {self.increment_ms} * "
+                f"{MAX_PLIES_LIMIT} > {MAX_CLOCK_MS}"
+            )
+        return self
 
 
 class Availability(ProtocolModel):
@@ -136,7 +165,84 @@ class MatchCertificate(ProtocolModel):
     opening: OpeningRef
     engine_white: EngineFingerprint
     engine_black: EngineFingerprint
+    time_control: TimeControl = Field(
+        default_factory=lambda: TimeControl(initial_ms=1_800_000, increment_ms=0)
+    )
     start_signatures: dict[Color, SignatureHex] = Field(default_factory=dict)
+
+
+class ClockWitnessSignature(ProtocolModel):
+    """One registered witness's signature over a clock receipt."""
+
+    witness: AddressText
+    signature: SignatureHex
+
+
+class SignedMove(ProtocolModel):
+    """A seat-signed move message (plan section 5.7, step 2).
+
+    ``clock_ms`` is deliberately absent: it is relay display data, never signed,
+    and is carried by :class:`MoveMessage` for transport only.
+    """
+
+    network: str = Field(min_length=1, max_length=32)
+    match_id: DigestHex
+    seat: AddressText
+    ply: int = Field(ge=0)
+    san: str = Field(min_length=1, max_length=16)
+    signature: SignatureHex
+
+
+class MoveMessage(SignedMove):
+    """The relay's wire form of a move, including its display clock."""
+
+    clock_ms: int = Field(ge=0, le=MAX_CLOCK_MS)
+
+
+class MoveReceipt(ProtocolModel):
+    """A witness-signed receipt for one accepted post-opening move."""
+
+    kind: Literal["move"] = "move"
+    match_id: DigestHex
+    ply: int = Field(ge=0)
+    seat: AddressText
+    san: str = Field(min_length=1, max_length=16)
+    received_at_ms: int = Field(ge=0)
+    white_ms: int = Field(ge=0, le=MAX_CLOCK_MS)
+    black_ms: int = Field(ge=0, le=MAX_CLOCK_MS)
+    witnesses: tuple[ClockWitnessSignature, ...] = ()
+
+
+class FlagReceipt(ProtocolModel):
+    """A witness-signed receipt for a flag fall (no SAN is present)."""
+
+    kind: Literal["flag"] = "flag"
+    match_id: DigestHex
+    ply: int = Field(ge=0)
+    seat: AddressText
+    received_at_ms: int = Field(ge=0)
+    white_ms: int = Field(ge=0, le=MAX_CLOCK_MS)
+    black_ms: int = Field(ge=0, le=MAX_CLOCK_MS)
+    witnesses: tuple[ClockWitnessSignature, ...] = ()
+
+
+class ClockEvidence(ProtocolModel):
+    """Everything a verifier needs to settle a flag (plan section 5.7.1)."""
+
+    time_control: TimeControl
+    final: FlagReceipt
+    receipts: tuple[MoveReceipt, ...] = ()
+
+
+class TimeoutClaim(ProtocolModel):
+    """The payload of a bonded ``timeout_claim`` transaction."""
+
+    network: str = Field(min_length=1, max_length=32)
+    match_id: DigestHex
+    certificate: MatchCertificate
+    last_move: SignedMove
+    clock_evidence: ClockEvidence
+    bond: int = Field(gt=0)
 
 
 class GameResult(ProtocolModel):
@@ -179,10 +285,14 @@ class WinProof(ProtocolModel):
     result: ResultValue
     termination: TerminationValue
     plies: int = Field(ge=1)
+    low_ply: bool = False
     opening: OpeningRef
     pgn: str = Field(min_length=1, max_length=262_144)
     certificate: MatchCertificate
     result_signatures: dict[Color, SignatureHex] = Field(default_factory=dict)
+    clock_evidence: ClockEvidence | None = None
+    move_evidence: tuple[SignedMove, ...] | None = None
+    timeout_claim_id: DigestHex | None = None
     quality_summary: QualitySummary | None = None
 
 
@@ -207,16 +317,23 @@ class RosterMember(ProtocolModel):
 
 
 __all__ = [
+    "MAX_CLOCK_MS",
+    "MAX_PLIES_LIMIT",
     "AddressText",
     "Availability",
     "Beacon",
     "BeaconReveal",
+    "ClockEvidence",
+    "ClockWitnessSignature",
     "Color",
     "DigestHex",
     "EngineFingerprint",
+    "FlagReceipt",
     "GameResult",
     "MatchCertificate",
     "Matchup",
+    "MoveMessage",
+    "MoveReceipt",
     "OpeningRef",
     "ProtocolModel",
     "PublicKeyHex",
@@ -225,7 +342,10 @@ __all__ = [
     "Reveal",
     "RosterMember",
     "SignatureHex",
+    "SignedMove",
     "TerminationValue",
+    "TimeControl",
+    "TimeoutClaim",
     "Transcript",
     "Verdict",
     "WinProof",

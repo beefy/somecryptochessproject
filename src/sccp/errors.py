@@ -109,6 +109,10 @@ class TranscriptError(ProtocolError):
     """A certificate, result attestation or transcript is inconsistent."""
 
 
+class ClockError(ProtocolError):
+    """A chess clock operation, receipt or clock-evidence bundle is invalid."""
+
+
 class ProofVerificationError(ProtocolError):
     """A win proof failed verification.
 

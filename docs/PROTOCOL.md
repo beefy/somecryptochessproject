@@ -1,10 +1,11 @@
-# sccp wire protocol, version 1 (M0–M2 subset)
+# sccp wire protocol, version 1 (M0–M3 subset)
 
-Status: **normative** for the parts implemented in milestones M0, M1 and M2
-(canonical encoding, game hash, PGN contract, opening book, engine fingerprints,
-epoch beacons, pairing, certificates, transcripts and win-proof verification).
-Sections for transactions, blocks, proofs-on-chain and the node API land in later
-milestones.
+Status: **normative** for the parts implemented in milestones M0–M3 (canonical
+encoding, game hash, PGN contract, opening book, engine fingerprints, epoch
+beacons, pairing, certificates, transcripts, clocks and clock evidence, and
+win-proof verification). Sections for transactions, blocks, proofs-on-chain and
+the node API land in later milestones. The M3 clock layer covers the off-chain
+primitives; the relay's timed-session API remains the M2 API described below.
 
 Reference implementation: `src/sccp/protocol/`, `src/sccp/chess/` and
 `src/sccp/serialization.py`. The plan that motivates these rules is
@@ -72,18 +73,22 @@ when a second game follows the first.
 | `Event`, `Site`, `Date`, `Round` | Free-form event metadata (never hashed) |
 | `White`, `Black` | Seat addresses of the players |
 | `Result` | `1-0`, `0-1` or `1/2-1/2` (`*` is rejected) |
-| `Termination` | `checkmate`, `draw` or `resignation` |
+| `Termination` | `checkmate`, `draw`, `resignation` or `time_forfeit` |
 | `MatchID` | Match identifier from the certificate |
+| `TimeControl` | `<initial>+<increment>` in whole seconds; must equal the certificate |
 | `Epoch`, `RoundNumber` | Non-negative integers; must equal the certificate |
 | `SeatWhite`, `SeatBlack` | Bech32 addresses; must equal the certificate |
 | `EngineWhite`, `EngineBlack` | Engine fingerprints; must equal the certificate |
 | `OpeningID`, `OpeningHash` | Book line id and its opening hash |
 | `Rules` | Exactly `chess` |
 
-Every tag must be present and non-empty. When a certificate (M2) is supplied,
+Every tag must be present and non-empty. When a certificate is supplied,
 `MatchID`, `Epoch`, `RoundNumber`, `SeatWhite`, `SeatBlack`, `EngineWhite`,
-`EngineBlack`, `OpeningID` and `OpeningHash` are compared exactly; any mismatch
-is a validation error.
+`EngineBlack`, `OpeningID`, `OpeningHash` and `TimeControl` are compared
+exactly; any mismatch is a validation error. The `TimeControl` form is strict:
+decimal seconds with no underscores or whitespace, initial time at least one
+second, and the worst case `initial_ms + increment_ms * max_plies` may not exceed
+`MAX_CLOCK_MS` (24 hours).
 
 ### 3.2 Replay
 
@@ -106,14 +111,15 @@ must agree with it.
 | --- | --- | --- |
 | Checkmate | winner (`1-0` or `0-1`) | `checkmate` |
 | Stalemate, insufficient material, 75-move rule, fivefold repetition | `1/2-1/2` | `draw` |
-| No automatic outcome | decisive | `resignation` |
-| Anything else (time forfeit, abandoned, unterminated) | rejected | rejected |
+| No automatic outcome, both seats attest the loss | decisive | `resignation` |
+| No automatic outcome, `ClockEvidence` proves a flag | winner | `time_forfeit` |
+| Anything else (abandoned, unterminated) | rejected | rejected |
 
-**M2 limitation.** There is no chess clock in the implemented protocol yet, so a
-time forfeit cannot be represented. The planned clock is one fixed 30+0 control
-for every match, with bonded timeout settlement; it is specified in
-[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1. This table will
-gain `time_forfeit` when that milestone lands.
+A `time_forfeit` PGN is accepted only when its `TimeControl` matches the
+certificate and the accompanying clock evidence verifies. The protocol uses one
+fixed 30+0 control for every match; matchmaking does not offer per-match
+choices. See [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1
+and section 8.2 below.
 
 Notes:
 
@@ -279,6 +285,7 @@ to check the prefix:
  "opening": {"book_version": "v1", "line_id": 17, "hash": "hex",
              "moves": ["e4", "e5", "Nf3"]},
  "engine_white": "sha256-or-mock-id", "engine_black": "...",
+ "time_control": {"initial_ms": 1800000, "increment_ms": 0},
  "start_signatures": {"white": "hex", "black": "hex"}}
 ```
 
@@ -289,6 +296,7 @@ Both seats sign this payload with `H("sccp/v1/certificate", …)`:
  "seats": ["<sorted seat A>", "<sorted seat B>"],
  "colors": {"white": "<address>", "black": "<address>"},
  "opening_hash": "hex",
+ "time_control": {"initial_ms": 1800000, "increment_ms": 0},
  "engine_fingerprints": {"white": "...", "black": "..."}}
 ```
 
@@ -296,11 +304,10 @@ Both seats sign this payload with `H("sccp/v1/certificate", …)`:
 when both signatures verify against the addresses' registered Ed25519 keys, the
 colour draw matches the beacon, and `match_id` recomputes from the seats.
 
-The planned clock extension adds `time_control = {initial_ms, increment_ms}` to
-the certificate and its signed payload, and adds `time_forfeit` to
-`termination`; M2 emits neither. Every match uses one protocol-fixed **30+0**
-control (`initial_ms = 1_800_000`, `increment_ms = 0`); matchmaking never offers
-or accepts a per-match choice. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
+The certificate commits to `time_control = {initial_ms, increment_ms}` and the
+signed payload covers it. Every match uses one protocol-fixed **30+0** control
+(`initial_ms = 1_800_000`, `increment_ms = 0`); matchmaking never offers or
+accepts a per-match choice. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
 
 ### 8.2 Result attestation
 
@@ -309,7 +316,7 @@ When the board is terminal or a seat resigns, both seats sign:
 ```json
 {"network": "...", "match_id": "...", "game_hash": "hex",
  "result": "1-0" | "0-1" | "1/2-1/2",
- "termination": "checkmate" | "draw" | "resignation",
+ "termination": "checkmate" | "draw" | "resignation" | "time_forfeit",
  "plies": 87,
  "result_signatures": {"white": "hex", "black": "hex"}}
 ```
@@ -318,28 +325,35 @@ The signature domain is `sccp/v1/result`; `result_signatures` is excluded from
 the signed payload. `game_hash` is the canonical game hash from section 2, so the
 two seats also attest the exact move list.
 
-In the planned clock protocol a checkmate may be proven without the loser's
-result signature: the winner supplies its own signature plus the signed move
-messages, and the verifier replays them to checkmate. Resignation and agreed
-draws still need both signatures. M2 has no signed move messages and keeps the
-both-signatures rule.
+A checkmate may be proven without the loser's result signature: the winner
+supplies its own signature plus the signed move messages (`move_evidence`), and
+the verifier replays them to checkmate. A time forfeit likewise needs only the
+winner's signature when the proof carries the `timeout_claim_id` and complete
+`clock_evidence`; the evidence includes witness-signed move receipts and the
+final flag receipt. Resignation and agreed draws still need both signatures.
+Exactly one missing result signature is tolerated, and the winner must be the
+seat that signed. The offline verifier checks the actual signature bytes against
+the registered keys.
 
 ### 8.3 PGN assembly
 
 A transcript PGN is the game plus the required tags of section 3.1, with
 `White`/`Black` = seat addresses, `MatchID`, `Epoch`, `RoundNumber`,
 `SeatWhite`, `SeatBlack`, `EngineWhite`, `EngineBlack`, `OpeningID`,
-`OpeningHash` and `Rules = chess`. `Termination` and `Result` come from the
-result attestation. The opening prefix is included in the move list.
+`OpeningHash`, `TimeControl = <initial>+<increment>` and `Rules = chess`.
+`Termination` and `Result` come from the result attestation. The opening prefix
+is included in the move list. A `time_forfeit` PGN without a matching
+`TimeControl` tag is rejected before the clock evidence is considered.
 
 ### 8.4 Relay API
 
 The relay is untrusted. It derives the round from public data and stores
-signatures; it never signs a result. In M2 it also does not enforce a chess
-clock: `timeout_seconds` only abandons a silent session, and that is not
-evidence of a loss. The planned clock receipts, signed move messages and bonded
-timeout claim are described in
-[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1.
+signatures; it never signs a result. The implemented relay endpoint remains the
+M2 API: `timeout_seconds` only abandons a silent session and is not evidence of
+a loss. The clock layer now provides the off-chain primitives a timed relay will
+use — signed move messages, witness-signed receipts, flag evidence and timeout
+claims — as described in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md)
+section 5.7.1. The timed session API itself is a later relay milestone.
 
 | Method | Path | Body |
 | --- | --- | --- |
@@ -353,11 +367,11 @@ timeout claim are described in
 | POST | `/v1/matches/{id}/result` | `{"seat", "signature"}` |
 | GET | `/v1/status`, `/v1/reputation` | relay status and no-show counts |
 
-The M2 move body is exactly `{seat, san}`; the relay verifies the turn and SAN
-legality, but the move carries no ply or signature. The planned clocked move
-body is `{network, match_id, seat, ply, san, clock_ms, signature}`; `clock_ms`
-is relay-computed display data and is not signed. The signed payload is
-`{network, match_id, seat, ply, san}` under `sccp/v1/move`; moves remain
+The current move body is exactly `{seat, san}`; the relay verifies the turn and
+SAN legality, but the move carries no ply or signature. The clocked move body is
+`{network, match_id, seat, ply, san, clock_ms, signature}`; `clock_ms` is
+relay-computed display data and is not signed. The signed payload is
+`{network, match_id, seat, ply, san}` under `sccp/v1/move`. Moves remain
 off-chain and only the final proof (or timeout claim) reaches a block. Because
 each move is signed, a checkmate can later be proven without the loser's result
 signature. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
@@ -377,6 +391,11 @@ sessions replay their SAN list on load.
  "roster": {"sccpt1...": {"public_key": "hex", "engine": "sha256-or-mock-id",
                            "max_games": 3}},
  "timeout_seconds": 300,
+ "lag_grace_ms": 250,
+ "timeout_dispute_window": 2,
+ "min_timeout_bond": 1,
+ "clock_witness_quorum": 1,
+ "clock_witness_bond": 1,
  "open_round": 0}
 ```
 
@@ -391,14 +410,21 @@ A proof wraps the co-signed transcript:
 {"network": "testnet", "proof_id": "hex", "game_hash": "hex",
  "match_id": "hex", "epoch": 3, "round": 0,
  "winner": "sccpt1...", "loser": "sccpt1...", "winner_seat": "white",
- "result": "1-0", "termination": "checkmate", "plies": 87,
+ "result": "1-0", "termination": "checkmate", "plies": 87, "low_ply": false,
  "opening": {...}, "pgn": "[Event ...] ...",
  "certificate": {...}, "result_signatures": {"white": "hex", "black": "hex"},
+ "clock_evidence": null, "move_evidence": null, "timeout_claim_id": null,
  "quality_summary": null}
 ```
 
 `proof_id = H("sccp/v1/proof", {game_hash, match_id, winner})`. The optional
 `quality_summary` belongs to M5 and is ignored by structural verification.
+`clock_evidence` is required for every `time_forfeit` and carries the time
+control, the witness-signed final flag receipt and every post-opening move
+receipt. `timeout_claim_id` binds a single-signature proof to its bonded timeout
+claim; it is null for every other termination.
+`move_evidence` is the signed post-opening move stream for a single-signature
+`checkmate`. Both evidence fields must be absent for other terminations.
 
 Verification runs cheap checks first and stops at the first typed failure:
 
@@ -410,10 +436,10 @@ Verification runs cheap checks first and stops at the first typed failure:
 | `opening` | line hash, canonical SAN, book version and beacon-selected line |
 | `roster` | both seats are in the verifier's roster |
 | `pairing` | the matchup is exactly what the beacon and roster produce |
-| `signature` | both start and both result signatures verify and cover these fields |
-| `pgn` | section 5.8 replay, headers and opening prefix |
+| `signature` | both start signatures and every present result signature verify; a missing loser signature requires matching clock or move evidence |
+| `pgn` | section 5.8 replay, headers including `TimeControl`, and opening prefix |
 | `game-hash` | the replayed SAN list hashes to `game_hash` |
-| `result` | result, termination, plies and winner seat match the replay |
+| `result` | result, termination, plies and winner seat match the replay; clock and move evidence are checked for `time_forfeit` and `checkmate` |
 | `proof-id` | `proof_id` recomputes from its fields |
 | `duplicate` | neither hash has already been seen by the caller |
 

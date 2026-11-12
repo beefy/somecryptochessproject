@@ -14,6 +14,7 @@ result the board never reached.
 from __future__ import annotations
 
 import io
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -26,6 +27,7 @@ import chess.pgn
 
 from sccp.config import NetworkParams
 from sccp.errors import PgnValidationError
+from sccp.protocol.models import MAX_CLOCK_MS, MAX_PLIES_LIMIT
 from sccp.serialization import Domain, domain_hex
 
 RULES_VALUE: Final = "chess"
@@ -49,11 +51,16 @@ REQUIRED_TAGS: Final[tuple[str, ...]] = (
     "EngineBlack",
     "OpeningID",
     "OpeningHash",
+    "TimeControl",
     "Rules",
 )
 """Every tag a proof-grade PGN must carry (section 5.8, step 3)."""
 
-_PROOF_TERMINATIONS: Final[frozenset[str]] = frozenset({"checkmate", "draw", "resignation"})
+_PROOF_TERMINATIONS: Final[frozenset[str]] = frozenset(
+    {"checkmate", "draw", "resignation", "time_forfeit"}
+)
+
+_TIME_CONTROL_PATTERN: Final = re.compile(r"(?P<initial>[0-9]+)\+(?P<increment>[0-9]+)\Z")
 
 
 class GameResult(StrEnum):
@@ -84,12 +91,13 @@ class Termination(StrEnum):
     """How a game ended.
 
     ``MAX_PLIES`` and ``UNFINISHED`` are produced by :mod:`sccp.chess.gameplay`
-    when a live game is stopped; a proof may only carry the first three values.
+    when a live game is stopped; a proof may only carry the four terminal values.
     """
 
     CHECKMATE = "checkmate"
     DRAW = "draw"
     RESIGNATION = "resignation"
+    TIME_FORFEIT = "time_forfeit"
     MAX_PLIES = "max-plies"
     UNFINISHED = "unfinished"
 
@@ -109,8 +117,9 @@ class Termination(StrEnum):
 class GameExpectations:
     """The certificate fields a PGN must agree with (section 5.8, steps 1 and 4).
 
-    M2's ``MatchCertificate`` builds one of these; M1 keeps the dependency out of
-    :mod:`sccp.chess` so this module stays protocol-independent.
+    The transcript layer builds one of these from a ``MatchCertificate``. The
+    dataclass deliberately carries plain values rather than protocol models so
+    offline PGN validation never needs a certificate object.
     """
 
     match_id: str
@@ -123,6 +132,7 @@ class GameExpectations:
     opening_id: int
     opening_hash: str
     opening_moves: tuple[str, ...] = ()
+    time_control: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +151,8 @@ class ParsedGame:
     termination: Termination
     tags: Mapping[str, str]
     start_fen: str = chess.STARTING_FEN
+    time_control: str | None = None
+    low_ply: bool = False
 
     @property
     def plies(self) -> int:
@@ -242,10 +254,33 @@ def _int_tag(tags: Mapping[str, str], name: str) -> int:
     return value
 
 
+def _time_control_tag(tags: Mapping[str, str]) -> str | None:
+    """Validate the lossless ``TimeControl`` tag and return its canonical form."""
+    raw = tags.get("TimeControl", "")
+    if not raw:
+        return None
+    match = _TIME_CONTROL_PATTERN.fullmatch(raw)
+    if match is None:
+        raise PgnValidationError(
+            f"tag TimeControl is {raw!r}; expected whole seconds as 'initial+increment'"
+        )
+    initial = int(match.group("initial"))
+    increment = int(match.group("increment"))
+    if initial < 1:
+        raise PgnValidationError("tag TimeControl must have a positive initial time")
+    worst_case = initial * 1000 + increment * 1000 * MAX_PLIES_LIMIT
+    if worst_case > MAX_CLOCK_MS:
+        raise PgnValidationError(
+            f"tag TimeControl {raw!r} exceeds MAX_CLOCK_MS for max_plies={MAX_PLIES_LIMIT}"
+        )
+    return f"{initial}+{increment}"
+
+
 def _check_expectations(
     tags: Mapping[str, str],
     expected: GameExpectations,
     numbers: Mapping[str, int],
+    time_control: str | None,
 ) -> None:
     """Compare the PGN against the certificate it claims to belong to."""
     text_pairs = (
@@ -262,6 +297,11 @@ def _check_expectations(
             raise PgnValidationError(
                 f"tag {name} is {actual!r}, but the certificate says {wanted!r}"
             )
+    if expected.time_control is not None and time_control != expected.time_control:
+        raise PgnValidationError(
+            f"tag TimeControl is {time_control!r}, but the certificate says "
+            f"{expected.time_control!r}"
+        )
     number_pairs = (
         ("Epoch", expected.epoch),
         ("RoundNumber", expected.round_number),
@@ -317,6 +357,14 @@ def _check_outcome(
     """Make the headers agree with the board, then the board agree with them."""
     outcome = board.outcome(claim_draw=False)
     if outcome is None:
+        if termination is Termination.TIME_FORFEIT:
+            if result.is_decisive:
+                return
+            if result is GameResult.DRAW and board.is_insufficient_material():
+                return
+            raise PgnValidationError(
+                "a time forfeit must be decisive, or a draw when neither side has mating material"
+            )
         if termination is not Termination.RESIGNATION:
             raise PgnValidationError(
                 "the board has no terminal position; only Termination 'resignation' is "
@@ -356,6 +404,7 @@ def validate_pgn(
     expected: GameExpectations | None = None,
     require_win: bool = False,
     resignation_check: Callable[[chess.Board], bool] | None = None,
+    clock_evidence: object | None = None,
 ) -> ParsedGame:
     """Validate untrusted PGN text and return a :class:`ParsedGame`.
 
@@ -367,6 +416,12 @@ def validate_pgn(
     ``resignation_check`` is the M5 quality-policy hook: it receives the final
     board and must return ``True`` when the resigning side is lost. It is only
     called for games without a board outcome.
+
+    ``clock_evidence`` is the presence marker for a clocked proof. A
+    ``time_forfeit`` PGN is accepted only when it is present; every other
+    termination rejects it. The evidence itself is validated by
+    :func:`sccp.protocol.clocks.verify_clock_evidence`, because clock arithmetic
+    depends on witness keys and network policy that this module does not know.
     """
     text = _decode_text(pgn_text)
     size = len(text.encode("utf-8"))
@@ -390,10 +445,11 @@ def validate_pgn(
 
     tags = _require_tags(game)
     numbers = {name: _int_tag(tags, name) for name in ("Epoch", "RoundNumber", "OpeningID")}
+    time_control = _time_control_tag(tags)
     if expected is not None:
         if _has_variations(game):
             raise PgnValidationError("variations are not allowed in a proof")
-        _check_expectations(tags, expected, numbers)
+        _check_expectations(tags, expected, numbers, time_control)
 
     result = GameResult.parse(tags["Result"])
     if result is GameResult.UNFINISHED:
@@ -401,8 +457,17 @@ def validate_pgn(
     termination = Termination.parse(tags["Termination"])
     if termination.value not in _PROOF_TERMINATIONS:
         raise PgnValidationError(f"Termination {termination.value!r} is not valid in a proof")
+    time_forfeit = termination is Termination.TIME_FORFEIT
+    if time_forfeit and time_control is None:
+        raise PgnValidationError("a time-forfeit PGN needs a TimeControl tag")
+    if time_forfeit and clock_evidence is None:
+        raise PgnValidationError("a time-forfeit PGN needs clock_evidence")
+    if clock_evidence is not None and not time_forfeit:
+        raise PgnValidationError("clock_evidence is only valid for termination 'time_forfeit'")
 
     san_moves, final_board = _replay(game, params)
+    if time_forfeit and not san_moves:
+        raise PgnValidationError("a flag at ply 0 is a no-show, not a win")
 
     if expected is not None and expected.opening_moves:
         prefix = tuple(san_moves[: len(expected.opening_moves)])
@@ -414,10 +479,11 @@ def validate_pgn(
 
     _check_outcome(final_board, result, termination, resignation_check)
 
+    low_ply = len(san_moves) < params.min_plies
     if require_win:
         if not result.is_decisive:
             raise PgnValidationError("draws are valid PGNs, but a proof needs a win")
-        if len(san_moves) < params.min_plies:
+        if low_ply and not time_forfeit:
             raise PgnValidationError(
                 f"game has {len(san_moves)} plies; a proof needs at least {params.min_plies}"
             )
@@ -430,6 +496,8 @@ def validate_pgn(
         result=result,
         termination=termination,
         tags=MappingProxyType(tags),
+        time_control=time_control,
+        low_ply=low_ply,
     )
 
 
@@ -440,6 +508,7 @@ def validate_pgn_file(
     expected: GameExpectations | None = None,
     require_win: bool = False,
     resignation_check: Callable[[chess.Board], bool] | None = None,
+    clock_evidence: object | None = None,
 ) -> ParsedGame:
     """Read ``path`` as UTF-8 bytes and hand it to :func:`validate_pgn`."""
     try:
@@ -452,4 +521,5 @@ def validate_pgn_file(
         expected=expected,
         require_win=require_win,
         resignation_check=resignation_check,
+        clock_evidence=clock_evidence,
     )

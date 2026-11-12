@@ -106,6 +106,87 @@ def test_require_win_applies_the_proof_rules(
         validate_pgn(make_pgn(STALEMATE, draw_tags), params=_params(min_plies=1), require_win=True)
 
 
+def test_time_forfeit_is_negotiated_by_clock_evidence(
+    make_pgn: Callable[[str, Mapping[str, str]], str],
+    match_tags: dict[str, str],
+) -> None:
+    tags = {**match_tags, "Result": "1-0", "Termination": "time_forfeit"}
+    pgn = make_pgn("1. e4 e5 1-0", tags)
+
+    with pytest.raises(PgnValidationError, match="clock_evidence"):
+        validate_pgn(pgn, params=_params(min_plies=20), require_win=True)
+
+    parsed = validate_pgn(
+        pgn,
+        params=_params(min_plies=20),
+        require_win=True,
+        clock_evidence=object(),
+    )
+    assert parsed.termination is Termination.TIME_FORFEIT
+    assert parsed.result is GameResult.WHITE
+    assert parsed.time_control == "1800+0"
+    assert parsed.low_ply is True
+
+    untimed = {tag: value for tag, value in tags.items() if tag != "TimeControl"}
+    with pytest.raises(PgnValidationError, match="TimeControl"):
+        validate_pgn(
+            make_pgn("1. e4 e5 1-0", untimed),
+            params=_params(min_plies=20),
+            require_win=True,
+            clock_evidence=object(),
+        )
+
+    with pytest.raises(PgnValidationError, match="time_forfeit"):
+        validate_pgn(
+            make_pgn(FOOLS_MATE, match_tags),
+            params=TESTNET,
+            clock_evidence=object(),
+        )
+
+
+def test_time_forfeit_rejects_a_flag_at_ply_zero(
+    make_pgn: Callable[[str, Mapping[str, str]], str],
+    match_tags: dict[str, str],
+) -> None:
+    tags = {**match_tags, "Result": "1-0", "Termination": "time_forfeit"}
+    with pytest.raises(PgnValidationError, match="no-show"):
+        validate_pgn(
+            make_pgn("1-0", tags),
+            params=TESTNET,
+            clock_evidence=object(),
+        )
+
+
+def test_time_control_must_be_whole_seconds_and_match_the_certificate(
+    make_pgn: Callable[[str, Mapping[str, str]], str],
+    match_tags: dict[str, str],
+    expectations: GameExpectations,
+) -> None:
+    pgn = make_pgn(FOOLS_MATE, match_tags)
+    assert validate_pgn(pgn, params=TESTNET, expected=expectations).time_control == "1800+0"
+
+    missing = {tag: value for tag, value in match_tags.items() if tag != "TimeControl"}
+    with pytest.raises(PgnValidationError, match="TimeControl"):
+        validate_pgn(make_pgn(FOOLS_MATE, missing), params=TESTNET, expected=expectations)
+    with pytest.raises(PgnValidationError, match="TimeControl"):
+        validate_pgn(make_pgn(FOOLS_MATE, missing), params=_params(min_plies=1))
+
+    for bad in (
+        "1800",
+        "1800+5",
+        "1800.5+0",
+        "0+0",
+        "86401+0",
+        "1800+1000",
+        " 1800+0",
+        "1800+0 ",
+        "1_800+0",
+    ):
+        tags = {**match_tags, "TimeControl": bad}
+        with pytest.raises(PgnValidationError, match="TimeControl"):
+            validate_pgn(make_pgn(FOOLS_MATE, tags), params=TESTNET, expected=expectations)
+
+
 def test_max_plies_is_enforced(
     make_pgn: Callable[[str, Mapping[str, str]], str],
     match_tags: dict[str, str],

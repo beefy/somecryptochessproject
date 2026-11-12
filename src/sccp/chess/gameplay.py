@@ -26,6 +26,8 @@ from sccp.errors import GameError
 
 EVENT_TAG: Final = "sccp match"
 RULES_TAG: Final = "chess"
+TIME_CONTROL_TAG: Final = "1800+0"
+"""The protocol-fixed 30+0 control; the transcript layer repeats it from the certificate."""
 
 MoveHook = Callable[[int, chess.Move, str], None]
 """Called after every pushed move with ``(ply, move, san)``."""
@@ -91,6 +93,7 @@ def render_pgn(
         "White": white.name,
         "Black": black.name,
         "Rules": RULES_TAG,
+        "TimeControl": TIME_CONTROL_TAG,
         "Termination": termination.value,
         "EngineWhite": white.fingerprint,
         "EngineBlack": black.fingerprint,

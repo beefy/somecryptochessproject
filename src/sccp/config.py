@@ -73,6 +73,13 @@ class NetworkParams(BaseModel):
     min_fee: int = Field(gt=0)
     challenge_window: int = Field(ge=0)
 
+    # Clocks and timeout settlement
+    lag_grace_ms: int = Field(default=250, ge=0, le=1_000)
+    timeout_dispute_window: int = Field(default=2, ge=1)
+    min_timeout_bond: int = Field(default=0, ge=0)
+    clock_witness_quorum: int = Field(default=1, ge=1)
+    clock_witness_bond: int = Field(default=0, ge=0)
+
     # Chess rules
     min_plies: int = Field(ge=1)
     max_plies: int = Field(ge=1, le=MAX_PLIES_LIMIT)
@@ -127,6 +134,8 @@ class NetworkParams(BaseModel):
                 ("subsidy", self.subsidy),
                 ("min_bond", self.min_bond),
                 ("min_fee", self.min_fee),
+                ("min_timeout_bond", self.min_timeout_bond),
+                ("clock_witness_bond", self.clock_witness_bond),
             ):
                 if amount > max_money:
                     raise ValueError(f"{name} exceeds MAX_MONEY ({max_money})")
@@ -154,6 +163,11 @@ TESTNET: Final = NetworkParams(
     unbond_delay=50,
     min_fee=1_000,
     challenge_window=30,
+    lag_grace_ms=250,
+    timeout_dispute_window=2,
+    min_timeout_bond=coins_to_units(1),
+    clock_witness_quorum=1,
+    clock_witness_bond=coins_to_units(1),
     min_plies=20,
     max_plies=300,
     nodes_per_move=50_000,
@@ -189,6 +203,11 @@ MAINNET: Final = NetworkParams(
     unbond_delay=1_000,
     min_fee=1_000,
     challenge_window=100,
+    lag_grace_ms=250,
+    timeout_dispute_window=6,
+    min_timeout_bond=coins_to_units(10),
+    clock_witness_quorum=3,
+    clock_witness_bond=coins_to_units(50),
     min_plies=30,
     max_plies=400,
     nodes_per_move=250_000,

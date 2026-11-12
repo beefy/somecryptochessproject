@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from sccp.errors import TranscriptError
-from sccp.protocol.models import Transcript
+from sccp.protocol.models import TimeControl, Transcript
 from sccp.protocol.transcript import (
     build_win_proof,
     certificate_payload,
@@ -80,6 +80,10 @@ def test_certificate_payload_is_colour_and_network_bound(signed_match) -> None:
         "white": signed_match.certificate.engine_white,
         "black": signed_match.certificate.engine_black,
     }
+    assert payload["time_control"] == {
+        "initial_ms": 1_800_000,
+        "increment_ms": 0,
+    }
     assert "start_signatures" not in payload
 
 
@@ -95,6 +99,12 @@ def test_certificate_signatures_verify_and_reject_tampering(signed_match) -> Non
     tampered = signed_match.certificate.model_copy(update={"engine_white": "mock-v1:dead"})
     with pytest.raises(TranscriptError, match="invalid"):
         verify_certificate_signatures(tampered, signed_match.public_keys)
+
+    retimed = signed_match.certificate.model_copy(
+        update={"time_control": TimeControl(initial_ms=60_000, increment_ms=0)}
+    )
+    with pytest.raises(TranscriptError, match="invalid"):
+        verify_certificate_signatures(retimed, signed_match.public_keys)
 
     with pytest.raises(TranscriptError, match="registered public key"):
         verify_certificate_signatures(signed_match.certificate, {})

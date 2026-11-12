@@ -25,6 +25,7 @@ from sccp.config import NetworkParams, get_network
 from sccp.crypto.keys import PublicKeyLike
 from sccp.errors import (
     BeaconError,
+    ClockError,
     NetworkError,
     OpeningBookError,
     PairingError,
@@ -34,8 +35,14 @@ from sccp.errors import (
     TranscriptError,
 )
 from sccp.protocol.beacon import DrandVerifier, verify_beacon
+from sccp.protocol.clocks import (
+    validate_time_control,
+    verify_clock_evidence,
+    verify_move_evidence,
+)
 from sccp.protocol.models import (
     Beacon,
+    Color,
     GameResult,
     Matchup,
     RosterMember,
@@ -152,6 +159,10 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         )
     if cert.white == cert.black:
         _fail(ProofFailure.CERTIFICATE, "certificate seats must be distinct")
+    try:
+        validate_time_control(cert.time_control, max_plies=params.max_plies, require_fixed=True)
+    except ClockError as exc:
+        _fail(ProofFailure.CERTIFICATE, str(exc))
     if proof.round >= params.rounds_per_epoch:
         _fail(
             ProofFailure.CERTIFICATE,
@@ -230,7 +241,28 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
     ):
         _fail(ProofFailure.PAIRING, "matchup is not the one this roster and beacon produce")
 
-    # 6. Both seats must have signed the start and the result.
+    # 6. Start signatures, plus the result signatures the evidence supports.
+    result_seats: tuple[Color, ...] = ("white", "black")
+    missing = [seat for seat in result_seats if seat not in proof.result_signatures]
+    if missing:
+        claim_exception = (
+            proof.termination == "time_forfeit"
+            and proof.timeout_claim_id is not None
+            and proof.clock_evidence is not None
+            and len(missing) == 1
+        )
+        checkmate_exception = (
+            proof.termination == "checkmate" and bool(proof.move_evidence) and len(missing) == 1
+        )
+        if claim_exception or checkmate_exception:
+            result_seats = (proof.winner_seat,)
+        else:
+            _fail(
+                ProofFailure.SIGNATURE,
+                f"result is missing the {missing[0]} signature and no evidence covers it",
+            )
+        if proof.winner_seat not in proof.result_signatures:
+            _fail(ProofFailure.SIGNATURE, "the claimant did not sign the result")
     result = GameResult(
         network=proof.network,
         match_id=proof.match_id,
@@ -242,7 +274,7 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
     )
     try:
         verify_certificate_signatures(cert, context.public_keys)
-        verify_result_signatures(result, cert, context.public_keys)
+        verify_result_signatures(result, cert, context.public_keys, seats=result_seats)
     except (TranscriptError, ValueError) as exc:
         _fail(ProofFailure.SIGNATURE, str(exc))
 
@@ -253,6 +285,7 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
             params=params,
             expected=expected_from_certificate(cert),
             require_win=True,
+            clock_evidence=proof.clock_evidence,
         )
     except PgnValidationError as exc:
         _fail(ProofFailure.PGN, str(exc))
@@ -275,6 +308,53 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
     parsed_seat = "white" if parsed.result is PgnResult.WHITE else "black"
     if parsed_seat != proof.winner_seat:
         _fail(ProofFailure.RESULT, "winner seat does not match the replayed result")
+    if proof.low_ply != parsed.low_ply:
+        _fail(
+            ProofFailure.RESULT,
+            f"proof low_ply is {proof.low_ply}, the replay says {parsed.low_ply}",
+        )
+
+    # 8b. Clock and board evidence must cover exactly the replayed game.
+    if proof.timeout_claim_id is not None and proof.termination != "time_forfeit":
+        _fail(ProofFailure.RESULT, "timeout_claim_id is only valid for a time forfeit")
+    if proof.termination == "time_forfeit":
+        if proof.clock_evidence is None:
+            _fail(ProofFailure.RESULT, "a time forfeit needs clock_evidence")
+        if proof.move_evidence:
+            _fail(ProofFailure.RESULT, "move_evidence is only valid for a checkmate")
+        try:
+            verify_clock_evidence(
+                proof.clock_evidence,
+                certificate=cert,
+                san_moves=parsed.san_moves,
+                result=proof.result,
+                winner_seat=proof.winner_seat,
+                public_keys=context.public_keys,
+                quorum=params.clock_witness_quorum,
+                max_plies=params.max_plies,
+                lag_grace_ms=params.lag_grace_ms,
+            )
+        except ClockError as exc:
+            _fail(ProofFailure.RESULT, f"invalid clock evidence: {exc}")
+    else:
+        if proof.clock_evidence is not None:
+            _fail(ProofFailure.RESULT, "clock_evidence is only valid for a time forfeit")
+        if proof.move_evidence:
+            if proof.termination != "checkmate":
+                _fail(ProofFailure.RESULT, "move_evidence is only valid for a checkmate")
+            try:
+                verify_move_evidence(
+                    proof.move_evidence,
+                    certificate=cert,
+                    public_keys=context.public_keys,
+                    san_moves=parsed.san_moves,
+                )
+            except ClockError as exc:
+                _fail(ProofFailure.RESULT, f"invalid move evidence: {exc}")
+            final_mover = cert.white if proof.winner_seat == "white" else cert.black
+            if proof.move_evidence[-1].seat != final_mover:
+                _fail(ProofFailure.RESULT, "the final move was not made by the winner")
+
     expected_proof_id = domain_hex(
         Domain.PROOF,
         {

@@ -40,7 +40,9 @@ from sccp.crypto.keys import (
     verify_domain,
 )
 from sccp.errors import TranscriptError
+from sccp.protocol.clocks import FIXED_TIME_CONTROL, time_control_tag
 from sccp.protocol.models import (
+    ClockEvidence,
     Color,
     GameResult,
     MatchCertificate,
@@ -48,6 +50,7 @@ from sccp.protocol.models import (
     OpeningRef,
     QualitySummary,
     ResultValue,
+    SignedMove,
     TerminationValue,
     Transcript,
     WinProof,
@@ -136,6 +139,7 @@ def create_certificate(
         opening=ref,
         engine_white=engine_white,
         engine_black=engine_black,
+        time_control=FIXED_TIME_CONTROL,
     )
 
 
@@ -154,6 +158,10 @@ def certificate_payload(cert: MatchCertificate) -> dict[str, object]:
         "seats": sorted((cert.white, cert.black)),
         "colors": {"white": cert.white, "black": cert.black},
         "opening_hash": cert.opening.hash,
+        "time_control": {
+            "initial_ms": cert.time_control.initial_ms,
+            "increment_ms": cert.time_control.increment_ms,
+        },
         "engine_fingerprints": {
             "white": cert.engine_white,
             "black": cert.engine_black,
@@ -243,12 +251,22 @@ def verify_result_signatures(
     result: GameResult,
     cert: MatchCertificate,
     public_keys: Mapping[str, PublicKeyLike | str],
+    *,
+    seats: tuple[Color, ...] = SEATS,
 ) -> None:
-    """Check both result signatures against the registered seat keys."""
+    """Check the required result signatures against the registered seat keys.
+
+    A co-signed result passes the default seat pair. The refused-result paths
+    pass only the claimant's seat; their separate evidence proves the board or
+    the clock.
+    """
     if result.match_id != cert.match_id or result.network != cert.network:
         raise TranscriptError("result does not belong to this certificate")
+    unknown = sorted(set(result.result_signatures) - set(SEATS))
+    if unknown:
+        raise TranscriptError(f"result has unknown signature seats: {unknown}")
     payload = result_payload(result)
-    for seat in SEATS:
+    for seat in seats:
         address = _seat_address(cert, seat)
         signature = result.result_signatures.get(seat)
         if signature is None:
@@ -273,6 +291,7 @@ def expected_from_certificate(cert: MatchCertificate) -> GameExpectations:
         opening_id=cert.opening.line_id,
         opening_hash=cert.opening.hash,
         opening_moves=cert.opening.moves,
+        time_control=time_control_tag(cert.time_control),
     )
 
 
@@ -294,6 +313,7 @@ def pgn_headers(cert: MatchCertificate) -> dict[str, str]:
         "EngineBlack": cert.engine_black,
         "OpeningID": str(cert.opening.line_id),
         "OpeningHash": cert.opening.hash,
+        "TimeControl": time_control_tag(cert.time_control),
         "Rules": RULES_TAG,
     }
 
@@ -341,12 +361,17 @@ def build_win_proof(
     *,
     params: NetworkParams,
     quality_summary: QualitySummary | None = None,
+    clock_evidence: ClockEvidence | None = None,
+    move_evidence: tuple[SignedMove, ...] | None = None,
+    timeout_claim_id: str | None = None,
 ) -> WinProof:
-    """Validate a co-signed game and wrap it into a :class:`WinProof`.
+    """Validate a game and wrap it into a :class:`WinProof`.
 
     The PGN is replayed and checked against the certificate, so a winner cannot
     submit a proof whose headers, opening or result disagree with what both
-    seats signed.
+    seats signed. The evidence arguments cover the two refused-result paths:
+    ``clock_evidence`` plus an optional ``timeout_claim_id`` for a flag, and
+    ``move_evidence`` for a refused checkmate.
     """
     if cert.network != params.network_id:
         raise TranscriptError(
@@ -355,8 +380,6 @@ def build_win_proof(
     for seat in SEATS:
         if seat not in cert.start_signatures:
             raise TranscriptError(f"certificate is missing the {seat} start signature")
-        if seat not in result_signatures:
-            raise TranscriptError(f"proof is missing the {seat} result signature")
     unknown = sorted(set(result_signatures) - set(SEATS))
     if unknown:
         raise TranscriptError(f"unknown result signature seats: {unknown}")
@@ -366,8 +389,8 @@ def build_win_proof(
         params=params,
         expected=expected_from_certificate(cert),
         require_win=True,
+        clock_evidence=clock_evidence,
     )
-    result = create_result(cert, parsed, result_signatures=result_signatures)
     if parsed.result is PgnResult.WHITE:
         winner_seat: Color = "white"
     elif parsed.result is PgnResult.BLACK:
@@ -377,6 +400,41 @@ def build_win_proof(
     winner = cert.white if winner_seat == "white" else cert.black
     loser = cert.black if winner_seat == "white" else cert.white
 
+    termination = parsed.termination.value
+    if clock_evidence is not None and termination != "time_forfeit":
+        raise TranscriptError("clock_evidence is only valid for a time forfeit")
+    if move_evidence is not None and termination != "checkmate":
+        raise TranscriptError("move_evidence is only valid for a checkmate")
+    if timeout_claim_id is not None and termination != "time_forfeit":
+        raise TranscriptError("timeout_claim_id is only valid for a time forfeit")
+    if clock_evidence is not None and clock_evidence.time_control != cert.time_control:
+        raise TranscriptError("clock evidence and certificate use different time controls")
+
+    # A missing result signature is only survivable when the accompanying
+    # evidence proves the board or the clock. Resignations and draws still need
+    # both seats, because they attest intent rather than a position.
+    missing = set(SEATS) - set(result_signatures)
+    if missing:
+        claim_exception = (
+            termination == "time_forfeit"
+            and timeout_claim_id is not None
+            and clock_evidence is not None
+            and len(missing) == 1
+        )
+        checkmate_exception = (
+            termination == "checkmate" and move_evidence is not None and len(missing) == 1
+        )
+        if not (claim_exception or checkmate_exception):
+            for seat in SEATS:
+                if seat not in result_signatures:
+                    raise TranscriptError(f"proof is missing the {seat} result signature")
+            raise TranscriptError("proof has an invalid result signature set")  # pragma: no cover
+        if winner_seat not in result_signatures:
+            raise TranscriptError("the claimant did not sign the result")
+        # The signature bytes are checked by the offline verifier, which has the
+        # registered keys. Here we only enforce which seats must be present.
+
+    result = create_result(cert, parsed, result_signatures=result_signatures)
     return WinProof(
         network=cert.network,
         proof_id=domain_hex(
@@ -397,21 +455,39 @@ def build_win_proof(
         result=result.result,
         termination=result.termination,
         plies=result.plies,
+        low_ply=parsed.low_ply,
         opening=cert.opening,
         pgn=pgn_text,
         certificate=cert,
         result_signatures=dict(result_signatures),
+        clock_evidence=clock_evidence,
+        move_evidence=move_evidence,
+        timeout_claim_id=timeout_claim_id,
         quality_summary=quality_summary,
     )
 
 
-def proof_from_transcript(transcript: Transcript, *, params: NetworkParams) -> WinProof:
-    """Wrap an already co-signed transcript into a proof."""
+def proof_from_transcript(
+    transcript: Transcript,
+    *,
+    params: NetworkParams,
+    clock_evidence: ClockEvidence | None = None,
+    move_evidence: tuple[SignedMove, ...] | None = None,
+    timeout_claim_id: str | None = None,
+) -> WinProof:
+    """Wrap an already co-signed transcript into a proof.
+
+    A co-signed ``time_forfeit`` still needs its clock evidence; the refused
+    paths supply the same optional evidence arguments as :func:`build_win_proof`.
+    """
     return build_win_proof(
         transcript.certificate,
         transcript.pgn,
         transcript.result.result_signatures,
         params=params,
+        clock_evidence=clock_evidence,
+        move_evidence=move_evidence,
+        timeout_claim_id=timeout_claim_id,
     )
 
 

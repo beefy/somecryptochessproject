@@ -9,7 +9,7 @@ import pytest
 from sccp.chess.openings import books_from_document
 from sccp.config import TESTNET
 from sccp.errors import ProofVerificationError
-from sccp.protocol.models import GameResult
+from sccp.protocol.models import GameResult, TimeControl
 from sccp.protocol.pairing import RosterEntry
 from sccp.protocol.transcript import sign_result
 from sccp.protocol.verification import (
@@ -68,6 +68,14 @@ def test_swapped_colours_fail(signed_match) -> None:
             "winner_seat": "black",
         }
     )
+    _expect_failure(proof, signed_match.context, ProofFailure.CERTIFICATE)
+
+
+def test_non_fixed_time_control_fails(signed_match) -> None:
+    certificate = signed_match.proof.certificate.model_copy(
+        update={"time_control": TimeControl(initial_ms=60_000, increment_ms=0)}
+    )
+    proof = signed_match.proof.model_copy(update={"certificate": certificate})
     _expect_failure(proof, signed_match.context, ProofFailure.CERTIFICATE)
 
 
@@ -177,6 +185,11 @@ def test_recomputed_game_hash_mismatch_fails(signed_match) -> None:
         }
     )
     _expect_failure(proof, signed_match.context, ProofFailure.GAME_HASH)
+
+
+def test_timeout_claim_id_is_only_valid_for_a_time_forfeit(signed_match) -> None:
+    proof = signed_match.proof.model_copy(update={"timeout_claim_id": "00" * 32})
+    _expect_failure(proof, signed_match.context, ProofFailure.RESULT)
 
 
 def test_tampered_proof_id_fails(signed_match) -> None:

@@ -62,6 +62,17 @@ def test_unknown_network_raises() -> None:
     assert issubclass(NetworkError, ValueError)
 
 
+def test_clock_and_timeout_parameters() -> None:
+    assert TESTNET.lag_grace_ms == 250
+    assert TESTNET.timeout_dispute_window == 2
+    assert TESTNET.min_timeout_bond == 1 * UNITS_PER_COIN
+    assert TESTNET.clock_witness_quorum == 1
+    assert TESTNET.clock_witness_bond == 1 * UNITS_PER_COIN
+    assert MAINNET.clock_witness_quorum == 3
+    assert MAINNET.min_timeout_bond == 10 * UNITS_PER_COIN
+    assert MAINNET.clock_witness_bond == 50 * UNITS_PER_COIN
+
+
 def test_devnet_is_deterministic() -> None:
     assert DEVNET.network_id == "devnet"
     assert DEVNET.epoch_length == 1
@@ -101,6 +112,10 @@ INVALID_OVERRIDES: list[dict[str, Any]] = [
     {"drand_chain": "quicknet", "drand_period_seconds": 3},  # missing round offset
     {"quality_mode": QualityMode.SAMPLED},  # sampled quality with zero rate
     {"min_fee": 0},
+    {"lag_grace_ms": 1_001},
+    {"timeout_dispute_window": 0},
+    {"clock_witness_quorum": 0},
+    {"min_timeout_bond": -1},
 ]
 
 
