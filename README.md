@@ -9,7 +9,7 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
-> **Status: M4 complete.** M0 (packaging, config, crypto, wallets, CLI, CI), M1
+> **Status: M5 complete.** M0 (packaging, config, crypto, wallets, CLI, CI), M1
 > (PGN validation, canonical game hash, opening book, engine abstraction,
 > game runner, offline `sccp verify pgn`), M2 (commit/reveal beacons,
 > deterministic pairing, signed match certificates and transcripts, the relay,
@@ -18,8 +18,10 @@ reward.
 > mempool, SQLite storage, bonded timeout settlement, the wallet service, the
 > block builder and deterministic genesis files) and M4 (the node API and
 > gossip, pull-sync, the unattended engine miner, the complete `sccp` command
-> surface, the in-process devnet and a docker-compose testnet stack) are
-> implemented and tested. Normative formats are in
+> surface, the in-process devnet and a docker-compose testnet stack), and M5
+> (quality verification, bonded challenges with beacon-ranked panels, slashing,
+> the adversarial suite and the threat model) are implemented and tested.
+> Normative formats are in
 > [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan lives in
 > [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 

@@ -7,6 +7,11 @@ summarised in the M0–M2 rows of the README roadmap.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-12
+
+A minor release: M5 quality verification and bonded challenges, the threat model,
+and operator guides for wallets, transfers and miners.
+
 ### Added
 
 - Milestone M5: quality verification, bonded challenges and the threat model.
