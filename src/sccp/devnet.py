@@ -185,6 +185,7 @@ def _bootstrap(service: NodeService, participants: Sequence[DevnetMiner]) -> Non
                 max_games=params.rounds_per_epoch,
             )
         )
+
     _build_and_ingest(service, scheduler, pool=pool)
 
     for _ in range(2):

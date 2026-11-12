@@ -232,6 +232,22 @@ class TransactionRecord(ProtocolModel):
     block_hash: str | None = None
 
 
+class FaucetRequest(ProtocolModel):
+    """``POST /v1/faucet``: the recipient address and an optional amount in coins."""
+
+    address: str = Field(min_length=1)
+    amount: int | None = Field(default=None, ge=1)
+
+
+class FaucetView(ProtocolModel):
+    """A dispensed faucet grant."""
+
+    network: str = Field(min_length=1)
+    address: str = Field(min_length=1)
+    amount: int = Field(ge=1)
+    txid: str = Field(min_length=1)
+
+
 __all__ = [
     "AccountView",
     "BlockIngest",
@@ -239,6 +255,8 @@ __all__ = [
     "DifficultyPoint",
     "DifficultyView",
     "EpochView",
+    "FaucetRequest",
+    "FaucetView",
     "GameView",
     "GossipResult",
     "MatchInfo",

@@ -36,7 +36,7 @@ from sccp.chess.engines import open_engine
 from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
 from sccp.config import UNITS_PER_COIN, NetworkParams, coins_to_units, get_network
-from sccp.crypto.address import encode_address
+from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.wallet import (
     DEFAULT_KDF,
     KdfParams,
@@ -54,6 +54,7 @@ from sccp.miner.engine_miner import EngineMiner, MinerConfig, NodeClient
 from sccp.miner.matchmaker import Matchmaker
 from sccp.miner.matchmaker import create_app as create_matchmaker_app
 from sccp.node.app import create_app as create_node_app
+from sccp.node.miner import NodeMiner, proof_summary
 from sccp.node.service import NodeService, sync_peers
 from sccp.protocol.models import Transaction, WinProof
 from sccp.protocol.verification import (
@@ -780,9 +781,39 @@ def node_run(
         list[str] | None,
         typer.Option("--peer", help="Peer base URL to pull-sync from at startup (repeatable)."),
     ] = None,
+    no_faucet: Annotated[
+        bool,
+        typer.Option("--no-faucet", help="Do not expose the testnet faucet endpoint."),
+    ] = False,
+    mine: Annotated[
+        bool,
+        typer.Option("--mine", help="Settle eligible proofs around a miner address."),
+    ] = False,
+    miner_address: Annotated[
+        str | None,
+        typer.Option("--miner-address", help="Address that receives coinbases for --mine."),
+    ] = None,
+    mine_poll_seconds: Annotated[
+        float,
+        typer.Option("--mine-poll-seconds", help="Seconds between --mine attempts."),
+    ] = 1.0,
+    mine_bootstrap: Annotated[
+        bool,
+        typer.Option(
+            "--mine-bootstrap/--no-mine-bootstrap",
+            help="Let --mine extend the empty bootstrap window (off for pre-built chains).",
+        ),
+    ] = True,
 ) -> None:
     """Serve the node API over HTTP, replaying the chain in ``--data-dir``."""
     params = _resolve_network(ctx, network)
+    if mine:
+        if miner_address is None:
+            _fail("--mine needs --miner-address", code=2)
+        if not validate_address(miner_address, params):
+            _fail(f"{miner_address!r} is not a valid {params.network_id} address", code=2)
+        if mine_poll_seconds <= 0:
+            _fail("--mine-poll-seconds must be positive", code=2)
     data_dir = _options(ctx).data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
     service = _run(
@@ -792,7 +823,11 @@ def node_run(
             storage=Storage(data_dir / "chain.sqlite"),
         )
     )
+    stop: Event | None = None
+    thread: Thread | None = None
     try:
+        if no_faucet:
+            service.faucet = None
         _run(service.check_startup)
         reports = sync_peers(service, tuple(peer or ()))
         status = service.status()
@@ -819,10 +854,33 @@ def node_run(
                 typer.echo(
                     f"synced {report.peer}: +{report.adopted} blocks to height {report.height}"
                 )
+        if mine:
+            assert miner_address is not None
+            node_miner = NodeMiner(
+                service, miner_address, clock=service.clock, mine_bootstrap=mine_bootstrap
+            )
+            stop = Event()
+            thread = Thread(
+                target=node_miner.run,
+                kwargs={
+                    "stop": stop,
+                    "poll_seconds": mine_poll_seconds,
+                    "on_block": lambda block: typer.echo(f"mined {proof_summary(block)}", err=True),
+                },
+                name="sccp-node-miner",
+                daemon=True,
+            )
+            thread.start()
+            typer.echo(f"mining proof blocks for {miner_address}")
+
         import uvicorn
 
         uvicorn.run(create_node_app(service), host=host, port=port)
     finally:
+        if stop is not None:
+            stop.set()
+        if thread is not None:
+            thread.join(timeout=5)
         service.close()
 
 

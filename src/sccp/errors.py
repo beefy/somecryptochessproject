@@ -149,6 +149,18 @@ class NotFoundError(NodeError):
     """The requested block, account, epoch, match or game is unknown."""
 
 
+class RateLimitError(NodeError):
+    """A faucet request exceeds the relay-enforced grant policy."""
+
+    def __init__(self, message: str, *, retry_after: int) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class FaucetError(NodeError):
+    """The faucet is disabled, exhausted or asked for an unsupported amount."""
+
+
 # --- ledger ------------------------------------------------------------------
 
 

@@ -39,17 +39,32 @@ MAX_SEAL_ATTEMPTS: int = 1 << 24
 
 @dataclass(slots=True)
 class BlockBuilder:
-    """Builds the next block for one miner from a chain and a mempool."""
+    """Builds the next block for one miner from a chain and a mempool.
+
+    A miner normally supplies its ``keypair``. A node that settles proofs for
+    miners it does not hold keys for can instead pass ``miner_address``; block
+    headers and coinbases carry an address, not a signature, so this is the same
+    consensus object either way.
+    """
 
     params: NetworkParams
     chain: Chain
     mempool: Mempool
-    keypair: Keypair
+    keypair: Keypair | None = None
+    miner_address: str | None = None
 
     @property
     def miner(self) -> str:
         """The address the coinbase pays and every proof must belong to."""
+        if self.miner_address is not None:
+            return self.miner_address
+        if self.keypair is None:  # pragma: no cover - guarded by __post_init__
+            raise ChainError("a block builder needs a keypair or a miner address")
         return encode_address(self.keypair.public_key_bytes, self.params)
+
+    def __post_init__(self) -> None:
+        if self.keypair is None and self.miner_address is None:
+            raise ChainError("a block builder needs a keypair or a miner address")
 
     def next_difficulty(self, height: int) -> Difficulty:
         """The difficulty the block at ``height`` must declare."""

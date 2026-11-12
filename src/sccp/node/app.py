@@ -19,7 +19,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
-from sccp.errors import NotFoundError, SccpError
+from sccp.errors import NotFoundError, RateLimitError, SccpError
 from sccp.node.models import (
     AccountView,
     BlockView,
@@ -27,6 +27,8 @@ from sccp.node.models import (
     ChallengeView,
     DifficultyView,
     EpochView,
+    FaucetRequest,
+    FaucetView,
     GameView,
     GossipResult,
     MatchInfo,
@@ -102,6 +104,12 @@ def create_app(service: NodeService) -> FastAPI:
     async def _not_found(_: Request, exc: NotFoundError) -> JSONResponse:
         return _error_response(404, str(exc))
 
+    @app.exception_handler(RateLimitError)
+    async def _rate_limited(_: Request, exc: RateLimitError) -> JSONResponse:
+        response = _error_response(429, str(exc))
+        response.headers["Retry-After"] = str(exc.retry_after)
+        return response
+
     @app.exception_handler(SccpError)
     async def _bad_request(_: Request, exc: SccpError) -> JSONResponse:
         return _error_response(400, str(exc))
@@ -152,6 +160,17 @@ def create_app(service: NodeService) -> FastAPI:
     @app.get("/v1/matches/{match_id}/transcript", response_model=Transcript)
     def transcript(match_id: str) -> Transcript:
         return service.transcript(match_id)
+
+    @app.get("/v1/faucet")
+    def faucet_status() -> dict[str, object]:
+        if service.faucet is None:
+            raise HTTPException(status_code=404, detail="the faucet is disabled")
+        return service.faucet.status()
+
+    @app.post("/v1/faucet", response_model=FaucetView)
+    def faucet(request: FaucetRequest, http_request: Request) -> FaucetView:
+        client = http_request.client.host if http_request.client is not None else "unknown"
+        return service.faucet_request(request.address, client=client, amount=request.amount)
 
     @app.get("/v1/mempool", response_model=MempoolView)
     def mempool() -> MempoolView:

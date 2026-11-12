@@ -580,6 +580,99 @@ def test_node_run_serves_the_app(data_dir: Path, monkeypatch: pytest.MonkeyPatch
     assert isinstance(served["app"], FastAPI)
 
 
+def test_node_run_validates_the_mining_options(data_dir: Path) -> None:
+    missing = runner.invoke(
+        app, ["--data-dir", str(data_dir), "node", "run", "--network", "devnet", "--mine"]
+    )
+    assert missing.exit_code == 2
+    assert "--mine needs --miner-address" in missing.output
+
+    invalid = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "node",
+            "run",
+            "--network",
+            "devnet",
+            "--mine",
+            "--miner-address",
+            "sccpt1nope",
+        ],
+    )
+    assert invalid.exit_code == 2
+    assert "not a valid devnet address" in invalid.output
+
+    bad_poll = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "node",
+            "run",
+            "--network",
+            "devnet",
+            "--mine",
+            "--miner-address",
+            _devnet_address(),
+            "--mine-poll-seconds",
+            "0",
+        ],
+    )
+    assert bad_poll.exit_code == 2
+    assert "--mine-poll-seconds must be positive" in bad_poll.output
+
+
+def test_node_run_starts_the_settlement_miner(
+    data_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import uvicorn
+
+    served: dict[str, Any] = {}
+    monkeypatch.setattr(
+        uvicorn, "run", lambda application, *, host, port: served.update(app=application)
+    )
+    result = runner.invoke(
+        app,
+        [
+            "--data-dir",
+            str(data_dir),
+            "node",
+            "run",
+            "--network",
+            "devnet",
+            "--mine",
+            "--miner-address",
+            _devnet_address(),
+            "--no-mine-bootstrap",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert f"mining proof blocks for {_devnet_address()}" in result.stdout
+    assert served["app"] is not None
+
+
+def test_node_run_can_hide_the_faucet(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import uvicorn
+
+    served: dict[str, Any] = {}
+    monkeypatch.setattr(
+        uvicorn, "run", lambda application, *, host, port: served.update(app=application)
+    )
+    result = runner.invoke(
+        app,
+        ["--data-dir", str(data_dir), "node", "run", "--network", "devnet", "--no-faucet"],
+    )
+    assert result.exit_code == 0, result.output
+    paths = {getattr(route, "path", None) for route in served["app"].routes}
+    assert "/v1/faucet" not in paths
+
+
+def _devnet_address() -> str:
+    return encode_address(keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
+
+
 def test_node_run_warns_about_a_peer_that_is_down(
     data_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

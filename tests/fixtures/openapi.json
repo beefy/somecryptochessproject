@@ -616,6 +616,58 @@
         ],
         "type": "object"
       },
+      "FaucetRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "amount": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "address"
+        ],
+        "type": "object"
+      },
+      "FaucetView": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "amount": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "txid": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "address",
+          "amount",
+          "txid"
+        ],
+        "type": "object"
+      },
       "FlagReceipt": {
         "additionalProperties": false,
         "properties": {
@@ -2089,6 +2141,54 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Beacon"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/faucet": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaucetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaucetView"
                 }
               }
             }

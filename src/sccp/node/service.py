@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 import random
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -35,12 +36,14 @@ from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import validate_address
 from sccp.errors import (
     AddressError,
+    FaucetError,
     GenesisError,
     GossipError,
     LedgerError,
     NotFoundError,
     ProtocolError,
 )
+from sccp.node.faucet import Faucet
 from sccp.node.models import (
     AccountView,
     BlockIngest,
@@ -50,6 +53,7 @@ from sccp.node.models import (
     DifficultyPoint,
     DifficultyView,
     EpochView,
+    FaucetView,
     GameView,
     GossipResult,
     MatchInfo,
@@ -138,6 +142,8 @@ class NodeService:
     peers: PeerTable = field(default_factory=PeerTable)
     gossip: GossipCache = field(default_factory=GossipCache)
     rng: random.Random = field(default_factory=random.Random)
+    faucet: Faucet | None = None
+    write_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
     fanout: int = MAX_FANOUT
     max_sync_blocks: int = 512
     syncing: bool = False
@@ -157,6 +163,13 @@ class NodeService:
             )
         if self.storage is not None:
             self.storage.bind_network(self.params)
+        if self.faucet is None and self.params.network_id in ("testnet", "devnet"):
+            self.faucet = Faucet(
+                params=self.params,
+                state=lambda: self.mempool.projection,
+                admit=lambda tx: self.mempool.add_transaction(tx),
+                clock=self.clock,
+            )
 
     # -- construction -------------------------------------------------------
 
@@ -530,8 +543,22 @@ class NodeService:
             raise ProtocolError(
                 f"transaction is for {tx.network!r}, this node is {self.params.network_id!r}"
             )
-        digest = self.mempool.add_transaction(tx)
+        with self.write_lock:
+            digest = self.mempool.add_transaction(tx)
         return TxAccepted(network=self.params.network_id, txid=digest)
+
+    def faucet_request(self, address: str, *, client: str, amount: int | None = None) -> FaucetView:
+        """Dispense one faucet grant and admit its transfer to the mempool."""
+        if self.faucet is None:
+            raise FaucetError(f"the faucet is disabled on {self.params.network_id}")
+        with self.write_lock:
+            tx = self.faucet.request(address, client=client, amount=amount)
+        return FaucetView(
+            network=self.params.network_id,
+            address=address,
+            amount=self.faucet.policy.amount_coins if amount is None else amount,
+            txid=txid(tx),
+        )
 
     def announce_proof(self, proof: WinProof) -> ProofAccepted:
         """Admit a win proof after the same checks a block would apply."""
@@ -539,7 +566,8 @@ class NodeService:
             raise ProtocolError(
                 f"proof is for {proof.network!r}, this node is {self.params.network_id!r}"
             )
-        proof_id = self.mempool.add_proof(proof)
+        with self.write_lock:
+            proof_id = self.mempool.add_proof(proof)
         return ProofAccepted(network=self.params.network_id, proof_id=proof_id)
 
     def add_transcript(self, transcript: Transcript) -> None:
@@ -554,6 +582,10 @@ class NodeService:
 
     def ingest_block(self, block: Block, *, now: int | None = None) -> BlockIngest:
         """Validate, store and persist ``block``; re-base the pool on a reorg."""
+        with self.write_lock:
+            return self._ingest_block(block, now=now)
+
+    def _ingest_block(self, block: Block, *, now: int | None = None) -> BlockIngest:
         if block.header.network != self.params.network_id:
             raise ProtocolError(
                 f"block is for {block.header.network!r}, this node is {self.params.network_id!r}"
