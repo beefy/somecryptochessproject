@@ -1,4 +1,4 @@
-"""Full-node services: chain API, gossip and peer sync (M4)."""
+"""Full-node services: chain API, gossip and peer sync."""
 
 from sccp.node.models import (
     AccountView,

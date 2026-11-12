@@ -286,7 +286,7 @@ def validate_slash(state: State, tx: Transaction, height: int) -> tuple[str, Wit
     if unknown:
         _fail(f"unknown slash_evidence payload fields: {unknown}")
     if "proof_id" in tx.payload:
-        _fail("proof equivocation is not an M3 rule; slash_evidence in M3 covers clock witnesses")
+        _fail("proof equivocation is not a timeout rule; slash_evidence covers clock witnesses")
     evidence = _payload_object(tx.payload, "evidence")
     extra = sorted(set(evidence) - EVIDENCE_KEYS)
     if extra:

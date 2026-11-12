@@ -1,4 +1,4 @@
-"""Wallet service: balances, builders and history (plan section 5.3)."""
+"""Wallet service: balances, builders and history (PROTOCOL.md)."""
 
 from __future__ import annotations
 

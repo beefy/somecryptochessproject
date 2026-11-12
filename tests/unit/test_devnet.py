@@ -1,4 +1,4 @@
-"""The in-process devnet: a whole network in one call (M4)."""
+"""The in-process devnet: a whole network in one call."""
 
 from __future__ import annotations
 

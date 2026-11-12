@@ -104,7 +104,7 @@ For the hosted two-miner deployment, replace that with the deployment host:
 export SCCP_NODE="http://203.0.113.10:8645"
 ```
 
-The M6 deployment does **not** terminate TLS. If the node is behind a reverse
+The testnet deployment does **not** terminate TLS. If the node is behind a reverse
 proxy, use its HTTPS URL instead. Check that the node is alive and on testnet:
 
 ```bash
@@ -252,7 +252,7 @@ sccpt1qrvk... 1000.00000000 (spendable 1000.00000000, bonded 0.00000000, immatur
 
 ### Why a faucet transfer can stay pending
 
-The M6 testnet does not mine empty blocks after bootstrap. Blocks are produced
+The testnet does not mine empty blocks after bootstrap. Blocks are produced
 when a miner settles a decisive game's win proof, and pending faucet transfers
 ride along in the next such block. A draw produces no proof and therefore no
 block.

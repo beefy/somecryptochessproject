@@ -1,4 +1,4 @@
-"""Deterministic pairing from a roster and beacon (section 5.6).
+"""Deterministic pairing from a roster and beacon (PROTOCOL.md section 7).
 
 ``pair`` is a pure function: every node that sees the same roster, beacon,
 epoch and round emits the same matchup list, so the relay only delivers a result
@@ -25,7 +25,7 @@ from sccp.protocol.models import Matchup
 from sccp.serialization import Domain, domain_hex
 
 PAIR_SCORE_DOMAIN: Final = Domain.PAIR.value.encode("utf-8")
-"""Prefix of the internal pairing score, per section 5.6."""
+"""Prefix of the internal pairing score, per PROTOCOL.md section 7."""
 
 COLOUR_TAG: Final = b"color"
 """Separator between the beacon and match id in the colour draw."""

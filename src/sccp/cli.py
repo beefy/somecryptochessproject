@@ -1,13 +1,11 @@
-"""``sccp`` command line interface (docs/IMPLEMENTATION_PLAN.md section 5.13).
+"""``sccp`` command line interface.
 
-M0 shipped ``--version`` and the wallet basics; M1 added the offline PGN
-verifier (``verify pgn``); M2 added offline proof verification (``verify
-proof``) and the matchmaking relay (``matchmaker run``); M3 added the ledger
-behind the wallet and chain commands; M4 completes the surface with the node
-(``node run``), the unattended miner (``miner run``, ``miner register``,
-``miner availability``, ``miner reveal``), the read-only chain commands, the
-testnet faucet and the one-command devnet. Every command is a thin wrapper over
-a library call so the same behaviour is testable in-process.
+The CLI exposes the wallet and keyfile tools, offline ``verify pgn`` and
+``verify proof`` checks, the matchmaking relay, the node (``node run``), the
+unattended miner (``miner run``, ``miner register``, ``miner availability``,
+``miner reveal``), the read-only chain commands, the testnet faucet and the
+one-command devnet. Every command is a thin wrapper over a library call so the
+same behaviour is testable in-process.
 
 Global options may be passed before or after the subcommand; an explicitly
 passed ``--network`` always wins over the global default of ``testnet``.
@@ -68,7 +66,7 @@ DEFAULT_NETWORK = "testnet"
 PASSPHRASE_ENV = "SCCP_WALLET_PASSPHRASE"
 DEFAULT_NODE_URL = "http://127.0.0.1:8645"
 FAUCET_NETWORKS = ("testnet", "devnet")
-"Networks whose genesis funds a public faucet (plan section 5.1)."
+"Networks whose genesis funds a public faucet."
 
 T = TypeVar("T")
 

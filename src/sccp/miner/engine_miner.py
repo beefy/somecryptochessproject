@@ -1,4 +1,4 @@
-"""The unattended miner daemon (plan M4, sections 5.7.1 and 5.11).
+"""The unattended miner daemon.
 
 ``EngineMiner`` is a library, not a process: it polls a relay through
 :class:`RelayClient`, plays the moves it is assigned, signs them with its own
@@ -213,7 +213,7 @@ class _HttpClient:
 
 
 class RelayClient:
-    """The relay API a miner needs (plan sections 5.7 and 5.12)."""
+    """The relay API a miner needs (PROTOCOL.md sections 8 and 14)."""
 
     def __init__(
         self,
@@ -271,7 +271,7 @@ class RelayClient:
     ) -> MatchView:
         """Submit one SAN move.
 
-        Passing ``signature`` sends the clocked body of plan section 5.7.1:
+        Passing ``signature`` sends the clocked body of PROTOCOL.md section 8.4:
         ``{network, match_id, seat, ply, san, clock_ms, signature}``. The relay
         verifies the signature against the registered seat key and recomputes
         ``clock_ms`` from its own monotonic clock.

@@ -1,4 +1,4 @@
-"""Assemble a claim into a block (plan sections 5.10 and 5.11).
+"""Assemble a claim into a block (PROTOCOL.md sections 9 and 12).
 
 The builder never invents consensus: it computes the scheduled difficulty, asks
 the mempool for ``k`` proofs won by this miner, applies the body to a copy of the

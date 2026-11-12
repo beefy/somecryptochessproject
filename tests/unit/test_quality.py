@@ -1,7 +1,7 @@
 """The pinned quality policy: blunders, resignation, cache and summary matching.
 
 These tests use scripted engines, so the policy is exercised deterministically
-without Stockfish. They cover the M5 acceptance rules that a legal-but-weak game
+without Stockfish. They cover the acceptance rules that a legal-but-weak game
 fails and a resignation is only accepted when the position is lost.
 """
 

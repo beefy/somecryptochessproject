@@ -8,7 +8,7 @@ every load.
 Testnet and devnet allocate coins to a *public* faucet key derived from a
 constant seed. That key is deliberately published so anyone can run a wallet on
 a test network; it is worthless and must never be used on mainnet. Mainnet
-genesis has no allocations, exactly as plan section 5.11 requires.
+genesis has no allocations, exactly as PROTOCOL.md sections 12-13 require.
 
 Usage::
 

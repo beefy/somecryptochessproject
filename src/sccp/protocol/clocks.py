@@ -1,4 +1,4 @@
-"""Match clocks, signed moves and clock evidence (plan section 5.7.1).
+"""Match clocks, signed moves and clock evidence (PROTOCOL.md section 8.4).
 
 The protocol has exactly one time control: 30+0. A match starts with two clocks
 at :data:`FIXED_TIME_CONTROL.initial_ms`; only the side to move spends time. A
@@ -52,7 +52,7 @@ FIXED_TIME_CONTROL: Final = TimeControl(initial_ms=1_800_000, increment_ms=0)
 """The only legal v1 control: 30 minutes per seat, no increment."""
 
 DEFAULT_LAG_GRACE_MS: Final = 250
-"""Network-jitter credit granted once per move (plan section 5.7.1)."""
+"""Network-jitter credit granted once per move (PROTOCOL.md section 8.4)."""
 
 MAX_LAG_GRACE_MS: Final = 1_000
 """Largest relay-policy grace; it never enters consensus or the game hash."""
@@ -315,8 +315,8 @@ def verify_move_evidence(
     """Verify a refused-checkmate move stream against the replayed SAN list.
 
     Every post-opening move must be present, in order, signed by the seat whose
-    turn it was. ``ply`` is the zero-based index into ``san_moves`` (plan section
-    5.8, step 7 and section 5.10, rule 12).
+    turn it was. ``ply`` is the zero-based index into ``san_moves`` (PROTOCOL.md
+    section 9).
     """
     if not evidence:
         raise ClockError("move_evidence is empty")

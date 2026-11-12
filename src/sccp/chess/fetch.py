@@ -1,4 +1,4 @@
-"""Verified engine downloads (M1 tooling; see ``scripts/fetch_engine.py``).
+"""Verified engine downloads (see ``scripts/fetch_engine.py``).
 
 ``data/engines.json`` pins, for every supported engine and platform, the
 download URL, the SHA-256 of the archive and the archive member that holds the

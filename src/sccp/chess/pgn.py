@@ -1,4 +1,4 @@
-"""PGN validation and canonical game hashing (docs/IMPLEMENTATION_PLAN.md 5.8).
+"""PGN validation and canonical game hashing (docs/PROTOCOL.md section 3).
 
 ``validate_pgn`` turns untrusted PGN text into a :class:`ParsedGame` or raises
 :class:`~sccp.errors.PgnValidationError`. It never mutates global state and has
@@ -54,7 +54,7 @@ REQUIRED_TAGS: Final[tuple[str, ...]] = (
     "TimeControl",
     "Rules",
 )
-"""Every tag a proof-grade PGN must carry (section 5.8, step 3)."""
+"""Every tag a proof-grade PGN must carry (PROTOCOL.md section 3.1)."""
 
 _PROOF_TERMINATIONS: Final[frozenset[str]] = frozenset(
     {"checkmate", "draw", "resignation", "time_forfeit"}
@@ -115,7 +115,7 @@ class Termination(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class GameExpectations:
-    """The certificate fields a PGN must agree with (section 5.8, steps 1 and 4).
+    """The certificate fields a PGN must agree with (PROTOCOL.md section 3).
 
     The transcript layer builds one of these from a ``MatchCertificate``. The
     dataclass deliberately carries plain values rather than protocol models so
@@ -408,12 +408,12 @@ def validate_pgn(
 ) -> ParsedGame:
     """Validate untrusted PGN text and return a :class:`ParsedGame`.
 
-    The steps mirror docs/IMPLEMENTATION_PLAN.md section 5.8: size and encoding,
-    exactly one game, parser errors, required and certificate tags, legality of
-    every move, the opening prefix, result/termination agreement, and -- for a
-    proof -- a decisive result of at least ``params.min_plies``.
+    The steps mirror ``docs/PROTOCOL.md`` section 3: size and encoding, exactly
+    one game, parser errors, required and certificate tags, legality of every
+    move, the opening prefix, result/termination agreement, and -- for a proof --
+    a decisive result of at least ``params.min_plies``.
 
-    ``resignation_check`` is the M5 quality-policy hook: it receives the final
+    ``resignation_check`` is the quality-policy hook: it receives the final
     board and must return ``True`` when the resigning side is lost. It is only
     called for games without a board outcome.
 

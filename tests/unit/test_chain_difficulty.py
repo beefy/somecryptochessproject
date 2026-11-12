@@ -1,4 +1,4 @@
-"""Difficulty schedule and the seal target (plan section 5.11)."""
+"""Difficulty schedule and the seal target (PROTOCOL.md sections 12-13)."""
 
 from __future__ import annotations
 

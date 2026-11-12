@@ -1,4 +1,4 @@
-"""Pull-sync: range planning, block fetching and partition healing (M4).
+"""Pull-sync: range planning, block fetching and partition healing.
 
 The two-node convergence test uses real blocks through an in-process ASGI peer;
 ``tests/e2e/test_local_network.py`` repeats it over actual sockets.

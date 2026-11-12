@@ -1,4 +1,4 @@
-"""Genesis documents, pinned hashes and the faucet (plan section 5.11)."""
+"""Genesis documents, pinned hashes and the faucet (PROTOCOL.md sections 12-13)."""
 
 from __future__ import annotations
 

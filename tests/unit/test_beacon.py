@@ -1,4 +1,4 @@
-"""Beacon commitment, derivation and drand checks (section 5.5)."""
+"""Beacon commitment, derivation and drand checks (PROTOCOL.md section 6)."""
 
 from __future__ import annotations
 

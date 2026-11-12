@@ -1,4 +1,4 @@
-"""Match clocks, signed moves and clock evidence (plan section 5.7.1)."""
+"""Match clocks, signed moves and clock evidence (PROTOCOL.md section 8.4)."""
 
 from __future__ import annotations
 

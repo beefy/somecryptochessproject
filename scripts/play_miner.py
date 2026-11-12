@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Play one relay match by hand: you at the keyboard, a miner across the board.
 
-The relay in this repository runs *timed sessions* (plan section 5.7.1): the
+The relay in this repository runs *timed sessions* (PROTOCOL.md section 8.4): the
 second start signature starts both clocks, every accepted move is receipted by
 the relay's clock witness, and a clock that reaches zero flags the session even
 if the losing seat never answers again. That is hard to feel from a unit test,

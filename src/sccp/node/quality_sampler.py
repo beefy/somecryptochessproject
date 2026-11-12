@@ -42,10 +42,10 @@ from sccp.protocol.challenges import MAX_EVIDENCE_LENGTH, MAX_REASON_LENGTH
 from sccp.protocol.models import QualitySummary, WinProof
 
 SAMPLE_BUCKETS: int = 1_000
-"""The plan's sampling denominator."""
+"""The sampling denominator."""
 
 DEFAULT_MAX_ATTEMPTS: int = 2
-"""One initial analysis plus one retry, matching the plan's retry requirement."""
+"""One initial analysis plus one retry, matching the retry requirement."""
 
 
 def sample_bucket(block_hash: str, proof_id: str, *, buckets: int = SAMPLE_BUCKETS) -> int:

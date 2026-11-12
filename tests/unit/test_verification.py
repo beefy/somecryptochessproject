@@ -1,4 +1,4 @@
-"""Offline win-proof verification and tamper resistance (section 5.10)."""
+"""Offline win-proof verification and tamper resistance (PROTOCOL.md section 9)."""
 
 from __future__ import annotations
 

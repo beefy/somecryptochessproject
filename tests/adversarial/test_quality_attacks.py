@@ -1,12 +1,13 @@
-"""Adversarial quality, challenge and panel cases (plan M5 acceptance criteria).
+"""Adversarial quality, challenge and panel cases.
 
 These run with the ``adversarial`` marker, which the default suite deselects:
 
     make adversarial
 
 Every test uses mock engines, so the suite needs no Stockfish binary and stays
-deterministic. The attacks are the ones the plan names: a fabricated summary, a
-challenger that tries to judge its own case, a node that picks a different panel,
+deterministic. The attacks are the ones the threat model names: a fabricated
+summary, a challenger that tries to judge its own case, a node that picks a
+different panel,
 stuffed or silent ballots, and a poisoned engine that would file challenges on an
 honest miner's behalf.
 """
@@ -259,7 +260,7 @@ def test_stuffed_or_silent_ballots_cannot_resolve(
 def test_a_weak_loser_game_fails_quality_and_the_challenge_holds(
     signed_match, protocol_params: NetworkParams, protocol_accounts
 ) -> None:
-    """The plan's acceptance case: a legal but weak game is provably bad."""
+    """The acceptance case: a legal but weak game is provably bad."""
     parsed = signed_match.parsed
     profile = replace(PROFILE, max_cpl=100, decided_cp=10_000, max_blunders_per_side=0)
     report = analyse_game(parsed, _WeakLoserEngine(_loser_positions(parsed)), profile=profile)

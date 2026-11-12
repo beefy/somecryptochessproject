@@ -1,4 +1,4 @@
-"""SQLite persistence with snapshots (plan section 5.11).
+"""SQLite persistence with snapshots (PROTOCOL.md sections 12-13).
 
 The store keeps three things: canonical block JSON, the adopted tip, and periodic
 state snapshots. A restart replays blocks from the last snapshot, so it never

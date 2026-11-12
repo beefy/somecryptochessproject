@@ -3,13 +3,20 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
-summarised in the M0–M2 rows of the README roadmap.
+not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation and code comments now describe the shipped protocol and testnet
+  directly instead of construction-phase labels. `docs/IMPLEMENTATION_PLAN.md`
+  is now a forward-looking list of next steps, acceptance criteria and
+  improvement areas; protocol details remain normative in `docs/PROTOCOL.md`.
+
 ## [0.9.0] - 2026-11-12
 
-A minor release: M6 makes the testnet deployable, fundable and operable with a
+A minor release: the testnet is now deployable, fundable and operable with a
 public faucet, node-side proof settlement, a deterministic two-miner bootstrap
 and an automated deployment workflow.
 
@@ -56,17 +63,18 @@ and an automated deployment workflow.
 
 ### Notes
 
-- M6 remains in progress: the block explorer, metrics and the 72-hour soak are
-  still outstanding.
+- This release completes the planned protocol and testnet scope. A block
+  explorer, metrics and a 72-hour soak are follow-on operational work, tracked in
+  [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
 ## [0.8.0] - 2026-11-12
 
-A minor release: M5 quality verification and bonded challenges, the threat model,
-and operator guides for wallets, transfers and miners.
+A minor release: quality verification, bonded challenges, the threat model and
+operator guides for wallets, transfers and miners.
 
 ### Added
 
-- Milestone M5: quality verification, bonded challenges and the threat model.
+- Quality verification, bonded challenges and the threat model.
   - `sccp.protocol.challenges` now selects adjudication panels itself:
     `select_panel` ranks the bonded set by
     `H("sccp/v1/challenge", {beacon, proof_id, member})` (odd `PANEL_SIZE = 3`,
@@ -224,19 +232,18 @@ and an opt-in round scheduler.
 - `timeout_seconds` no longer abandons a live clocked session; abandoning one
   would let the losing seat escape the flag.
 
-The next milestone, M5, is quality verification, challenges and the threat-model
-tests. The `book_version: v1` quality profile, the challenge lifecycle and
-`sccp.node.quality_sampler` are still to come. What is left of the timed-session
-work is the on-chain claim transaction (plan section 5.7.1): the miner already
-builds and verifies the `TimeoutClaim` that transaction will carry.
+Quality verification, the challenge lifecycle and `sccp.node.quality_sampler`
+followed in 0.8.0. The timed-session work still needed the on-chain claim
+integration: the miner already built and verified the `TimeoutClaim` that the
+transaction carries.
 
 ## [0.5.1] - 2026-11-12
 
-Milestone M4, completed: the rest of the CLI surface and the multi-process stack.
+The node, P2P, unattended miner and the rest of the CLI surface.
 
 ### Added
 
-- `sccp node run`: serves the section 5.12 API over uvicorn, replays the chain in
+- `sccp node run`: serves the protocol API over uvicorn, replays the chain in
   `--data-dir`, honours `--genesis` and pull-syncs from `--peer` URLs at startup.
   A peer that is down is recorded, skipped and logged, never fatal.
   `sync_peers` in `sccp.node.service` is the library behind it.
@@ -271,9 +278,9 @@ Milestone M4, completed: the rest of the CLI surface and the multi-process stack
 ### Changed
 
 - Every top-level API response now carries the network id: `AccountView`,
-  `BlockView`, `PeerView` and `DifficultyView` gained `network`, as section 5.12
-  and the M4 acceptance criteria require.
-- The M4 test modules are named after the plan's deliverables: `test_api.py`,
+  `BlockView`, `PeerView` and `DifficultyView` gained `network`, as the protocol
+  API contract requires.
+- The node test modules cover the delivered surface: `test_api.py`,
   `test_gossip.py`, `test_sync.py` and `test_miner_loop.py`.
 - `make lint`, `make format` and CI also cover `deploy/`.
 
@@ -288,8 +295,7 @@ Milestone M4, completed: the rest of the CLI surface and the multi-process stack
 
 ## [0.5.0] - 2026-11-12
 
-Milestone M4: the node, P2P gossip, the unattended engine miner and the
-in-process devnet.
+The node, P2P gossip, the unattended engine miner and the in-process devnet.
 
 ### Added
 
@@ -301,13 +307,13 @@ in-process devnet.
   `ingest_block` with duplicate/orphan/reorg handling) and pull-sync
   (`sync_from`). `HttpPeerClient` speaks the peer API over an injected
   `httpx.Client`.
-- `sccp.node.app`: the complete section 5.12 HTTP API (status, params, blocks by
+- `sccp.node.app`: the complete protocol HTTP API (status, params, blocks by
   height or hash, accounts, epochs and beacons, difficulty history, games,
   matches and transcripts, mempool, transactions, transaction and proof
-  submission, the M5 challenges placeholder, gossip and peers), with startup
+  submission, the challenges placeholder, gossip and peers), with startup
   checks, a lifespan that closes storage, and one error handler per exception
   family so ledger errors become 4xx instead of 500. `sccp.node.routes` keeps
-  the M2 read-only entry point working.
+  the earlier read-only entry point working.
 - `sccp.node.models`: frozen, `extra="forbid"` response models, each carrying
   the network id.
 - `sccp.node.p2p`: signed gossip envelopes (`sccp/v1/gossip` domain over
@@ -356,13 +362,13 @@ in-process devnet.
   `--cov=sccp.serialization`, and coverage.py applies `--cov-fail-under` to the
   union of measured files, so it demanded 95% whole-package coverage (89% actual)
   and the release job stopped before building the distributions. It now runs the
-  pair of gates defined in `IMPLEMENTATION_PLAN.md` section 7.2 — the whole
+  project coverage gates — the whole
   package at 85%, `crypto/` and `serialization.py` at 95% — like the `ci`
   workflow does, so a release can build and publish.
 
 ## [0.3.0] - 2026-11-12
 
-Milestone M3: the chain, the wallet service and the block builder.
+The chain, the wallet service and the block builder.
 
 ### Added
 
@@ -422,8 +428,9 @@ Milestone M3: the chain, the wallet service and the block builder.
 
 ### Notes
 
-- M3 is a library milestone: no `chain`, `miner` or `devnet` CLI command ships
-  yet, and the M2 relay does not track clocks. Both are M4 work.
-- Quality challenges and proof-equivocation slashing are M5 work; M3 rejects
-  `challenge` transactions and `slash_evidence` payloads that carry `proof_id`
-  explicitly rather than silently ignoring them.
+- At this point the chain is a library: no `chain`, `miner` or `devnet` CLI
+  command ships yet, and the relay does not track clocks. Both arrived with the
+  node release.
+- Quality challenges and proof-equivocation slashing landed in 0.8.0; this
+  release rejects `challenge` transactions and `slash_evidence` payloads that
+  carry `proof_id` explicitly rather than silently ignoring them.

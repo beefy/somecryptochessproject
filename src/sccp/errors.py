@@ -4,7 +4,7 @@ Every error raised on purpose by this package derives from :class:`SccpError`.
 Where it is natural, the hierarchy also subclasses the built-in exception a
 caller would expect (``ValueError`` for bad values, ``TypeError`` for wrong
 types), so ``except ValueError`` keeps working while tests can still assert on a
-specific type. See docs/IMPLEMENTATION_PLAN.md section 5.2.
+specific type. See docs/PROTOCOL.md section 1.
 """
 
 from __future__ import annotations

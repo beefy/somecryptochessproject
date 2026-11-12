@@ -1,4 +1,4 @@
-"""The public testnet faucet (plan M6).
+"""The public testnet faucet.
 
 The faucet is a convenience over the deterministic genesis allocation described
 in :mod:`sccp.chain.genesis`, not a consensus feature. It builds and signs a

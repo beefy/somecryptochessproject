@@ -1,4 +1,4 @@
-"""Deterministic pairing, quotas and soft constraints (section 5.6)."""
+"""Deterministic pairing, quotas and soft constraints (PROTOCOL.md section 7)."""
 
 from __future__ import annotations
 

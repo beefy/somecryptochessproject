@@ -1,11 +1,11 @@
 # Threat model
 
-This document is the M5 deliverable named in
-[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 8. It states what the
-network protects, who attacks it, which code implements each mitigation, what
-remains exposed, and what is deliberately out of scope. It describes the code in
-this repository, not an aspiration: every "implemented" claim names the module
-and the test that proves it.
+This document states what the network protects, who attacks it, which code
+implements each mitigation, what remains exposed, and what is deliberately out
+of scope. It describes the code in this repository, not an aspiration: every
+"implemented" claim names the module and the test that proves it. The forward
+work that would reduce the residual risks is tracked in
+[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
 
 Scope: devnet and testnet as they exist today, with mainnet parameters used only
 where the difference matters (quality sampling on, real engines pinned).
@@ -59,7 +59,7 @@ competing honestly. It is not "cheating is impossible".
   move funds or mint proofs. A proof is valid without the relay being online.
 - **Chain.** Consensus-critical validation is deterministic and engine-free:
   signatures, registries, bond arithmetic, coinbase vesting. Nothing that needs
-  an engine is block-validity critical (plan section 5.9).
+  an engine is block-validity critical; quality is sampled and challengeable.
 - **Operators.** On testnet, panel adjudication may be triggered by an operator
   key. That is an explicit trust assumption until panel execution is scheduled by
   consensus; it can burn a challenger's bond, so it is documented per deployment.
@@ -89,7 +89,7 @@ competing honestly. It is not "cheating is impossible".
 
 The attacks above are exercised by:
 
-| Attack (plan M5 list) | Test |
+| Attack | Test |
 | --- | --- |
 | Fabricated summary | `tests/adversarial/test_quality_attacks.py::test_a_fabricated_summary_becomes_a_bonded_challenge` |
 | Weak-loser self-play | `tests/adversarial/test_quality_attacks.py::test_a_weak_loser_game_fails_quality_and_the_challenge_holds`, `tests/unit/test_quality.py` |
@@ -178,9 +178,9 @@ Goal: make honest miners waste CPU or lose bonds
 | The reference profile is deterministic across honest nodes | Implemented for depth, engine options and (when set) the binary's SHA-256; NNUE nets are not pinned yet; thresholds are deliberately loose | `chess/quality.py`, `QUALITY_V1` |
 | Every node sees the same bonded set and beacon when it derives a panel | True for nodes at the same height; a reorg can change a not-yet-resolved panel | `challenges.challenge_panel` |
 | Sample rate 50/1000 catches enough bad proofs | Policy choice, tunable per network; not a security proof | `config.py: quality_sample_rate` |
-| Bonds exceed the expected value of one bad proof | Parameter choice; mainnet sizing is an open question (plan section 10) | `config.py: challenge_window`, `bond` fields |
+| Bonds exceed the expected value of one bad proof | Parameter choice; mainnet sizing is an open question in the implementation plan | `config.py: challenge_window`, `bond` fields |
 | Panel votes are delivered honestly | Not yet enforced on chain: there is no `panel_vote` transaction, so the node/operator transport is trusted | open item |
-| Witnesses for timeouts are available and honest enough | Mainnet requires a 3-witness quorum (plan section 5.7.1) | `chain/timeout.py` |
+| Witnesses for timeouts are available and honest enough | Mainnet requires a 3-witness quorum (`PROTOCOL.md` section 10.4) | `chain/timeout.py` |
 
 Open items that affect this model:
 
@@ -191,7 +191,7 @@ Open items that affect this model:
 3. A `drand` BLS verifier, so `drand_used = 1` is verifiable offline.
 4. Bonded finality, so a reorg cannot un-slash a miner.
 5. Benchmarks for games/minute with mock engines and analysis seconds/ply at
-   depth 14 (plan section 10); published figures are still estimates, not
+   depth 14 (see the implementation plan); published figures are still estimates, not
    measurements, and the sampler's disagreement rate across CPUs is unmeasured.
 
 ## 7. Explicit non-goals

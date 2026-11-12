@@ -1,8 +1,8 @@
-"""Timed relay sessions (plan section 5.7.1): clocks, receipts and flags.
+"""Timed relay sessions (PROTOCOL.md section 8.4): clocks, receipts and flags.
 
 These tests drive the relay over its HTTP surface with an injected millisecond
 clock, so every second of a game is under the test's control. They check the
-three things the M2 relay could not do: a move that the seat signed, a clock
+three things the earlier relay could not do: a move that the seat signed, a clock
 that actually runs, and a flag that ends the game without the losing seat's
 cooperation — plus the receipt bundle a timeout claim needs.
 """

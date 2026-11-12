@@ -8,14 +8,13 @@
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,
 > networking, storage and operation. It is descriptive, not normative. The
 > wire formats and consensus rules are specified in
-> [`PROTOCOL.md`](PROTOCOL.md); the engineering plan and milestone boundaries are
-> in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md). If this whitepaper and
+> [`PROTOCOL.md`](PROTOCOL.md); next steps and improvement areas are in
+> [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md). If this whitepaper and
 > `PROTOCOL.md` disagree, `PROTOCOL.md` wins.
 >
-> **Status.** Milestones M0–M4 and the timed relay are implemented. Quality
-> verification, bonded quality challenges and the associated threat-model work
-> (M5) are not implemented. Mainnet parameters exist, but no mainnet has been
-> launched or audited. Testnet and devnet coins have no value.
+> **Status.** Protocol v1, the timed relay, quality sampling, bonded challenges
+> and the two-miner testnet are implemented. Mainnet parameters exist, but no
+> mainnet has been launched or audited. Testnet and devnet coins have no value.
 
 ---
 
@@ -66,8 +65,9 @@ The design separates three kinds of work:
 - **Quality work** is deliberately *not* consensus-critical in v1. Reference-
   engine analysis is expected to be sampled and challengeable because engine
   versions and hardware differ; forcing every node to reproduce every centipawn
-  judgement would risk consensus forks. This layer is M5 work and is not yet
-  present.
+  judgement would risk consensus forks. The reference implementation therefore
+  samples games deterministically and resolves disputes through bonded
+  challenges; quality is evidence, not a block-validity rule.
 
 The result is a complete, testable prototype of a different proof-of-work
 economy, not a claim that chess is a verifiable delay function or that the
@@ -112,9 +112,10 @@ The protocol must also establish:
 6. **That the game was not trivial.** A minimum ply count and, eventually,
    quality analysis raise the cost of a deliberately thrown game.
 
-The first five are implemented as consensus rules. The sixth is split: the
-minimum ply rule is implemented; reference-engine quality sampling and bonded
-challenges are planned for M5.
+The first five are implemented as consensus rules. The sixth is economic rather
+than consensus-critical: the minimum ply rule is enforced, and reference-engine
+sampling plus bonded challenges raise the cost of a deliberately weak game
+without making a node's engine judgement fork the chain.
 
 ### 2.3 The honest security statement
 
@@ -222,7 +223,8 @@ requirement to run two strong engines; it does not claim to eliminate it.
 - **Clocks are observed, not derived.** The chain cannot see wall-clock time at
   sub-second resolution. It relies on bonded witnesses for flags and verifies
   their arithmetic and signatures offline.
-- **Quality is not yet enforced.** A structural proof is not a quality proof.
+- **Quality is not consensus-enforced.** A structural proof is not a quality
+  proof; sampling and bonded challenges are probabilistic economic controls.
   See [section 16](#16-economics-security-and-residual-risk).
 
 ### 4.3 Network isolation
@@ -452,7 +454,7 @@ H(domain, payload) = SHA-256(domain_utf8 || 0x00 || canonical_json(payload))
 | `sccp/v1/beacon-commit` | Availability commitment |
 | `sccp/v1/block` | Reserved block-document namespace |
 | `sccp/v1/certificate` | Match certificate |
-| `sccp/v1/challenge` | Reserved quality challenge |
+| `sccp/v1/challenge` | Challenge panel ranking and challenge id |
 | `sccp/v1/clock` | Clock receipts and evidence bundle |
 | `sccp/v1/game` | Canonical game record |
 | `sccp/v1/gossip` | Gossip envelope |
@@ -565,7 +567,7 @@ auditable exception for a genuine flag: a clock can run out before move 20.
 
 Minimum length is not a quality measure. It merely prevents a one-move
 "game" from being used as a proof. A pair of colluding engines can still play a
-long, weak game, which is why M5 exists.
+long, weak game, which is why sampling and bonded challenges exist.
 
 ### 8.5 Opening book
 
@@ -701,9 +703,9 @@ can see earlier reveals and the parent hash before deciding whether to reveal.
 Withholding changes the set of entries that produce `B_e`, and an operator with
 many identities has more selection power. This is bias by participation, not by
 grinding an open nonce. The design reserves an optional drand mix-in to close
-that gap. **The current implementation has no drand verifier and the chain's
-`epoch_beacon` computes pure commit/reveal. The network parameters carry drand
-fields for the planned mainnet policy, and the beacon module accepts an injected
+that gap. **The current implementation bundles no drand verifier and the chain's
+`epoch_beacon` computes pure commit/reveal. Network parameters carry drand
+fields for the mainnet policy, and the beacon module accepts an injected
 verifier, but no production code supplies one.** Do not describe testnet beacons
 as drand-attested.
 
@@ -1032,15 +1034,20 @@ The distinct-opponent rule and cooldown slow down a miner that tries to recycle
 one cooperative opponent. They do not stop a miner from operating many keys;
 that is the Sybil problem discussed in section 16.
 
-### 12.5 Quality fields are reserved, not enforced
+### 12.5 Quality is evidence, not block validity
 
-`WinProof` has an optional `quality_summary` field, and the clocks/PGN modules
-have hooks for a resignation policy and quality analysis. Mainnet parameters
-currently declare `quality_mode = sampled` and a non-zero sample rate, but no
-consensus code consumes those values. The current verifier does not evaluate
-quality, does not require a reference-engine report, and does not reject a proof
-because its moves are weak. The field and policy are reserved for M5. This is the
-single largest gap between the implemented system and the full design.
+`WinProof` has an optional `quality_summary`, and the clocks/PGN modules expose a
+resignation-policy hook and reference-engine analysis. Mainnet parameters
+declare `quality_mode = sampled` and a non-zero sample rate. The structural
+verifier deliberately ignores quality: a node does not reject a proof because a
+local engine disagrees by a few centipawns, which would make heterogeneous
+hardware a consensus risk.
+
+Instead, a node deterministically samples proofs, records an analysis summary,
+and turns a persistent disagreement into a bonded `challenge`. A
+beacon-ranked panel re-runs the pinned quality profile and resolves the
+challenge on chain. The challenge path is implemented; moving panel votes on
+chain and calibrating bond sizes remain open work.
 
 ---
 
@@ -1071,7 +1078,7 @@ consensus commitment is the account root plus the block chain.
 | `timeout_claim` | Open a bonded claim that an opponent flagged |
 | `timeout_dispute` | Answer a claim with a later signed move |
 | `slash_evidence` | Prove witness equivocation |
-| `challenge` | Reserved for M5; explicitly rejected in v1 |
+| `challenge` | Bond a quality challenge against an accepted proof |
 
 A transaction is rejected for the wrong network, unknown fields, wrong type,
 bad signature, wrong nonce, insufficient balance, insufficient fee, or a
@@ -1315,7 +1322,7 @@ The public v1 surface is small:
 | `GET /v1/transactions/{txid}` | Transaction status |
 | `POST /v1/tx` | Submit a signed transaction |
 | `POST /v1/proofs` | Submit a win proof |
-| `GET /v1/challenges` | M5 placeholder |
+| `GET /v1/challenges` | Open quality challenges, plus resolved ones on request |
 | `POST /v1/gossip` | Receive a signed gossip envelope |
 | `GET /v1/peers` | Known peers and scores |
 
@@ -1465,8 +1472,9 @@ prevent this. It raises the cost and the chance of detection:
 None of these proves that the two seats are independently controlled. A
 sufficiently rich operator can register many identities and accept the bond and
 opportunity costs. The honest claim is that self-play is priced, not excluded.
-M5's quality sampling and bonded challenges are intended to raise the price
-further by making deliberately weak games challengeable.
+Quality sampling and bonded challenges raise the price further by making
+deliberately weak games challengeable, but they do not prove that two keys are
+independently controlled.
 
 ### 16.3 Sybil resistance
 
@@ -1503,7 +1511,7 @@ claim otherwise.
 | Eclipse a node | Multiple peers, manual configuration | No DHT or automatic diversity in v1 |
 | DoS the HTTP API | Validation before storage, size caps, peer bans | No auth, rate limiting or TLS |
 | Stolen wallet key | Passphrase-encrypted keyfile | Key compromise is identity compromise |
-| Weak engine / thrown game | Structural checks only in v1 | **Open until M5** |
+| Weak engine / thrown game | Structural checks, deterministic sampling and bonded challenges | Sampling is probabilistic; panel votes still have an operator-trusted transport |
 
 ### 16.5 Finality
 
@@ -1522,21 +1530,30 @@ miners played. A miner's address is linkable across epochs unless it rotates
 keys, and rotating keys costs new bonds and registration. The protocol is not a
 privacy system and makes no confidentiality claim.
 
-### 16.7 What M5 must add
+### 16.7 The quality layer and its residual gaps
 
-The quality layer is the missing economic piece:
+The quality layer is implemented as an economic control:
 
 - deterministic sampling of games for reference-engine analysis;
-- a signed quality report with engine identity, depth and score;
-- a bonded challenge transaction (`challenge`) that is currently rejected;
-- a dispute process with a clear standard for "this game was thrown";
-- slashing or reward adjustment when a challenge succeeds;
-- a threat model that accounts for engine-version differences and hardware;
-- a policy for resignations that prevents a losing engine from resigning at
-  move 1 to hand a win to a twin.
+- quality summaries carrying engine identity, depth and a trace hash;
+- a bonded `challenge` transaction with a bounded reason and evidence payload;
+- panel selection from the bonded set, a complete-ballot verdict and
+  deterministic slashing of the proof miner or the challenger;
+- a resignation policy that checks the final position before accepting a loss;
+- an adversarial suite and [`THREAT_MODEL.md`](THREAT_MODEL.md).
 
-Until that ships, the protocol's security statement is structural, not quality-
-based. Do not describe it as "proof of strong chess" or "proof of honest play".
+What remains is hardening, not a missing subsystem:
+
+- panel votes are delivered to the node/operator rather than committed by a
+  `panel_vote` transaction;
+- sample rate, bond size and panel size need calibration across hardware;
+- the sampler should submit qualifying challenges automatically;
+- NNUE networks are not pinned by hash;
+- cross-CPU disagreement rates are not yet measured.
+
+The protocol's security statement is therefore structural plus economic, not a
+proof of strong chess. Do not describe sampling or challenges as "proof of
+honest play".
 
 ---
 
@@ -1561,39 +1578,48 @@ based. Do not describe it as "proof of strong chess" or "proof of honest play".
 | Timeout claim/dispute and witness slashing ledger rules | Implemented |
 | Gossip envelopes, peer table, pull sync | Implemented |
 | SQLite persistence with replayed, snapshot-checked state | Implemented |
-| REST node API and CLI | Implemented |
+| REST node API, proof settler and CLI | Implemented |
+| Deterministic quality sampling, summaries and resignation policy | Implemented |
+| Bonded challenges, panel selection, adjudication and slashing | Implemented |
 | Wallet, devnet, multi-miner demo, unit/integration tests | Implemented |
+| Public faucet, deterministic bootstrap and two-miner testnet stack | Implemented |
+| GHCR image build and SSH testnet deploy workflow | Implemented |
 
 ### 17.2 Planned or incomplete
 
 | Area | Status |
 | --- | --- |
-| Reference-engine quality sampling | Planned (M5) |
-| Bonded quality challenges and adjudication | Planned (M5); tx type rejected |
-| Full threat model and adversarial review | Planned (M5) |
-| drand quicknet verifier wiring | Not implemented; fields and hook exist |
+| Continuous public testnet and 72-hour soak | Not yet run |
+| Metrics, alerting and block explorer | Not implemented |
+| On-chain challenge-panel votes | Votes use an operator-trusted transport |
 | Automatic timeout-claim submission in CLI/demo | Incomplete integration |
+| drand quicknet verifier wiring | Hook exists; pinned verifier not bundled |
+| Faucet limit persistence | Limits are in memory |
+| Storage pruning and restore tooling | Not implemented |
 | Light client / SPV proofs | Not implemented |
 | P2P encryption, discovery, NAT traversal | Not implemented |
 | Mainnet launch and audit | Not done |
 | Finality gadget | Not planned for v1 |
 
-### 17.3 Milestone framing
+### 17.3 Next work
 
-- **M0:** packaging, configuration, crypto, wallets, CLI and CI.
-- **M1:** PGN validation, canonical game hash, opening book, engine
-  abstraction, game runner and offline `sccp verify pgn`.
-- **M2:** commit/reveal beacons, deterministic pairing, certificates,
-  transcripts, the relay and offline `sccp verify proof`.
-- **M3:** transactions, accounts, bonds, blocks, fork choice, difficulty,
-  mempool, SQLite storage, timeout settlement, block builder and genesis.
-- **M4:** node API, gossip, pull-sync, engine miner, full CLI, devnet and the
-  docker-compose testnet stack.
-- **M5 (next):** quality sampling, bonded challenges, threat model, hardening.
+The protocol build is complete; the next work is operational confidence and
+mainnet readiness. In priority order:
 
-The M5 boundary is not cosmetic. Until quality is enforced, the protocol proves
-that a game happened, not that it was contested. The whitepaper and any public
-communication should keep that distinction explicit.
+1. Run a persistent public testnet and publish a 72-hour soak report.
+2. Add metrics, alerting and a block explorer.
+3. Automate timeout-claim submission and bundle a pinned drand verifier.
+4. Commit challenge-panel votes through a signed transaction.
+5. Persist faucet limits and harden storage, peer networking and miner/relay
+   recovery.
+6. Calibrate bonds and sampling, complete an external review and decide whether
+   to launch mainnet.
+
+The acceptance criteria and the longer list of improvement areas are in
+[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md). The distinction that matters
+publicly is unchanged: a proof shows that a legal, assigned game happened and
+was co-signed; sampling and bonds raise the cost of a weak game but do not prove
+that both engines played honestly.
 
 ### 17.4 Readiness statement
 
@@ -1834,7 +1860,8 @@ the engine-marked tests.
 - Treat a relay as replaceable: run more than one, and verify its pairings.
 - Keep enough peers to avoid eclipse; v1 has no automatic discovery.
 - Do not treat testnet coins or confirmations as valuable or final.
-- Do not claim quality enforcement until M5 ships.
+- Do not describe quality sampling as consensus enforcement; it is probabilistic
+  evidence backed by bonds and challenges.
 
 ---
 
@@ -1875,8 +1902,8 @@ the engine-marked tests.
 ### 20.1 Repository documents
 
 - [`docs/PROTOCOL.md`](PROTOCOL.md) — normative wire formats and rule details.
-- [`docs/IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — engineering plan,
-  milestones and design rationale.
+- [`docs/IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — next steps,
+  acceptance criteria and improvement areas.
 - [`docs/PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — on-chain play and game
   export walkthrough.
 - [`docs/OPEN_A_WALLET.md`](OPEN_A_WALLET.md) — wallet creation, backup and
@@ -1899,7 +1926,8 @@ the engine-marked tests.
 - **UCI** — Universal Chess Interface, the engine protocol.
 - **PGN** — Portable Game Notation, the transcript text format.
 - **python-chess** — board state, move generation, PGN and UCI support.
-- **drand quicknet** — BLS12-381 randomness beacon, planned for beacon mixing.
+- **drand quicknet** — BLS12-381 randomness beacon, supported as an optional
+  mix-in; a pinned verifier is still outstanding.
 
 ### 20.3 Design lineage
 
@@ -1916,7 +1944,7 @@ The project borrows ideas, not code, from:
 ### 20.4 A closing note on claims
 
 This whitepaper describes a working prototype. It deliberately marks the line
-between implemented and planned rather than presenting the design as finished.
+between implemented and remaining rather than presenting the design as finished.
 The strongest honest claim is:
 
 > A miner can prove that it won a legal, assigned, previously unseen chess game
@@ -1928,5 +1956,6 @@ The claim it does **not** make is:
 > The two keys are controlled by different people, or both engines played
 > honestly and well.
 
-Closing that gap is the purpose of M5. Until then, read every "proof of chess"
-statement with the structural qualifier attached.
+Quality sampling and bonded challenges narrow that gap, but they do not close
+it. Read every "proof of chess" statement with the structural and economic
+qualifiers attached.

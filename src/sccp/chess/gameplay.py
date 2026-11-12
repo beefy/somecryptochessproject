@@ -1,4 +1,4 @@
-"""The move loop: two engines to a replayable PGN (section 5.7).
+"""The move loop: two engines to a replayable PGN (PROTOCOL.md section 8).
 
 The runner is the single place that decides a move is legal. Every move from an
 engine goes through ``Board.is_legal`` before it is pushed, so a misbehaving

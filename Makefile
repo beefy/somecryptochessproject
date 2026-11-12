@@ -1,4 +1,4 @@
-# Developer entry points (docs/IMPLEMENTATION_PLAN.md section 4 and 7.2).
+# Developer entry points.
 #
 # Everything runs inside .venv so the same commands work locally and in CI.
 PYTHON ?= .venv/bin/python
@@ -43,7 +43,7 @@ cov: venv  ## Whole-package report with the project-wide 85% gate
 	$(PYTHON) -m pytest --cov=sccp --cov-report=term-missing \
 		--cov-fail-under=85 $(PYTEST_ARGS)
 
-cov-gate: venv  ## M0 gate: crypto/ and serialization.py at >= 95%
+cov-gate: venv  ## Crypto gate: crypto/ and serialization.py at >= 95%
 	$(PYTHON) -m pytest --cov=sccp.crypto --cov=sccp.serialization \
 		--cov-report=term-missing --cov-fail-under=95 $(PYTEST_ARGS)
 
@@ -62,7 +62,7 @@ check: lint typecheck test  ## Everything CI runs
 
 lock: venv  ## Regenerate requirements.lock from the current venv
 	@printf '%s\n' \
-		'# Locked versions for the validated environment (M0).' \
+		'# Locked versions for the validated environment.' \
 		'# Runtime and test dependencies are declared in pyproject.toml.' \
 		'# Regenerate with: make lock' \
 		> requirements.lock

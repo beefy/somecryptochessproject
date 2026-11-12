@@ -1,4 +1,4 @@
-"""Transactions: the plan-5.4 checklist and its state transitions."""
+"""Transactions: the validation checklist and its state transitions."""
 
 from __future__ import annotations
 

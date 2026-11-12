@@ -22,9 +22,9 @@ classifiers = [
   "Topic :: Security :: Cryptography",
 ]
 
-# Runtime dependencies: see docs/IMPLEMENTATION_PLAN.md section 3.
-# python-chess is pinned to the 1.11 behaviour line (dist version 1.999) because
-# docs/IMPLEMENTATION_PLAN.md section 5.8 depends on its exact PGN semantics.
+# Runtime dependencies. python-chess is pinned to the 1.11 behaviour line
+# (dist version 1.999) because docs/PROTOCOL.md section 3 depends on its exact
+# PGN semantics.
 dependencies = [
   "python-chess>=1.11,<2",
   "cryptography>=50,<51",

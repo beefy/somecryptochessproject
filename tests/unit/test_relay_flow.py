@@ -1,4 +1,4 @@
-"""The FastAPI relay: a complete two-miner match over ASGI (section 5.7)."""
+"""The FastAPI relay: a complete two-miner match over ASGI (PROTOCOL.md section 8)."""
 
 from __future__ import annotations
 

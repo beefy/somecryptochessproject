@@ -1,4 +1,4 @@
-"""Wallet service: balances, transfers, staking and history (plan section 5.3).
+"""Wallet service: balances, transfers, staking and history (PROTOCOL.md).
 
 This is the read/build layer the CLI and miner use. It never holds a decrypted
 key longer than one call: callers pass a :class:`~sccp.crypto.keys.Keypair` and

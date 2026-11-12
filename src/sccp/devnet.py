@@ -1,4 +1,4 @@
-"""``sccp devnet up``: a whole network in one process (plan M4).
+"""``sccp devnet up``: a whole network in one process.
 
 The devnet is built bottom-up from the same library calls a real deployment
 uses: registrations, availability commitments and reveals are signed

@@ -1,4 +1,4 @@
-"""Opening book loading, validation and seeded selection (section 5.6)."""
+"""Opening book loading, validation and seeded selection (PROTOCOL.md section 7)."""
 
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ def test_selection_rejects_a_wrong_length_beacon() -> None:
 
 
 def test_selection_is_close_to_uniform() -> None:
-    """Chi-square smoke test over 10k deterministic draws (section M1)."""
+    """Chi-square smoke test over 10k deterministic draws."""
     book = load_book("v1")
     rng = random.Random(20260101)
     counts = [0] * len(book)

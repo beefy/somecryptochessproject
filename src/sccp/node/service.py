@@ -1,4 +1,4 @@
-"""The node: chain, mempool, transcripts and gossip in one object (section 5.12).
+"""The node: chain, mempool, transcripts and gossip in one object (PROTOCOL.md section 14).
 
 ``NodeService`` is the library behind the HTTP API, the CLI and the devnet. It
 owns exactly one :class:`~sccp.chain.chain.Chain`, the :class:`~sccp.chain.mempool.Mempool`
@@ -209,8 +209,8 @@ class NodeService:
         """Fail fast before serving: network id, pinned genesis and storage.
 
         The reference-engine policy is intentionally not enforced here: the node
-        does not run an engine, it only checks proof quality under the sampled
-        policy (M5). This method is where that check will land.
+        does not run an engine at startup. Quality is handled by the sampler and
+        bonded challenges after a proof is accepted.
         """
         if self.chain.params.network_id != self.params.network_id:
             raise ProtocolError(

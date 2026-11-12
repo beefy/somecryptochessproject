@@ -336,7 +336,7 @@ txid: 1c9d...
 
 Registration is valid for `registration_epochs` (10 on testnet, 30 on mainnet).
 The transaction must be included in a block before the ledger changes; the CLI
-gets as far as the node's mempool (section 5.4).
+gets as far as the node's mempool (`PROTOCOL.md` section 10).
 
 ### 5.2 Commit availability
 

@@ -1,4 +1,4 @@
-"""Opening book loading, validation and seeded selection (section 5.6).
+"""Opening book loading, validation and seeded selection (PROTOCOL.md section 7).
 
 The book lives in ``data/openings.json`` at the repository root and is copied
 into the wheel as ``sccp/chess/data/openings.json`` at build time. Every line is
@@ -32,7 +32,7 @@ from sccp.errors import OpeningBookError
 from sccp.serialization import Domain, domain_hex
 
 MAX_BOOK_PLIES: Final = 12
-"""No book line may be longer than this (section 5.6)."""
+"""No book line may be longer than this (PROTOCOL.md section 7)."""
 
 BEACON_BYTES: Final = 32
 """Beacons are 32-byte digests, so selection rejects anything else."""

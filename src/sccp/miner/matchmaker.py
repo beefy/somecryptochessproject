@@ -6,7 +6,7 @@ them, and stores both seats' signatures. Every object it returns can be
 recomputed and checked by anyone with the roster and the beacon.
 
 Sessions are **timed**: each live match carries the protocol's fixed 30+0 clock
-(plan section 5.7.1). The relay starts both clocks when the second seat joins,
+(PROTOCOL.md section 8.4). The relay starts both clocks when the second seat joins,
 deducts the mover's elapsed time on every accepted move, signs a receipt for it
 with its witness key, and flags a clock that reaches zero even if the losing
 seat never sends another message. Moves may carry the clocked body
@@ -122,7 +122,7 @@ class JoinRequest(ProtocolModel):
 class MoveRequest(ProtocolModel):
     """A seat submits one SAN move.
 
-    The M2 body is ``{seat, san}``; the timed body adds ``network``, ``ply``,
+    The untimed body is ``{seat, san}``; the timed body adds ``network``, ``ply``,
     ``clock_ms`` and ``signature``. ``clock_ms`` is display data and is never
     trusted: the relay recomputes the clock from its own monotonic source. A
     body that carries a ``signature`` must also carry ``network`` and ``ply``,
@@ -624,7 +624,7 @@ class Matchmaker:
     def _expire_locked(self) -> list[str]:
         """Abandon silent joins. A live clocked session is never abandoned.
 
-        A clocked match ends on its clock (plan section 5.7.1), so the
+        A clocked match ends on its clock (PROTOCOL.md section 8.4), so the
         inactivity reaper only applies to sessions that have no running clock:
         pending joins, and the theoretically impossible active-but-unclocked
         state. Anything else would let a losing seat deny its opponent the flag.
@@ -697,7 +697,7 @@ class Matchmaker:
         Returns ``False`` when no clock has run out. The flag receipt is signed
         by the relay's witness key, so the opponent can settle the game on chain
         with a bonded ``timeout_claim`` even though the flagged seat never
-        answered (plan section 5.7.1, PROTOCOL section 10.4).
+        answered (PROTOCOL.md sections 8.4 and 10.4).
         """
         clock = session.clock
         if session.status is not SessionStatus.ACTIVE or clock is None:
@@ -917,8 +917,8 @@ class Matchmaker:
     def join(self, match_id: str, request: JoinRequest) -> MatchView:
         """Record a seat's certificate signature; activate when both have joined.
 
-        Activation starts both clocks: the plan's "second start signature
-        activates the session" rule (plan section 5.7.1).
+        Activation starts both clocks: the "second start signature
+        activates the session" rule (PROTOCOL.md section 8.4).
         """
         with self._lock:
             now_ms = self._now_ms()

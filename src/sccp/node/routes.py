@@ -1,9 +1,9 @@
-"""Compatibility entry point for the M2 read-only node stub.
+"""Compatibility entry point for the earlier read-only node stub.
 
-M4 moved the API to :mod:`sccp.node.app`, which needs a full
+The API now lives in :mod:`sccp.node.app`, which needs a full
 :class:`~sccp.node.service.NodeService`. This module keeps the old signature
-alive for callers (and the M2 relay test) that only want to serve a genesis
-chain plus a few known beacons and transcripts.
+alive for callers (and the relay compatibility test) that only want to serve a
+genesis chain plus a few known beacons and transcripts.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def create_app(
 ) -> FastAPI:
     """Build a node app over a genesis-only chain seeded with known objects.
 
-    ``height`` is accepted for source compatibility with the M2 stub and
+    ``height`` is accepted for source compatibility with the earlier stub and
     ignored: the new API always reports the chain's real height.
     """
     del height

@@ -1,6 +1,6 @@
 # The two-miner testnet stack
 
-`docker-compose.yml` runs the M6 deployment on one machine: a full node, the
+`docker-compose.yml` runs the testnet deployment on one machine: a full node, the
 matchmaking relay, one deterministic bootstrap job and two Stockfish miners. It
 starts from the pinned `testnet` genesis, funds and registers both miners,
 commits/reveals availability, opens a matchable epoch, plays games and settles
@@ -28,7 +28,7 @@ proof to settle.
 | Service | Command | Purpose |
 | --- | --- | --- |
 | `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the two keyfiles, the passphrase file and `stack.json` |
-| `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --no-mine-bootstrap` | section 5.12 API plus the proof settler; chain in SQLite under `node-data` |
+| `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --no-mine-bootstrap` | node API plus the proof settler; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers both miners, commits and reveals availability, writes `relay.json` from epoch 3 |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json` | opens round 0, runs the 30+0 clock, opens a new round every 60 s |
 | `miner-1`, `miner-2` | `sccp miner run --engine-profile stockfish-19 --nodes-per-move 5000` | join, play, co-sign and announce win proofs to the node |

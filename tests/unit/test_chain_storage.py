@@ -1,4 +1,4 @@
-"""SQLite persistence, snapshots and restart replay (plan section 5.11)."""
+"""SQLite persistence, snapshots and restart replay (PROTOCOL.md sections 12-13)."""
 
 from __future__ import annotations
 

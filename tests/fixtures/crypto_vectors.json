@@ -1,5 +1,5 @@
 {
-  "description": "Golden vectors for M0 (canonical JSON, domain hashes, Merkle roots, Ed25519, bech32 addresses, mnemonic). Generated from a fixed seed; regenerate only with a deliberate consensus change.",
+  "description": "Golden vectors for canonical JSON, domain hashes, Merkle roots, Ed25519, bech32 addresses and mnemonic generation. Generated from a fixed seed; regenerate only with a deliberate consensus change.",
   "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
   "mnemonic": "abandon amount liar amount expire adjust cage candy arch gather drum bullet absurd math era live bid rhythm alien crouch range attend journey unaware",

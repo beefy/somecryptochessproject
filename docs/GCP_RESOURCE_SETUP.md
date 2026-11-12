@@ -1,6 +1,6 @@
 # Set up the GCP resources
 
-This is a high-level map of the Google Cloud resources the M6 testnet needs. It
+This is a high-level map of the Google Cloud resources the testnet needs. It
 is intentionally not a Terraform module or a complete production landing zone:
 one operator, one VM, one Docker Compose stack.
 

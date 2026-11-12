@@ -1,7 +1,7 @@
 """Canonical JSON, domain-separated hashing and Merkle commitments.
 
 This module is the single source of truth for every byte that consensus hashes
-(docs/IMPLEMENTATION_PLAN.md section 5.2):
+(docs/PROTOCOL.md section 1):
 
 ``hash = sha256(domain.encode() + b"\\x00" + canonical_json(payload))``
 
@@ -84,7 +84,7 @@ def canonical_json(value: object) -> bytes:
 
 
 class Domain(StrEnum):
-    """Hash domains from docs/IMPLEMENTATION_PLAN.md section 5.2."""
+    """Hash domains from docs/PROTOCOL.md section 1."""
 
     ADDRESS = "sccp/v1/address"
     BEACON = "sccp/v1/beacon"
@@ -143,7 +143,7 @@ def merkle_root(leaves: Mapping[str, object] | Iterable[tuple[str, object]]) -> 
     """Commit to a ``key -> value`` map, independent of insertion order.
 
     Leaves are sorted by the UTF-8 bytes of their keys. ``value is None`` means
-    "absent" and is not encoded, matching docs/IMPLEMENTATION_PLAN.md section 5.2.
+    "absent" and is not encoded, matching docs/PROTOCOL.md section 1.
     An odd node at any level is promoted unchanged. An empty tree is
     :data:`EMPTY_ROOT`.
     """

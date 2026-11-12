@@ -1,4 +1,4 @@
-"""Wire models for matchmaking, certificates and win proofs (M2).
+"""Wire models for matchmaking, certificates and win proofs.
 
 The models in this module are the schema half of docs/PROTOCOL.md sections 6-9.
 They are frozen, forbid unknown fields and use constrained string types, so a
@@ -47,7 +47,7 @@ TerminationValue = Literal["checkmate", "draw", "resignation", "time_forfeit"]
 Verdict = Literal["pass", "fail", "unknown"]
 
 MAX_CLOCK_MS = 24 * 60 * 60 * 1000
-"""Upper bound for a clock value (24 hours), from plan section 5.7.1."""
+"""Upper bound for a clock value (24 hours), from PROTOCOL.md section 8.4."""
 
 
 class ProtocolModel(BaseModel):
@@ -57,7 +57,7 @@ class ProtocolModel(BaseModel):
 
 
 class TxType(StrEnum):
-    """The transaction vocabulary of plan section 5.4."""
+    """The transaction vocabulary of PROTOCOL.md section 10."""
 
     TRANSFER = "transfer"
     REGISTER = "register"
@@ -74,7 +74,7 @@ class TxType(StrEnum):
 
 
 class Transaction(ProtocolModel):
-    """A signed ledger transaction (plan section 5.4).
+    """A signed ledger transaction (PROTOCOL.md section 10).
 
     ``payload`` is an untyped mapping on the wire: its shape depends on ``type``
     and is validated by :mod:`sccp.chain.tx`, which keeps one canonical envelope
@@ -94,7 +94,7 @@ class Transaction(ProtocolModel):
 
 
 class TimeControl(ProtocolModel):
-    """One fixed chess clock control (plan section 5.7.1).
+    """One fixed chess clock control (PROTOCOL.md section 8.4).
 
     Both values are whole seconds expressed in milliseconds, so the PGN
     ``TimeControl`` tag is lossless. The complete ``initial + increment * plies``
@@ -118,7 +118,7 @@ class TimeControl(ProtocolModel):
 
 
 class Availability(ProtocolModel):
-    """A miner's commit-phase availability for one epoch (section 5.5)."""
+    """A miner's commit-phase availability for one epoch (PROTOCOL.md section 6)."""
 
     network: str = Field(min_length=1, max_length=32)
     miner: AddressText
@@ -188,7 +188,7 @@ class Matchup(ProtocolModel):
 
 
 class MatchCertificate(ProtocolModel):
-    """The signed start-of-match commitment (section 5.7, step 1).
+    """The signed start-of-match commitment (PROTOCOL.md section 8.1).
 
     ``start_signatures`` is keyed by colour and contains one signature per seat
     over :func:`sccp.protocol.transcript.certificate_payload`.
@@ -217,7 +217,7 @@ class ClockWitnessSignature(ProtocolModel):
 
 
 class SignedMove(ProtocolModel):
-    """A seat-signed move message (plan section 5.7, step 2).
+    """A seat-signed move message (PROTOCOL.md section 8.4).
 
     ``clock_ms`` is deliberately absent: it is relay display data, never signed,
     and is carried by :class:`MoveMessage` for transport only.
@@ -265,7 +265,7 @@ class FlagReceipt(ProtocolModel):
 
 
 class ClockEvidence(ProtocolModel):
-    """Everything a verifier needs to settle a flag (plan section 5.7.1)."""
+    """Everything a verifier needs to settle a flag (PROTOCOL.md section 8.4)."""
 
     time_control: TimeControl
     final: FlagReceipt
@@ -284,7 +284,7 @@ class TimeoutClaim(ProtocolModel):
 
 
 class GameResult(ProtocolModel):
-    """Both seats' attestation of a finished game (section 5.7, step 3).
+    """Both seats' attestation of a finished game (PROTOCOL.md section 8.2).
 
     This is the protocol's result object, distinct from
     :class:`sccp.chess.pgn.GameResult` (the PGN result vocabulary). Use
@@ -301,7 +301,7 @@ class GameResult(ProtocolModel):
 
 
 class QualitySummary(ProtocolModel):
-    """Optional quality verdict attached to a proof (plan section 5.9).
+    """Optional quality verdict attached to a proof (PROTOCOL.md section 9.2).
 
     The summary is non-consensus evidence: it names the policy, records the
     compact counters a validator can compare against a re-run, and commits to the
@@ -319,7 +319,7 @@ class QualitySummary(ProtocolModel):
 
 
 class WinProof(ProtocolModel):
-    """A winner's self-contained claim (section 5.10)."""
+    """A winner's self-contained claim (PROTOCOL.md section 9)."""
 
     network: str = Field(min_length=1, max_length=32)
     proof_id: DigestHex
@@ -345,7 +345,7 @@ class WinProof(ProtocolModel):
 
 
 class BlockHeader(ProtocolModel):
-    """The sealed header of plan section 5.11, in wire order."""
+    """The sealed header of PROTOCOL.md sections 12-13, in wire order."""
 
     version: int = Field(ge=1)
     network: str = Field(min_length=1, max_length=32)
@@ -366,7 +366,7 @@ class BlockHeader(ProtocolModel):
 class Block(ProtocolModel):
     """A header plus its body: coinbase, transactions and win proofs.
 
-    Genesis carries neither a coinbase nor proofs (plan section 5.11); every
+    Genesis carries neither a coinbase nor proofs (PROTOCOL.md sections 12-13); every
     other block has exactly one coinbase and exactly ``header.wins_required``
     proofs.
     """

@@ -417,7 +417,7 @@ def test_devnet_help_lists_up() -> None:
     assert "up" in result.stdout
 
 
-# --- M4: node, miner, chain and faucet commands -----------------------------
+# --- Node, miner, chain and faucet commands ---------------------------------
 
 
 @pytest.fixture()

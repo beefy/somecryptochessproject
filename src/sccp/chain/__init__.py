@@ -1,6 +1,6 @@
 """The ledger: transactions, state, blocks, fork choice, mempool and storage.
 
-Modules (docs/IMPLEMENTATION_PLAN.md section 4 and M3):
+Modules:
 
 - :mod:`sccp.chain.tx` -- transaction validation, application and the txid rule.
 - :mod:`sccp.chain.state` -- accounts, bonds, proof registry, epoch records and

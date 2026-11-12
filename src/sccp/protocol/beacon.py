@@ -1,4 +1,4 @@
-"""Epoch beacons: commit/reveal derivation and optional drand mixing (section 5.5).
+"""Epoch beacons: commit/reveal derivation and optional drand mixing.
 
 The beacon is a pure function of public data::
 
@@ -11,10 +11,9 @@ Each entry is the revealed commitment's 32 bytes followed by the 32-byte nonce;
 entries are sorted as byte strings, so reveal order never matters.
 
 drand quicknet signs with BLS12-381, which ``cryptography`` does not implement.
-Rather than pull in a second crypto stack for M2, signature checking is an
-injected :class:`DrandVerifier`: a caller that wants drand supplies one (M4 wires
-the pinned quicknet key). ``drand_used = 0`` is always valid and needs no
-verifier.
+Rather than pull in a second crypto stack, signature checking is an injected
+:class:`DrandVerifier`: a caller that wants drand supplies one pinned to the
+quicknet key. ``drand_used = 0`` is always valid and needs no verifier.
 """
 
 from __future__ import annotations
@@ -39,7 +38,7 @@ BEACON_BYTES: Final = 32
 U64_MAX: Final = 2**64 - 1
 
 DRAND_QUICKNET_PERIOD_SECONDS: Final = 3
-"""quicknet publishes a round every 3 seconds (section 5.5)."""
+"""quicknet publishes a round every 3 seconds (PROTOCOL.md section 6)."""
 
 DRAND_QUICKNET_ROUND_OFFSET: Final = 1
 """``round(e) = mtp // period + offset`` for quicknet."""
@@ -169,7 +168,7 @@ def epoch_reveals(
     Returns ``(entries, withheld)``. ``entries`` is the sorted beacon input;
     ``withheld`` lists availability miners with no valid reveal, sorted. A miner
     that withholds is excluded from the roster, but the fact is public and can be
-    recorded by the chain (M3) or the relay's reputation endpoint.
+    recorded by the chain or the relay's reputation endpoint.
     """
     network = _check_network(network)
     _check_u64(epoch, "epoch")
@@ -374,7 +373,7 @@ def derive_drand_round(
     period_seconds: int = DRAND_QUICKNET_PERIOD_SECONDS,
     offset: int = DRAND_QUICKNET_ROUND_OFFSET,
 ) -> int:
-    """``round(e) = mtp // period_seconds + offset`` (section 5.5, step 6)."""
+    """``round(e) = mtp // period_seconds + offset`` (PROTOCOL.md section 6)."""
     if not isinstance(mtp, int) or isinstance(mtp, bool) or mtp < 0:
         raise BeaconError("median time past must be a non-negative integer")
     if not isinstance(period_seconds, int) or isinstance(period_seconds, bool):

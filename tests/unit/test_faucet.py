@@ -1,4 +1,4 @@
-"""The testnet faucet endpoint (plan M6)."""
+"""The testnet faucet endpoint."""
 
 from __future__ import annotations
 

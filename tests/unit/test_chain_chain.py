@@ -1,4 +1,4 @@
-"""Block tree, fork choice and reorganisation (plan section 5.11)."""
+"""Block tree, fork choice and reorganisation (PROTOCOL.md sections 12-13)."""
 
 from __future__ import annotations
 

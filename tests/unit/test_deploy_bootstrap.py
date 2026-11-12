@@ -1,4 +1,4 @@
-"""The deterministic testnet stack bootstrap (plan M6)."""
+"""The deterministic testnet stack bootstrap."""
 
 from __future__ import annotations
 

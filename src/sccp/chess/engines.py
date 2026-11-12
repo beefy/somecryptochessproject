@@ -1,4 +1,4 @@
-"""Engine abstraction: UCI adapter, deterministic mocks (section 5.6).
+"""Engine abstraction: UCI adapter, deterministic mocks (PROTOCOL.md section 7).
 
 Engines are deliberately dumb: ``choose_move`` proposes a move and the game
 runner is the only component that decides whether it is legal. That keeps one

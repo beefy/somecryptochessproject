@@ -1,4 +1,4 @@
-"""Header and block validation (plan sections 5.10 and 5.11).
+"""Header and block validation (PROTOCOL.md sections 9 and 12).
 
 ``connect_block`` is the single entry point that turns a parent state plus a
 block into a child state. It runs cheap checks first and expensive chess replay
@@ -125,7 +125,7 @@ def block_hash(header: BlockHeader) -> str:
 def body_root(items: list[str] | tuple[str, ...]) -> str:
     """Merkle root of an ordered list of txids/proof ids.
 
-    The plan's shared construction is keyed by a string, so the key is the
+    The shared construction is keyed by a string, so the key is the
     item's position: leaves are ``sha256(0x00 || str(i) || 0x00 || json(item))``
     in *given* order (no sorting), an odd node is promoted unchanged.
     """
@@ -348,7 +348,7 @@ def check_proof(
     proof_ids: frozenset[str],
     book: OpeningBook | None = None,
 ) -> None:
-    """Run every plan-5.10 rule that needs the chain, not just the proof."""
+    """Run every proof rule that needs the chain, not just the proof."""
     if proof.network != params.network_id:
         _fail(BlockFailure.PROOFS, f"proof is for {proof.network!r}")
     if proof.winner != header.miner:

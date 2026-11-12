@@ -1,4 +1,4 @@
-"""Valid PGNs and every accepted termination (plan section 5.8)."""
+"""Valid PGNs and every accepted termination (PROTOCOL.md section 3)."""
 
 from __future__ import annotations
 

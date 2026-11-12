@@ -1,6 +1,6 @@
-"""Transaction validation and application (plan section 5.4).
+"""Transaction validation and application (PROTOCOL.md section 10).
 
-Validation order is fixed by the plan: schema -> network -> signature -> nonce ->
+Validation order is fixed by the protocol: schema -> network -> signature -> nonce ->
 balance -> type-specific rules -> size limits. Mempool admission runs the same
 checklist; blocks rerun everything from scratch, so a mempool bug can never make
 an invalid block valid.
@@ -532,7 +532,7 @@ def validate_transaction(
     height: int,
     for_mempool: bool = False,
 ) -> None:
-    """Run the full plan-5.4 checklist for ``tx`` at ``height``.
+    """Run the full transaction checklist for ``tx`` at ``height``.
 
     ``for_mempool`` additionally rejects a transaction that is still valid on
     chain but already superseded in the pool; the pool itself enforces its own

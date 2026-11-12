@@ -4,7 +4,7 @@ The package is import-light on purpose: importing :mod:`sccp` must not start
 engines, open databases or read configuration. Entry points (CLI, node, miner)
 call :func:`sccp.version.verify_chess_version` during startup so an unexpected
 ``python-chess`` upgrade fails loudly instead of silently changing PGN parsing
-behaviour (docs/IMPLEMENTATION_PLAN.md section 3).
+behaviour (docs/PROTOCOL.md).
 """
 
 from sccp.version import __version__

@@ -1,4 +1,4 @@
-"""Immutable network parameters (docs/IMPLEMENTATION_PLAN.md section 5.1).
+"""Immutable network parameters (docs/PROTOCOL.md section 15).
 
 Amounts are integer base units: ``1 coin = 100_000_000 units``. No floating
 point value is ever accepted by this module. ``NetworkParams`` validates its own
@@ -101,7 +101,7 @@ class NetworkParams(BaseModel):
     max_pgn_bytes: int = Field(gt=0)
     max_tx_bytes: int = Field(gt=0)
 
-    # Ledger: pinned genesis and storage policy (M3)
+    # Ledger: pinned genesis and storage policy
     genesis_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     mempool_ttl_blocks: int = Field(default=64, ge=1)
     snapshot_interval: int = Field(default=100, ge=1)

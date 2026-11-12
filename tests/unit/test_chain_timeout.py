@@ -388,7 +388,7 @@ def test_slash_is_only_about_clock_witnesses_for_now(
     tx = _slash_tx(signed_match, _receipts(signed_match))
     assert tx.payload is not None
     unsupported = tx.model_copy(update={"payload": {**tx.payload, "proof_id": "11" * 32}})
-    with pytest.raises(TimeoutClaimError, match="not an M3 rule"):
+    with pytest.raises(TimeoutClaimError, match="not a timeout rule"):
         timeout.validate_slash(timeout_state, unsupported, HEIGHT)
 
     unknown = tx.model_copy(update={"payload": {**tx.payload, "note": "hi"}})

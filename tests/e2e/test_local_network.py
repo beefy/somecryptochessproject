@@ -1,4 +1,4 @@
-"""A two-node local network over real sockets: mine, partition, heal (M4).
+"""A two-node local network over real sockets: mine, partition, heal.
 
 The unit suite reaches the node through an in-process ASGI transport. This
 test repeats the important path over actual TCP ports on loopback (with

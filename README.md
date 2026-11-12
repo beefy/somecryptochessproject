@@ -9,21 +9,18 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
-> **Status: M5 complete.** M0 (packaging, config, crypto, wallets, CLI, CI), M1
-> (PGN validation, canonical game hash, opening book, engine abstraction,
-> game runner, offline `sccp verify pgn`), M2 (commit/reveal beacons,
-> deterministic pairing, signed match certificates and transcripts, the relay,
-> offline `sccp verify proof`), M3 (the ledger: transactions, accounts and
-> bonds, headers and blocks, fork choice and reorg, difficulty retargeting,
-> mempool, SQLite storage, bonded timeout settlement, the wallet service, the
-> block builder and deterministic genesis files) and M4 (the node API and
-> gossip, pull-sync, the unattended engine miner, the complete `sccp` command
-> surface, the in-process devnet and a docker-compose testnet stack), and M5
-> (quality verification, bonded challenges with beacon-ranked panels, slashing,
-> the adversarial suite and the threat model) are implemented and tested.
-> Normative formats are in
-> [`docs/PROTOCOL.md`](docs/PROTOCOL.md); the engineering plan lives in
-> [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
+> **Status: protocol v1 is implemented and deployed on testnet.** The repository
+> contains the complete path from wallet to block: PGN validation and canonical
+> game hashing; commit/reveal beacons, deterministic pairing, signed match
+> certificates and the timed relay; the account ledger, block validation, fork
+> choice, difficulty, SQLite storage and block builder; the node API, gossip and
+> pull-sync; the unattended engine miner; quality sampling and bonded
+> challenges; and a funded two-miner testnet with a public faucet, automated
+> deployment and operator runbooks. Normative formats are in
+> [`docs/PROTOCOL.md`](docs/PROTOCOL.md); next steps and improvement areas are
+> in [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md). Mainnet
+> parameters exist, but no mainnet has launched or been audited; testnet and
+> devnet coins have no value.
 
 > **The relay runs timed sessions.** Every session is a real **30+0** clock game:
 > the second start signature starts both clocks, the relay's monotonic clock is
@@ -37,8 +34,10 @@ reward.
 > claim it cannot reproduce. `sccp matchmaker run --witness-key` signs the
 > receipts, `--round-seconds` adds the opt-in round scheduler, and
 > `sccp miner run --relay-witness-key` trusts that witness. The formats are
-> normative in [`docs/PROTOCOL.md`](docs/PROTOCOL.md) section 8.4; what remains
-> is the on-chain claim transaction (plan section 5.7.1) and the M6 work.
+> normative in [`docs/PROTOCOL.md`](docs/PROTOCOL.md) section 8.4 and 10.4. The
+> ledger rules, clock evidence and local claim verification are implemented; the
+> remaining integration gap is automatic submission of a timeout claim from the
+> demo/CLI path.
 
 > **Naming.** The repository and project name is `somecryptochessproject`. The
 > Python package and console command use the short form `sccp` (import `sccp`,
@@ -243,7 +242,7 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 | Game length | 20-300 plies | 30-400 plies |
 | Engines allowed | any UCI engine, incl. mock | pinned Stockfish builds |
 | Quality checks | off (fast local iteration) | sampled + challengeable |
-| Beacon | commit-reveal | drand + commit-reveal |
+| Beacon | commit-reveal | commit-reveal; optional drand mix-in (pinned verifier pending) |
 | Minimum fee | 1,000 base units | 1,000 base units |
 
 `devnet` (in-process, mock engines, zero seal difficulty) exists for tests and CI.
@@ -253,8 +252,8 @@ All values above are provisional and live in `src/sccp/config.py`.
 
 ## 5. Repository layout
 
-Modules marked *(M0)* through *(M6)* exist to the extent described by the
-roadmap below; the rest is the target layout for later milestones.
+Every module below ships in the 0.9.0 tree. Comments name the module's main
+responsibility rather than a construction phase.
 
 ```text
 .
@@ -263,21 +262,21 @@ roadmap below; the rest is the target layout for later milestones.
 ├── pyproject.toml                # packaging, deps, ruff/mypy/pytest config
 ├── Makefile                      # test / lint / typecheck / devnet / stack / dist
 ├── Dockerfile                    # image used by every stack service
-├── docker-compose.yml            # node + relay + bootstrap + 2 miners (M6)
+├── docker-compose.yml            # node + relay + bootstrap + 2 Stockfish miners
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
 ├── .github/workflows/deploy-testnet-miners.yml  # image + hosted testnet deploy
 ├── docs/
-│   ├── IMPLEMENTATION_PLAN.md    # this project's plan
+│   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
 │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
 │   ├── GCP_RESOURCE_SETUP.md     # project, VM, firewall and deploy wiring
 │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
-│   ├── PROTOCOL.md               # normative wire formats (M1–M4)
+│   ├── PROTOCOL.md               # normative wire formats and consensus rules
 │   ├── RUNBOOK.md                # restart, faucet, mining, incidents
 │   ├── TESTNET_DEPLOYMENT.md     # CI deployment and monthly cost estimate
 │   ├── RUN_A_TESTNET_MINER.md    # operator guide: relay, miner and registration
 │   ├── SEND_COINS.md             # fund a wallet and send a transfer
-│   └── THREAT_MODEL.md           # security analysis (M5)
+│   └── THREAT_MODEL.md           # adversary model and residual risk
 ├── data/
 │   ├── openings.json             # curated opening lines, shipped in the wheel
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
@@ -296,20 +295,17 @@ roadmap below; the rest is the target layout for later milestones.
 │   ├── config.py                 # network parameters, settings
 │   ├── serialization.py          # canonical JSON, domain-separated hashing
 │   ├── crypto/                   # keys, bech32 addresses, encrypted wallets
-│   ├── chess/                    # pgn, openings, engines, gameplay (M1);
-│   │                             # quality policy (M5)
-│   ├── protocol/                 # models, beacon, pairing, transcripts, verification,
-│   │                             # bonded challenges and panels (M5)
-│   ├── chain/                    # tx, blocks, state, mempool, fork choice, storage,
-│   │                             # difficulty, bonded timeouts, genesis (M3);
-│   │                             # quality slashing (M5)
-│   ├── node/                     # FastAPI app, gossip, services (M4);
-│   │                             # quality sampler (M5)
-│   ├── miner/                    # matchmaker/relay (M2), block builder (M3),
-│   │                             # engine miner (M4)
-│   ├── wallet/                   # M0 key files, M3 wallet service
-│   ├── transport.py              # synchronous ASGI transport for httpx (M4)
-│   ├── devnet.py                 # `sccp devnet up` (M4)
+│   ├── chess/                    # pgn, openings, engines, gameplay, quality
+│   ├── protocol/                 # models, beacon, pairing, transcripts,
+│   │                             # verification, challenges and panels
+│   ├── chain/                    # tx, blocks, state, mempool, fork choice,
+│   │                             # storage, difficulty, timeouts, genesis
+│   ├── node/                     # FastAPI app, gossip, services, faucet,
+│   │                             # proof settler, quality sampler
+│   ├── miner/                    # matchmaker/relay, block builder, engine miner
+│   ├── wallet/                   # key files and wallet service
+│   ├── transport.py              # synchronous ASGI transport for httpx
+│   ├── devnet.py                 # in-process local network
 │   └── cli.py                    # Typer CLI
 └── tests/
     ├── unit/                     # per-module tests, including test_api.py,
@@ -317,7 +313,7 @@ roadmap below; the rest is the target layout for later milestones.
     ├── property/                 # hypothesis
     ├── integration/              # Stockfish smoke test (-m engine)
     ├── e2e/                      # test_local_network.py (real loopback ports)
-    ├── adversarial/              # cheat / self-play / tamper suites (M5)
+    ├── adversarial/              # cheat / self-play / tamper suites
     └── fixtures/                 # PGN/hash vectors, crypto vectors, openapi.json
 ```
 
@@ -325,7 +321,8 @@ roadmap below; the rest is the target layout for later milestones.
 
 ## 6. Quickstart
 
-M0–M4 work today, and every step below is a thin wrapper over a library call.
+Every step below is a thin wrapper over a library call, so the CLI, tests and
+services exercise the same code path.
 
 ```bash
 git clone git@github.com:beefy/somecryptochessproject.git
@@ -388,7 +385,7 @@ sccp miner run --network testnet \
     --node http://127.0.0.1:8645 \
     --relay-witness-key <relay-witness-public-key-hex>
 
-# The whole stack, as containers (node + relay + three mock miners on testnet)
+# The whole testnet stack (node + relay + bootstrap + two Stockfish miners)
 docker compose up --build
 
 # Play a timed relay match yourself, by hand: solo mode builds the relay and one
@@ -468,20 +465,24 @@ stops after `N` relay polls, which is how the CLI tests drive it.
 
 ---
 
-## 7. Roadmap
+## 7. Current status and next work
 
-| Milestone | Deliverable | Status |
-| --- | --- | --- |
-| **M0** | Foundations: packaging, config, crypto, CLI skeleton, CI | done |
-| **M1** | Chess core: PGN validation, canonical hashing, opening book, engine abstraction, game runner | done |
-| **M2** | Matchmaking: beacon, deterministic pairing, certificates, transcripts, relay, offline proof verification | done |
-| **M3** | Chain: transactions, wallet, blocks, state, mempool, fork choice, difficulty, block builder | done |
-| **M4** | Node + P2P + miner daemon | done — node API and gossip, pull-sync, `EngineMiner`, the full CLI, `sccp devnet up` and the docker-compose testnet stack |
-| **M5** | Quality verification, challenges, slashing, threat-model tests | done — pinned quality profile, deterministic sampling, bonded challenges with beacon-ranked panels, adversarial suite, [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md) |
-| **M6** | Testnet launch: funded testnet, faucet operations, observability, operator guide | in progress — faucet endpoint, node proof settler, deterministic bootstrap, two-miner deploy workflow, runbook and cost estimate; block explorer, metrics and the 72-hour soak remain |
-| **M7** | Hardening and mainnet readiness review | not started |
+Protocol v1 and the testnet release are complete. The reference implementation
+includes the wallet and keyfile tooling, the chess proof pipeline, the timed
+relay, the ledger and consensus rules, the node and gossip layer, the unattended
+miner, quality sampling and bonded challenges, and the funded two-miner testnet
+with an automated deploy path.
 
-Detailed tasks, file-level deliverables and acceptance criteria are in
+The work that remains is operational and economic rather than foundational:
+
+- run a persistent public testnet and publish a 72-hour soak report;
+- add metrics, alerting and a block explorer;
+- automate timeout-claim submission and pin the drand quicknet verifier;
+- move challenge-panel votes on chain;
+- harden storage, peer networking, faucet limits and miner/relay resilience;
+- complete the audit, economic review and mainnet go/no-go decision.
+
+The prioritized list, acceptance criteria and improvement areas are in
 [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
 
 ---
@@ -543,7 +544,7 @@ Requirements: Python 3.11+ (developed against 3.13), `python-chess`, `pydantic`,
 development. Real-engine tests need a Stockfish binary; see
 `scripts/fetch_engine.py`.
 
-### Chess core (M1)
+### Chess core
 
 The chess pipeline is import-light and engine-free until you ask for one:
 
@@ -569,7 +570,7 @@ print(raw.pgn)
 only `(network, start position, SAN list, result)`. The opening book and engine
 pins are described in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
-### Matchmaking and proofs (M2)
+### Matchmaking and proofs
 
 Beacons and pairings are pure functions, so a relay cannot invent either:
 
@@ -603,7 +604,7 @@ beacon, signatures and PGN offline. drand quicknet verification is a pluggable
 `DrandVerifier` (BLS12-381 is not in the stdlib crypto stack); `drand_used = 0`
 needs no verifier and is always valid.
 
-### The ledger, wallets and blocks (M3)
+### The ledger, wallets and blocks
 
 The chain is a library, not a daemon yet: genesis, transactions, blocks, fork
 choice and storage all work in-process.
@@ -637,7 +638,7 @@ live in `src/sccp/chain/timeout.py`; genesis documents in `genesis/*.json` are
 regenerated by `scripts/make_genesis.py`. Wire formats are in
 [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
 
-### The node, gossip and the miner daemon (M4)
+### The node, gossip and the miner daemon
 
 The node and the miner are libraries with thin HTTP/CLI edges, so a whole
 network can run in one process without opening a port.
@@ -650,7 +651,7 @@ print(summary.height, summary.tip_hash, len(summary.proofs))
 ```
 
 A node is `sccp.node.service.NodeService`: a `Chain`, a `Mempool`, a peer table
-and a transcript cache. It serves the section 5.12 API through
+and a transcript cache. It serves the protocol API through
 `sccp.node.app.create_app(service)` (blocks by height or hash, accounts, epochs
 and beacons, difficulty history, games, matches, transcripts, mempool,
 transaction/proof submission, gossip and peers) and speaks gossip through
@@ -684,7 +685,7 @@ exactly the window funding, registration and availability need, so the first
 matchable epoch is 3. `tests/unit/test_devnet.py` asserts the run reaches the
 requested height and that two runs produce the same tip hash.
 
-The CLI is the whole surface of plan section 5.13: `node run` serves the API and
+The CLI is the whole operator surface: `node run` serves the API and
 pull-syncs from `--peer` URLs at startup, `miner run` is the unattended loop
 (with `--iterations` for scripted runs), `miner register|availability|reveal`
 sign the on-chain lifecycle, `wallet balance|send|history` and

@@ -1,4 +1,4 @@
-"""Hypothesis invariants for the hostile-input PGN boundary (plan section 7.2)."""
+"""Hypothesis invariants for the hostile-input PGN boundary (plan the project coverage gates)."""
 
 from __future__ import annotations
 

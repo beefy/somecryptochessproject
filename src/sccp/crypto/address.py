@@ -6,7 +6,7 @@ first 20 bytes of ``sha256("sccp/v1/address" + 0x00 + canonical_json({"network",
 ``bech32`` package are not usable here: they hard-code witness program lengths
 and reject the 21-byte program this protocol needs, so we use the primitives
 ``bech32_encode``/``bech32_decode``/``convertbits`` directly
-(docs/IMPLEMENTATION_PLAN.md section 5.3).
+(docs/PROTOCOL.md).
 """
 
 from __future__ import annotations

@@ -10,7 +10,7 @@ and reject a header that declares easier values than the schedule allows.
 
 Testnet and devnet run with ``seal_bits = 0`` and retargeting disabled, so the
 seal costs nothing and block spacing is whatever the chess takes -- expected, not
-a bug (plan section 5.11).
+a bug (PROTOCOL.md sections 12-13).
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from sccp.config import NetworkParams
 from sccp.errors import StateError
 
 WIN_UNIT: Final = 1 << 16
-"""Work credited per required win; one unit of ``k`` (plan section 5.11)."""
+"""Work credited per required win; one unit of ``k`` (PROTOCOL.md sections 12-13)."""
 
 MAX_SEAL_BITS: Final = 32
 """Hard ceiling for the header seal target."""
@@ -105,7 +105,7 @@ def next_difficulty(
 
     ``k`` moves at most once per epoch (``height % epoch_length == 0``) and never
     within ``epoch_length`` blocks of the previous ``k`` change, which is the
-    "one epoch of grace" the plan requires for open claim windows.
+    "one epoch of grace" the protocol requires for open claim windows.
     """
     if not params.retarget_enabled:
         return current

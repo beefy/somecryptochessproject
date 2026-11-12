@@ -40,7 +40,7 @@ ZERO_HASH: Final = "00" * 32
 """Parent of the genesis block: a digest of 32 zero bytes."""
 
 MAX_RECENT_TIMESTAMPS: Final = 11
-"""Median-time-past window (plan section 5.11)."""
+"""Median-time-past window (PROTOCOL.md sections 12-13)."""
 
 
 def epoch_of(height: int, params: NetworkParams) -> int:
@@ -236,7 +236,7 @@ def _as_int(value: object, name: str) -> int:
 
 @dataclass(slots=True)
 class EpochRecord:
-    """Everything the chain knows about one epoch (plan section 5.5).
+    """Everything the chain knows about one epoch (PROTOCOL.md section 6).
 
     Created when the epoch's first block is applied, from the reveal set
     collected during the previous epoch and the roster registered at ``H_e``.
@@ -370,7 +370,7 @@ class TimeoutClaimRecord:
 
 @dataclass(slots=True)
 class ChallengeRecord:
-    """A bonded quality challenge against an accepted proof (plan M5).
+    """A bonded quality challenge against an accepted proof.
 
     The bond is locked when the challenge opens. Upholding the challenge returns
     the bond and slashes the proof miner; rejecting it burns the bond. A record is
@@ -568,7 +568,7 @@ class State:
     # -- commitments --------------------------------------------------------
 
     def state_root(self) -> str:
-        """Merkle root over ``address -> account`` leaves (plan section 5.11)."""
+        """Merkle root over ``address -> account`` leaves (PROTOCOL.md sections 12-13)."""
         return merkle_root_hex(
             {address: account.as_dict() for address, account in self.accounts.items()}
         )

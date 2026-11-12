@@ -1,4 +1,4 @@
-"""The node's HTTP API, exercised in-process over ASGI (M4).
+"""The node's HTTP API, exercised in-process over ASGI.
 
 Pull-sync lives in ``test_sync.py`` and gossip in ``test_gossip.py``; this file
 covers the routes themselves, plus the OpenAPI snapshot that makes an
@@ -210,7 +210,7 @@ def test_openapi_contract_has_not_changed() -> None:
 
 
 def test_openapi_contract_requires_the_network_id() -> None:
-    """Every top-level JSON response names its network (plan section 5.12)."""
+    """Every top-level JSON response names its network (PROTOCOL.md section 14)."""
     schema = _contract()
     components = schema["components"]["schemas"]
     checked = 0

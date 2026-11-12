@@ -216,13 +216,13 @@ nonce 4
 
 ### Status in this snapshot
 
-Block production from a live node is not automated yet: the in-process
-`sccp devnet up` mines blocks itself, and the docker-compose testnet stack
-deliberately does not settle on chain (see [`deploy/README.md`](../deploy/README.md)).
-On a node you operate, a pending transfer is settled when a block containing it
-is submitted to the node's `/v1/blocks` endpoint. For the current milestone
-boundary, [`docs/IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) is the
-authoritative list of what is wired and what remains.
+A node started with `sccp node run --mine --miner-address ADDRESS` runs a proof
+settler: it takes an eligible proof from the mempool and builds the next block
+around it, including any pending transfers. The docker-compose testnet starts
+that settler automatically. After the bootstrap window the node does not mine
+empty blocks, so a transfer confirms with the next decisive game; a draw
+produces no proof and no block. See [`RUNBOOK.md`](RUNBOOK.md) for the exact
+bootstrap and settlement behaviour.
 
 ---
 

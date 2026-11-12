@@ -1,4 +1,4 @@
-"""Fork choice, block storage in memory and reorg handling (plan section 5.11).
+"""Fork choice, block storage in memory and reorg handling (PROTOCOL.md sections 12-13).
 
 Every stored block keeps the state it produces. States are pure functions of the
 ancestor chain, so a side branch is validated exactly like the main chain and a

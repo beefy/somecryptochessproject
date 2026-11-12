@@ -1,4 +1,4 @@
-"""The node HTTP API (plan section 5.12).
+"""The node HTTP API (PROTOCOL.md section 14).
 
 The app is a thin, fully typed wrapper around :class:`sccp.node.service.NodeService`:
 every route parses a request, calls one service method and returns a frozen

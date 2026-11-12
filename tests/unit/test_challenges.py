@@ -1,4 +1,4 @@
-"""Bonded quality challenges: validation, bonds and adjudication (M5)."""
+"""Bonded quality challenges: validation, bonds and adjudication."""
 
 from __future__ import annotations
 

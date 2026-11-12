@@ -1,4 +1,4 @@
-"""Deterministic quality sampling and the validator disagreement queue (M5)."""
+"""Deterministic quality sampling and the validator disagreement queue."""
 
 from __future__ import annotations
 

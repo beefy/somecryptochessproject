@@ -1,9 +1,9 @@
-"""Response models for the node API (plan section 5.12).
+"""Response models for the node API (PROTOCOL.md section 14).
 
 Every response is a frozen pydantic model with ``extra="forbid"``, so the
 OpenAPI schema doubles as a contract and an unexpected field fails in tests
 rather than silently reaching a client. All responses carry the network id
-where the plan asks for it, which is what lets a wallet refuse to talk to a
+where the protocol asks for it, which is what lets a wallet refuse to talk to a
 node on the wrong network.
 """
 

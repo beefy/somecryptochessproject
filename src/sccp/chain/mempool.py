@@ -1,4 +1,4 @@
-"""The mempool: transaction and proof pools (plan sections 5.4 and 5.10).
+"""The mempool: transaction and proof pools (PROTOCOL.md sections 10 and 9).
 
 Admission runs the full block checklist against a *projection* of the tip state,
 so a transaction that depends on an earlier pending transaction from the same

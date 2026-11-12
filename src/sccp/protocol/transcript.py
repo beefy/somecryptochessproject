@@ -1,4 +1,4 @@
-"""Certificates, result attestations and transcript storage (section 5.7).
+"""Certificates, result attestations and transcript storage (PROTOCOL.md section 8).
 
 A match transcript is self-contained: the certificate commits to identity,
 pairing, colours, opening and engine fingerprints; both seats sign it before the
@@ -144,7 +144,7 @@ def create_certificate(
 
 
 def certificate_payload(cert: MatchCertificate) -> dict[str, object]:
-    """The exact payload both seats sign at match start (section 5.7, step 1).
+    """The exact payload both seats sign at match start (PROTOCOL.md section 8.1).
 
     ``seats`` is the sorted address list and ``colors`` maps each colour to its
     seat, so the colour assignment is covered without ambiguity. ``network`` is

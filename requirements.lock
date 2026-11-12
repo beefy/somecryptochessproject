@@ -1,4 +1,4 @@
-# Locked versions for the validated environment (M0).
+# Locked versions for the validated environment.
 # Runtime and test dependencies are declared in pyproject.toml.
 # Regenerate with: make lock
 annotated-doc==0.0.6

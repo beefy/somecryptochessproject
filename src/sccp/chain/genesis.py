@@ -1,4 +1,4 @@
-"""Genesis blocks and allocation documents (plan section 5.11).
+"""Genesis blocks and allocation documents (PROTOCOL.md sections 12-13).
 
 Genesis is the only premine: a testnet faucet allocation or, on mainnet, no
 allocation at all. Its hash is pinned in :class:`~sccp.config.NetworkParams` and

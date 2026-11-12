@@ -125,7 +125,7 @@ def expectations(match_tags: Mapping[str, str]) -> GameExpectations:
     )
 
 
-# --- M2 matchmaking fixtures -------------------------------------------------
+# --- Matchmaking fixtures ----------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -411,7 +411,7 @@ def signed_match(
     return replace(match, availability=protocol_availability)
 
 
-# --- M3 ledger fixtures -------------------------------------------------------
+# --- Ledger fixtures ---------------------------------------------------------
 
 GENESIS_DIR = Path(__file__).resolve().parent.parent / "genesis"
 

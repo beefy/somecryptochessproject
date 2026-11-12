@@ -1,4 +1,4 @@
-"""The non-consensus quality policy (plan section 5.9 and M5).
+"""The non-consensus quality policy.
 
 Quality analysis asks a stronger question than legality: did both sides actually
 play strong chess? Every move is compared against a pinned reference engine at a
@@ -32,7 +32,7 @@ from sccp.protocol.models import Color, QualitySummary, Verdict
 from sccp.serialization import Domain, domain_hex
 
 MATE_SCORE: int = 100_000
-"""Centipawn proxy for mate, matching the plan's scoring convention."""
+"""Centipawn proxy for mate, matching the protocol scoring convention."""
 
 DEFAULT_CACHE_ENTRIES: int = 4_096
 """How many position analyses :class:`AnalysisCache` keeps before eviction."""
@@ -40,7 +40,7 @@ DEFAULT_CACHE_ENTRIES: int = 4_096
 
 @dataclass(frozen=True, slots=True)
 class QualityProfile:
-    """A versioned reference-engine profile (plan section 5.9)."""
+    """A versioned reference-engine profile (PROTOCOL.md section 9.2)."""
 
     policy: str
     engine: str
@@ -92,7 +92,7 @@ QUALITY_V1 = QualityProfile(
     min_plies=30,
     options={"Threads": 1, "Hash": 16, "MultiPV": 5, "Contempt": 0},
 )
-"""The mainnet reference profile from plan section 5.9."""
+"""The mainnet reference profile from PROTOCOL.md section 9.2."""
 
 REFERENCE_PROFILES: Mapping[str, QualityProfile] = {"quality-v1": QUALITY_V1}
 """Every pinned profile, keyed by its policy id."""
@@ -390,7 +390,7 @@ def analyse_game(
     profile: QualityProfile = QUALITY_V1,
     cache: AnalysisCache | None = None,
 ) -> QualityReport:
-    """Run the plan-5.9 policy over an already validated PGN.
+    """Run the quality policy over an already validated PGN.
 
     Every move is compared with the reference engine. A move outside the top
     ``MultiPV`` lines is scored by analysing the position after it and negating

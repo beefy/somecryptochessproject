@@ -1,4 +1,4 @@
-"""Bonded quality challenges and adjudication (plan sections 5.9 and M5).
+"""Bonded quality challenges and adjudication.
 
 A quality summary on a proof is evidence, not consensus. When a validator's
 deterministic sample disagrees, or when any bonded party believes a proof was

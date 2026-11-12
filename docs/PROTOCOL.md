@@ -1,19 +1,18 @@
-# sccp wire protocol, version 1 (M0–M4 subset)
+# sccp wire protocol, version 1
 
-Status: **normative** for the parts implemented in milestones M0–M4 (canonical
-encoding, game hash, PGN contract, opening book, engine fingerprints, epoch
-beacons, pairing, certificates, transcripts, clocks and clock evidence, win-proof
-verification, the M3 ledger — transaction envelopes, account state, block
-headers and bodies, difficulty, fork choice and genesis documents — and the M4
-node: HTTP API, gossip envelopes, peer scoring and pull-sync). Sections for the
-quality/challenge lifecycle land in a later milestone. The M3 clock layer covers
-the off-chain primitives *and* on-chain settlement; the relay's timed-session API
-remains the M2 API described below.
+Status: **normative** for protocol v1 (canonical encoding, game hash, PGN
+contract, opening book, engine fingerprints, epoch beacons, pairing,
+certificates, transcripts, clocks and clock evidence, win-proof verification,
+the ledger — transaction envelopes, account state, block headers and bodies,
+difficulty, fork choice and genesis documents — the quality and challenge
+lifecycle, and the node: HTTP API, gossip envelopes, peer scoring and
+pull-sync). The clock layer covers the off-chain primitives *and* on-chain
+settlement.
 
 Reference implementation: `src/sccp/protocol/`, `src/sccp/chess/`,
 `src/sccp/chain/`, `src/sccp/node/`, `src/sccp/miner/`, `src/sccp/devnet.py` and
-`src/sccp/serialization.py`. The plan that motivates these rules is
-[`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), sections 5.2–5.12.
+`src/sccp/serialization.py`. This document is the normative source for these
+rules; forward work is tracked in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
 
 ---
 
@@ -61,8 +60,7 @@ Rules:
    **not** hashed. The same moves with different metadata hash identically; a
    different move order or result hashes differently.
 6. The hash commits to uniqueness only. Certificates commit to identity,
-   pairing and engine metadata; transcript hashes are a separate construction
-   (M2).
+   pairing and engine metadata; transcript hashes are a separate construction.
 
 ## 3. PGN contract
 
@@ -122,8 +120,8 @@ must agree with it.
 A `time_forfeit` PGN is accepted only when its `TimeControl` matches the
 certificate and the accompanying clock evidence verifies. The protocol uses one
 fixed 30+0 control for every match; matchmaking does not offer per-match
-choices. See [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) section 5.7.1
-and section 8.2 below.
+choices. See section 8.2 below and the clock implementation in
+`src/sccp/protocol/clocks.py`.
 
 Notes:
 
@@ -131,7 +129,7 @@ Notes:
   draws. A game stopped by one of those is only valid as a resignation.
 - For a resignation the side to move is the side that resigned, so a White
   resignation is `0-1`.
-- A resignation is additionally subject to the quality policy (M5) through
+- A resignation is additionally subject to the quality policy through
   `validate_pgn(..., resignation_check=...)`; the check must confirm the
   position is lost.
 - Draws are valid PGNs but earn nothing; a win proof requires a decisive
@@ -245,9 +243,10 @@ Validation:
 6. Recompute `B_e` and compare it with the declared `hash`.
 
 drand quicknet signs with BLS12-381. The reference implementation injects a
-`DrandVerifier` rather than pulling in a second crypto stack; M4 supplies the
-verifier pinned to the quicknet chain key. A verifier that has not been wired
-rejects `drand_used = 1` instead of accepting it blindly.
+`DrandVerifier` rather than pulling in a second crypto stack. A verifier pinned
+to the quicknet chain key is not bundled yet, so a caller must supply one;
+without it, `drand_used = 1` is rejected instead of accepted blindly. Pinning
+the verifier is tracked in the implementation plan.
 
 ## 7. Pairing
 
@@ -311,7 +310,7 @@ colour draw matches the beacon, and `match_id` recomputes from the seats.
 The certificate commits to `time_control = {initial_ms, increment_ms}` and the
 signed payload covers it. Every match uses one protocol-fixed **30+0** control
 (`initial_ms = 1_800_000`, `increment_ms = 0`); matchmaking never offers or
-accepts a per-match choice. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
+accepts a per-match choice. See section 8.4 for the timed-session API.
 
 ### 8.2 Result attestation
 
@@ -408,7 +407,7 @@ canonical SAN for the position. A body carrying a signature must also carry
 `network` and `ply`, and the signature is verified against the registered seat
 key. Moves remain off-chain and only the final proof (or timeout claim) reaches a
 block; because each move is signed, a checkmate can later be proven without the
-loser's result signature. See `IMPLEMENTATION_PLAN.md` section 5.7.1.
+loser's result signature. See section 8.4 for the signed move stream.
 
 Illegal moves, wrong turns, stale plies, forged bodies, duplicate joins and bad
 signatures are rejected with HTTP 400 and never change the session or its
@@ -461,7 +460,8 @@ A proof wraps the co-signed transcript:
 ```
 
 `proof_id = H("sccp/v1/proof", {game_hash, match_id, winner})`. The optional
-`quality_summary` belongs to M5 and is ignored by structural verification.
+`quality_summary` is evidence for the quality layer and is ignored by structural
+verification.
 `clock_evidence` is required for every `time_forfeit` and carries the time
 control, the witness-signed final flag receipt and every post-opening move
 receipt. `timeout_claim_id` binds a single-signature proof to its bonded timeout
@@ -480,14 +480,15 @@ Verification runs cheap checks first and stops at the first typed failure:
 | `roster` | both seats are in the verifier's roster |
 | `pairing` | the matchup is exactly what the beacon and roster produce |
 | `signature` | both start signatures and every present result signature verify; a missing loser signature requires matching clock or move evidence |
-| `pgn` | section 5.8 replay, headers including `TimeControl`, and opening prefix |
+| `pgn` | section 3 replay, headers including `TimeControl`, and opening prefix |
 | `game-hash` | the replayed SAN list hashes to `game_hash` |
 | `result` | result, termination, plies and winner seat match the replay; clock and move evidence are checked for `time_forfeit` and `checkmate` |
 | `proof-id` | `proof_id` recomputes from its fields |
 | `duplicate` | neither hash has already been seen by the caller |
 
 A proof that passes is structurally and cryptographically valid. It says nothing
-about how well the moves were played; quality sampling and challenges are M5.
+about how well the moves were played; quality is handled separately as sampled
+evidence and a bonded challenge process.
 
 ### 9.1 Context document
 
@@ -506,7 +507,28 @@ about how well the moves were played; quality sampling and challenges are M5.
 `availability`, `quotas`, `drand_round` and the seen sets are optional. The
 opening book is loaded from the installed package unless `--book` names an
 override. drand needs a callable verifier, so a `drand_used = 1` beacon fails
-offline verification until M4 wires the pinned verifier.
+offline verification unless the caller supplies a pinned verifier.
+
+### 9.2 Quality evidence and challenges
+
+`quality_summary` is optional evidence. It never affects structural verification
+or block validity. A node that wants to audit a proof selects it
+deterministically from `H(block_hash || proof_id) mod 1000 < sample_rate`, so
+every validator computes the same sample without coordination. Analysis results
+are reported by the node's quality sampler; a persistent disagreement can become
+a bonded `challenge` transaction (section 10.2).
+
+A challenge is valid only inside `challenge_window`, must name an accepted
+proof, and cannot be opened by the proof's miner. The challenger's bond is
+locked. The adjudication panel is derived from the ledger and beacon: eligible
+bonded members are ranked by the challenge domain hash, the parties are excluded,
+and the panel size is odd. In the current implementation panel votes are
+delivered to the node/operator rather than committed as a transaction, so
+`adjudicate_with_panel` is called with a complete ballot. An upheld challenge
+returns the challenger's bond, slashes the proof miner's bond and burns the
+still-unvested coinbase credit from the proof's block; a rejected challenge burns
+the challenger's bond. On-chain panel voting is tracked in the implementation
+plan.
 
 ## 10. Transactions
 
@@ -559,10 +581,10 @@ extra signature format is needed.
 | `withdraw_bond` | `public_key`\* | only after the unbonding height, and only the unlocked bond, moves back to spendable |
 | `availability` | `epoch`, `max_games`, `commitment`, `public_key`\* | commits for `epoch = current + availability_lead`; `1 <= max_games <= rounds_per_epoch`; the committer must be registered through `epoch`, hold `min_bond`, and may not change a commitment |
 | `reveal` | `epoch`, `nonce`, `public_key`\* | only valid in epoch `epoch - 1`, must open that epoch's commitment, may not change |
-| `timeout_claim` | `match_id`, `certificate`, `last_move`, `clock_evidence`, `bond`, `public_key`\* | opens a bonded claim (10.3) |
-| `timeout_dispute` | `claim_id`, `move`, `move_signature`, `clock_evidence`, `public_key`\* | the accused answers with a later signed move (10.3) |
-| `slash_evidence` | `evidence`, `proof_id`, `public_key`\* | burns an equivocating clock witness (10.3); `proof_id` is refused in M3 |
-| `challenge` | `proof_id`, `reason`, `evidence`, `bond`, `public_key`\* | M5; M3 rejects every challenge explicitly |
+| `timeout_claim` | `match_id`, `certificate`, `last_move`, `clock_evidence`, `bond`, `public_key`\* | opens a bonded claim (10.4) |
+| `timeout_dispute` | `claim_id`, `move`, `move_signature`, `clock_evidence`, `public_key`\* | the accused answers with a later signed move (10.4) |
+| `slash_evidence` | `evidence`, `proof_id`, `public_key`\* | burns an equivocating clock witness (10.4); `proof_id` is refused here and is handled by the challenge layer |
+| `challenge` | `proof_id`, `reason`, `evidence`, `bond`, `public_key`\* | locks a bond and opens a quality challenge; an upheld challenge slashes the proof miner and burns unvested coinbase, a rejected challenge burns the challenger's bond (9.2) |
 
 \* optional: only needed for an account whose public key the chain does not
 already know (10.1).
@@ -603,13 +625,13 @@ The lifecycle (implemented in `src/sccp/chain/timeout.py`) is:
    and be undisputed; the bond then returns to the claimant. A claim may only
    finalise in a block **after** its deadline.
 
-`slash_evidence` covers clock-witness equivocation only in M3: it carries
+`slash_evidence` covers clock-witness equivocation only: it carries
 `evidence = {witness, receipts}` with exactly two receipts of the same
 `(match_id, kind, ply)`, different contents and valid signatures from the named
 witness. The witness must be registered with a non-zero bond; the bond is burned,
 the witness is de-registered and `banned_until = height + unbond_delay`.
-Equivocation about proofs (`proof_id` in the payload) is refused: it belongs to
-the M5 challenge layer.
+Equivocation about proofs (`proof_id` in the payload) is refused here; proof
+disputes go through the bonded challenge layer (9.2).
 
 ## 11. Ledger state
 
@@ -781,7 +803,8 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/transactions/{txid}` | `TransactionRecord`: type, height, block hash, mempool flag |
 | POST | `/v1/tx` | `TxAccepted`: the recomputed txid |
 | POST | `/v1/proofs` | `ProofAccepted`: the proof id |
-| GET | `/v1/challenges` | placeholder `{network, challenges: []}` until M5 |
+| GET | `/v1/challenges` | `ChallengeList`: open challenges by default, resolved ones with `?include_resolved=true` |
+| GET | `/v1/challenges/{challenge_id}` | `ChallengeView`: one resolved or open challenge |
 | POST | `/v1/gossip` | `GossipResult`: object id, duplicate flag, fanout |
 | GET | `/v1/peers` | `PeerView[]`: network, url, address, height, failures, ban and last-seen times |
 

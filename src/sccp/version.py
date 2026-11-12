@@ -1,7 +1,7 @@
 """Version constants and runtime dependency guards.
 
 ``python-chess`` ships distribution version ``1.999`` while ``chess.__version__``
-is ``1.11.2``. The protocol plan (section 5.8) relies on the exact 1.11 PGN
+is ``1.11.2``. The protocol (PROTOCOL.md section 3) relies on the exact 1.11 PGN
 semantics -- ``read_game`` consuming one game per call, ``game.errors`` being
 necessary but not sufficient, ``push()`` accepting illegal moves -- so startup
 asserts the ``chess.__version__`` series rather than the distribution version.
@@ -44,8 +44,8 @@ def verify_chess_version() -> str:
     if match is None or f"{match.group(1)}.{match.group(2)}" != EXPECTED_CHESS_SERIES:
         raise RuntimeError(
             f"python-chess {version} is not supported: this codebase requires the "
-            f"{EXPECTED_CHESS_SERIES}.x behaviour line (see IMPLEMENTATION_PLAN.md "
-            "section 5.8). Pin python-chess>=1.11,<2."
+            f"{EXPECTED_CHESS_SERIES}.x behaviour line (see PROTOCOL.md section 3). "
+            "Pin python-chess>=1.11,<2."
         )
     return version
 

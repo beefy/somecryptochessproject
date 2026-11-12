@@ -1,4 +1,4 @@
-"""The node's optional proof-settling miner (plan M6)."""
+"""The node's optional proof-settling miner."""
 
 from __future__ import annotations
 

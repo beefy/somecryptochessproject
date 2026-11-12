@@ -1,4 +1,4 @@
-"""The unattended engine miner (M4), driven by a stub relay."""
+"""The unattended engine miner, driven by a stub relay."""
 
 from __future__ import annotations
 

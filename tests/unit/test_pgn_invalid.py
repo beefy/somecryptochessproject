@@ -242,7 +242,7 @@ def test_replay_legality_gate_rejects_a_move_the_parser_kept(
         validate_pgn(make_pgn(FOOLS_MATE, match_tags), params=TESTNET)
 
 
-# --- python-chess gotchas from section 5.8, as regression tests --------------
+# --- python-chess gotchas from PROTOCOL.md section 3 -------------------------
 
 
 def test_gotcha_read_game_returns_none_for_empty_input() -> None:

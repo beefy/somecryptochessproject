@@ -75,7 +75,7 @@ jobs:
         # coverage.py's --cov-fail-under applies to the union of everything that
         # was measured, so combining --cov=sccp with the narrower --cov=sccp.crypto
         # / --cov=sccp.serialization sources would silently demand 95% for the
-        # whole package. IMPLEMENTATION_PLAN.md section 7.2 defines two gates --
+        # whole package. the project defines two coverage gates --
         # overall >= 85% and crypto/ + serialization.py >= 95% -- so keep them
         # separate, exactly like the ci workflow does.
         run: pytest --cov=sccp --cov-report=term-missing --cov-fail-under=85

@@ -1,4 +1,4 @@
-"""Gossip envelopes, the peer table and pull-sync (plan section 5.12).
+"""Gossip envelopes, the peer table and pull-sync (PROTOCOL.md section 14).
 
 Everything here is transport-agnostic on purpose. An envelope is a signed
 pydantic document; the peer table is an in-memory abuse score; pull-sync walks
@@ -6,7 +6,7 @@ heights through a ``PeerClient`` protocol. The HTTP transport lives in
 :mod:`sccp.node.app` (server) and :class:`sccp.node.service.HttpPeerClient`
 (client), so gossip and sync are testable without sockets.
 
-Design rules taken from the plan:
+Design rules:
 
 - The envelope is ``{network, kind, payload, sender, signature}``. The sender
   signs ``sha256(domain + 0x00 + canonical_json(...))`` in the
@@ -58,7 +58,7 @@ MAX_SEEN_OBJECTS = 4096
 
 
 class GossipKind(StrEnum):
-    """What an envelope carries (plan section 5.12)."""
+    """What an envelope carries (PROTOCOL.md section 14)."""
 
     TRANSACTION = "transaction"
     PROOF = "proof"

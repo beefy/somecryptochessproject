@@ -1,4 +1,4 @@
-"""The node's optional settlement miner (plan M6).
+"""The node's optional settlement miner.
 
 A full node does not need a key: it validates blocks and proofs for everyone.
 For a small testnet it is still useful for the node to be able to assemble a

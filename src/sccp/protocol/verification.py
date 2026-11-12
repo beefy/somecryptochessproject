@@ -1,4 +1,4 @@
-"""Offline win-proof verification (section 5.10, cheap checks first).
+"""Offline win-proof verification (cheap checks first).
 
 ``verify_win_proof`` never trusts a field it can recompute. It orders checks from
 cheapest to most expensive -- network, beacon, certificate shape, opening,
@@ -6,9 +6,9 @@ roster/pairing, signatures, PGN replay, hashes, duplicates -- and raises
 :class:`~sccp.errors.ProofVerificationError` with a stable
 :class:`ProofFailure` reason at the first failure.
 
-Quality sampling is deliberately absent: it is M5 work and must never be a
-consensus rule. A proof that passes here is structurally and cryptographically
-valid; whether the chess was played well is a separate question.
+Quality sampling is deliberately absent: it must never be a consensus rule.
+A proof that passes here is structurally and cryptographically valid; whether
+the chess was played well is handled by the sampler and bonded challenges.
 """
 
 from __future__ import annotations

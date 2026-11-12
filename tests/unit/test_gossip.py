@@ -1,4 +1,4 @@
-"""Gossip envelopes, dedupe, fanout and the peer table (M4)."""
+"""Gossip envelopes, dedupe, fanout and the peer table."""
 
 from __future__ import annotations
 
