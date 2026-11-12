@@ -11,6 +11,19 @@ Milestone M4: the node, P2P gossip, the miner daemon, relay-tracked clocks and
 the `chain`, `miner` and `devnet` CLI commands. Nothing has landed yet; 0.3.0 is
 the M3 baseline.
 
+## [0.4.1] - 2026-11-12
+
+### Fixed
+
+- The publish workflow's `build and verify` job failed on release tags: its
+  single test step combined `--cov=sccp` with `--cov=sccp.crypto` and
+  `--cov=sccp.serialization`, and coverage.py applies `--cov-fail-under` to the
+  union of measured files, so it demanded 95% whole-package coverage (89% actual)
+  and the release job stopped before building the distributions. It now runs the
+  pair of gates defined in `IMPLEMENTATION_PLAN.md` section 7.2 — the whole
+  package at 85%, `crypto/` and `serialization.py` at 95% — like the `ci`
+  workflow does, so a release can build and publish.
+
 ## [0.3.0] - 2026-11-12
 
 Milestone M3: the chain, the wallet service and the block builder.

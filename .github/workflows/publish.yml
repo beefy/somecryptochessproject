@@ -71,8 +71,17 @@ jobs:
       - name: Typecheck
         run: mypy
 
-      - name: Test
-        run: pytest --cov=sccp --cov=sccp.crypto --cov=sccp.serialization --cov-fail-under=95
+      - name: Test (whole-package coverage gate, 85%)
+        # coverage.py's --cov-fail-under applies to the union of everything that
+        # was measured, so combining --cov=sccp with the narrower --cov=sccp.crypto
+        # / --cov=sccp.serialization sources would silently demand 95% for the
+        # whole package. IMPLEMENTATION_PLAN.md section 7.2 defines two gates --
+        # overall >= 85% and crypto/ + serialization.py >= 95% -- so keep them
+        # separate, exactly like the ci workflow does.
+        run: pytest --cov=sccp --cov-report=term-missing --cov-fail-under=85
+
+      - name: Coverage gate (crypto and serialization >= 95%)
+        run: pytest -q --cov=sccp.crypto --cov=sccp.serialization --cov-fail-under=95
 
       - name: Build sdist and wheel
         run: python -m build
