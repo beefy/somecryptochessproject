@@ -7,6 +7,11 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-12
+
+A patch release: documentation and source comments now describe the shipped
+protocol and testnet directly, without construction-phase labels.
+
 ### Changed
 
 - Documentation and code comments now describe the shipped protocol and testnet

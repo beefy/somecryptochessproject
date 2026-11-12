@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sccp"
-version = "0.9.0"
+version = "0.9.1"
 description = "Some Crypto Chess Project: a cryptocurrency whose proof of work is winning chess games"
 readme = "README.md"
 license = { file = "LICENSE" }

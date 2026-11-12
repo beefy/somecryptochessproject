@@ -252,7 +252,7 @@ All values above are provisional and live in `src/sccp/config.py`.
 
 ## 5. Repository layout
 
-Every module below ships in the 0.9.0 tree. Comments name the module's main
+Every module below ships in the 0.9.1 tree. Comments name the module's main
 responsibility rather than a construction phase.
 
 ```text
