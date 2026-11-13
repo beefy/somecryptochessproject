@@ -149,14 +149,23 @@ see [TLS](#tls).
 
 ### GCP: the deploy directory
 
-The workflow SSHes as the `sccp` user and creates the directory tree itself, but
-`/opt` is root-owned, so create the parent once — exactly as for
-`/opt/sccp-testnet`:
+The workflow creates its own tree under `$DEPLOY_DIR` (default
+`/opt/sccp-explorer`), but `/opt` belongs to root. It tries
+`sudo -n install -d` first, which works when the deploy user has passwordless
+sudo — GCP's default user does. A restricted `sccp` user usually does not, so if
+the **Prepare the deploy directory** step stops, run its printed command once,
+exactly as for `/opt/sccp-testnet`:
 
 ```bash
 gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT_ID" --command \
   "sudo install -d -m 755 -o sccp -g sccp /opt/sccp-explorer"
 ```
+
+Use the user from `EXPLORER_DEPLOY_HOST` (`sccp` in the example) as both owner and
+group. The step also re-checks writability after creating the directory, so a
+`/opt/sccp-explorer` that exists but belongs to someone else fails there with the
+`chown` to run, instead of a `mkdir: Permission denied` in the middle of the
+upload.
 
 The VM needs nothing else. Docker Engine and the Compose v2 plugin are already
 installed for the chain's deploy, the `nginx:1.27-alpine` image is pulled on first
@@ -283,6 +292,7 @@ even though `#/play` plays real matches.
 | Page serves an old bundle | `current` was not switched | `readlink -f /opt/sccp-explorer/www/current` — it must be the newest release |
 | nginx crash-loops with `cannot open /etc/nginx/conf.d/default.conf` | `nginx.conf` was never uploaded (a directory exists at that path) | Re-run the workflow; it copies the file before starting the container |
 | `bind source path does not exist` | `www` missing because no release has been uploaded | Run the workflow once |
+| `mkdir: cannot create directory '/opt/sccp-explorer': Permission denied` | The deploy directory was never created and the user has no passwordless sudo | Run the `sudo install -d` command in [the deploy directory](#gcp-the-deploy-directory); the job's **Prepare the deploy directory** step now stops first and prints it |
 | `mv: invalid option -- 'T'` | Not GNU coreutils | The VM should run Debian 12, as in [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md) |
 | `EADDRINUSE` on port 80 | Something else on the host owns it | `sudo ss -ltnp 'sport = :80'`; move that service or run the explorer elsewhere |
 | `dig` returns nothing | DNS record missing or not propagated | `gcloud dns record-sets list --zone="$DNS_ZONE"`; wait for the 60 s TTL |

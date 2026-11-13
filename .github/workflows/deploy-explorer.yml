@@ -134,6 +134,31 @@ jobs:
           } >> "$HOME/.ssh/config"
           chmod 600 "$HOME/.ssh/config"
 
+      # /opt belongs to root, so a fresh VM cannot create its own deploy
+      # directory. Try passwordless sudo once — a GCP instance's default user
+      # has it — and otherwise stop here with the command to run by hand. The
+      # alternative is a bare `mkdir: Permission denied` two steps later, which
+      # names neither the user nor the fix.
+      - name: Prepare the deploy directory
+        run: |
+          set -eu
+          remote_user="$(ssh explorer 'id -un')"
+          remote_group="$(ssh explorer 'id -gn')"
+          if ! ssh explorer "test -d '$DEPLOY_DIR'"; then
+            echo "$DEPLOY_DIR is missing on $TARGET; trying sudo -n"
+            if ! ssh explorer "sudo -n install -d -m 755 -o '$remote_user' -g '$remote_group' '$DEPLOY_DIR'"; then
+              echo "::error::$remote_user cannot create $DEPLOY_DIR on $TARGET"
+              echo "::error::run once on the VM: sudo install -d -m 755 -o $remote_user -g $remote_group $DEPLOY_DIR"
+              exit 1
+            fi
+          fi
+          if ! ssh explorer "test -w '$DEPLOY_DIR'"; then
+            echo "::error::$DEPLOY_DIR is not writable by $remote_user on $TARGET"
+            echo "::error::run once on the VM: sudo chown -R $remote_user:$remote_group $DEPLOY_DIR"
+            exit 1
+          fi
+          echo "deploying into $DEPLOY_DIR as $remote_user"
+
       - name: Upload the proxy configuration
         run: |
           set -eu
