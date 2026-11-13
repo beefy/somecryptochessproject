@@ -21,7 +21,9 @@ import { Blocks } from "./views/Blocks";
 import { Dashboard } from "./views/Dashboard";
 import { GameDetail } from "./views/GameDetail";
 import { Games } from "./views/Games";
+import { MinerRating } from "./views/MinerRating";
 import { NotFound } from "./views/NotFound";
+import { Ratings } from "./views/Ratings";
 
 /**
  * The table pulls in `chess.js`, which the explorer itself never needs, so it
@@ -36,6 +38,7 @@ const SECTIONS = [
   { key: "dashboard", label: "Overview", href: "#/" },
   { key: "blocks", label: "Blocks", href: "#/blocks" },
   { key: "games", label: "Games", href: "#/games" },
+  { key: "ratings", label: "Elo", href: "#/ratings" },
   { key: "play", label: "Play", href: "#/play" },
 ] as const;
 
@@ -151,6 +154,10 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <Games />;
     case "game":
       return <GameDetail gameHash={route.gameHash} />;
+    case "ratings":
+      return <Ratings />;
+    case "miner":
+      return <MinerRating address={route.address} />;
     case "play":
       return (
         <Suspense fallback={<Loading />}>

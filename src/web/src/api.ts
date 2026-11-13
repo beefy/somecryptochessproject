@@ -22,9 +22,11 @@ import type {
   GameView,
   MatchInfo,
   MempoolView,
+  MinerRatingDetail,
   NetworkParams,
   NodeStatus,
   ProofAccepted,
+  RatingsView,
   Transcript,
   TxAccepted,
   WinProof,
@@ -175,6 +177,19 @@ export function fetchAccount(address: string, signal?: AbortSignal): Promise<Acc
 /** `GET /v1/difficulty`: the current target and its retarget history. */
 export function fetchDifficulty(signal?: AbortSignal): Promise<DifficultyView> {
   return request<DifficultyView>("/v1/difficulty", { signal });
+}
+
+/** `GET /v1/ratings`: Glicko-2 ratings replayed from settled proofs. */
+export function fetchRatings(signal?: AbortSignal): Promise<RatingsView> {
+  return request<RatingsView>("/v1/ratings", { signal });
+}
+
+/** `GET /v1/ratings/{address}`: one miner's rating and its history. */
+export function fetchMinerRating(
+  address: string,
+  signal?: AbortSignal,
+): Promise<MinerRatingDetail> {
+  return request<MinerRatingDetail>(`/v1/ratings/${encodeURIComponent(address)}`, { signal });
 }
 
 /** `POST /v1/faucet`: ask the testnet faucet to fund `address`. */

@@ -172,6 +172,8 @@ rules, its DNS record and its rollback are in
 | `#/blocks/12`, `#/blocks/<hash>` | one block: header, coinbase, transactions, proofs |
 | `#/games` | proofs in the node's order: pending first, then newest settlement |
 | `#/games/<game_hash>` | settlement state, the match certificate, the PGN |
+| `#/ratings` | miner Elo: the top ten, their record and deviation, and the distribution |
+| `#/miners/<address>` | one miner: current rating, a line chart per epoch, its games |
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
 | `#/play` | a seat in a real match: register, get paired, play, announce the proof |
 

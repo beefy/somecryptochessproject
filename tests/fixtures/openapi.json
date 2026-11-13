@@ -1443,6 +1443,170 @@
         ],
         "type": "object"
       },
+      "MinerRatingDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "deviation": {
+            "exclusiveMinimum": 0.0,
+            "type": "number"
+          },
+          "draws": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "games": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "history": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RatingPointView"
+            },
+            "type": "array"
+          },
+          "last_epoch": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "last_height": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "losses": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "provisional": {
+            "type": "boolean"
+          },
+          "rank": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rating": {
+            "type": "number"
+          },
+          "volatility": {
+            "exclusiveMinimum": 0.0,
+            "type": "number"
+          },
+          "wins": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "network",
+          "address",
+          "rating",
+          "deviation",
+          "volatility",
+          "games",
+          "wins",
+          "draws",
+          "losses",
+          "provisional"
+        ],
+        "type": "object"
+      },
+      "MinerRatingView": {
+        "additionalProperties": false,
+        "properties": {
+          "address": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "deviation": {
+            "exclusiveMinimum": 0.0,
+            "type": "number"
+          },
+          "draws": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "games": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "last_epoch": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "last_height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "losses": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "provisional": {
+            "type": "boolean"
+          },
+          "rank": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "rating": {
+            "type": "number"
+          },
+          "volatility": {
+            "exclusiveMinimum": 0.0,
+            "type": "number"
+          },
+          "wins": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "address",
+          "rank",
+          "rating",
+          "deviation",
+          "volatility",
+          "games",
+          "wins",
+          "draws",
+          "losses",
+          "provisional",
+          "last_epoch",
+          "last_height"
+        ],
+        "type": "object"
+      },
       "MoveReceipt": {
         "additionalProperties": false,
         "properties": {
@@ -1706,6 +1870,177 @@
         "required": [
           "policy",
           "verdict"
+        ],
+        "type": "object"
+      },
+      "RatingBucketView": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "high": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "label": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "low": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "label",
+          "count"
+        ],
+        "type": "object"
+      },
+      "RatingDistribution": {
+        "additionalProperties": false,
+        "properties": {
+          "buckets": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/RatingBucketView"
+            },
+            "type": "array"
+          },
+          "mean": {
+            "type": "number"
+          },
+          "median": {
+            "type": "number"
+          },
+          "rated": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rated",
+          "mean",
+          "median"
+        ],
+        "type": "object"
+      },
+      "RatingPointView": {
+        "additionalProperties": false,
+        "properties": {
+          "deviation": {
+            "exclusiveMinimum": 0.0,
+            "type": "number"
+          },
+          "draws": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "epoch": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "games": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "losses": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "rating": {
+            "type": "number"
+          },
+          "volatility": {
+            "exclusiveMinimum": 0.0,
+            "type": "number"
+          },
+          "wins": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "epoch",
+          "height",
+          "rating",
+          "deviation",
+          "volatility",
+          "games",
+          "wins",
+          "draws",
+          "losses"
+        ],
+        "type": "object"
+      },
+      "RatingsView": {
+        "additionalProperties": false,
+        "properties": {
+          "algorithm": {
+            "const": "glicko-2",
+            "default": "glicko-2",
+            "type": "string"
+          },
+          "distribution": {
+            "$ref": "#/components/schemas/RatingDistribution"
+          },
+          "games": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "miners": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/MinerRatingView"
+            },
+            "type": "array"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "rated_epochs": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "rating_period": {
+            "const": "epoch",
+            "default": "epoch",
+            "type": "string"
+          },
+          "tip_hash": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "height",
+          "tip_hash",
+          "rated_epochs",
+          "games",
+          "distribution"
         ],
         "type": "object"
       },
@@ -2839,6 +3174,77 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProofAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/ratings": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RatingsView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/ratings/{address}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "address",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MinerRatingDetail"
                 }
               }
             }

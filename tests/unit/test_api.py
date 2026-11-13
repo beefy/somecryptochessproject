@@ -290,6 +290,59 @@ def test_game_pgn_route_serves_the_proof_body(
     service.close()
 
 
+def test_ratings_routes_are_derived_from_settled_proofs(
+    live_chain: Any, chain_match: Any, mine_block: Any, miner_keys: dict[str, Any]
+) -> None:
+    """A rating is replayed from settled proofs, never submitted by a miner."""
+    chain = live_chain.chain
+    match = chain_match(chain, epoch=3)
+    mine_block(chain, miner_keys[match.proof.winner], proofs=(match.proof,))
+    service = NodeService(
+        params=chain.params,
+        chain=chain,
+        mempool=Mempool(params=chain.params, tip_state=chain.state, book=chain.book),
+    )
+    unrated = encode_address(keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
+    with _client(service) as client:
+        board = client.get("/v1/ratings").json()
+        capped = client.get("/v1/ratings?limit=1").json()
+        detail = client.get(f"/v1/ratings/{match.proof.winner}").json()
+        prior = client.get(f"/v1/ratings/{unrated}")
+        invalid = client.get("/v1/ratings/not-an-address")
+    assert board["network"] == "devnet"
+    assert board["algorithm"] == "glicko-2"
+    assert board["rating_period"] == "epoch"
+    assert board["games"] == 1
+    assert [row["rank"] for row in board["miners"]] == [1, 2]
+    assert board["miners"][0]["address"] == match.proof.winner
+    assert board["distribution"]["rated"] == 2
+    assert sum(bucket["count"] for bucket in board["distribution"]["buckets"]) == 2
+    assert capped["miners"] == board["miners"][:1]
+    assert detail["rank"] == 1
+    assert detail["games"] == 1
+    assert detail["wins"] == 1 and detail["losses"] == 0
+    assert detail["history"][-1]["games"] == 1
+    assert detail["history"][-1]["rating"] == detail["rating"]
+    assert prior.status_code == 200
+    assert prior.json()["rating"] == 1500.0
+    assert prior.json()["rank"] is None
+    assert prior.json()["history"] == []
+    assert invalid.status_code == 400
+    service.close()
+
+
+def test_ratings_on_a_genesis_only_node_are_empty() -> None:
+    service = _node()
+    with _client(service) as client:
+        board = client.get("/v1/ratings").json()
+    assert board["miners"] == []
+    assert board["rated_epochs"] == 0
+    assert board["distribution"]["rated"] == 0
+    assert board["distribution"]["mean"] == 0.0
+    assert sum(bucket["count"] for bucket in board["distribution"]["buckets"]) == 0
+    service.close()
+
+
 def test_a_built_explorer_is_served_next_to_the_api(tmp_path: Path) -> None:
     """``web_root`` mounts a static client without shadowing the JSON API."""
     (tmp_path / "index.html").write_text("<!doctype html><title>explorer</title>", encoding="utf-8")

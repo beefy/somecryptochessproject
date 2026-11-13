@@ -345,9 +345,15 @@ __all__ = [
     "MatchInfo",
     "MempoolStatus",
     "MempoolView",
+    "MinerRatingDetail",
+    "MinerRatingView",
     "NodeStatus",
     "PeerView",
     "ProofAccepted",
+    "RatingBucketView",
+    "RatingDistribution",
+    "RatingPointView",
+    "RatingsView",
     "SyncReport",
     "TransactionRecord",
     "TxAccepted",
@@ -364,3 +370,101 @@ class DifficultyView(ProtocolModel):
     retarget_interval: int = Field(ge=1)
     retarget_enabled: bool
     history: tuple[DifficultyPoint, ...] = ()
+
+
+class RatingPointView(ProtocolModel):
+    """One period of a miner's rating history (``GET /v1/ratings/{address}``).
+
+    ``epoch`` is the block epoch the period covers and ``height`` the last block
+    that settled a game for this miner in it. A trailing point at the tip epoch
+    carries the miner's current rating with an inflated deviation, which is how
+    an idle miner's growing uncertainty appears on the chart.
+    """
+
+    epoch: int = Field(ge=0)
+    height: int = Field(ge=0)
+    rating: float
+    deviation: float = Field(gt=0)
+    volatility: float = Field(gt=0)
+    games: int = Field(ge=0)
+    wins: int = Field(ge=0)
+    draws: int = Field(ge=0)
+    losses: int = Field(ge=0)
+
+
+class MinerRatingView(ProtocolModel):
+    """One row of ``GET /v1/ratings``: a rated miner and its standing."""
+
+    address: AddressText
+    rank: int = Field(ge=1)
+    rating: float
+    deviation: float = Field(gt=0)
+    volatility: float = Field(gt=0)
+    games: int = Field(ge=0)
+    wins: int = Field(ge=0)
+    draws: int = Field(ge=0)
+    losses: int = Field(ge=0)
+    provisional: bool
+    last_epoch: int = Field(ge=0)
+    last_height: int = Field(ge=0)
+
+
+class MinerRatingDetail(ProtocolModel):
+    """``GET /v1/ratings/{address}``: one miner's rating and its whole history.
+
+    An address that has never settled a game gets the prior (1500, deviation 350),
+    ``games: 0`` and an empty history rather than a 404: the rating of a fresh
+    registration is a real value, not an error.
+    """
+
+    network: str = Field(min_length=1)
+    address: str = Field(min_length=1)
+    rank: int | None = Field(default=None, ge=1)
+    rating: float
+    deviation: float = Field(gt=0)
+    volatility: float = Field(gt=0)
+    games: int = Field(ge=0)
+    wins: int = Field(ge=0)
+    draws: int = Field(ge=0)
+    losses: int = Field(ge=0)
+    provisional: bool
+    last_epoch: int | None = Field(default=None, ge=0)
+    last_height: int | None = Field(default=None, ge=0)
+    history: tuple[RatingPointView, ...] = ()
+
+
+class RatingBucketView(ProtocolModel):
+    """One bar of the fixed-width rating histogram."""
+
+    label: str = Field(min_length=1)
+    low: int | None = None
+    high: int | None = None
+    count: int = Field(ge=0)
+
+
+class RatingDistribution(ProtocolModel):
+    """The distribution of current ratings across every rated miner."""
+
+    buckets: tuple[RatingBucketView, ...] = ()
+    rated: int = Field(ge=0)
+    mean: float
+    median: float
+
+
+class RatingsView(ProtocolModel):
+    """``GET /v1/ratings``: the derived leaderboard and its distribution.
+
+    ``miners`` is every rated miner, strongest first, truncated by ``?limit=``.
+    The distribution always covers *all* miners, not just the returned rows, so
+    a leaderboard page still shows the shape of the whole field.
+    """
+
+    network: str = Field(min_length=1)
+    height: int = Field(ge=0)
+    tip_hash: str
+    algorithm: Literal["glicko-2"] = "glicko-2"
+    rating_period: Literal["epoch"] = "epoch"
+    rated_epochs: int = Field(ge=0)
+    games: int = Field(ge=0)
+    miners: tuple[MinerRatingView, ...] = ()
+    distribution: RatingDistribution

@@ -1081,6 +1081,21 @@ beacon-ranked panel re-runs the pinned quality profile and resolves the
 challenge on chain. The challenge path is implemented; moving panel votes on
 chain and calibrating bond sizes remain open work.
 
+### 12.6 Ratings are a derived view
+
+A proof settles a result, and a result is all a rating needs. A node replays
+every proof on the adopted branch as a Glicko-2 tournament — one rating period
+per epoch, both seats rated, a 1500/350/0.06 prior, inactivity widening the
+deviation — and serves the outcome at `/v1/ratings`. The rating is not in a
+header, not in a transaction and not in `state_root`: a miner cannot announce
+one, and every node at the same tip replays the same blocks into the same table.
+
+That placement is the security argument as much as a convenience. A rating is
+only as meaningful as the games under it: a legal, co-signed game that nobody
+contested still counts, so the number is a lens on settled proofs, not a second
+consensus rule. It is also why the explorer can draw a rating history without
+trusting a server-side database — the chart is the chain, grouped by epoch.
+
 ---
 
 

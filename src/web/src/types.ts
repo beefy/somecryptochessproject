@@ -471,4 +471,84 @@ export interface RelayMatchView {
 /** The relay's co-signed transcript: what a proof is built from. */
 export type TranscriptView = Transcript;
 
+/** One period of a miner's derived rating history (`/v1/ratings/{address}`). */
+export interface RatingPoint {
+  epoch: number;
+  height: number;
+  rating: number;
+  deviation: number;
+  volatility: number;
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+}
+
+/** One row of the derived rating leaderboard (`/v1/ratings`). */
+export interface MinerRating {
+  address: string;
+  rank: number;
+  rating: number;
+  deviation: number;
+  volatility: number;
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  provisional: boolean;
+  last_epoch: number;
+  last_height: number;
+}
+
+/** One bar of the node's fixed-width rating histogram. */
+export interface RatingBucket {
+  label: string;
+  low: number | null;
+  high: number | null;
+  count: number;
+}
+
+export interface RatingDistribution {
+  buckets: RatingBucket[];
+  rated: number;
+  mean: number;
+  median: number;
+}
+
+/**
+ * `GET /v1/ratings`: Glicko-2 ratings replayed from settled proofs.
+ *
+ * The node derives these; there is no route that accepts a rating from a miner.
+ */
+export interface RatingsView {
+  network: string;
+  height: number;
+  tip_hash: string;
+  algorithm: "glicko-2";
+  rating_period: "epoch";
+  rated_epochs: number;
+  games: number;
+  miners: MinerRating[];
+  distribution: RatingDistribution;
+}
+
+/** `GET /v1/ratings/{address}`: one miner's standing and its history. */
+export interface MinerRatingDetail {
+  network: string;
+  address: string;
+  rank: number | null;
+  rating: number;
+  deviation: number;
+  volatility: number;
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  provisional: boolean;
+  last_epoch: number | null;
+  last_height: number | null;
+  history: RatingPoint[];
+}
+
+
 

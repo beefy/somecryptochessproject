@@ -839,6 +839,8 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/epochs/{epoch}` | `EpochView`: beacon, roster, availability, quotas, matchable flag |
 | GET | `/v1/epochs/{epoch}/beacon` | `Beacon` (404 when the chain has none) |
 | GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |
+| GET | `/v1/ratings` | `RatingsView`: derived Glicko-2 rating per miner, strongest first (`?limit=`, default 100), plus the fixed-bucket distribution |
+| GET | `/v1/ratings/{address}` | `MinerRatingDetail`: rating, deviation, volatility, record, rank and one history point per epoch (the 1500 prior when the seat has no settled game) |
 | GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, height, mempool flag |
 | GET | `/v1/games/{game_hash}/pgn` | `GamePgn`: the move text the proof for that game carries (404 when this node holds no block body for it) |
 | GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, certificate, transcript |
@@ -909,6 +911,46 @@ missing) is counted as `orphaned` and retried by a later sync.
 `sccp.node.service.sync_peers`. A peer that cannot be reached at all is recorded
 as one failure and skipped: startup must not depend on a peer being up, and the
 peer table bans an address that keeps failing.
+
+### 14.4 Derived miner ratings (Elo)
+
+`GET /v1/ratings` and `GET /v1/ratings/{address}` expose a Glicko-2 rating for
+every address that has settled a game. The rating is **derived, not committed**:
+
+- It is replayed from the proofs on the adopted branch (`block.proofs`) in block
+  order, and each proof is one game for both named seats. Only proofs the chain
+  already accepted (section 9) contribute.
+- Nothing in a block, a transaction or the API accepts a rating from a miner.
+  There is no `rating` field, no `rating` transaction and no `POST` route: the
+  only way to move a rating is to settle a verified game.
+- It is not in `state_root`. A node that has not synced a proof simply has a
+  shorter history to replay; two nodes at the same tip replay the same blocks in
+  the same order, and the node caches that replay by tip hash.
+
+The parameters are the paper's: the prior is 1500 with deviation 350 and
+volatility 0.06, `tau = 0.5`, and one rating period is one block epoch. Every
+game in a period is evaluated against the opponents' pre-period ratings, so the
+update is simultaneous; two games against the same opponent in a period are
+averaged into one score, which is the paper's prescription. A miner that sits
+out a period keeps its rating and its deviation grows by `sigma^2` per period,
+which is why an idle miner's rating becomes visibly wider on its page. A rating
+is marked `provisional` until it has 10 settled games.
+
+The distribution is a fixed histogram: `<1000`, 100-wide bands from 1000 to
+1999, then `>=2000`. It always covers every rated miner, even when `?limit=`
+truncates the leaderboard; fixed bounds keep two polls and two networks
+comparable.
+
+Three limits are worth stating plainly:
+
+- A rating measures results, not intent. Two colluding seats can trade wins and
+  inflate each other; pairing's identity heuristics make that harder, but no
+  number derived from legal games can prove a game was contested.
+- The arithmetic is floating point. That is acceptable only because the value is
+  never committed: a node on another platform may differ in the last decimal.
+- Like `GET /v1/games`, the replay reads proof bodies. This implementation keeps
+  every block, including after a snapshot; a future pruning mode would shorten
+  the history rather than change a settled game.
 
 ## 15. Devnet parameters and policy
 

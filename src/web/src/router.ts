@@ -12,6 +12,8 @@ export type Route =
   | { name: "block"; reference: string }
   | { name: "games" }
   | { name: "game"; gameHash: string }
+  | { name: "ratings" }
+  | { name: "miner"; address: string }
   | { name: "play" }
   | { name: "account"; address: string }
   | { name: "notFound"; path: string };
@@ -28,6 +30,10 @@ export function parseRoute(hash: string): Route {
       return second === undefined ? { name: "blocks" } : { name: "block", reference: decode(second) };
     case "games":
       return second === undefined ? { name: "games" } : { name: "game", gameHash: decode(second) };
+    case "ratings":
+      return { name: "ratings" };
+    case "miners":
+      return second === undefined ? { name: "notFound", path } : { name: "miner", address: decode(second) };
     case "play":
       return { name: "play" };
     case "accounts":
@@ -58,6 +64,10 @@ export function routeHash(route: Route): string {
       return "#/games";
     case "game":
       return `#/games/${encodeURIComponent(route.gameHash)}`;
+    case "ratings":
+      return "#/ratings";
+    case "miner":
+      return `#/miners/${encodeURIComponent(route.address)}`;
     case "play":
       return "#/play";
     case "account":
@@ -90,7 +100,9 @@ export function useRoute(): Route {
 }
 
 /** Which nav tab is active for `route`. */
-export function activeSection(route: Route): "dashboard" | "blocks" | "games" | "play" | "account" {
+export function activeSection(
+  route: Route,
+): "dashboard" | "blocks" | "games" | "ratings" | "play" | "account" {
   switch (route.name) {
     case "blocks":
     case "block":
@@ -98,6 +110,9 @@ export function activeSection(route: Route): "dashboard" | "blocks" | "games" | 
     case "games":
     case "game":
       return "games";
+    case "ratings":
+    case "miner":
+      return "ratings";
     case "play":
       return "play";
     case "account":
