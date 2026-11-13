@@ -273,7 +273,7 @@ responsibility rather than a construction phase.
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
 │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
-│   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a table
+│   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
 │   ├── GCP_RESOURCE_SETUP.md     # project, VM, firewall and deploy wiring
 │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
@@ -314,9 +314,10 @@ responsibility rather than a construction phase.
 │   ├── devnet.py                 # in-process local network
 │   └── cli.py                    # Typer CLI
 ├── src/web/                      # explorer: React Native for Web + Material
-│   ├── README.md                 # build it, serve it, develop against a node
+│   ├── README.md                 # build it, serve it, run the relay, play a seat
 │   ├── src/views/                # overview, blocks, games, accounts, table
-│   └── src/lib/                  # node client, protocol ports, generated vectors
+│   └── src/lib/                  # node/relay clients, protocol ports, tx signing,
+│                                 # certificates, proofs, verifier, hash vectors
 └── tests/
     ├── unit/                     # per-module tests, including test_api.py,
     │                             # test_gossip.py, test_sync.py, test_miner_loop.py

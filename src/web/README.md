@@ -1,13 +1,13 @@
 # `src/web` — the SCCP explorer
 
-The browser client: a block explorer and a table where you can play a game and
-watch the protocol sign it. React Native for Web rendered through Material Design
+The browser client: a block explorer and a table that is one real seat in a real
+match. React Native for Web rendered through Material Design
 (`react-native-paper`), bundled by Vite, TypeScript in strict mode.
 
-It talks to exactly one thing, the node's `/v1` JSON API. Every number on screen is
-a field the node sent and every response is typed in [`src/types.ts`](src/types.ts).
-There is no fixtures mode: with no node reachable, the pages say so rather than
-invent data.
+It talks to two things: the node's `/v1` JSON API and, from `#/play`, the
+matchmaking relay. Every number on screen is a field one of them sent and every
+response is typed in [`src/types.ts`](src/types.ts). There is no fixtures mode:
+with no node reachable, the pages say so rather than invent data.
 
 ## Requirements
 
@@ -86,6 +86,11 @@ Two things to know before doing that:
   a statically hosted build. Publish `dist/` behind the same origin as the API —
   one nginx with `location /` for the files and `location /v1` proxied to the node
   — or keep using the node's own `--web`.
+- The relay is a second origin again. `VITE_SCCP_RELAY` (default
+  `http://127.0.0.1:8646`) sets where `#/play` looks for it, and the relay must
+  allow the page: `sccp matchmaker run --origin http://your.explorer.example`.
+  Without that flag the relay answers no preflights at all, which keeps a
+  relay-only deployment from advertising itself to browsers.
 
 ## Scripts
 
@@ -115,26 +120,79 @@ Two things to know before doing that:
 | `#/games` | proofs in the node's order: pending first, then newest settlement |
 | `#/games/<game_hash>` | settlement state, the match certificate, the PGN |
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
-| `#/play` | the table: both seats played from one tab |
+| `#/play` | a seat in a real match: register, get paired, play, announce the proof |
 
 Routing lives in the hash, so the bundle works from any static path with no
 server-side rewrite rule.
 
-## The table needs a faucet
+## The table is a miner seat
 
-`#/play` generates two throwaway Ed25519 keys in the browser and funds the white
-seat with `POST /v1/faucet`. A node on `testnet` or `devnet` has a faucet
-automatically; a `mainnet` node has none and `--no-faucet` hides it — in both cases
-the button shows the node's own refusal. Nothing else on that page talks to the
-node, and it submits no proof: a game with no book opening and no opponent could
-never verify.
+`#/play` is not a demo board. The key it holds goes through the same four steps a
+Stockfish miner goes through, as signed ledger transactions:
+
+| Step | Transaction | Why |
+| --- | --- | --- |
+| register | `register` | bond, endpoint, and the engine fingerprint the certificate will carry |
+| commit | `availability` | a commitment for the epoch `availability_lead` ahead |
+| reveal | `reveal` | the committed nonce, valid only in epoch `E - 1` |
+| join | (signed certificate, posted to the relay) | the start signature; the second one activates the match and starts both clocks |
+
+From there the page is a relay client: it publishes each move with its ply and
+signature, co-signs the result automatically when the game ends, and then builds
+the `WinProof` from the co-signed transcript. A TS port of the offline verifier
+runs every rule that needs only the proof and the epoch beacon — network and
+epoch binding, the match id, the colour draw, the opening commitment, the PGN
+replay, both start signatures, both result signatures, the game hash, `low_ply`
+and the proof id — and shows the table. If it all passes, the proof goes to
+`POST /v1/proofs`; settlement is the node's `--mine`.
+
+Two limits are real and shown on the page rather than hidden:
+
+- **You cannot choose your opponent.** `pair()` sorts the whole epoch roster by
+  the beacon and pairs neighbours, so the page waits for a round whose pairing
+  includes its seat. A seat that is not on the roster, or is the odd one out,
+  sits the round out.
+- **A browser cannot win on time or analyse the game.** The relay owns the clock,
+  so a flag settles through a bonded `timeout_claim` the winning miner opens — the
+  page can only record it. And with no analysis engine, a network that samples
+  quality gets `verdict: "unknown"`, which a validator may challenge.
+
+The reference implementation of the same flow, in one process and with a
+scripted opponent, is `python scripts/play_miner.py --on-chain`: it funds and
+registers a human seat, seats it through the relay, co-signs the result and mines
+the proof into a block. The browser needs that stack split into processes:
+
+```bash
+# 1. the node: serves the page and settles announced proofs
+sccp --network devnet --data-dir data-devnet node run --web --mine \
+     --miner-address <any-valid-address>
+#    (the settlement miner tries each announced winner as the block's miner
+#     first, so this address only matters for empty heartbeat blocks)
+
+# 2. the relay: follows that node's epochs, signs clock receipts, allows the page
+sccp --network devnet matchmaker run --config relay.json \
+     --node http://127.0.0.1:8645 --witness-key relay.key \
+     --origin http://127.0.0.1:8645
+
+# 3. an opponent seat
+sccp --network devnet miner run --key opponent.key \
+     --relay http://127.0.0.1:8646 --node http://127.0.0.1:8645 \
+     --engine-profile mock
+```
+
+`relay.json` is the deployment's relay config (beacon, roster, engines); `--node`
+replaces its beacon and roster with each later epoch the chain opens. With the
+relay on another origin, build with `VITE_SCCP_RELAY=http://127.0.0.1:8646` and
+pass that origin to `--origin`. A node on `testnet` or `devnet` has a faucet; a
+`mainnet` node has none, and the page shows the node's refusal.
 
 ## Checks
 
 ```bash
 # in src/web
 npm run typecheck
-npm test                                       # vitest: canonical, bech32, keys, protocol
+npm test                     # vitest: canonical JSON, bech32, keys, protocol,
+                             # transactions, certificates, proofs, the verifier
 
 # in the repository root
 python scripts/make_web_vectors.py             # regenerate src/lib/vectors.json
@@ -143,8 +201,10 @@ python -m pytest tests/unit/test_web_vectors.py
 
 The TypeScript ports in `src/lib` are held to the Python implementation by
 generated vectors (`src/lib/vectors.json`), so a change to canonical JSON, the hash
-domains, bech32, the match id, the colour draw or the game hash fails on whichever
-side moved first.
+domains, bech32, the match id, the colour draw, the game hash, a transaction
+envelope, a certificate payload or a whole win proof fails on whichever side moved
+first. `test_web_vectors.py` re-reads the same file against `sccp` itself, so the
+document cannot go stale in the other direction either.
 
 CI runs exactly those steps on every push and pull request — the `web` job in
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), on Node 22 and 24,
@@ -161,7 +221,8 @@ src/
 ├── views/             # Dashboard, Blocks, BlockDetail, Games, GameDetail,
 │                      # AccountView, Play, NotFound
 ├── lib/               # canonical JSON, hashing, bech32, keys, protocol ports,
-│                      # formatters, generated vectors
+│                      # transactions (tx), certificates, proofs, verifier,
+│                      # relay client, formatters, generated vectors
 ├── api.ts             # typed /v1 client
 ├── types.ts           # every response shape
 ├── router.ts          # hash routing
@@ -180,7 +241,15 @@ src/
 - **"cannot reach the node at this origin"** — no node behind the page. Start one,
   or fix `SCCP_NODE` (dev and preview) / `VITE_SCCP_API` (a build); the panel's hint
   names the command and the variable.
-- **"the faucet is disabled on mainnet"** — expected; the table cannot be funded.
+- **"the faucet is disabled on mainnet"** — expected; a mainnet seat cannot be
+  funded from the page.
+- **"cannot reach the relay at http://127.0.0.1:8646"** — `#/play` talks to the
+  relay directly. Start it (`sccp matchmaker run`), pass it an `--origin` that
+  matches this page, and rebuild with `VITE_SCCP_RELAY` if it lives elsewhere.
+- **"no session lists this seat yet"** — the relay has no session for this
+  address. Check that the seat is on the *current* epoch's roster (the page shows
+  the roster size), that its availability was revealed in epoch `E - 1`, and that
+  the relay is following the same chain (`--node`).
 - **`EADDRINUSE` on 8645** — something is already listening there; the compose
   stack in `deploy/` publishes 8645. Use `--port 8650`, then either open
   `http://127.0.0.1:8650/` or `SCCP_NODE=http://127.0.0.1:8650 npm run dev`.

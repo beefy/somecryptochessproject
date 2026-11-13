@@ -1,9 +1,9 @@
 # Explore the chain
 
-`src/web` is the browser client: a block explorer and a table where you can play a
-game and watch the protocol sign it. It is React Native for Web rendered through
-Material Design, built with Vite, and it talks only to the node's `/v1` JSON API —
-every number on the page is a field the node sent.
+`src/web` is the browser client: a block explorer and a table that is one real
+seat in a real match. It is React Native for Web rendered through Material Design,
+built with Vite, and it talks to the node's `/v1` JSON API and, from `#/play`, to
+the matchmaking relay — every number on the page is a field one of them sent.
 
 For the day-to-day commands — `npm ci`, `npm run dev` against a node, port and
 proxy variables, troubleshooting — see [`src/web/README.md`](../src/web/README.md).
@@ -64,30 +64,53 @@ VITE_SCCP_API=https://testnet.example.com npm run build
 
 ## The table (`#/play`)
 
-Both seats are played from one tab. The page generates two Ed25519 keypairs in
-the browser, derives their bech32 addresses under the node's network id, draws
-colours with the protocol's own beacon rule and signs each move with the exact
-payload a seat signs (`sccp/v1/move`). A finished game produces the canonical
-game hash and both signatures over `sccp/v1/result`.
+The page holds one seat, not two. It registers that key with a signed `register`
+transaction (bond, endpoint, engine fingerprint), commits availability for the
+epoch two ahead, reveals the committed nonce in the epoch before it opens, and
+then waits: the chain puts the address on the epoch's roster and the relay pairs
+that roster from the beacon with `pair()`.
 
-What it does **not** do: submit a proof. A game played here has no book opening
-and no opponent, so it could never pass verification. The only request the table
-makes is a `POST /v1/faucet` for the white seat's address, which is a real
-transfer into the node's mempool.
+Paired, the page is the client a Stockfish miner is:
 
-The move count, the SAN list and the hashes match the Python implementation; the
-TypeScript ports in `src/web/src/lib` are pinned to it by generated vectors:
+1. it signs the certificate the relay built (`sccp/v1/certificate`), which is the
+   start signature that lets both clocks run;
+2. it publishes each move with its ply and signature (`sccp/v1/move`) — the relay
+   replays it, charges the mover's clock and signs a receipt;
+3. it co-signs the result automatically (`sccp/v1/result`), which is what makes
+   the transcript available to either seat.
+
+When the game is over the page builds the `WinProof` from that co-signed
+transcript (`build_win_proof`'s exact shape: opening ref, PGN, both result
+signatures, `low_ply`, the proof id) and verifies it in the browser against the
+epoch's real beacon and roster. The rules it runs are the ones in
+`sccp/protocol/verification.py` that need nothing else: network and epoch
+binding, certificate consistency, the match id, the colour draw, the fixed 30+0
+control, the opening hash, the PGN replay and result, the canonical game hash,
+both start signatures, both result signatures, `low_ply` and the proof id. If
+every rule passes, the proof goes to `POST /v1/proofs`; the node's settlement
+miner (`node run --mine`) puts it in a block.
+
+What it cannot do is as important: a browser cannot open a trusted clock, so a
+flag settles through the winner's bonded `timeout_claim` and the relay's witness
+receipts, not from the page; and with no analysis engine, a network that samples
+quality gets `verdict: "unknown"`, which a validator may challenge. The reference
+implementation of the same flow in one process is
+`python scripts/play_miner.py --on-chain`.
+
+The move count, the SAN list, every hash and every signature match the Python
+implementation; the TypeScript ports in `src/web/src/lib` are pinned to it by
+generated vectors:
 
 ```bash
 python scripts/make_web_vectors.py            # regenerate src/web/src/lib/vectors.json
 python -m pytest tests/unit/test_web_vectors.py
-cd src/web && npm test                        # vitest: canonical, bech32, keys, protocol
+cd src/web && npm test                        # vitest: canonical, keys, tx, proofs, verifier
 ```
 
 ## Limits
 
-- The explorer is read-only: there is no wallet import, and nothing is signed
-  except the throwaway table keys.
+- The explorer never imports a wallet: the table's key lives in the tab's memory,
+  so a refresh forgets it, and nothing else on the site signs anything.
 - Routes live in the hash (`#/blocks/12`), so the bundle works from any static
   path without a server-side rewrite.
 - A tab left open across a network switch keeps showing the documents it fetched;

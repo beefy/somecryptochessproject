@@ -175,7 +175,7 @@ function ProofCard({ proof }: { proof: WinProof }): ReactNode {
         <Mono copy>{proof.proof_id}</Mono>
       </KeyValue>
       <KeyValue label="Opening">
-        {`${proof.opening.name} (${proof.opening.book_version} #${proof.opening.line_id})`}
+        {`${proof.opening.book_version} #${proof.opening.line_id}: ${proof.opening.moves.join(" ")}`}
       </KeyValue>
       <KeyValue label="PGN">
         <CodeBlock>{proof.pgn}</CodeBlock>

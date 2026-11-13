@@ -15,6 +15,7 @@ import type {
   BlockView,
   ChallengeList,
   DifficultyView,
+  EpochView,
   FaucetView,
   GameList,
   GameView,
@@ -22,8 +23,12 @@ import type {
   MempoolView,
   NetworkParams,
   NodeStatus,
+  ProofAccepted,
   Transcript,
+  TxAccepted,
+  WinProof,
 } from "./types";
+import type { WireTransaction } from "./lib/tx";
 
 /** Base URL with any trailing slash removed; empty means "same origin". */
 export const API_BASE: string = (import.meta.env.VITE_SCCP_API ?? "").replace(/\/+$/, "");
@@ -169,5 +174,23 @@ export function fetchDifficulty(signal?: AbortSignal): Promise<DifficultyView> {
 /** `POST /v1/faucet`: ask the testnet faucet to fund `address`. */
 export function requestFaucet(address: string, signal?: AbortSignal): Promise<FaucetView> {
   return request<FaucetView>("/v1/faucet", { method: "POST", body: { address }, signal });
+}
+
+/** `GET /v1/epochs/{epoch}`: the beacon, roster, quotas and reveal set. */
+export function fetchEpoch(epoch: number, signal?: AbortSignal): Promise<EpochView> {
+  return request<EpochView>(`/v1/epochs/${encodeURIComponent(String(epoch))}`, { signal });
+}
+
+/** `POST /v1/tx`: hand a signed transaction to the node's mempool. */
+export function submitTransaction(
+  tx: WireTransaction,
+  signal?: AbortSignal,
+): Promise<TxAccepted> {
+  return request<TxAccepted>("/v1/tx", { method: "POST", body: tx, signal });
+}
+
+/** `POST /v1/proofs`: announce a win proof to the node. */
+export function submitProof(proof: WinProof, signal?: AbortSignal): Promise<ProofAccepted> {
+  return request<ProofAccepted>("/v1/proofs", { method: "POST", body: proof, signal });
 }
 

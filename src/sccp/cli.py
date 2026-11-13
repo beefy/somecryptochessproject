@@ -855,6 +855,16 @@ def matchmaker_run(
         float,
         typer.Option("--node-poll-seconds", help="How often to ask the node for the tip height."),
     ] = 2.0,
+    origin: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--origin",
+            help=(
+                "Browser origin allowed to call this relay (repeatable), e.g. "
+                "--origin http://127.0.0.1:8645. Needed only when a web client plays."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Serve the matchmaking relay over HTTP (uvicorn).
 
@@ -937,7 +947,11 @@ def matchmaker_run(
     import uvicorn
 
     try:
-        uvicorn.run(create_matchmaker_app(state), host=host, port=port)
+        uvicorn.run(
+            create_matchmaker_app(state, origins=tuple(origin or ())),
+            host=host,
+            port=port,
+        )
     finally:
         stop.set()
         thread.join(timeout=5)

@@ -49,6 +49,207 @@
     "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
     "seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
   },
+  "ledger": {
+    "availability_commitment": {
+      "address": "sccpt1qzcg4fd9yazfs94gyrhxe8flkgxg47eu2gnwcavs",
+      "commitment": "ae5006b1ae065f8a4f9c408954ba5250b1bc636f4e067ab38a4064d6289120f8",
+      "epoch": 3,
+      "nonce": "1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "register": {
+      "transaction": {
+        "fee": 1000,
+        "from": "sccpt1qzcg4fd9yazfs94gyrhxe8flkgxg47eu2gnwcavs",
+        "network": "devnet",
+        "nonce": 0,
+        "payload": {
+          "bond": 0,
+          "endpoint": "http://127.0.0.1:8647",
+          "engine": "sccp-web/hand-play-1",
+          "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c"
+        },
+        "signature": "5dd533c1e8b865f6d8f0dbfeda53bd221c67ad9ba7cd88cb8539e9a205585fa3b7b2fe24de08f2196a7339c3c417d70f35e9bbc38800adbfbaf185da8494a80d",
+        "type": "register"
+      },
+      "txid": "e4c7e348ad96835ef70a086eb5e751d0c47ccbe9e834402f591dbfbc410f0415"
+    },
+    "seed_hex": "0707070707070707070707070707070707070707070707070707070707070707"
+  },
+  "match": {
+    "beacon": {
+      "epoch": 3,
+      "hash": "26e7bd284cec43f1c9ed0694a383dc8a273d13ef4aa8f24cfb7e713917b96ec3",
+      "network": "devnet"
+    },
+    "certificate": {
+      "black": "sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s",
+      "engine_black": "web-v1:0000000000000002",
+      "engine_white": "web-v1:0000000000000001",
+      "epoch": 3,
+      "match_id": "a0712ef14eaaa317058e565db2118c2e3407544011f9f9752526e1cdf1117e71",
+      "network": "devnet",
+      "opening": {
+        "book_version": "dev-1",
+        "hash": "c4f71203ab43f67f201e13edbcd17676b20c8373747cb3a379d4d4c8ff241ab4",
+        "line_id": 0,
+        "moves": [
+          "e4",
+          "e5",
+          "Bc4",
+          "Bc5"
+        ]
+      },
+      "round": 0,
+      "start_signatures": {
+        "black": "c0764da99104de8f603ecb91b1ef413661762815a3f4e7c0f9213accf9bfa85b0ad1fc5bc0ee548be47b2566b4f1da2825782e7c3200a8d189c90cc7e6d2e504",
+        "white": "e9997f5f0410879d1bc536154ca99411f3ed9dc3c979e27fb5aca936124dec1f703f0623ec590dbeda17735597019a503ab1fd01f5dbb13b3088b7de97887200"
+      },
+      "time_control": {
+        "increment_ms": 0,
+        "initial_ms": 1800000
+      },
+      "white": "sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg"
+    },
+    "certificate_payload": {
+      "colors": {
+        "black": "sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s",
+        "white": "sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg"
+      },
+      "engine_fingerprints": {
+        "black": "web-v1:0000000000000002",
+        "white": "web-v1:0000000000000001"
+      },
+      "epoch": 3,
+      "match_id": "a0712ef14eaaa317058e565db2118c2e3407544011f9f9752526e1cdf1117e71",
+      "network": "devnet",
+      "opening_hash": "c4f71203ab43f67f201e13edbcd17676b20c8373747cb3a379d4d4c8ff241ab4",
+      "round": 0,
+      "seats": [
+        "sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg",
+        "sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s"
+      ],
+      "time_control": {
+        "increment_ms": 0,
+        "initial_ms": 1800000
+      }
+    },
+    "params": {
+      "min_plies": 1,
+      "network_id": "devnet",
+      "quality_mode": "off",
+      "rounds_per_epoch": 3
+    },
+    "pgn": "[Event \"sccp match\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"0\"]\n[White \"sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg\"]\n[Black \"sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s\"]\n[Result \"1-0\"]\n[MatchID \"a0712ef14eaaa317058e565db2118c2e3407544011f9f9752526e1cdf1117e71\"]\n[Epoch \"3\"]\n[RoundNumber \"0\"]\n[SeatWhite \"sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg\"]\n[SeatBlack \"sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s\"]\n[EngineWhite \"web-v1:0000000000000001\"]\n[EngineBlack \"web-v1:0000000000000002\"]\n[OpeningID \"0\"]\n[OpeningHash \"c4f71203ab43f67f201e13edbcd17676b20c8373747cb3a379d4d4c8ff241ab4\"]\n[TimeControl \"1800+0\"]\n[Rules \"chess\"]\n[Termination \"checkmate\"]\n\n1. e4 e5 2. Bc4 Bc5 3. Qh5 Nf6 4. Qxf7# 1-0",
+    "proof": {
+      "certificate": {
+        "black": "sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s",
+        "engine_black": "web-v1:0000000000000002",
+        "engine_white": "web-v1:0000000000000001",
+        "epoch": 3,
+        "match_id": "a0712ef14eaaa317058e565db2118c2e3407544011f9f9752526e1cdf1117e71",
+        "network": "devnet",
+        "opening": {
+          "book_version": "dev-1",
+          "hash": "c4f71203ab43f67f201e13edbcd17676b20c8373747cb3a379d4d4c8ff241ab4",
+          "line_id": 0,
+          "moves": [
+            "e4",
+            "e5",
+            "Bc4",
+            "Bc5"
+          ]
+        },
+        "round": 0,
+        "start_signatures": {
+          "black": "c0764da99104de8f603ecb91b1ef413661762815a3f4e7c0f9213accf9bfa85b0ad1fc5bc0ee548be47b2566b4f1da2825782e7c3200a8d189c90cc7e6d2e504",
+          "white": "e9997f5f0410879d1bc536154ca99411f3ed9dc3c979e27fb5aca936124dec1f703f0623ec590dbeda17735597019a503ab1fd01f5dbb13b3088b7de97887200"
+        },
+        "time_control": {
+          "increment_ms": 0,
+          "initial_ms": 1800000
+        },
+        "white": "sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg"
+      },
+      "clock_evidence": null,
+      "epoch": 3,
+      "game_hash": "3bc769e2275a5dc4daf235e1fd8f4f48124e120097c48866bc0ed52497ae6027",
+      "loser": "sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s",
+      "low_ply": false,
+      "match_id": "a0712ef14eaaa317058e565db2118c2e3407544011f9f9752526e1cdf1117e71",
+      "move_evidence": null,
+      "network": "devnet",
+      "opening": {
+        "book_version": "dev-1",
+        "hash": "c4f71203ab43f67f201e13edbcd17676b20c8373747cb3a379d4d4c8ff241ab4",
+        "line_id": 0,
+        "moves": [
+          "e4",
+          "e5",
+          "Bc4",
+          "Bc5"
+        ]
+      },
+      "pgn": "[Event \"sccp match\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"0\"]\n[White \"sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg\"]\n[Black \"sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s\"]\n[Result \"1-0\"]\n[MatchID \"a0712ef14eaaa317058e565db2118c2e3407544011f9f9752526e1cdf1117e71\"]\n[Epoch \"3\"]\n[RoundNumber \"0\"]\n[SeatWhite \"sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg\"]\n[SeatBlack \"sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s\"]\n[EngineWhite \"web-v1:0000000000000001\"]\n[EngineBlack \"web-v1:0000000000000002\"]\n[OpeningID \"0\"]\n[OpeningHash \"c4f71203ab43f67f201e13edbcd17676b20c8373747cb3a379d4d4c8ff241ab4\"]\n[TimeControl \"1800+0\"]\n[Rules \"chess\"]\n[Termination \"checkmate\"]\n\n1. e4 e5 2. Bc4 Bc5 3. Qh5 Nf6 4. Qxf7# 1-0",
+      "plies": 7,
+      "proof_id": "4abcf86269821da47fa10c26297335fa5142fbe9dadfadfeee735367b095520f",
+      "quality_summary": null,
+      "result": "1-0",
+      "result_signatures": {
+        "black": "d330ef81295934d4b21d2e9349608a193f9cf5ec7ebaefd9144e938b26143dcac14b0b3b1f0c977bfd1f06fa869a69b7e5f07b4ab3c5d33477f38a84cc88b70f",
+        "white": "8f67586cb600f6bc36143d38cc97981836c775b8bb4acf381ff582d775c60a2de294164e9a0941f290b59e680a48b6509007a7e4e27cf69d4f19126e7f67d70b"
+      },
+      "round": 0,
+      "termination": "checkmate",
+      "timeout_claim_id": null,
+      "winner": "sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg",
+      "winner_seat": "white"
+    },
+    "public_keys": {
+      "sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+      "sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394"
+    },
+    "result": {
+      "game_hash": "3bc769e2275a5dc4daf235e1fd8f4f48124e120097c48866bc0ed52497ae6027",
+      "match_id": "a0712ef14eaaa317058e565db2118c2e3407544011f9f9752526e1cdf1117e71",
+      "network": "devnet",
+      "plies": 7,
+      "result": "1-0",
+      "result_signatures": {
+        "black": "d330ef81295934d4b21d2e9349608a193f9cf5ec7ebaefd9144e938b26143dcac14b0b3b1f0c977bfd1f06fa869a69b7e5f07b4ab3c5d33477f38a84cc88b70f",
+        "white": "8f67586cb600f6bc36143d38cc97981836c775b8bb4acf381ff582d775c60a2de294164e9a0941f290b59e680a48b6509007a7e4e27cf69d4f19126e7f67d70b"
+      },
+      "termination": "checkmate"
+    },
+    "result_payload": {
+      "game_hash": "3bc769e2275a5dc4daf235e1fd8f4f48124e120097c48866bc0ed52497ae6027",
+      "match_id": "a0712ef14eaaa317058e565db2118c2e3407544011f9f9752526e1cdf1117e71",
+      "network": "devnet",
+      "plies": 7,
+      "result": "1-0",
+      "termination": "checkmate"
+    },
+    "san_moves": [
+      "e4",
+      "e5",
+      "Bc4",
+      "Bc5",
+      "Qh5",
+      "Nf6",
+      "Qxf7#"
+    ],
+    "seats": {
+      "black": {
+        "address": "sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s",
+        "public_key_hex": "8139770ea87d175f56a35466c34c7ecccb8d8a91b4ee37a25df60f5b8fc9b394",
+        "seed_hex": "0202020202020202020202020202020202020202020202020202020202020202"
+      },
+      "white": {
+        "address": "sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg",
+        "public_key_hex": "8a88e3dd7409f195fd52db2d3cba5d72ca6709bf1d94121bf3748801b40f6f5c",
+        "seed_hex": "0101010101010101010101010101010101010101010101010101010101010101"
+      }
+    }
+  },
   "move": {
     "payload": {
       "match_id": "0284dad56cc5216c3f4ab29ab96b65a52f1bb38f2d3420b73bdf0f7b4d64172d",

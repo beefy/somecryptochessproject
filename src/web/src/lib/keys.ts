@@ -93,6 +93,37 @@ export function signDomain(keypair: Keypair, domain: Domain | string, payload: u
   return toHex(ed25519.sign(digest, keypair.seed));
 }
 
+/**
+ * Sign a raw 32-byte digest.
+ *
+ * Ledger transactions sign their *txid* directly (`sccp.chain.tx.sign_transaction`),
+ * not a domain hash, so the payload has already been folded in by the caller.
+ */
+export function signDigest(keypair: Keypair, digest: Uint8Array): string {
+  if (digest.length !== 32) {
+    throw new KeyError(`a digest signature covers 32 bytes, got ${digest.length}`);
+  }
+  return toHex(ed25519.sign(digest, keypair.seed));
+}
+
+/** Verify a signature produced by {@link signDigest}. Never throws. */
+export function verifyDigest(
+  publicKeyHexText: string,
+  digest: Uint8Array,
+  signatureHex: string,
+): boolean {
+  try {
+    if (digest.length !== 32) return false;
+    const signature = fromHex(signatureHex);
+    if (signature.length !== SIGNATURE_SIZE) return false;
+    const publicKey = fromHex(publicKeyHexText);
+    if (publicKey.length !== PUBLIC_KEY_SIZE) return false;
+    return ed25519.verify(signature, digest, publicKey);
+  } catch {
+    return false;
+  }
+}
+
 /** Verify a signature produced by {@link signDomain}. Never throws. */
 export function verifyDomain(
   publicKeyHexText: string,

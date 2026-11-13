@@ -17,10 +17,15 @@ from types import ModuleType
 
 import pytest
 
+from sccp.chain.tx import sign_transaction, tx_body, txid
 from sccp.chess.pgn import GameResult, canonical_game_hash
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import keypair_from_seed, verify_domain
+from sccp.protocol.beacon import commitment
+from sccp.protocol.models import GameResult as ProtocolGameResult
+from sccp.protocol.models import MatchCertificate, Transaction, WinProof
 from sccp.protocol.pairing import match_id, white_seat
+from sccp.protocol.transcript import certificate_payload, result_payload
 from sccp.serialization import Domain, canonical_json, domain_hex
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "make_web_vectors.py"
@@ -113,4 +118,82 @@ def test_signature_vectors_verify(vectors: dict[str, object]) -> None:
         Domain.RESULT,
         result["payload"],
         bytes.fromhex(result["signature_hex"]),
+    )
+
+
+def test_ledger_vectors_describe_this_implementation(vectors: dict[str, object]) -> None:
+    """The register transaction and the availability commitment still round-trip."""
+    ledger = vectors["ledger"]
+    assert isinstance(ledger, dict)
+    keypair = keypair_from_seed(bytes.fromhex(ledger["seed_hex"]))
+    wire = ledger["register"]["transaction"]
+    unsigned = Transaction.model_validate({**wire, "signature": None})
+    assert txid(unsigned) == ledger["register"]["txid"]
+    signed = sign_transaction(keypair, unsigned)
+    assert signed.signature == wire["signature"]
+    body = tx_body(unsigned)
+    # `sign_transaction` signs the txid bytes, which *are* `H("sccp/v1/tx", body)`,
+    # so the domain verifier accepts it without a second hashing step.
+    assert verify_domain(
+        keypair.public_key,
+        Domain.TX,
+        body,
+        bytes.fromhex(wire["signature"]),
+    )
+    assert (
+        commitment(
+            ledger["availability_commitment"]["address"],
+            ledger["availability_commitment"]["epoch"],
+            ledger["availability_commitment"]["nonce"],
+        )
+        == ledger["availability_commitment"]["commitment"]
+    )
+
+
+def test_match_vectors_describe_this_implementation(vectors: dict[str, object]) -> None:
+    """The certificate, result and proof in the document are recomputable today."""
+    match = vectors["match"]
+    assert isinstance(match, dict)
+    certificate = MatchCertificate.model_validate(match["certificate"])
+    assert certificate_payload(certificate) == match["certificate_payload"]
+
+    for seat, entry in match["seats"].items():
+        keypair = keypair_from_seed(bytes.fromhex(entry["seed_hex"]))
+        assert encode_address(keypair.public_key_bytes, certificate.network) == entry["address"]
+        assert entry["public_key_hex"] == keypair.public_key_hex
+        assert verify_domain(
+            keypair.public_key,
+            Domain.CERTIFICATE,
+            certificate_payload(certificate),
+            bytes.fromhex(certificate.start_signatures[seat]),
+        )
+
+    result = ProtocolGameResult.model_validate(match["result"])
+    assert result_payload(result) == match["result_payload"]
+    assert result.game_hash == canonical_game_hash(
+        certificate.network, match["san_moves"], GameResult(result.result)
+    )
+
+    proof = WinProof.model_validate(match["proof"])
+    assert proof.proof_id == domain_hex(
+        Domain.PROOF,
+        {
+            "game_hash": proof.game_hash,
+            "match_id": proof.match_id,
+            "winner": proof.winner,
+        },
+    )
+    assert proof.match_id == match_id(
+        certificate.network,
+        certificate.epoch,
+        certificate.round,
+        [certificate.white, certificate.black],
+    )
+    assert (
+        white_seat(
+            bytes.fromhex(match["beacon"]["hash"]),
+            certificate.match_id,
+            [certificate.white, certificate.black],
+        )
+        == certificate.white
     )

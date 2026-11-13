@@ -113,10 +113,10 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
             </Link>
           </KeyValue>
           <KeyValue label="Opening">
-            {`${certificate.opening.name} (${certificate.opening.book_version} #${certificate.opening.line_id})`}
+            {`${certificate.opening.book_version} #${certificate.opening.line_id}: ${certificate.opening.moves.join(" ")}`}
           </KeyValue>
           <KeyValue label="Engines">
-            {`${certificate.engine_white.name} ${certificate.engine_white.version} vs ${certificate.engine_black.name} ${certificate.engine_black.version}`}
+            {`${certificate.engine_white} vs ${certificate.engine_black}`}
           </KeyValue>
           <KeyValue label="Time control">
             {`${formatInteger(certificate.time_control.initial_ms / 1000)}s + ${formatInteger(
