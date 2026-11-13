@@ -7,6 +7,13 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- `src/web/README.md`: how to build the explorer, serve it from `sccp node run
+  --web`, develop against a node with the Vite proxy, set `SCCP_NODE`,
+  `VITE_SCCP_API` and `SCCP_WEB_DIST`, and what to check when a page comes up
+  empty.
+
 ## [0.14.0] - 2026-11-12
 
 A minor release: the testnet gets a face. `src/web` is a browser block explorer

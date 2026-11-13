@@ -5,6 +5,10 @@ game and watch the protocol sign it. It is React Native for Web rendered through
 Material Design, built with Vite, and it talks only to the node's `/v1` JSON API —
 every number on the page is a field the node sent.
 
+For the day-to-day commands — `npm ci`, `npm run dev` against a node, port and
+proxy variables, troubleshooting — see [`src/web/README.md`](../src/web/README.md).
+This page is the tour.
+
 ## Build it
 
 ```bash

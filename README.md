@@ -314,6 +314,7 @@ responsibility rather than a construction phase.
 │   ├── devnet.py                 # in-process local network
 │   └── cli.py                    # Typer CLI
 ├── src/web/                      # explorer: React Native for Web + Material
+│   ├── README.md                 # build it, serve it, develop against a node
 │   ├── src/views/                # overview, blocks, games, accounts, table
 │   └── src/lib/                  # node client, protocol ports, generated vectors
 └── tests/
