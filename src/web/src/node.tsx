@@ -24,20 +24,33 @@ const NodeContext = createContext<NodeState | null>(null);
 /** How often the header re-reads the chain head. */
 const STATUS_POLL_MS = 5000;
 
+/**
+ * The parameters for `network`, or none while a re-read is in flight.
+ *
+ * `/v1/status` polls and `/v1/params` does not, so a node restarted on another
+ * chain would otherwise leave devnet's epoch length next to testnet's height.
+ * Until the re-read lands the old document is worse than no document: every
+ * epoch boundary and every verifier binding would be computed from the wrong
+ * network.
+ */
+export function paramsForNetwork<T extends { network_id: string }>(
+  params: Resource<T>,
+  network: string | null,
+): Resource<T> {
+  if (params.data === undefined || network === null || params.data.network_id === network) {
+    return params;
+  }
+  return { ...params, data: undefined };
+}
+
 export function NodeProvider({ children }: { children: ReactNode }): ReactNode {
   const status = useResource((signal) => fetchStatus(signal), [], { pollMs: STATUS_POLL_MS });
   const network = status.data?.network ?? null;
-  // The parameters are re-read whenever the network id changes: a node restarted
-  // on another chain is another chain, and devnet's one-block epochs next to
-  // testnet's height would misplace every epoch boundary in the app.
   const params = useResource((signal) => fetchParams(signal), [network]);
-  const value = useMemo<NodeState>(() => {
-    // While that re-read is in flight the parameters still belong to the previous
-    // network; show none rather than the wrong ones.
-    const stale =
-      params.data !== undefined && network !== null && params.data.network_id !== network;
-    return { status, params: stale ? { ...params, data: undefined } : params, network };
-  }, [status, params, network]);
+  const value = useMemo<NodeState>(
+    () => ({ status, params: paramsForNetwork(params, network), network }),
+    [status, params, network],
+  );
   return <NodeContext.Provider value={value}>{children}</NodeContext.Provider>;
 }
 

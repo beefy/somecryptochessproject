@@ -62,6 +62,17 @@ A local devnet node is `sccp --network devnet --data-dir data-devnet node run` �
 give it its own directory, because a SQLite file is bound to the network it was
 created for and a node refuses to open it under another id.
 
+A fresh directory is a genesis-only chain, so the header says `height 0` until
+something makes blocks — and nothing mines testnet for you. Either make them
+(`--mine`; testnet's target is one block a minute), or pull the shared chain once
+at startup:
+
+```bash
+sccp --network testnet --data-dir data node run \
+  --peer http://testnet.somecryptochessproject.com:8645
+# synced http://testnet.somecryptochessproject.com:8645: +121 blocks to height 121
+```
+
 The dev server proxies `/v1` to `SCCP_NODE` (default `http://127.0.0.1:8645`), so
 the browser only ever talks to `localhost:5173` and nothing needs CORS:
 
@@ -115,6 +126,15 @@ Two things to know before doing that:
   allow the page: `sccp matchmaker run --origin http://your.explorer.example`.
   Without that flag the relay answers no preflights at all, which keeps a
   relay-only deployment from advertising itself to browsers.
+
+The hosted testnet (`http://testnet.somecryptochessproject.com:8645`) answers
+`/v1` and nothing else: `http://…:8645/` is a `{"detail":"Not Found"}`, because
+that node was deployed without `dist/` behind `--web`. Point a local dev server
+or a build at it instead of expecting a page there:
+
+```bash
+SCCP_NODE=http://testnet.somecryptochessproject.com:8645 npm run dev
+```
 
 ## Scripts
 
@@ -274,6 +294,13 @@ src/
 
 ## When it does not work
 
+- **The header says `height 0`** — the node's data dir holds no blocks yet: a
+  fresh `--data-dir` is a genesis-only chain, so there is nothing to show. The
+  page is innocent here — it prints `/v1/status` verbatim. Nothing mines testnet
+  for you either: make blocks (`--mine`, one a minute) or sync once from the
+  hosted node (`--peer http://testnet.somecryptochessproject.com:8645`, which
+  prints `synced …: +121 blocks to height 121`). A dir that "went back to 0" is a
+  different `--data-dir`, not a lost chain — the SQLite file is bound to one path.
 - **`no built explorer found`** (exit 2) — `sccp node run --web` found no
   `src/web/dist/index.html`. Run `npm ci && npm run build` in `src/web`, or point
   `SCCP_WEB_DIST` at the build you have.
