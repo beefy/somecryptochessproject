@@ -530,9 +530,7 @@ class NodeService:
         if before_height is None:
             for proof in self.mempool.proofs.values():
                 pending.append(
-                    _pending_summary(
-                        proof, challenge_status(self.chain.state, proof.game_hash)
-                    )
+                    _pending_summary(proof, challenge_status(self.chain.state, proof.game_hash))
                 )
         settled: list[GameSummary] = []
         for record in sorted(

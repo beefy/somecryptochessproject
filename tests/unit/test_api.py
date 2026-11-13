@@ -196,9 +196,7 @@ def test_compat_shim_serves_a_genesis_only_node() -> None:
 # --- the explorer's list endpoints -----------------------------------------
 
 
-def test_block_list_walks_back_from_the_tip(
-    devnet_chain: Any, mine_block: Any
-) -> None:
+def test_block_list_walks_back_from_the_tip(devnet_chain: Any, mine_block: Any) -> None:
     """``GET /v1/blocks`` is newest first and pages with ``before_height``."""
     service = _node()
     for _ in range(3):
@@ -259,9 +257,7 @@ def test_game_list_shows_pending_then_settled_results(
 
 def test_a_built_explorer_is_served_next_to_the_api(tmp_path: Path) -> None:
     """``web_root`` mounts a static client without shadowing the JSON API."""
-    (tmp_path / "index.html").write_text(
-        "<!doctype html><title>explorer</title>", encoding="utf-8"
-    )
+    (tmp_path / "index.html").write_text("<!doctype html><title>explorer</title>", encoding="utf-8")
     (tmp_path / "assets").mkdir()
     (tmp_path / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
     service = _node()
