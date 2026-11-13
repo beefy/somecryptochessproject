@@ -3,10 +3,12 @@ import { describe, expect, it } from "vitest";
 import { fromHex } from "./canonical";
 import { keypairFromSeedHex, publicKeyHex, verifyDigest } from "./keys";
 import {
+  HYBRID_SIGNATURE_HEX_LENGTH,
   availabilityCommitment,
   buildAvailability,
   buildRegister,
   buildReveal,
+  isHybridSignatureHex,
   signTransaction,
   txId,
   type Transaction,
@@ -66,6 +68,16 @@ describe("ledger transactions", () => {
   it("reproduces the availability commitment", () => {
     const entry = ledger.availability_commitment;
     expect(availabilityCommitment(entry.address, entry.epoch, entry.nonce)).toBe(entry.commitment);
+  });
+
+  it("tells a hybrid signature from an Ed25519 one", () => {
+    expect(isHybridSignatureHex(wire.signature)).toBe(false);
+    expect(isHybridSignatureHex(null)).toBe(false);
+    expect(isHybridSignatureHex(undefined)).toBe(false);
+    expect(isHybridSignatureHex(`02${"00".repeat(3373)}`)).toBe(false);
+    const hybrid = `01${"ab".repeat(3373)}`;
+    expect(hybrid).toHaveLength(HYBRID_SIGNATURE_HEX_LENGTH);
+    expect(isHybridSignatureHex(hybrid)).toBe(true);
   });
 
   it("refuses an availability nonce that is not 32 bytes of hex", () => {

@@ -2211,6 +2211,10 @@
                 "type": "string"
               },
               {
+                "pattern": "^[0-9a-f]{6748}$",
+                "type": "string"
+              },
+              {
                 "type": "null"
               }
             ]

@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { Bech32Error, addressHrp, convertBits, encodeProgram } from "./bech32";
+import {
+  Bech32Error,
+  HYBRID_ADDRESS_VERSION,
+  addressHrp,
+  convertBits,
+  encodeProgram,
+} from "./bech32";
 import { fromHex } from "./canonical";
 import { addressFor, addressProgram, addressHash, keypairFromSeed, publicKeyHex } from "./keys";
 import vectors from "./vectors.json";
@@ -21,8 +27,12 @@ describe("bech32", () => {
   it("refuses programs it cannot represent", () => {
     expect(() => encodeProgram("sccpt", new Uint8Array(20))).toThrow(Bech32Error);
     const wrongVersion = new Uint8Array(21);
-    wrongVersion[0] = 1;
+    wrongVersion[0] = HYBRID_ADDRESS_VERSION;
     expect(() => encodeProgram("sccpt", wrongVersion)).toThrow(Bech32Error);
+    expect(() => encodeProgram("sccpt", wrongVersion)).toThrow(/hybrid address version 1/);
+    const nonsense = new Uint8Array(21);
+    nonsense[0] = 7;
+    expect(() => encodeProgram("sccpt", nonsense)).toThrow(/unsupported address version 7/);
   });
 
   it("regroups bits with BIP-173 convertbits semantics", () => {

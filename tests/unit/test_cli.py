@@ -14,8 +14,10 @@ from typer.testing import CliRunner
 from sccp.chess.pgn import validate_pgn
 from sccp.cli import PASSPHRASE_ENV, app
 from sccp.config import DEVNET, UNITS_PER_COIN
-from sccp.crypto.address import encode_address
+from sccp.crypto.address import address_version, encode_address
 from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import pq_available
+from sccp.crypto.wallet import read_header
 from sccp.errors import RelayError
 from sccp.protocol.transcript import (
     build_win_proof,
@@ -80,9 +82,127 @@ def test_new_json_output(tmp_path: Path, env: dict[str, str]) -> None:
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert set(payload) == {"address", "network", "public_key", "keyfile"}
+    assert set(payload) == {"address", "network", "public_key", "scheme", "keyfile"}
+    assert payload["scheme"] == "ed25519"
     assert payload["network"] == "testnet"
     assert payload["address"].startswith("sccpt1")
+
+
+HYBRID = ["--scheme", "ed25519-mldsa65"]
+requires_pq = pytest.mark.skipif(not pq_available(), reason="ML-DSA-65 backend unavailable")
+
+
+@requires_pq
+def test_new_hybrid_keyfile(tmp_path: Path, env: dict[str, str]) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "wallet",
+            "new",
+            "--out",
+            str(tmp_path / "h.key"),
+            "--network",
+            "testnet",
+            *HYBRID,
+            *FAST,
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["scheme"] == "ed25519-mldsa65"
+    assert payload["network"] == "testnet"
+    # 1-byte tag + 32-byte Ed25519 key + 1952-byte ML-DSA-65 key.
+    assert len(bytes.fromhex(payload["public_key"])) == 1985
+    assert address_version(payload["address"]) == 1
+
+    header = read_header(tmp_path / "h.key")
+    assert header.version == 2
+    assert header.scheme == "ed25519-mldsa65"
+    assert header.address == payload["address"]
+
+    addressed = runner.invoke(
+        app, ["--json", "wallet", "address", "--key", str(tmp_path / "h.key")]
+    )
+    assert addressed.exit_code == 0, addressed.output
+    assert json.loads(addressed.stdout)["scheme"] == "ed25519-mldsa65"
+
+
+def test_unknown_scheme_exits_two(tmp_path: Path, env: dict[str, str]) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "wallet",
+            "new",
+            "--out",
+            str(tmp_path / "w.key"),
+            "--scheme",
+            "ed25519-mldsa87",
+            *FAST,
+        ],
+        env=env,
+    )
+    assert result.exit_code == 2
+    assert "unknown scheme" in result.stderr
+
+
+@requires_pq
+def test_miner_run_refuses_a_hybrid_key(tmp_path: Path, env: dict[str, str]) -> None:
+    created = _new(tmp_path, env, "--network", "devnet", *HYBRID)
+    assert created.exit_code == 0, created.output
+    result = runner.invoke(
+        app,
+        [
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--engine-profile",
+            "mock",
+            "--iterations",
+            "1",
+            "--poll-seconds",
+            "0.01",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 1
+    assert "Ed25519-only" in result.stderr
+
+
+@requires_pq
+def test_export_and_import_hybrid_mnemonic(tmp_path: Path, env: dict[str, str]) -> None:
+    created = _new(tmp_path, env, *HYBRID)
+    assert created.exit_code == 0, created.output
+    source = str(tmp_path / "wallet.key")
+
+    exported = runner.invoke(app, ["wallet", "export-mnemonic", "--key", source], env=env)
+    assert exported.exit_code == 0, exported.output
+    phrase = exported.stdout.strip()
+    assert len(phrase.split()) == 24
+
+    exported_json = runner.invoke(
+        app, ["--json", "wallet", "export-mnemonic", "--key", source], env=env
+    )
+    assert exported_json.exit_code == 0, exported_json.output
+    document = json.loads(exported_json.stdout)
+    assert document["scheme"] == "ed25519-mldsa65"
+    assert document["address"] == created.stdout.strip()
+    assert document["mnemonic"] == phrase
+
+    restored = tmp_path / "restored.key"
+    imported = runner.invoke(
+        app,
+        ["wallet", "import-mnemonic", "--out", str(restored), *HYBRID, *FAST],
+        input=phrase + "\n",
+        env=env,
+    )
+    assert imported.exit_code == 0, imported.output
+    assert imported.stdout.strip().splitlines()[-1] == created.stdout.strip()
+    assert read_header(restored).scheme == "ed25519-mldsa65"
 
 
 def test_network_override_and_mismatch(tmp_path: Path, env: dict[str, str]) -> None:

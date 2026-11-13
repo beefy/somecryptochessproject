@@ -98,7 +98,7 @@ matchmaking protocol, the proof format, the anti-collusion rules and the chain.
 
 | Role | What it does | Trust required |
 | --- | --- | --- |
-| **Wallet** | Ed25519 keys, bech32 addresses, signs transactions and match transcripts | none |
+| **Wallet** | Ed25519 keys (optionally hybrid Ed25519 + ML-DSA-65), bech32 addresses, signs transactions and match transcripts | none |
 | **Engine miner** | Registers, commits availability, connects to a relay, plays assigned games with a UCI engine, submits win proofs | none for correctness; it only hurts itself by cheating |
 | **Matchmaker / relay** | Runs epoch rounds, derives pairings from the beacon, relays moves, collects co-signatures, stores match transcripts | **untrusted**: any node can recompute the pairing and verify the transcript |
 | **Full node** | Gossips blocks and transactions, validates the chain, serves the HTTP API | none |

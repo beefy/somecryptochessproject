@@ -35,8 +35,13 @@ from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
 from sccp.config import NetworkParams, coins_to_units, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
+from sccp.crypto.keys import Keypair
 from sccp.crypto.wallet import (
     DEFAULT_KDF,
+    PQ_KDF,
+    SCHEME_ED25519,
+    SCHEME_HYBRID,
+    SCHEMES,
     KdfParams,
     Wallet,
     create_wallet,
@@ -271,11 +276,48 @@ def _emit_wallet(ctx: typer.Context, wallet: Wallet) -> None:
                 "address": wallet.address,
                 "network": wallet.network,
                 "public_key": wallet.public_key_hex,
+                "scheme": wallet.scheme,
                 "keyfile": str(wallet.path) if wallet.path is not None else None,
             }
         )
         return
     typer.echo(wallet.address)
+
+
+def _wallet_scheme(scheme: str) -> str:
+    """Validate a ``--scheme`` value before it reaches a keyfile."""
+    if scheme not in SCHEMES:
+        _fail(f"unknown scheme {scheme!r}; use one of: {', '.join(sorted(SCHEMES))}", code=2)
+    return scheme
+
+
+def _keyfile_kdf(scheme: str, kdf_n: int | None) -> KdfParams:
+    """The scrypt parameters for a new keyfile.
+
+    A hybrid keyfile defaults to the harder :data:`~sccp.crypto.wallet.PQ_KDF`
+    (2**17) because one passphrase now protects an ML-DSA-65 key as well as the
+    Ed25519 one; ``--kdf-n`` overrides it, which is what tests do to stay fast.
+    """
+    if kdf_n is not None:
+        return KdfParams(n=kdf_n)
+    return PQ_KDF if scheme == SCHEME_HYBRID else DEFAULT_KDF
+
+
+def _classical_keypair(wallet: Wallet, purpose: str) -> Keypair:
+    """The Ed25519 keypair of ``wallet``, refusing a hybrid keyfile.
+
+    Match certificates, move and clock receipts and the relay's roster all carry
+    raw Ed25519 keys, so a miner or witness identity is a version-0 address. A
+    hybrid keyfile can hold and spend funds, but it cannot play or witness until
+    those messages grow a hybrid form too.
+    """
+    if wallet.is_hybrid:
+        _fail(
+            f"a hybrid keyfile cannot {purpose}: match transcripts, clock receipts and "
+            f"the relay roster are Ed25519-only. Use an Ed25519 keyfile "
+            f"(sccp wallet new --scheme ed25519) for miner and witness commands"
+        )
+    return wallet.keypair
 
 
 def _coins(units: int) -> str:
@@ -453,20 +495,31 @@ def wallet_new(
         int | None,
         typer.Option("--created-at", hidden=True, help="Fix created_at (tests)."),
     ] = None,
+    scheme: Annotated[
+        str,
+        typer.Option(
+            "--scheme",
+            help="Key scheme: ed25519 (default, version-0 address) or ed25519-mldsa65.",
+        ),
+    ] = SCHEME_ED25519,
     kdf_n: Annotated[
-        int,
-        typer.Option("--kdf-n", hidden=True, help="scrypt N (tests only; default 2**15)."),
-    ] = DEFAULT_KDF.n,
+        int | None,
+        typer.Option(
+            "--kdf-n", hidden=True, help="scrypt N (tests only; default 2**15, 2**17 hybrid)."
+        ),
+    ] = None,
 ) -> None:
     """Create an encrypted keyfile and print its address."""
     params = _resolve_network(ctx, network)
+    resolved_scheme = _wallet_scheme(scheme)
     passphrase = _passphrase(ctx, confirm=True)
     wallet = _run(
         lambda: create_wallet(
             out,
             params,
             passphrase,
-            kdf=KdfParams(n=kdf_n),
+            scheme=resolved_scheme,
+            kdf=_keyfile_kdf(resolved_scheme, kdf_n),
             created_at=created_at,
             force=force,
         )
@@ -492,6 +545,7 @@ def wallet_address(
                 "address": header.address,
                 "network": header.network,
                 "public_key": header.public_key,
+                "scheme": header.scheme,
                 "keyfile": str(key),
             }
         )
@@ -514,7 +568,15 @@ def wallet_export_mnemonic(
     passphrase = _passphrase(ctx, confirm=False)
     phrase = _run(lambda: export_mnemonic(key, passphrase))
     if _options(ctx).json_output:
-        _echo_json({"mnemonic": phrase, "address": header.address, "network": header.network})
+        _echo_json(
+            {
+                "mnemonic": phrase,
+                "address": header.address,
+                "network": header.network,
+                # A phrase is scheme-neutral; the keyfile says how to re-expand it.
+                "scheme": header.scheme,
+            }
+        )
         return
     typer.echo(phrase)
 
@@ -535,13 +597,23 @@ def wallet_import_mnemonic(
         int | None,
         typer.Option("--created-at", hidden=True, help="Fix created_at (tests)."),
     ] = None,
+    scheme: Annotated[
+        str,
+        typer.Option(
+            "--scheme",
+            help="Key scheme the phrase is expanded under: ed25519 or ed25519-mldsa65.",
+        ),
+    ] = SCHEME_ED25519,
     kdf_n: Annotated[
-        int,
-        typer.Option("--kdf-n", hidden=True, help="scrypt N (tests only; default 2**15)."),
-    ] = DEFAULT_KDF.n,
+        int | None,
+        typer.Option(
+            "--kdf-n", hidden=True, help="scrypt N (tests only; default 2**15, 2**17 hybrid)."
+        ),
+    ] = None,
 ) -> None:
     """Recreate a keyfile from a 24-word backup phrase."""
     params = _resolve_network(ctx, network)
+    resolved_scheme = _wallet_scheme(scheme)
     phrase = typer.prompt("Mnemonic (24 words)", hide_input=True)
     passphrase = _passphrase(ctx, confirm=True)
     wallet = _run(
@@ -550,7 +622,8 @@ def wallet_import_mnemonic(
             phrase,
             params,
             passphrase,
-            kdf=KdfParams(n=kdf_n),
+            scheme=resolved_scheme,
+            kdf=_keyfile_kdf(resolved_scheme, kdf_n),
             created_at=created_at,
             force=force,
         )
@@ -629,9 +702,7 @@ def wallet_send(
     wallet = _run(lambda: load_wallet(key, passphrase))
     with _account_source(ctx, params, header.address, node) as accounts:
         try:
-            tx = accounts.service.build_transfer(
-                wallet.keypair, to, coins_to_units(amount), fee=fee
-            )
+            tx = accounts.service.build_transfer(wallet.signer, to, coins_to_units(amount), fee=fee)
         except WalletServiceError as exc:
             if accounts.chain_height == 0:
                 _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
@@ -894,7 +965,7 @@ def matchmaker_run(
         passphrase = _passphrase(ctx, confirm=False)
         wallet = _run(lambda: load_wallet(witness_key, passphrase))
         _check_network(ctx, network, wallet.network)
-        witness = wallet.keypair
+        witness = _classical_keypair(wallet, "witness matches")
     state = _run(
         lambda: Matchmaker.from_document(
             document,
@@ -1258,7 +1329,7 @@ def miner_run(
     witness_keys = _witness_keys(params, relay_witness_key or [])
     config = MinerConfig.for_network(
         params,
-        wallet.keypair,
+        _classical_keypair(wallet, "run a miner"),
         relay_url=relay,
         node_url=node,
         nodes_per_move=nodes_per_move or params.nodes_per_move,
@@ -1358,7 +1429,7 @@ def miner_register(
     with _local_node(ctx, params.network_id) as service:
         tx = _run(
             lambda: WalletService(params, service.chain.state, chain=service.chain).build_register(
-                wallet.keypair,
+                _classical_keypair(wallet, "register a miner"),
                 endpoint=endpoint,
                 engine=engine,
                 bond=coins_to_units(bond),
@@ -1411,7 +1482,7 @@ def miner_availability(
         wallet_service = WalletService(params, service.chain.state, chain=service.chain)
         tx = _run(
             lambda: wallet_service.build_availability(
-                wallet.keypair,
+                _classical_keypair(wallet, "commit availability"),
                 nonce_secret=secret,
                 max_games=max_games,
             )
@@ -1460,7 +1531,7 @@ def miner_reveal(
     with _local_node(ctx, params.network_id) as service:
         tx = _run(
             lambda: WalletService(params, service.chain.state, chain=service.chain).build_reveal(
-                wallet.keypair,
+                _classical_keypair(wallet, "reveal availability"),
                 nonce_secret,
             )
         )

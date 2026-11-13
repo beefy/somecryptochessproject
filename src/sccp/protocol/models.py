@@ -4,11 +4,14 @@ The models in this module are the schema half of docs/PROTOCOL.md sections 6-9.
 They are frozen, forbid unknown fields and use constrained string types, so a
 malformed object fails at the boundary instead of deep inside a verifier.
 
-Signatures are always lowercase hex of the 64-byte Ed25519 signature; digests are
-lowercase hex of a 32-byte SHA-256 domain hash. The models deliberately do *not*
-verify signatures or recompute hashes: that is the job of
-:mod:`sccp.protocol.transcript` and :mod:`sccp.protocol.verification`, which can
-report a typed failure reason.
+Signatures are lowercase hex. A ledger transaction carries either the 64-byte
+Ed25519 signature (128 hex characters) or the hybrid Ed25519 + ML-DSA-65 blob
+(3374 bytes, 6748 hex characters, see :mod:`sccp.crypto.pq`); the leading scheme
+byte inside the blob makes the two unambiguous. Match transcripts and clock
+receipts remain Ed25519. Digests are lowercase hex of a 32-byte SHA-256 domain
+hash. The models deliberately do *not* verify signatures or recompute hashes:
+that is the job of :mod:`sccp.protocol.transcript` and
+:mod:`sccp.protocol.verification`, which can report a typed failure reason.
 """
 
 from __future__ import annotations
@@ -25,6 +28,12 @@ DigestHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 SignatureHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{128}$")]
 """A 64-byte Ed25519 signature, lowercase hex."""
+
+HybridSignatureHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{6748}$")]
+"""A 3374-byte hybrid Ed25519 + ML-DSA-65 signature blob, lowercase hex."""
+
+TxSignatureHex = SignatureHex | HybridSignatureHex
+"""A ledger transaction signature: Ed25519, or hybrid on a version-1 address."""
 
 PublicKeyHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 """A raw 32-byte Ed25519 public key, lowercase hex."""
@@ -90,7 +99,7 @@ class Transaction(ProtocolModel):
     nonce: int = Field(ge=0)
     fee: int = Field(ge=0)
     payload: dict[str, object] = Field(default_factory=dict)
-    signature: SignatureHex | None = None
+    signature: TxSignatureHex | None = None
 
 
 class TimeControl(ProtocolModel):

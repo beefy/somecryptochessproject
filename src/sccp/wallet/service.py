@@ -1,8 +1,9 @@
 """Wallet service: balances, transfers, staking and history (PROTOCOL.md).
 
 This is the read/build layer the CLI and miner use. It never holds a decrypted
-key longer than one call: callers pass a :class:`~sccp.crypto.keys.Keypair` and
-get a signed, canonical transaction back.
+key longer than one call: callers pass a :class:`~sccp.crypto.keys.Keypair` (or a
+:class:`~sccp.crypto.pq.HybridKeypair`) and get a signed, canonical transaction
+back. The scheme is carried by the key itself, so ``build_*`` needs no flag.
 
 Everything is derived from a :class:`~sccp.chain.state.State`, so the same calls
 work against the tip, a fork or a test fixture. History additionally needs a
@@ -24,13 +25,25 @@ from sccp.chain.chain import Chain
 from sccp.chain.state import Account, State, epoch_of
 from sccp.chain.tx import sign_transaction, txid
 from sccp.config import NetworkParams, format_coins, get_network
-from sccp.crypto.address import encode_address, validate_address
-from sccp.crypto.keys import Keypair
+from sccp.crypto.address import encode_address, encode_hybrid_address, validate_address
+from sccp.crypto.pq import HybridKeypair, SigningKey
 from sccp.errors import StateError, WalletServiceError
 from sccp.protocol.models import Transaction, TxType
 
 DEFAULT_SOURCE = "the local chain in --data-dir"
 """Where a wallet's state came from, when the caller does not say."""
+
+
+def derive_address(keypair: SigningKey, params: NetworkParams) -> str:
+    """The bech32 address of ``keypair`` on ``params``.
+
+    The scheme decides the program version: an Ed25519 key derives a version-0
+    address, a hybrid key a version-1 one. Both expose ``public_key_bytes``, so
+    only the version byte and the hash domain differ.
+    """
+    if isinstance(keypair, HybridKeypair):
+        return encode_hybrid_address(keypair.public_key_bytes, params)
+    return encode_address(keypair.public_key_bytes, params)
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,9 +138,9 @@ class WalletService:
         """The network id of this service."""
         return self.params.network_id
 
-    def address_for(self, keypair: Keypair) -> str:
-        """The bech32 address of ``keypair`` on this network."""
-        return encode_address(keypair.public_key_bytes, self.params)
+    def address_for(self, keypair: SigningKey) -> str:
+        """The bech32 address of ``keypair`` on this network (0x00 or 0x01)."""
+        return derive_address(keypair, self.params)
 
     def account(self, address: str) -> Account:
         """The account at ``address`` (a zeroed one if it never appeared)."""
@@ -200,7 +213,7 @@ class WalletService:
 
     def build_transfer(
         self,
-        keypair: Keypair,
+        keypair: SigningKey,
         to: str,
         amount: int,
         *,
@@ -239,7 +252,7 @@ class WalletService:
 
     def build_register(
         self,
-        keypair: Keypair,
+        keypair: SigningKey,
         *,
         endpoint: str,
         engine: str,
@@ -277,7 +290,7 @@ class WalletService:
 
     def build_availability(
         self,
-        keypair: Keypair,
+        keypair: SigningKey,
         *,
         nonce_secret: str,
         max_games: int = 1,
@@ -311,7 +324,7 @@ class WalletService:
 
     def build_reveal(
         self,
-        keypair: Keypair,
+        keypair: SigningKey,
         nonce_secret: str,
         *,
         epoch: int | None = None,
@@ -365,4 +378,4 @@ class WalletService:
         return None
 
 
-__all__ = ["Balance", "HistoryEntry", "WalletService"]
+__all__ = ["Balance", "HistoryEntry", "WalletService", "derive_address"]

@@ -544,7 +544,7 @@ block body and on the wire. `src/sccp/chain/tx.py` is the only validator, and
 | `nonce` | int ≥ 0 | equals the sender's current nonce; a gap is a rejection |
 | `fee` | int ≥ 0 | at least `min_fee`, debited from spendable balance, never from a bond |
 | `payload` | object | type-specific; unknown keys are rejected |
-| `signature` | 128 hex chars | Ed25519 over the txid; `null` only for a coinbase |
+| `signature` | 128 or 6748 hex chars | Ed25519 (128) or hybrid Ed25519 + ML-DSA-65 (6748) over the txid; `null` only for a coinbase |
 
 `txid = H("sccp/v1/tx", {network, type, from, nonce, fee, payload})`. The
 signature is outside the hash, so signing is well defined and re-signing never
@@ -568,6 +568,13 @@ with neither (a plain recipient) puts `public_key` in the payload of its first
 transaction; consensus then checks that the key re-encodes to the `from` address
 before storing it. The reveal is self-authenticating, so no key registry and no
 extra signature format is needed.
+
+The stored key is either a 32-byte Ed25519 key (64 hex) or a hybrid key blob
+(3970 hex, 10.5). The address pins the scheme: a version-0 address accepts only
+an Ed25519 key and a version-1 address only a hybrid one, and the signature
+length picks the verifier. Offering the wrong key for an address, or signing a
+hybrid account with its Ed25519 half alone, fails the same `signature` check as
+a forged signature — the key never overrides the address version.
 
 ### 10.2 Types and payloads
 
@@ -632,6 +639,50 @@ witness. The witness must be registered with a non-zero bond; the bond is burned
 the witness is de-registered and `banned_until = height + unbond_delay`.
 Equivocation about proofs (`proof_id` in the payload) is refused here; proof
 disputes go through the bonded challenge layer (9.2).
+
+### 10.5 Hybrid post-quantum accounts
+
+A wallet may hold a hybrid Ed25519 + ML-DSA-65 key (NIST FIPS 204, category 3)
+instead of a bare Ed25519 one. Two encodings are self-describing by a leading
+scheme byte, so nothing has to be negotiated:
+
+```text
+public key = 0x01 || ed25519_pub(32) || mldsa65_pub(1952)   = 1985 bytes
+signature  = 0x01 || ed25519_sig(64) || mldsa65_sig(3309)   = 3374 bytes
+```
+
+A hybrid **address** is a version-1 bech32 program over the *full* SHA-256
+digest, not the 20-byte truncation of version 0 — a shortened digest would lose
+to Grover's quadratic speedup:
+
+```text
+program = 0x01 || H("sccp/v1/address-pq", {
+    "network": <network_id>,
+    "algorithm": "ed25519-mldsa65",
+    "public_key": <1985-byte blob as lowercase hex>
+})
+```
+
+A hybrid **transaction signature** covers the same txid digest as an Ed25519
+one, and every signature is over `sha256("sccp/v1/pq-hybrid" || 0x00 || digest)`
+with the FIPS 204 context `sccp/v1/hybrid-ed25519-mldsa65`, so the two halves
+sign the same scheme-tagged message. Verification is the conjunction: the
+transaction is invalid unless *both* halves verify, so an attacker must break
+Ed25519 and ML-DSA-65. The type byte and the length of `signature` choose the
+check (`128` hex → Ed25519, `6748` hex → hybrid); a length that is neither is a
+`schema` failure, and a hybrid signature offered for a version-0 address (or an
+Ed25519 signature for a version-1 one) is a `signature` failure. Older nodes
+reject a `6748`-hex `signature` outright, so a hybrid spend is opt-in per
+account and the chain commits no new state for a chain that never sees one.
+
+The hybrid scope is deliberately narrow. Match certificates, move and clock
+receipts, win proofs and the relay roster keep raw Ed25519 keys
+(`sccp.crypto.pq.ed25519_public_key_hex` extracts the Ed25519 half of a hybrid
+account's key for those verifiers), so `register`, `register_witness` and the
+relay-side identity remain version-0 addresses. Hybrid keys therefore protect
+funds and bonds today; playing and witnessing follow when those messages grow a
+hybrid form. `pq.py` verifies fail-closed when the OpenSSL build exposes no
+ML-DSA provider, and key generation raises `PQUnavailableError`.
 
 ## 11. Ledger state
 

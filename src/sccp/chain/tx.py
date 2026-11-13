@@ -22,8 +22,23 @@ from typing import NoReturn
 
 from sccp.chain.state import State, epoch_of, first_matchable_epoch
 from sccp.config import NetworkParams
-from sccp.crypto.address import encode_address, validate_address
-from sccp.crypto.keys import Keypair, public_key_from_hex, sign, verify
+from sccp.crypto.address import encode_address, encode_hybrid_address, validate_address
+from sccp.crypto.keys import (
+    PUBLIC_KEY_SIZE,
+    Keypair,
+    public_key_from_hex,
+    sign,
+    verify,
+)
+from sccp.crypto.pq import (
+    HYBRID_PUBLIC_KEY_SIZE,
+    HybridKeypair,
+    SigningKey,
+    ed25519_public_key_hex,
+    hybrid_sign,
+    hybrid_verify,
+    is_hybrid_public_key_hex,
+)
 from sccp.errors import AddressError, KeyEncodingError, TxValidationError
 from sccp.protocol.beacon import commitment
 from sccp.protocol.models import Availability, Transaction, TxType
@@ -76,13 +91,22 @@ def tx_size(tx: Transaction) -> int:
     return len(canonical_json(tx.model_dump(mode="json", by_alias=True)))
 
 
-def sign_transaction(keypair: Keypair, tx: Transaction) -> Transaction:
-    """Return ``tx`` with ``keypair``'s signature over its txid."""
-    if not isinstance(keypair, Keypair):
-        raise TxValidationError(TxFailure.SIGNATURE, "signing needs a Keypair")
+def sign_transaction(keypair: SigningKey, tx: Transaction) -> Transaction:
+    """Return ``tx`` with ``keypair``'s signature over its txid.
+
+    An Ed25519 keypair yields a 64-byte signature; a hybrid keypair yields a
+    blob carrying both the Ed25519 and the ML-DSA-65 half. The scheme byte in
+    the signature is what lets a validator tell the two apart without guessing.
+    """
+    if not isinstance(keypair, (Keypair, HybridKeypair)):
+        raise TxValidationError(TxFailure.SIGNATURE, "signing needs a Keypair or a HybridKeypair")
     unsigned = tx if tx.signature is None else tx.model_copy(update={"signature": None})
     digest = bytes.fromhex(txid(unsigned))
-    return unsigned.model_copy(update={"signature": sign(keypair, digest).hex()})
+    if isinstance(keypair, HybridKeypair):
+        signature = hybrid_sign(keypair, digest)
+    else:
+        signature = sign(keypair, digest)
+    return unsigned.model_copy(update={"signature": signature.hex()})
 
 
 def make_coinbase(miner: str, amount: int, network: str) -> Transaction:
@@ -111,12 +135,14 @@ def coinbase_id(miner: str, amount: int, network: str) -> str:
 
 
 def resolve_public_key(state: State, tx: Transaction) -> str:
-    """The sender's Ed25519 public key, from state or a first-use reveal."""
+    """The sender's public key hex, from state or a first-use reveal."""
     account = state.accounts.get(tx.sender)
     if account is not None and account.public_key:
         return account.public_key
     candidate = tx.payload.get("public_key")
-    if isinstance(candidate, str) and len(candidate) == 64:
+    if isinstance(candidate, str) and (
+        len(candidate) == PUBLIC_KEY_SIZE * 2 or is_hybrid_public_key_hex(candidate)
+    ):
         return candidate
     _fail(
         TxFailure.SIGNATURE,
@@ -125,18 +151,54 @@ def resolve_public_key(state: State, tx: Transaction) -> str:
 
 
 def check_sender_key(state: State, params: NetworkParams, tx: Transaction) -> str:
-    """Verify the sender's signature and return the public key hex it used."""
+    """Verify the sender's signature and return the public key hex it used.
+
+    The key's length picks the scheme: 32 bytes is Ed25519 and is checked
+    against a version-0 address, 1985 bytes is the hybrid blob and is checked
+    against a version-1 address. A key that re-encodes to another address (for
+    example an Ed25519 key offered for a hybrid address) fails here, so the
+    address version pins the scheme a spend must use.
+    """
     key_hex = resolve_public_key(state, tx)
     try:
-        public_key = public_key_from_hex(key_hex)
-        derived = encode_address(bytes.fromhex(key_hex), params)
-    except (KeyEncodingError, AddressError, ValueError) as exc:
-        _fail(TxFailure.SIGNATURE, f"invalid public key: {exc}")
+        raw_key = bytes.fromhex(key_hex)
+    except ValueError:
+        _fail(TxFailure.SIGNATURE, "public key is not valid hex")
+    hybrid = False
+    key = None
+    if len(raw_key) == PUBLIC_KEY_SIZE:
+        try:
+            derived = encode_address(raw_key, params)
+        except (KeyEncodingError, AddressError, ValueError) as exc:
+            _fail(TxFailure.SIGNATURE, f"invalid public key: {exc}")
+        key = public_key_from_hex(key_hex)
+    elif is_hybrid_public_key_hex(key_hex):
+        hybrid = True
+        try:
+            derived = encode_hybrid_address(raw_key, params)
+        except (KeyEncodingError, AddressError) as exc:
+            _fail(TxFailure.SIGNATURE, f"invalid hybrid public key: {exc}")
+    else:
+        _fail(
+            TxFailure.SIGNATURE,
+            f"public key must be {PUBLIC_KEY_SIZE} bytes or a "
+            f"{HYBRID_PUBLIC_KEY_SIZE}-byte hybrid blob, got {len(raw_key)}",
+        )
     if derived != tx.sender:
         _fail(TxFailure.SIGNATURE, f"public key derives {derived}, not the sender {tx.sender}")
     if tx.signature is None:
         _fail(TxFailure.SIGNATURE, "transaction is not signed")
-    if not verify(public_key, bytes.fromhex(txid(tx)), bytes.fromhex(tx.signature)):
+    try:
+        signature = bytes.fromhex(tx.signature)
+    except ValueError:
+        _fail(TxFailure.SIGNATURE, "signature is not valid hex")
+    digest = bytes.fromhex(txid(tx))
+    if hybrid:
+        valid = hybrid_verify(raw_key, digest, signature)
+    else:
+        assert key is not None
+        valid = verify(key, digest, signature)
+    if not valid:
         _fail(TxFailure.SIGNATURE, "signature does not cover the txid")
     return key_hex
 
@@ -415,7 +477,7 @@ def _apply_register_witness(state: State, tx: Transaction, height: int) -> None:
     account.balance -= bond
     account.bonded += bond
     state.witnesses[tx.sender] = WitnessRecord(
-        public_key=account.public_key or "",
+        public_key=ed25519_public_key_hex(account.public_key or ""),
         endpoint=endpoint,
         bond=bond,
         registered_at_height=height,

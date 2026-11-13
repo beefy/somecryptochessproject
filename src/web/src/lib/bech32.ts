@@ -5,7 +5,8 @@
  * hash) with the *primitives*, not the segwit helpers, because those hard-code
  * witness lengths. This is the same subset: polymod, hrp expansion, convertbits
  * and the checksum, written out so a browser can derive an address from a
- * public key without shipping a bech32 dependency.
+ * public key without shipping a bech32 dependency. A version-1 (hybrid) program
+ * is 33 bytes and is not encoded here; see {@link HYBRID_ADDRESS_VERSION}.
  */
 
 const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
@@ -14,6 +15,18 @@ const GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 
 /** Program version byte for Ed25519 keys (`ADDRESS_VERSION` in Python). */
 export const ADDRESS_VERSION = 0;
+
+/**
+ * Program version byte for hybrid Ed25519 + ML-DSA-65 keys
+ * (`HYBRID_ADDRESS_VERSION` in Python).
+ *
+ * `encodeProgram` refuses it: an ML-DSA-65 signature is 3309 bytes and no
+ * browser primitive signs one here, so a page that cannot make a valid hybrid
+ * signature must not hand out a hybrid address either. The CLI wallet owns that
+ * scheme, and this module fails closed instead of writing a version-1 program it
+ * cannot back with a signature.
+ */
+export const HYBRID_ADDRESS_VERSION = 1;
 
 /** Address hash length in bytes. */
 export const HASH_SIZE = 20;
@@ -99,6 +112,11 @@ export function bech32Encode(hrp: string, words: readonly number[]): string {
 export function encodeProgram(hrp: string, program: Uint8Array): string {
   if (program.length !== 1 + HASH_SIZE) {
     throw new Bech32Error(`address program must be ${1 + HASH_SIZE} bytes`);
+  }
+  if (program[0] === HYBRID_ADDRESS_VERSION) {
+    throw new Bech32Error(
+      "hybrid address version 1 is not supported in the browser; use the CLI wallet",
+    );
   }
   if (program[0] !== ADDRESS_VERSION) {
     throw new Bech32Error(`unsupported address version ${program[0] as number}`);

@@ -11,6 +11,13 @@
  * Nothing here is specific to a browser: the same bytes `sccp miner register`
  * produces come out of {@link buildRegister}, which is what lets a seat created
  * in this tab be paired by the relay like any other.
+ *
+ * Signing is Ed25519-only on purpose. A CLI wallet may hold a hybrid
+ * Ed25519 + ML-DSA-65 key, and the chain accepts its 6748-hex signature, but no
+ * browser primitive signs ML-DSA-65 and a miner seat must be a version-0
+ * address anyway (`PROTOCOL.md` section 10.5). {@link isHybridSignatureHex}
+ * exists so a viewer can label such a transaction instead of mistaking it for a
+ * malformed one.
  */
 
 import { DOMAINS, domainHex, fromHex } from "./canonical";
@@ -27,11 +34,30 @@ export interface Transaction {
   nonce: number;
   fee: number;
   payload: Record<string, unknown>;
+  /** 128 hex characters for Ed25519, 6748 for a hybrid account (or absent). */
   signature?: string;
 }
 
 export class TxError extends Error {
   override name = "TxError";
+}
+
+/** Hex length of a hybrid Ed25519 + ML-DSA-65 signature (3374 bytes). */
+export const HYBRID_SIGNATURE_HEX_LENGTH = 6748;
+
+/**
+ * Whether `signature` is a hybrid blob rather than an Ed25519 signature.
+ *
+ * The scheme byte is `0x01`, so a well-formed hybrid signature starts with
+ * `"01"`; the length check alone is enough to tell the two apart on the wire,
+ * which is what the chain does (`sccp.protocol.models.TxSignatureHex`).
+ */
+export function isHybridSignatureHex(signature: string | null | undefined): boolean {
+  return (
+    typeof signature === "string" &&
+    signature.length === HYBRID_SIGNATURE_HEX_LENGTH &&
+    /^01[0-9a-f]*$/.test(signature)
+  );
 }
 
 /** The canonical signed body: everything but the signature. */
