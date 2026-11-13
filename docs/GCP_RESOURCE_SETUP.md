@@ -31,7 +31,7 @@ commands; see [Cost guardrails](#cost-guardrails) for the shape of that work.
 | Deploy user and SSH key | Lets the workflow reach the host without GCP credentials. | `sccp` user, key-only SSH. |
 | Docker Engine + Compose plugin | Runs the node, relay and miners. | Installed from Docker's apt repository. |
 | GitHub repository variables/secrets | Tell the workflow where and how to deploy. | `TESTNET_DEPLOY_*` variables + `TESTNET_SSH_KEY`. |
-| Explorer origin (optional) | Serves the web explorer on port 80, next to the node. | `tcp:80` on the same VM, an `A` record, one nginx container. See [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md). |
+| Explorer origin (optional) | Serves the web explorer on 80 and 443, next to the node. | `tcp:80,tcp:443` on the same VM, an `A` record, an nginx origin behind a Caddy TLS terminator. See [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md). |
 
 You do **not** need GKE, Cloud SQL, a load balancer, Cloud Storage, Artifact
 Registry, or a GCP service account for the workflow. Images live in GHCR and
@@ -170,8 +170,9 @@ gcloud compute firewall-rules create sccp-testnet-relay \
 
 ### Explorer page, only if you publish the web client
 
-The explorer is served by an nginx container on the same VM, so it needs one more
-ingress rule and no other resource. It answers `80` only; the node and relay ports
+The explorer is served by two containers on the same VM — a Caddy terminator that
+holds the TLS certificate on `80`/`443`, and an nginx origin behind it on
+loopback — so the only new resource is one ingress rule. The node and relay ports
 above are unchanged, and the relay can stay closed because the page reaches it
 through the proxy:
 
@@ -180,11 +181,14 @@ gcloud compute firewall-rules create sccp-testnet-explorer-web \
     --network="$NETWORK" \
     --direction=INGRESS \
     --action=ALLOW \
-    --rules=tcp:80 \
+    --rules=tcp:80,tcp:443 \
     --source-ranges=0.0.0.0/0 \
     --target-tags="$NODE_TAG" \
     --project="$PROJECT_ID"
 ```
+
+Keep `80` open even though the site is served over `443`: Let's Encrypt validates
+the name over plain HTTP and Caddy uses `80` for the redirect.
 
 The deployment itself — DNS record, deploy directory, GitHub variables, TLS
 options and rollback — is in [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md).
@@ -341,7 +345,9 @@ curl -sS "http://$TESTNET_HOST:8645/v1/status" \
 ```
 
 There is no GCP load balancer or managed certificate in this setup, and the node
-still speaks plain HTTP on `8645`. The explorer does too, on `80`.
+still speaks plain HTTP on `8645`. The explorer does not: Caddy terminates TLS on
+`443` with a certificate it obtains itself, so the page is served over `https`
+while every other endpoint in the stack stays as described above.
 
 
 ---
@@ -601,6 +607,7 @@ environment; remove those separately if you are decommissioning the repository.
 | GHCR `unauthorized` during deploy | Package visibility or workflow token permissions. | Check the build job and package settings. |
 | `curl :8645` times out | VM lacks `sccp-node` tag, firewall rule is wrong, or the stack is not running. | `docker compose ps` and the firewall list. |
 | `curl :80` times out | Explorer firewall rule missing, or `dig` returns nothing yet. | The `sccp-testnet-explorer-web` rule and `dig +short explorer.somecryptochessproject.com`. |
+| `curl https://explorer…` times out | `tcp:443` missing from that rule, or the Caddy container is down. | `gcloud compute firewall-rules describe sccp-testnet-explorer-web`; `docker compose ps` in `/opt/sccp-explorer`. |
 | Deploy succeeds but faucet `404` | Node started with `--no-faucet`. | Compose environment and `docker compose logs node`. |
 | Chain height resets after every deploy | Expected: the workflow runs `docker compose down -v`. | [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md). |
 

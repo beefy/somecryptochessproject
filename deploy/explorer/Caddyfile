@@ -1,0 +1,19 @@
+# The explorer's TLS terminator: Caddy in front of the nginx origin.
+#
+# It exists because a browser address bar means https://, and because `#/play`
+# generates a seat keypair in the page — a move signature should not cross the
+# network in clear text. Caddy obtains and renews the Let's Encrypt certificate
+# on its own (HTTP-01 on port 80), redirects http:// to https://, and proxies to
+# nginx on the loopback port it now listens on.
+#
+# The name below must have an A record pointing at this VM and port 80 must be
+# open, or the challenge fails and Caddy serves a TLS error instead. Add an
+# `email` in the global block if you want expiry notices from Let's Encrypt.
+{
+	# No DNS provider token here, so HTTP-01 is the challenge in use.
+	# auto_https is on by default: :80 answers the challenge and redirects.
+}
+
+explorer.somecryptochessproject.com {
+	reverse_proxy 127.0.0.1:8080
+}

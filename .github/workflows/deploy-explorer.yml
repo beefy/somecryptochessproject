@@ -17,7 +17,7 @@ name: deploy-explorer
 #   secrets.EXPLORER_KNOWN_HOSTS optional pinned host key; falls back to TESTNET_KNOWN_HOSTS
 #   vars.EXPLORER_DEPLOY_DIR     optional; defaults to /opt/sccp-explorer
 #   vars.EXPLORER_DEPLOY_PORT    optional; defaults to 22
-#   vars.EXPLORER_PUBLIC_URL     optional; defaults to http://explorer.somecryptochessproject.com
+#   vars.EXPLORER_PUBLIC_URL     optional; defaults to https://explorer.somecryptochessproject.com
 #
 # Unlike deploy-testnet-miners.yml this deploy never touches the chain: it
 # uploads a release directory, switches one symlink and leaves the node alone.
@@ -93,7 +93,7 @@ jobs:
       TARGET: ${{ vars.EXPLORER_DEPLOY_HOST || vars.TESTNET_DEPLOY_HOST }}
       DEPLOY_DIR: ${{ vars.EXPLORER_DEPLOY_DIR || '/opt/sccp-explorer' }}
       DEPLOY_PORT: ${{ vars.EXPLORER_DEPLOY_PORT || '22' }}
-      PUBLIC_URL: ${{ vars.EXPLORER_PUBLIC_URL || 'http://explorer.somecryptochessproject.com' }}
+      PUBLIC_URL: ${{ vars.EXPLORER_PUBLIC_URL || 'https://explorer.somecryptochessproject.com' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -165,6 +165,7 @@ jobs:
           ssh explorer "mkdir -p '$DEPLOY_DIR/www/releases'"
           scp deploy/explorer/docker-compose.yml explorer:"$DEPLOY_DIR/docker-compose.yml"
           scp deploy/explorer/nginx.conf explorer:"$DEPLOY_DIR/nginx.conf"
+          scp deploy/explorer/Caddyfile explorer:"$DEPLOY_DIR/Caddyfile"
 
       # Each deploy is a new directory under www/releases, so the switch below is
       # one rename: no request ever sees a half-written bundle, and the previous

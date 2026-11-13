@@ -17,9 +17,17 @@ not itemised here.
   to the node and `/relay` to the matchmaker. Same-origin paths are what make a
   hosted page work at all -- the node sends no CORS headers -- and the relay
   proxy means `#/play` needs neither a public `8646` nor `--origin`.
-- `docs/EXPLORER_DEPLOYMENT.md`: what the deploy does, the GCP firewall rule and
+- `deploy/explorer/Caddyfile`: the page is served over `https`. Caddy terminates
+  TLS in front of the nginx origin (now on loopback `8080`), obtains and renews
+  the Let's Encrypt certificate with no external tooling, and redirects `http://`
+  to `https://`. A browser address bar defaults to `https://`, and a VM with no
+  listener on `443` answers that with `ERR_CONNECTION_TIMED_OUT`; `#/play` also
+  signs with a key made in the page, which plain HTTP would put on the wire. The
+  certificate lives in a `caddy_data` volume, so a deploy never re-issues it.
+- `docs/EXPLORER_DEPLOYMENT.md`: what the deploy does, the GCP firewall rules
+  (`tcp:80,tcp:443`) and
   `A` record it needs, the GitHub variables (all falling back to `TESTNET_*`),
-  TLS options, rollback and a troubleshooting table.
+  how TLS is issued and renewed, rollback and a troubleshooting table.
 - `VITE_SCCP_RELAY` may now be a path (`/relay`): `#/play` resolves it against
   the page (`relayPublicUrl`) so a relative base still prints a URL a reader can
   open. `src/web/src/lib/relay.test.ts` pins the resolution.

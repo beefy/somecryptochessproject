@@ -13,7 +13,7 @@ The current hosted deployment is at
 `http://testnet.somecryptochessproject.com:8645`; the commands below use
 `127.0.0.1` because they are for a local Compose stack. The page that reads it is
 a separate deploy, in `explorer/`, published at
-`http://explorer.somecryptochessproject.com`; see
+`https://explorer.somecryptochessproject.com`; see
 [`docs/EXPLORER_DEPLOYMENT.md`](../docs/EXPLORER_DEPLOYMENT.md).
 
 ```bash

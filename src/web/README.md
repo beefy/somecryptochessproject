@@ -137,10 +137,11 @@ SCCP_NODE=http://testnet.somecryptochessproject.com:8645 npm run dev
 ```
 
 The published page lives on an origin of its own,
-`http://explorer.somecryptochessproject.com`, where nginx serves the bundle and
-proxies `/v1` and `/relay`. That is the shape a hosted build always needs: the
+`https://explorer.somecryptochessproject.com`, where nginx serves the bundle and
+proxies `/v1` and `/relay`, behind a Caddy terminator that holds the certificate.
+That is the shape a hosted build always needs: the
 API on the page's own origin, the relay on a path of it. The deploy, its firewall
-rule, its DNS record and its rollback are in
+rules, its DNS record and its rollback are in
 [`docs/EXPLORER_DEPLOYMENT.md`](../../docs/EXPLORER_DEPLOYMENT.md).
 
 ## Scripts

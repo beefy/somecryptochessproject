@@ -290,7 +290,7 @@ responsibility rather than a construction phase.
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
 ├── deploy/
 │   ├── README.md                 # what the compose stack does and does not do
-│   ├── explorer/                 # the hosted page's nginx origin + compose file
+│   ├── explorer/                 # Caddy + nginx + compose for the hosted page
 │   └── init_testnet_stack.py     # deterministic stack keys + relay config
 ├── genesis/{devnet,testnet,mainnet}.json
 ├── scripts/
@@ -469,8 +469,9 @@ deployment is published at
 same name over SSH (`sccp@testnet.somecryptochessproject.com`).
 
 The explorer has its own deploy and its own name:
-`http://explorer.somecryptochessproject.com` serves the built bundle with `/v1`
-and `/relay` proxied onto that origin, because the node sends no CORS headers. See
+`https://explorer.somecryptochessproject.com` serves the built bundle with `/v1`
+and `/relay` proxied onto that origin, because the node sends no CORS headers. A
+Caddy terminator in front holds the certificate. See
 [`docs/EXPLORER_DEPLOYMENT.md`](docs/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws

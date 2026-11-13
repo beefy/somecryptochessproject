@@ -1,19 +1,26 @@
-# The explorer's static host: one nginx container that serves the uploaded
-# release and puts the node and the relay on the same origin, because the node
-# sends no CORS headers and `#/play` signs payloads for both.
+# The explorer's static host: an nginx origin that serves the uploaded release
+# and puts the node and the relay on the same origin, behind a Caddy container
+# that terminates TLS.
 #
-# The workflow uploads this file, nginx.conf and a release directory, then
-# switches the `current` symlink; see docs/EXPLORER_DEPLOYMENT.md.
+# Both proxies exist because the node sends no CORS headers: a page served from
+# one origin cannot read /v1 on another, and `#/play` signs payloads for both.
+# Keeping the relay behind /relay as well means the browser needs neither a
+# public 8646 nor `--origin` on the relay.
+#
+# The workflow uploads this file, nginx.conf, Caddyfile and a release directory,
+# then switches the `current` symlink; see docs/EXPLORER_DEPLOYMENT.md.
 #
 #   docker compose up -d
 #
-# `network_mode: host` is what lets nginx reach the node and relay through the
-# loopback ports that docker-compose.yml already publishes (8645, 8646), so no
-# Docker network has to be shared with the chain's stack and 8646 can stay
-# firewalled off from browsers.
+# `network_mode: host` is what lets the two containers talk over loopback and
+# reach the node and relay through the ports that docker-compose.yml already
+# publishes (8645, 8646), so no Docker network has to be shared with the chain's
+# stack and 8646 can stay firewalled off from browsers.
 name: sccp-explorer
 
 services:
+  # The origin. It listens on loopback only: everything public arrives through
+  # Caddy below, so there is exactly one place that owns :80/:443.
   explorer:
     image: nginx:1.27-alpine
     network_mode: host
@@ -24,9 +31,32 @@ services:
       # release that existed when the container started.
       - ./www:/srv:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/index.html"]
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/index.html"]
       interval: 30s
       timeout: 3s
       retries: 3
       start_period: 5s
     restart: unless-stopped
+
+  # The public face. It also holds the certificate, so `caddy_data` is the one
+  # volume worth keeping: re-issuing on every deploy would burn Let's Encrypt's
+  # rate limit.
+  tls:
+    image: caddy:2-alpine
+    network_mode: host
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:
+

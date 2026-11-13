@@ -38,8 +38,9 @@ for anything of value. The deploy workflow connects to the same name over SSH
 
 The browser client is a second, independent deploy:
 [`deploy-explorer.yml`](../.github/workflows/deploy-explorer.yml) publishes
-`src/web/dist` at `http://explorer.somecryptochessproject.com`, on the same VM,
-behind an nginx proxy that puts `/v1` and `/relay` on the page's own origin.
+`src/web/dist` at `https://explorer.somecryptochessproject.com`, on the same VM,
+behind Caddy (TLS) and an nginx proxy that puts `/v1` and `/relay` on the page's
+own origin.
 This document covers the chain; the page is in
 [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md).
 
