@@ -180,6 +180,13 @@ rules, its DNS record and its rollback are in
 Routing lives in the hash, so the bundle works from any static path with no
 server-side rewrite rule.
 
+The tab icon is [`public/favicon.svg`](public/favicon.svg): the four centre
+squares of the `#/play` board (d4, d5, e4, e5) cropped into a circle, in that
+board's own `squareLight`/`squareDark` colours. Vite copies `public/` into
+`dist/` untouched and `base: "./"` rewrites the `index.html` link to
+`./favicon.svg`, so the one build serves the icon from `/` (node `--web`) and
+from a subdirectory on a static host.
+
 ## The table is a miner seat
 
 `#/play` is not a demo board. The key it holds goes through the same four steps a

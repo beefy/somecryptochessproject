@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    The explorer's tab icon: the four centre squares of the board on `#/play`
+    (d4, d5, e4, e5) cropped into a circle.
+
+    A board is light on the diagonal, so the 2x2 from d5 across to e4 alternates
+    light/dark top-left first, the same pattern Play.tsx draws from
+    `(row + column) % 2`. The two colours are copied from `styles.squareLight`
+    and `styles.squareDark` there, so the icon matches the table rather than
+    approximating it.
+
+    Each square is half of the 64-unit viewBox, which puts the board's own grid
+    lines exactly on the axes: clipping to r=32 cuts the outer corners off all
+    four squares and leaves a disc that still reads as a checkerboard at 16px.
+    The hairline ring stays inside the clip edge so the light half has an edge
+    against a light browser chrome; the dark half needs none.
+  -->
+  <title>SCCP explorer</title>
+  <defs>
+    <clipPath id="board-disc">
+      <circle cx="32" cy="32" r="32" />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#board-disc)">
+    <rect width="64" height="64" fill="#e9e2d0" />
+    <rect x="32" width="32" height="32" fill="#7d6a54" />
+    <rect y="32" width="32" height="32" fill="#7d6a54" />
+  </g>
+  <circle cx="32" cy="32" r="31.25" fill="none" stroke="#2b2118" stroke-opacity="0.28" stroke-width="1.5" />
+</svg>
