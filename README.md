@@ -270,10 +270,12 @@ responsibility rather than a construction phase.
 ├── docker-compose.yml            # node + relay + bootstrap + 2 Stockfish miners
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13); web (22, 24)
 ├── .github/workflows/deploy-testnet-miners.yml  # image + hosted testnet deploy
+├── .github/workflows/deploy-explorer.yml        # hosted explorer (explorer.*)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
 │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
 │   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
+│   ├── EXPLORER_DEPLOYMENT.md    # publish the explorer: proxy, DNS, rollback
 │   ├── GCP_RESOURCE_SETUP.md     # project, VM, firewall and deploy wiring
 │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
@@ -288,6 +290,7 @@ responsibility rather than a construction phase.
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
 ├── deploy/
 │   ├── README.md                 # what the compose stack does and does not do
+│   ├── explorer/                 # the hosted page's nginx origin + compose file
 │   └── init_testnet_stack.py     # deterministic stack keys + relay config
 ├── genesis/{devnet,testnet,mainnet}.json
 ├── scripts/
@@ -464,6 +467,11 @@ To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
 deployment is published at
 `http://testnet.somecryptochessproject.com:8645`; the workflow connects to the
 same name over SSH (`sccp@testnet.somecryptochessproject.com`).
+
+The explorer has its own deploy and its own name:
+`http://explorer.somecryptochessproject.com` serves the built bundle with `/v1`
+and `/relay` proxied onto that origin, because the node sends no CORS headers. See
+[`docs/EXPLORER_DEPLOYMENT.md`](docs/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws
 for the match and hands you the position after it, so the script opens by

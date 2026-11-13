@@ -127,14 +127,21 @@ Two things to know before doing that:
   Without that flag the relay answers no preflights at all, which keeps a
   relay-only deployment from advertising itself to browsers.
 
-The hosted testnet (`http://testnet.somecryptochessproject.com:8645`) answers
-`/v1` and nothing else: `http://…:8645/` is a `{"detail":"Not Found"}`, because
-that node was deployed without `dist/` behind `--web`. Point a local dev server
-or a build at it instead of expecting a page there:
+The hosted chain (`http://testnet.somecryptochessproject.com:8645`) answers `/v1`
+and nothing else: `http://…:8645/` is a `{"detail":"Not Found"}`, because that
+node was deployed without `dist/` behind `--web`. Point a local dev server at it
+instead of expecting a page there:
 
 ```bash
 SCCP_NODE=http://testnet.somecryptochessproject.com:8645 npm run dev
 ```
+
+The published page lives on an origin of its own,
+`http://explorer.somecryptochessproject.com`, where nginx serves the bundle and
+proxies `/v1` and `/relay`. That is the shape a hosted build always needs: the
+API on the page's own origin, the relay on a path of it. The deploy, its firewall
+rule, its DNS record and its rollback are in
+[`docs/EXPLORER_DEPLOYMENT.md`](../../docs/EXPLORER_DEPLOYMENT.md).
 
 ## Scripts
 
@@ -152,6 +159,7 @@ SCCP_NODE=http://testnet.somecryptochessproject.com:8645 npm run dev
 | --- | --- | --- | --- |
 | `SCCP_NODE` | `npm run dev`, `npm run preview` | `http://127.0.0.1:8645` | proxy target for `/v1` |
 | `VITE_SCCP_API` | the bundle, at build time | empty (same origin) | absolute API base |
+| `VITE_SCCP_RELAY` | the bundle, at build time | `http://127.0.0.1:8646` | relay base for `#/play`; a path such as `/relay` means "same origin, proxied" |
 | `SCCP_WEB_DIST` | `sccp node run --web` | `src/web/dist` | directory to mount |
 
 ## Routes
@@ -314,7 +322,10 @@ src/
   funded from the page.
 - **"cannot reach the relay at http://127.0.0.1:8646"** — `#/play` talks to the
   relay directly. Start it (`sccp matchmaker run`), pass it an `--origin` that
-  matches this page, and rebuild with `VITE_SCCP_RELAY` if it lives elsewhere.
+  matches this page, and rebuild with `VITE_SCCP_RELAY` if it lives elsewhere. A
+  hosted build prints the URL it resolved: `VITE_SCCP_RELAY=/relay` means the page
+  calls `/relay` on its own origin, so the proxy has to answer, not the relay's
+  port.
 - **"no session lists this seat yet"** — the relay has no session for this
   address. Check that the seat is on the *current* epoch's roster (the page shows
   the roster size), that its availability was revealed in epoch `E - 1`, and that

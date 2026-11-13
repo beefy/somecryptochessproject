@@ -9,6 +9,20 @@ not itemised here.
 
 ### Added
 
+- `.github/workflows/deploy-explorer.yml`: on every merge that touches `src/web`
+  or `deploy/explorer`, build the bundle and publish it to
+  `explorer.somecryptochessproject.com` over SSH, as a release directory behind a
+  `current` symlink. The deploy never touches the chain.
+- `deploy/explorer/`: the nginx origin that serves the release and proxies `/v1`
+  to the node and `/relay` to the matchmaker. Same-origin paths are what make a
+  hosted page work at all -- the node sends no CORS headers -- and the relay
+  proxy means `#/play` needs neither a public `8646` nor `--origin`.
+- `docs/EXPLORER_DEPLOYMENT.md`: what the deploy does, the GCP firewall rule and
+  `A` record it needs, the GitHub variables (all falling back to `TESTNET_*`),
+  TLS options, rollback and a troubleshooting table.
+- `VITE_SCCP_RELAY` may now be a path (`/relay`): `#/play` resolves it against
+  the page (`relayPublicUrl`) so a relative base still prints a URL a reader can
+  open. `src/web/src/lib/relay.test.ts` pins the resolution.
 - `src/web/README.md`: how to build the explorer, serve it from `sccp node run
   --web`, develop against a node with the Vite proxy, set `SCCP_NODE`,
   `VITE_SCCP_API` and `SCCP_WEB_DIST`, and what to check when a page comes up

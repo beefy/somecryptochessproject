@@ -23,6 +23,27 @@ export const RELAY_BASE: string = (
   import.meta.env.VITE_SCCP_RELAY ?? "http://127.0.0.1:8646"
 ).replace(/\/+$/, "");
 
+/**
+ * `RELAY_BASE` as a browser sees it.
+ *
+ * A hosted build proxies the relay under a path of its own origin
+ * (`VITE_SCCP_RELAY=/relay`), and "/relay" is not an address anyone can check;
+ * resolve it against the page so labels and errors name a real URL. `page`
+ * defaults to this document, and without one the base is returned unchanged.
+ */
+export function relayPublicUrl(base: string = RELAY_BASE, page?: string): string {
+  let at = page;
+  if (at === undefined) {
+    if (typeof window === "undefined") return base;
+    at = window.location.href;
+  }
+  try {
+    return new URL(base, at).href.replace(/\/+$/, "");
+  } catch {
+    return base;
+  }
+}
+
 /** A relay call failed; `status` is the HTTP status, or 0 for a transport error. */
 export class RelayError extends Error {
   override name = "RelayError";
@@ -73,7 +94,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") throw error;
-    throw new RelayError(`cannot reach the relay at ${RELAY_BASE}`, 0);
+    throw new RelayError(`cannot reach the relay at ${relayPublicUrl()}`, 0);
   }
   const payload = await response.json().catch(() => undefined);
   if (!response.ok) throw new RelayError(describeFailure(payload, response.status), response.status);

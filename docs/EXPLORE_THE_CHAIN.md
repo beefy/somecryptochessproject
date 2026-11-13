@@ -37,12 +37,18 @@ SCCP_NODE=http://127.0.0.1:8645 npm run dev   # http://localhost:5173
 ```
 
 The dev server proxies `/v1` to `SCCP_NODE` (default `http://127.0.0.1:8645`).
-`VITE_SCCP_API` overrides both, which is what a hosted static build uses to point
-at a remote node:
+`VITE_SCCP_API` sets the API base in a build and `VITE_SCCP_RELAY` sets where
+`#/play` looks for the relay; both are baked in at build time:
 
 ```bash
-VITE_SCCP_API=https://testnet.example.com npm run build
+VITE_SCCP_API="" VITE_SCCP_RELAY=/relay npm run build
 ```
+
+An empty API base and a relative relay path are what a hosted build uses, because
+the node sends no CORS headers: `/v1` and `/relay` have to be paths on the origin
+that served the page, which means a reverse proxy in front of the same host. The
+deploy that does exactly this is
+[`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md).
 
 ## What the pages show
 

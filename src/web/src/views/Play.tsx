@@ -58,11 +58,10 @@ import {
 import { movePayload, resultPayload } from "../lib/protocol";
 import { buildWinProof, webQualitySummary } from "../lib/proof";
 import {
-  RELAY_BASE,
-  RelayError,
   relayJoin,
   relayMatches,
   relayMove,
+  relayPublicUrl,
   relayResign,
   relaySignResult,
   relayStatus,
@@ -745,7 +744,7 @@ function Table({
         <>
           <Section title="Two networks" subtitle={`node ${network ?? "?"} · relay ${relayNetwork}`}>
             <Text variant="bodyMedium" style={styles.muted}>
-              {`The node serving this page is on ${network}, but the relay at ${RELAY_BASE} is on ${relayNetwork}. Every payload this page signs names one network, so a seat on ${network} cannot be paired or certified by a ${relayNetwork} relay. Point both at one chain: restart the relay with --network ${network} and --node ${window.location.origin}, or rebuild the page with VITE_SCCP_RELAY pointing at a relay that follows this node.`}
+              {`The node serving this page is on ${network}, but the relay at ${relayPublicUrl()} is on ${relayNetwork}. Every payload this page signs names one network, so a seat on ${network} cannot be paired or certified by a ${relayNetwork} relay. Point both at one chain: restart the relay with --network ${network} and --node ${window.location.origin}, or rebuild the page with VITE_SCCP_RELAY pointing at a relay that follows this node.`}
             </Text>
           </Section>
           <Divider />
@@ -839,7 +838,7 @@ function Table({
       {relay.error !== undefined && (
         <>
           <Divider />
-          <Section title="Relay" subtitle={RELAY_BASE}>
+          <Section title="Relay" subtitle={relayPublicUrl()}>
             <FailureNotice error={relay.error} />
             <Text variant="bodySmall" style={styles.muted}>
               {`The relay is a separate service. A deployment starts it next to the node with \`sccp matchmaker run --config relay.json --node ${window.location.origin} --origin ${window.location.origin}\`, and a static build points at it with VITE_SCCP_RELAY.`}
