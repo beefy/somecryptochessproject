@@ -14,10 +14,15 @@ not itemised here.
   serve the leaderboard, a fixed 100-point distribution and each miner's history.
   The rating is not consensus state and has no submit route: no block field,
   transaction or API call accepts one, so a miner can only move it by settling a
-  verified game (`sccp/ratings.py`, `node/service.py`). The explorer gains an
-  **Elo** page (top 10 plus distribution) and a miner page
-  (`#/miners/{address}`) whose SVG line chart plots rating per epoch; block and
-  game rows now link a miner to that page instead of the bare account.
+  verified game (`sccp/ratings.py`, `node/service.py`). The one-period arithmetic
+  is the pinned `glicko2` package (2.1.x, MIT); the replay, the epoch boundary and
+  the prior stay in `sccp/ratings.py`, so a dependency bump moves a displayed
+  number, never a block. A regression test covers the extreme upset (a 2200
+  player losing to an 840 one) that used to drive a hand-rolled volatility search
+  to a meaningless root. The explorer gains an **Elo** page (top 10 plus
+  distribution) and a miner page (`#/miners/{address}`) whose SVG line chart
+  plots rating per epoch; block and game rows now link a miner to that page
+  instead of the bare account.
 - `GET /v1/games/{game_hash}/pgn`: the move text a settlement proof carries, so
   a game page can print the PGN on a node that never cached the match's
   transcript. The moves live in the proof body inside its block, which is what

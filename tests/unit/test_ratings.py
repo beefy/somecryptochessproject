@@ -1,6 +1,7 @@
 """Derived Glicko-2 ratings (PROTOCOL.md section 14.4).
 
-Two layers are covered here: the published Glicko-2 arithmetic, and the ledger
+Two layers are covered here: the one-period update — delegated to the pinned
+`glicko2` package and checked against the paper's worked example — and the ledger
 that replays settled proofs off a real chain. The ledger tests use the same
 fixtures as the block tests, so a proof that verifies also rates.
 """
@@ -63,6 +64,31 @@ def test_glicko2_reproduces_the_papers_worked_example() -> None:
     assert updated.rating == pytest.approx(1464.06, abs=0.02)
     assert updated.deviation == pytest.approx(151.52, abs=0.02)
     assert updated.volatility == pytest.approx(0.05999, abs=1e-5)
+
+
+def test_a_heavy_upset_stays_on_the_scale() -> None:
+    """A lone loss to a far weaker opponent must not blow the update up.
+
+    Glicko-2's volatility search gets flat when the surprise is extreme (a 2200
+    player losing to an 840 one). A hand-rolled bracket once returned a
+    volatility near 1139 and a rating near -195676 for this input; the pinned
+    reference package keeps it bounded.
+    """
+    updated = update_rating(
+        Rating(2197.2591089542266, 339.59450792396785, 0.048287426485310675),
+        [(Rating(836.1669930, 168.1135337), 0.0)],
+    )
+    assert 1000.0 < updated.rating < 2197.2591089542266
+    assert 0.0 < updated.deviation < 700.0
+    assert 0.0 < updated.volatility < 0.2
+
+
+def test_tau_reaches_the_reference_update() -> None:
+    """The system constant is passed through, not silently left at the default."""
+    games = [(Rating(1600.0, 60.0), 0.0)]
+    calm = update_rating(Rating(2100.0, 60.0, 0.05), games, tau=0.3)
+    jumpy = update_rating(Rating(2100.0, 60.0, 0.05), games, tau=1.2)
+    assert jumpy.volatility > calm.volatility
 
 
 def test_a_win_lifts_the_winner_and_lowers_the_loser() -> None:

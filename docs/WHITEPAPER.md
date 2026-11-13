@@ -1089,6 +1089,8 @@ per epoch, both seats rated, a 1500/350/0.06 prior, inactivity widening the
 deviation — and serves the outcome at `/v1/ratings`. The rating is not in a
 header, not in a transaction and not in `state_root`: a miner cannot announce
 one, and every node at the same tip replays the same blocks into the same table.
+The one-period arithmetic is the pinned `glicko2` package; the replay, the epoch
+boundary and the prior are the node's.
 
 That placement is the security argument as much as a convenience. A rating is
 only as meaningful as the games under it: a legal, co-signed game that nobody
@@ -1716,7 +1718,9 @@ sccp --version
 ```
 
 The project pins `python-chess` deliberately. Upgrading it can change PGN
-semantics and therefore consensus behaviour.
+semantics and therefore consensus behaviour. It also pins `glicko2`, the
+one-period rating update; upgrading that changes displayed ratings, never
+consensus.
 
 ### 18.2 Create a wallet
 
@@ -1981,6 +1985,8 @@ the engine-marked tests.
 - **UCI** — Universal Chess Interface, the engine protocol.
 - **PGN** — Portable Game Notation, the transcript text format.
 - **python-chess** — board state, move generation, PGN and UCI support.
+- **glicko2** — the Glicko-2 one-period rating update behind the derived Elo view
+  (MIT).
 - **drand quicknet** — BLS12-381 randomness beacon, supported as an optional
   mix-in; a pinned verifier is still outstanding.
 

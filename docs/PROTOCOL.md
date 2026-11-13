@@ -936,6 +936,20 @@ out a period keeps its rating and its deviation grows by `sigma^2` per period,
 which is why an idle miner's rating becomes visibly wider on its page. A rating
 is marked `provisional` until it has 10 settled games.
 
+The arithmetic for one period is delegated to the pinned `glicko2` package (an
+MIT-licensed reference implementation of the paper). `sccp/ratings.py` owns
+everything the paper does not: the replay in block order, the epoch boundary,
+the prior, the duplicate-opponent averaging, validation and the presentation. A
+library upgrade can therefore move a number on the explorer; it cannot move a
+block, and it is a deliberate dependency bump rather than an incidental one.
+
+The package is the reference, with one known quirk: its volatility objective
+squares the pre-period rating (`mu^2`) where the paper squares the pre-period
+deviation (`phi^2`). It reproduces the paper's worked example, but results for
+ratings far from 1500 can differ slightly from a literal transcription. A node
+follows this package, and since the value is derived, that difference is a
+display detail rather than a consensus one; `sccp/ratings.py` records it.
+
 The distribution is a fixed histogram: `<1000`, 100-wide bands from 1000 to
 1999, then `>=2000`. It always covers every rated miner, even when `?limit=`
 truncates the leaderboard; fixed bounds keep two polls and two networks

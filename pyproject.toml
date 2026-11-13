@@ -27,6 +27,10 @@ classifiers = [
 # PGN semantics.
 dependencies = [
   "python-chess>=1.11,<2",
+  # The Glicko-2 one-period update (docs/PROTOCOL.md section 14.4). Ratings are
+  # a derived view, never consensus state, but the arithmetic is still pinned:
+  # an upgrade can move displayed numbers, so it should be a deliberate change.
+  "glicko2>=2.1,<3",
   "cryptography>=50,<51",
   "bech32>=1.2,<2",
   "mnemonic>=0.21,<1",

@@ -582,10 +582,10 @@ python scripts/fetch_engine.py --engine stockfish-19 --dest ./bin
 pytest -m engine tests/integration          # or SCCP_STOCKFISH=/path/to/stockfish
 ```
 
-Requirements: Python 3.11+ (developed against 3.13), `python-chess`, `pydantic`,
-`fastapi`, `uvicorn`, `httpx`, `typer`, `cryptography`, `bech32`, `mnemonic`,
-`rich`, with `pytest`, `pytest-asyncio`, `hypothesis`, `ruff` and `mypy` for
-development. Real-engine tests need a Stockfish binary; see
+Requirements: Python 3.11+ (developed against 3.13), `python-chess`, `glicko2`,
+`pydantic`, `fastapi`, `uvicorn`, `httpx`, `typer`, `cryptography`, `bech32`,
+`mnemonic`, `rich`, with `pytest`, `pytest-asyncio`, `hypothesis`, `ruff` and
+`mypy` for development. Real-engine tests need a Stockfish binary; see
 `scripts/fetch_engine.py`.
 
 ### Chess core

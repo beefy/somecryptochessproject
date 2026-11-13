@@ -17,10 +17,16 @@ The algorithm is Mark Glickman's Glicko-2 with one rating period per epoch:
 * an inactive miner's deviation grows (``phi^2 += sigma^2`` per period) while the
   rating itself does not move.
 
+The single-period arithmetic is **not** reimplemented here: ``update_rating``
+calls the ``glicko2`` package (the pinned reference implementation declared in
+``pyproject.toml``), which reproduces the paper's worked example in the tests.
+The replay, the epoch boundary, the prior, the duplicate-opponent averaging and
+the validation are ours. Ratings are a view, so a library upgrade can move a
+number on the explorer, never a block.
+
 Floating point is intentional: this is a read-only view, never part of
 ``state_root``, so two nodes that disagree in the last bit of a ``float`` disagree
-about a label, not about a block. The arithmetic below is the paper's, with the
-paper's own constants, and reproduces the paper's worked example in the tests.
+about a label, not about a block.
 """
 
 from __future__ import annotations
@@ -29,6 +35,8 @@ import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
+
+from glicko2 import Player  # type: ignore[import-untyped]
 
 if TYPE_CHECKING:  # pragma: no cover - import-cycle hygiene, not runtime behaviour
     from sccp.chain.chain import Chain
@@ -47,9 +55,6 @@ DEFAULT_VOLATILITY: Final = 0.06
 
 TAU: Final = 0.5
 """System constant: how much volatility may move in one period (0.3-1.2 is sane)."""
-
-CONVERGENCE: Final = 1e-6
-"""Tolerance for the Illinois root search on volatility."""
 
 PROVISIONAL_GAMES: Final = 10
 """Below this many settled games a rating is flagged provisional."""
@@ -79,59 +84,6 @@ class Rating:
             raise ValueError("rating volatility must be positive")
 
 
-def _g(deviation: float) -> float:
-    """``g(phi)``: how much a game against this deviation can move a rating."""
-    return 1.0 / math.sqrt(1.0 + 3.0 * deviation * deviation / (math.pi * math.pi))
-
-
-def _expected(mu: float, opponent_mu: float, g: float) -> float:
-    """``E``: the expected score, ``1 / (1 + 10^(-g * (mu - mu_j) / 400))``.
-
-    ``mu`` is already in the paper's internal scale, where ``400 / ln(10)``
-    cancels, so the exponent is simply ``-g * (mu - mu_j)``.
-    """
-    return 1.0 / (1.0 + math.exp(-g * (mu - opponent_mu)))
-
-
-def _solve_volatility(
-    phi: float,
-    sigma: float,
-    v: float,
-    delta: float,
-    *,
-    tau: float,
-    convergence: float,
-) -> float:
-    """Step 5 of the paper: the new volatility from the Illinois algorithm."""
-
-    def f(x: float) -> float:
-        ex = math.exp(x)
-        numerator = ex * (delta * delta - phi * phi - v - ex)
-        denominator = 2.0 * (phi * phi + v + ex) ** 2
-        return numerator / denominator - (x - a) / tau
-
-    a = math.log(sigma * sigma)
-    if delta * delta > phi * phi + v:
-        b = math.log(delta * delta - phi * phi - v)
-    else:
-        k = 1.0
-        while f(a - k * tau) < 0.0:
-            k += 1.0
-        b = a - k * tau
-
-    f_a = f(a)
-    f_b = f(b)
-    while abs(b - a) > convergence:
-        c = a + (a - b) * f_a / (f_b - f_a)
-        f_c = f(c)
-        if f_c * f_b <= 0.0:
-            a, f_a = b, f_b
-        else:
-            f_a /= 2.0
-        b, f_b = c, f_c
-    return math.exp(a / 2.0)
-
-
 def inflate(rating: Rating, periods: int) -> Rating:
     """Grow the deviation over ``periods`` of inactivity (step 1, repeated)."""
     if periods < 0:
@@ -148,48 +100,40 @@ def update_rating(
     games: Sequence[tuple[Rating, float]],
     *,
     tau: float = TAU,
-    convergence: float = CONVERGENCE,
 ) -> Rating:
     """Apply one rating period to ``current``.
 
     ``games`` pairs each opponent's pre-period rating with the score against it
     (1.0 win, 0.5 draw, 0.0 loss). Averaging duplicate opponents is the caller's
-    job; this is the paper's single-pass update. With no games the rating is
-    unchanged and only its deviation grows.
+    job; this is the paper's single-pass update, delegated to the pinned
+    ``glicko2`` package. With no games the rating is unchanged and only its
+    deviation grows (``inflate``), which is the rule the package calls
+    ``did_not_compete``.
+
+    One quirk comes with the package: its volatility objective squares the
+    pre-period rating (``mu^2``) where the paper squares the pre-period deviation
+    (``phi^2``). It still reproduces the paper's worked example, but results for
+    ratings far from 1500 differ slightly from a literal transcription. The
+    package is the reference this node reproduces; it is a display value either
+    way.
     """
     if not games:
         return inflate(current, 1)
     if tau <= 0.0:
         raise ValueError("tau must be positive")
-
-    mu = (current.rating - DEFAULT_RATING) / RATING_SCALE
-    phi = current.deviation / RATING_SCALE
-    information = 0.0
-    improvement = 0.0
-    for opponent, score in games:
+    for _, score in games:
         if not 0.0 <= score <= 1.0:
             raise ValueError(f"a game score must be between 0 and 1, got {score}")
-        opponent_mu = (opponent.rating - DEFAULT_RATING) / RATING_SCALE
-        g = _g(opponent.deviation / RATING_SCALE)
-        expected = _expected(mu, opponent_mu, g)
-        information += g * g * expected * (1.0 - expected)
-        improvement += g * (score - expected)
-    if information <= 0.0:  # pragma: no cover - E is strictly inside (0, 1)
-        raise ValueError("a rating period needs at least one informative game")
 
-    v = 1.0 / information
-    delta = v * improvement
-    volatility = _solve_volatility(
-        phi, current.volatility, v, delta, tau=tau, convergence=convergence
+    player = Player(current.rating, current.deviation, current.volatility)
+    # The package keeps tau as a class attribute; there is no constructor argument.
+    player._tau = tau
+    player.update_player(
+        [opponent.rating for opponent, _ in games],
+        [opponent.deviation for opponent, _ in games],
+        [score for _, score in games],
     )
-    phi_star = math.sqrt(phi * phi + volatility * volatility)
-    new_phi = 1.0 / math.sqrt(1.0 / (phi_star * phi_star) + 1.0 / v)
-    new_mu = mu + new_phi * new_phi * improvement
-    return Rating(
-        new_mu * RATING_SCALE + DEFAULT_RATING,
-        new_phi * RATING_SCALE,
-        volatility,
-    )
+    return Rating(float(player.rating), float(player.rd), float(player.vol))
 
 
 @dataclass(frozen=True, slots=True)
@@ -522,7 +466,6 @@ def rating_median(values: Sequence[float]) -> float:
 
 
 __all__ = [
-    "CONVERGENCE",
     "DEFAULT_DEVIATION",
     "DEFAULT_RATING",
     "DEFAULT_VOLATILITY",
