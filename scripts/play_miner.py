@@ -29,19 +29,29 @@ Three modes:
     a verified ``TimeoutClaim``.
 
 ``python scripts/play_miner.py --on-chain``
-    **On-chain.** Builds or resumes a local devnet chain in ``--chain-dir``
-    (default ``./data-play``), funds and registers your seat and three opponent
-    miners, opens the current epoch and then seats you through the same relay
-    API. A second run resumes the same chain at its next epoch; ``--fresh``
-    discards it, and ``--games N`` plays several games in one sitting. When the
-    game ends it co-signs the result, turns the relay transcript into a
-    ``WinProof`` and mines that proof into a block with the production block
-    builder. The chain is written to SQLite, so ``sccp --data-dir ./data-play
-    node run --network devnet`` can serve it and ``scripts/export_block_games.py``
-    can export the game. A draw, a time forfeit (there is no claim-transaction
-    path in this demo yet) or a game shorter than devnet's 20-ply minimum
-    produces no block. A loss is still decisive: the winner's proof is mined,
-    whichever seat won.
+    **On-chain.** Builds or resumes a local chain in ``--chain-dir`` (default
+    ``./data-play``) on ``--network`` (devnet, the default, or testnet), funds
+    and registers your seat and the opponent miners, opens the current epoch and
+    then seats you through the same relay API. A second run resumes the same
+    chain at its next epoch; ``--fresh`` discards it, and ``--games N`` plays
+    several games in one sitting. When the game ends it co-signs the result,
+    turns the relay transcript into a ``WinProof`` and mines that proof into a
+    block with the production block builder. The chain is written to SQLite, so
+    ``sccp --data-dir ./data-play node run --network devnet`` (or ``testnet``)
+    can serve it and ``scripts/export_block_games.py`` can export the game. A
+    draw, a time forfeit (there is no claim-transaction path in this demo yet)
+    or a game shorter than the network's 20-ply minimum produces no block. A
+    loss is still decisive: the winner's proof is mined, whichever seat won.
+
+    The two networks differ in shape, not in protocol. Devnet's epochs are one
+    block long and it seats four miners, so the block carrying the proof also
+    carries every availability commitment and reveal the *next* epoch needs —
+    ``--games N`` is N blocks. Testnet's are five blocks long with
+    :data:`TESTNET_OPPONENTS` opponent, exactly the stack
+    ``deploy/bootstrap_testnet_stack.py`` publishes. A proof may only be mined
+    once its epoch has ended (PROTOCOL.md 12.2), so a testnet game also mines out
+    the rest of its own epoch, one commitment or reveal per block, and settles in
+    the block that opens the next one: 20, 25, 30. One game per five blocks.
 
 ``python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key``
     **Attached.** The same human seat, pointed at a relay that is already
@@ -84,7 +94,7 @@ from typing import Final, cast
 import chess
 import httpx
 
-from sccp.chain.state import EpochRecord
+from sccp.chain.state import EpochRecord, State, epoch_end_height
 from sccp.chain.storage import Storage
 from sccp.chess.engines import MOCK_VERSION, Engine, open_engine
 from sccp.chess.openings import book_for
@@ -93,9 +103,10 @@ from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, keypair_from_seed, sign_domain
 from sccp.crypto.wallet import load_wallet, read_passphrase_file
 from sccp.devnet import (
-    GENESIS_EPOCH,
     DevnetMiner,
     _bootstrap,
+    _bootstrap_testnet,
+    _mine_heartbeat,
     _mine_pending,
     _relay_for_epoch,
     _submit_epoch_txs,
@@ -120,6 +131,7 @@ from sccp.protocol.models import (
     MoveMessage,
     TimeControl,
     Transcript,
+    WinProof,
 )
 from sccp.protocol.pairing import RosterEntry
 from sccp.protocol.pairing import pair as pair_miners
@@ -200,7 +212,30 @@ CHAIN_META_VERSION: Final = 1
 """Version of :data:`CHAIN_META_NAME`; unknown versions are ignored."""
 
 CHAIN_NETWORK: Final = "devnet"
-"""``--on-chain`` is devnet-only: its one-block epochs and zero seal are deterministic."""
+"""The network ``--on-chain`` builds when ``--network`` is not given."""
+
+CHAIN_NETWORKS: Final = ("devnet", "testnet")
+"""Networks ``--on-chain`` can bootstrap in process.
+
+Both park the tip in epoch 3 with a roster that already revealed for epoch 4,
+so the first game is one block away from a proof. ``mainnet`` is not here: it
+needs a published genesis, sealed blocks a single machine cannot mine and a
+relay this demo does not run -- attach to one with ``--relay`` and ``--key``.
+"""
+
+TESTNET_OPPONENTS: Final = 1
+"""How many engine opponents a testnet chain seats besides you.
+
+A testnet block above the bootstrap window carries a single transaction and an
+epoch is five blocks long, so one epoch has to fit both seats' availability
+commitments, both reveals and the block that mines the proof. Two miners is
+exactly the stack ``deploy/bootstrap_testnet_stack.py`` publishes. Devnet has
+one-block epochs that flush the whole pool into the proof's block, so it seats
+every key in :data:`CHAIN_OPPONENT_SEEDS`.
+"""
+
+MAX_ADVANCE_BLOCKS: Final = 100
+"""Heartbeat blocks a chain may mine to reach an epoch no game has used yet."""
 
 MAX_SETTLE_STEPS: Final = 20
 """How many engine polls to spend waiting for the other seat's result signature."""
@@ -213,7 +248,8 @@ examples:
   python scripts/play_miner.py                          # solo, you are white
   python scripts/play_miner.py --color black            # solo, you are black
   python scripts/play_miner.py --on-chain               # play a devnet game, mine the proof
-  python scripts/play_miner.py --on-chain --games 3     # three games, three blocks
+  python scripts/play_miner.py --on-chain --network testnet   # same game on testnet parameters
+  python scripts/play_miner.py --on-chain --games 3     # three games, three blocks (devnet)
   python scripts/play_miner.py --on-chain --chain-dir ./data-play
   python scripts/play_miner.py --on-chain --fresh       # discard that chain and bootstrap
   python scripts/play_miner.py --engine stockfish-19 --engine-path ./bin/stockfish-19
@@ -448,17 +484,19 @@ class SoloTable:
         if result.plies < minimum:
             self.settlement = ChainSettlement(
                 False,
-                f"{result.plies} plies is below devnet's {minimum}-ply proof minimum",
+                f"{result.plies} plies is below {self.chain.params.network_id}'s "
+                f"{minimum}-ply proof minimum",
             )
             return self.settlement
         try:
-            self._prepare_next_epoch()
             signed_view = self._co_sign_result(view)
             if signed_view is None:
                 self.settlement = ChainSettlement(False, self._missing_signature_reason())
                 return self.settlement
             transcript = self.seat.transcript()
             proof = proof_from_transcript(transcript, params=self.chain.params)
+            self._prepare_next_epoch()
+            self._open_claim_window(proof)
             if proof.proof_id not in self.chain.mempool.proofs:
                 self.chain.announce_proof(proof)
             if not _mine_pending(self.chain, self.keypairs, self.mined):
@@ -518,11 +556,39 @@ class SoloTable:
         height ``e + 1``, so the next game needs epoch ``e + 1`` to be matchable
         by then. The block that carries this game's proof also carries those
         transactions, which is what lets a resumed chain host another game.
+
+        A testnet block carries one transaction, so the same transactions are
+        spread over the blocks of the epoch the proof opens -- see
+        :meth:`_open_claim_window`.
         """
         if self.prepared or self.chain is None or not self.participants:
             return
         _submit_epoch_txs(self.chain, self.participants)
         self.prepared = True
+
+    def _open_claim_window(self, proof: WinProof) -> None:
+        """Mine the rest of ``proof``'s epoch so the next block can settle it.
+
+        A proof may only be mined once its epoch has ended (PROTOCOL.md 12.2) and
+        an epoch ends with its last block, so a proof from the epoch the tip is
+        in has to wait for the miner to build the blocks that close it. On devnet
+        that is the very next block and there is nothing to do; a testnet epoch is
+        five blocks long. Those blocks are the chain's clock, not padding: each
+        one carries an availability commitment or a reveal, so the epoch the proof
+        opens lands full -- four transactions and this proof.
+        """
+        if self.chain is None or not self.participants:
+            return
+        params = self.chain.params
+        ended = epoch_end_height(proof.epoch, params)
+        for _ in range(MAX_ADVANCE_BLOCKS):
+            if self.chain.height + 1 > ended:
+                return
+            _mine_clock(self.chain, self.participants)
+        raise SystemExit(
+            f"the chain could not close epoch {proof.epoch} at height {self.chain.height}; "
+            "use --fresh to start over"
+        )
 
     def _missing_signature_reason(self) -> str:
         """Explain a co-sign failure with the opponent's own refusal, if it has one."""
@@ -594,14 +660,17 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
     parser.add_argument(
         "--network",
         metavar="ID",
-        help=f"Network id: {SOLO_NETWORK} (solo/on-chain default), testnet or mainnet.",
+        help=(
+            f"Network id: {SOLO_NETWORK} (solo/on-chain default), testnet or mainnet. "
+            "With --on-chain, devnet and testnet are bootstrapped in process."
+        ),
     )
     parser.add_argument(
         "--on-chain",
         action="store_true",
         help=(
-            "Build or resume a devnet chain and mine the finished game's proof into a "
-            "block (writes --chain-dir; --fresh discards an existing one)."
+            "Build or resume a chain on --network and mine the finished game's proof "
+            "into a block (writes --chain-dir; --fresh discards an existing one)."
         ),
     )
     parser.add_argument(
@@ -709,8 +778,11 @@ def _parse_args(argv: Sequence[str] | None) -> Options:
         parser.error("playing several games in a row needs --on-chain")
     if namespace.games > 1 and namespace.pgn_out is not None:
         parser.error("--pgn-out names one game; leave it off when --games is greater than 1")
-    if namespace.on_chain and namespace.network not in (None, CHAIN_NETWORK):
-        parser.error(f"--on-chain is devnet-only; drop --network {namespace.network}")
+    if namespace.on_chain and namespace.network not in (None, *CHAIN_NETWORKS):
+        parser.error(
+            f"--on-chain bootstraps {', '.join(CHAIN_NETWORKS)} in process; "
+            f"--network {namespace.network} needs a published stack, so drop --on-chain"
+        )
     return Options(
         relay=namespace.relay,
         key=namespace.key,
@@ -957,12 +1029,13 @@ class _HumanFingerprint:
 
 
 def _chain(options: Options) -> SoloTable:
-    """Build or resume the devnet chain, seating you in the requested colour."""
-    params = get_network(options.network or SOLO_NETWORK)
-    if params.network_id != CHAIN_NETWORK:
+    """Build or resume the ``--network`` chain, seating you in the requested colour."""
+    params = get_network(options.network or CHAIN_NETWORK)
+    if params.network_id not in CHAIN_NETWORKS:
         raise SystemExit(
-            f"--on-chain is devnet-only; got --network {params.network_id} "
-            "(devnet's one-block epochs and zero seal are what make this demo deterministic)"
+            f"--on-chain bootstraps {', '.join(CHAIN_NETWORKS)} in process; "
+            f"--network {params.network_id} needs a published stack, so attach to its "
+            "relay with --relay and --key"
         )
     data_dir = options.chain_dir or DEFAULT_CHAIN_DIR
     database = data_dir / CHAIN_DB_NAME
@@ -979,7 +1052,7 @@ def _chain(options: Options) -> SoloTable:
         seed = base if attempt == 0 else hashlib.sha256(base + attempt.to_bytes(4, "big")).digest()
         table = _chain_table(params, keypair_from_seed(seed), options)
         if options.color in ("auto", table.seat.color):
-            _write_chain_meta(data_dir, seed)
+            _write_chain_meta(data_dir, seed, params.network_id)
             return table
         table.close()
     _remove_chain(database)
@@ -1009,8 +1082,7 @@ def _resume_chain(params: NetworkParams, options: Options, data_dir: Path) -> So
                 "Pass the --seed used to create it, or use --fresh to start over."
             )
         seed, human = found
-        epoch = _next_chain_epoch(service)
-        table = _chain_table(params, human, options, service=service, epoch=epoch)
+        table = _chain_table(params, human, options, service=service)
     except BaseException:
         service.close()
         raise
@@ -1020,21 +1092,91 @@ def _resume_chain(params: NetworkParams, options: Options, data_dir: Path) -> So
             f"the next epoch of this chain does not seat you as {options.color}; "
             "use --color auto, or start a new chain with --fresh"
         )
-    _write_chain_meta(data_dir, seed)
+    _write_chain_meta(data_dir, seed, params.network_id)
     return table
 
 
-def _next_chain_epoch(service: NodeService) -> int:
-    """The epoch the next game must use: the tip's own, and it must be matchable."""
+def _next_chain_epoch(service: NodeService, participants: Sequence[DevnetMiner]) -> int:
+    """The epoch the next game uses: the tip's own, or the next one that can pair.
+
+    A fresh bootstrap parks the tip inside the first epoch no game has used, and
+    that is the epoch to play. It is the tip's epoch after a game too, on both
+    networks: a proof settles in the block that opens the *next* epoch, so a
+    finished game always leaves the tip on a boundary nobody has played yet --
+    on devnet because an epoch is a single block, on testnet because the miner
+    closes the proof's own epoch first (see
+    :meth:`SoloTable._open_claim_window`). A chain that drifted some other way
+    (an epoch whose reveals never made it on chain, say) is mined on until a
+    matchable roster nobody has used opens; those blocks are the chain's clock,
+    not padding, because each one carries an availability commitment or a reveal.
+    """
     state = service.chain.state
     epoch = state.current_epoch()
+    if _playable(state, participants, epoch):
+        return epoch
+    if service.params.epoch_length > 1:
+        return _advance_chain(service, participants)
+    raise SystemExit(
+        f"the chain tip at height {state.height} cannot pair: "
+        f"{_unplayable(state, participants, epoch)}; use --fresh to start over"
+    )
+
+
+def _playable(state: State, participants: Sequence[DevnetMiner], epoch: int) -> bool:
+    """Whether ``epoch`` can host a game between two of ``participants`` right now."""
+    return not _unplayable(state, participants, epoch)
+
+
+def _unplayable(state: State, participants: Sequence[DevnetMiner], epoch: int) -> str:
+    """Why ``epoch`` cannot host a game, or ``""`` when it can."""
     record = state.epoch_record(epoch)
-    if record is None or not record.matchable:
+    if record is None:
+        return f"epoch {epoch} has not opened yet"
+    if not record.matchable:
+        return f"epoch {epoch} has no matchable roster"
+    seats = {participant.address for participant in participants}
+    seated = seats & set(record.roster)
+    if len(seated) < 2:
+        return f"epoch {epoch} seats {len(seated)} of the {len(seats)} known miners"
+    if any(entry.epoch == epoch and set(entry.seats) & seats for entry in state.matches.values()):
+        return f"epoch {epoch} already has a settled game"
+    return ""
+
+
+def _advance_chain(service: NodeService, participants: Sequence[DevnetMiner]) -> int:
+    """Mine the chain on until an unplayed, matchable epoch opens; return its number."""
+    for _ in range(MAX_ADVANCE_BLOCKS):
+        state = service.chain.state
+        if _playable(state, participants, state.current_epoch()):
+            return state.current_epoch()
+        _mine_clock(service, participants)
+    state = service.chain.state
+    epoch = state.current_epoch()
+    raise SystemExit(
+        f"the chain stalled at height {state.height}: {_unplayable(state, participants, epoch)} "
+        f"after {MAX_ADVANCE_BLOCKS} heartbeat blocks; use --fresh to start over"
+    )
+
+
+def _mine_clock(service: NodeService, participants: Sequence[DevnetMiner]) -> None:
+    """Mine one heartbeat block, stocking the pool if it has run dry.
+
+    A block is the chain's clock: an epoch of ``epoch_length`` blocks only ends
+    once that many have been built. Above the bootstrap window a block without
+    proofs must still carry one transaction (PROTOCOL.md 12.2), and the
+    transactions a testnet epoch needs are exactly the availability commitments
+    and reveals for the epochs ahead, so "mining on" is the same work as
+    keeping the roster alive -- the pool holds four of them for four blocks.
+    """
+    miner = participants[0].keypair
+    if _mine_heartbeat(service, miner):
+        return
+    _submit_epoch_txs(service, participants)
+    if not _mine_heartbeat(service, miner):
         raise SystemExit(
-            f"the chain tip at height {state.height} has no matchable epoch {epoch} roster; "
-            "use --fresh to start a new devnet"
+            f"the chain stalled at height {service.height}: the pool has no transaction "
+            "left to mine in this epoch; use --fresh to start over"
         )
-    return epoch
 
 
 def _candidate_seeds(options: Options, meta: dict[str, object] | None) -> list[bytes]:
@@ -1090,11 +1232,11 @@ def _read_chain_meta(data_dir: Path) -> dict[str, object] | None:
     return document
 
 
-def _write_chain_meta(data_dir: Path, seed: bytes) -> None:
-    """Remember which seed to use the next time this chain is resumed."""
+def _write_chain_meta(data_dir: Path, seed: bytes, network: str = CHAIN_NETWORK) -> None:
+    """Remember which seed and network to use the next time this chain is resumed."""
     payload = {
         "version": CHAIN_META_VERSION,
-        "network": CHAIN_NETWORK,
+        "network": network,
         "human_seed": seed.hex(),
     }
     with suppress(OSError):
@@ -1122,14 +1264,18 @@ def _chain_table(
     clock_ms: Callable[[], int] = monotonic_ms,
     engine: Engine | None = None,
     service: NodeService | None = None,
-    epoch: int = GENESIS_EPOCH,
+    epoch: int | None = None,
 ) -> SoloTable:
-    """A devnet chain (fresh or resumed) plus the relay, miner and seat on top of it.
+    """A chain (fresh or resumed) plus the relay, miner and seat on top of it.
 
     This is the library path ``sccp devnet up`` uses: ``_bootstrap`` funds and
-    registers both seats, ``_relay_for_epoch`` builds the real relay for
-    ``epoch`` (beacon, pairing, receipts), and the chain is persisted in
-    ``chain.sqlite`` so ``sccp node run`` can serve it after the game.
+    registers both seats on devnet, ``_bootstrap_testnet`` does the same work
+    across the longer testnet bootstrap window, ``_relay_for_epoch`` builds the
+    real relay for ``epoch`` (beacon, pairing, receipts), and the chain is
+    persisted in ``chain.sqlite`` so ``sccp node run`` can serve it after the
+    game. ``epoch`` defaults to the next one the chain can pair in
+    (:func:`_next_chain_epoch`), which for a fresh bootstrap is the same
+    :data:`~sccp.devnet.GENESIS_EPOCH` both networks park their tip in.
     """
     engine = (
         engine
@@ -1137,7 +1283,9 @@ def _chain_table(
         else open_engine(options.engine, binary=options.engine_path, seed=options.engine_seed)
     )
     opponents = chain_opponents()
-    opponent_nonces = chain_opponent_nonces(options.seed)
+    if params.network_id != CHAIN_NETWORK:
+        opponents = opponents[:TESTNET_OPPONENTS]
+    opponent_nonces = chain_opponent_nonces(options.seed)[: len(opponents)]
     witness = keypair_from_seed(bytes.fromhex(WITNESS_SEED))
     human_address = encode_address(human.public_key_bytes, params)
     witness_address = encode_address(witness.public_key_bytes, params)
@@ -1150,9 +1298,10 @@ def _chain_table(
             keypair=human,
             engine=cast(Engine, _HumanFingerprint(HUMAN_ENGINE)),
             nonce_secret=human_nonce,
+            params=params,
         ),
         *(
-            DevnetMiner(keypair=opponent, engine=engine, nonce_secret=nonce)
+            DevnetMiner(keypair=opponent, engine=engine, nonce_secret=nonce, params=params)
             for opponent, nonce in zip(opponents, opponent_nonces, strict=True)
         ),
     )
@@ -1166,7 +1315,12 @@ def _chain_table(
     try:
         service.check_startup()
         if owns_service:
-            _bootstrap(service, participants)
+            if params.network_id == CHAIN_NETWORK:
+                _bootstrap(service, participants)
+            else:
+                _bootstrap_testnet(service, participants)
+        if epoch is None:
+            epoch = _next_chain_epoch(service, participants)
         record = service.chain.state.epoch_record(epoch)
         if record is None or record.beacon is None:  # _relay_for_epoch checks this too
             raise SystemExit(f"epoch {epoch} has no beacon to pair in")
@@ -1471,7 +1625,8 @@ class Game:
             self.out("relay    in-process, witness receipts, auto-flag on zero")
             if self.stack.chain is not None:
                 self.out(
-                    f"chain    devnet at {self.stack.chain_dir} (height {self.stack.chain.height})"
+                    f"chain    {self.stack.chain.params.network_id} at "
+                    f"{self.stack.chain_dir} (height {self.stack.chain.height})"
                 )
                 self.out("         the finished result is co-signed, proved and mined here")
                 self.out("         another run resumes this chain; --fresh resets it")
@@ -1681,7 +1836,8 @@ class Game:
                         f"network {result.network})"
                     )
                     self.out(
-                        f"node     sccp --data-dir {self.stack.chain_dir} node run --network devnet"
+                        f"node     sccp --data-dir {self.stack.chain_dir} node run "
+                        f"--network {result.network}"
                     )
                 else:
                     self.out(f"chain    not mined: {settlement.summary}")

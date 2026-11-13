@@ -21,9 +21,11 @@ from typing import Any
 import chess
 import pytest
 
+from sccp.chain.block import bootstrap_end_height
 from sccp.chess.engines import MockEngine
-from sccp.config import DEVNET
+from sccp.config import DEVNET, TESTNET
 from sccp.crypto.keys import keypair_from_seed
+from sccp.devnet import GENESIS_EPOCH
 from sccp.miner.matchmaker import ResignRequest
 from sccp.protocol.clocks import FIXED_TIME_CONTROL
 
@@ -290,13 +292,14 @@ def test_parse_args_validates_on_chain_mode(play: ModuleType) -> None:
     chain_dir = Path("other-chain")
     assert play._parse_args(["--on-chain", "--chain-dir", str(chain_dir)]).chain_dir == chain_dir
     assert play._parse_args(["--on-chain", "--color", "auto"]).color == "auto"
+    assert play._parse_args(["--on-chain", "--network", "testnet"]).network == "testnet"
 
     for argv in (
         ["--on-chain", "--relay", "http://127.0.0.1:8646"],
         ["--on-chain", "--key", "seat.key"],
         ["--on-chain", "--match", "0" * 64],
         ["--chain-dir", str(chain_dir)],
-        ["--on-chain", "--network", "testnet"],
+        ["--on-chain", "--network", "mainnet"],
     ):
         with pytest.raises(SystemExit):
             play._parse_args(argv)
@@ -341,7 +344,7 @@ def test_the_on_chain_table_bootstraps_a_devnet_chain(play: ModuleType, tmp_path
         assert table.chain is not None
         assert table.chain_dir == tmp_path / "chain"
         assert (tmp_path / "chain" / play.CHAIN_DB_NAME).exists()
-        assert table.chain.height >= play.GENESIS_EPOCH
+        assert table.chain.height >= GENESIS_EPOCH
         assert table.seat.join().status == "pending"
         for _ in range(50):
             table.step()
@@ -351,6 +354,49 @@ def test_the_on_chain_table_bootstraps_a_devnet_chain(play: ModuleType, tmp_path
         assert table.errors == []
     finally:
         table.close()
+
+
+def test_the_on_chain_table_bootstraps_a_testnet_chain(play: ModuleType, tmp_path: Path) -> None:
+    """A fresh testnet chain is the published stack: tip 19, epochs 3 and 4 pair.
+
+    The bootstrap spreads funding, registration, availability and reveals over the
+    fifteen block window a five-block epoch needs, so both networks hand the miner
+    the same thing -- a chain whose tip sits in the first epoch no game has used,
+    with the commitments the epochs ahead need already on chain.
+    """
+    chain_dir = tmp_path / "chain"
+    options = play.Options(
+        network="testnet", on_chain=True, chain_dir=chain_dir, color="auto", ascii=True
+    )
+    table = play._chain(options)
+    try:
+        assert table.chain is not None
+        assert table.chain.params.network_id == "testnet"
+        assert table.chain.params.epoch_length == 5
+        assert table.chain.height == 19
+        state = table.chain.chain.state
+        assert state.current_epoch() == 3
+        seats = {participant.address for participant in table.participants}
+        assert seats
+        record = state.epoch_record(3)
+        assert record is not None and record.matchable, "the bootstrap epoch cannot pair"
+        assert seats <= set(record.roster)
+        # Epoch 4 has not opened yet, but everything it needs is on chain; epoch 5
+        # already has its commitments, and the reveal that goes with them is one
+        # of the transactions the first game adds to the block that opens it.
+        for epoch in (4, 5):
+            assert seats <= set(state.availability.get(epoch, {})), f"epoch {epoch} commitment"
+        assert seats <= set(state.reveals.get(4, {}))
+        assert table.seat.join().status == "pending"
+        assert table.errors == []
+    finally:
+        table.close()
+    meta = play._read_chain_meta(chain_dir)
+    assert meta is not None and meta["network"] == "testnet"
+    # The sidecar remembers the network, so resuming as another one is refused
+    # instead of opening a testnet chain with devnet parameters.
+    with pytest.raises(SystemExit, match="testnet"):
+        play._chain(play.Options(on_chain=True, chain_dir=chain_dir, color="auto", ascii=True))
 
 
 def test_an_on_chain_game_mines_its_win_proof(play: ModuleType, tmp_path: Path) -> None:
@@ -500,6 +546,53 @@ def test_on_chain_resumes_the_same_chain_for_another_game(play: ModuleType, tmp_
     assert settlements[0].proof_id != settlements[1].proof_id
 
 
+def test_testnet_on_chain_plays_one_game_per_epoch(play: ModuleType, tmp_path: Path) -> None:
+    """Testnet epochs are five blocks long, so each game closes its own epoch.
+
+    The bootstrap parks the tip on the last block of epoch 3, so the first proof
+    settles in block 20 -- the block that opens epoch 4. Each resumed run plays
+    that epoch, mines the four blocks that close it with the availability
+    commitments and reveals the epochs ahead need, and settles in the block that
+    opens the next one: 25, then 30.
+    """
+    chain_dir = tmp_path / "chain"
+    options = play.Options(
+        network="testnet", on_chain=True, chain_dir=chain_dir, color="auto", ascii=True
+    )
+    settlements: list[Any] = []
+    for tip, expected_height in ((19, 20), (20, 25), (25, 30)):
+        table = play._chain(options)
+        try:
+            assert table.chain is not None
+            assert table.chain.params.network_id == "testnet"
+            assert table.chain.height == tip
+            view = _play_to_minimum(play, table)
+            settlement = table.settle(view)
+            assert settlement.mined, settlement.summary
+            assert settlement.height == expected_height
+            state = table.chain.chain.state
+            assert state.current_epoch() == expected_height // TESTNET.epoch_length
+            stored = table.chain.chain.block_at_height(expected_height)
+            assert stored is not None and stored.block.proofs
+            settlements.append(settlement)
+        finally:
+            table.close()
+
+    assert len({settlement.proof_id for settlement in settlements}) == 3
+    # The blocks between the bootstrap and the last proof are the chain's clock,
+    # so every one of them carries a transaction or a proof, never nothing.
+    service = play.NodeService.open(TESTNET, storage=play.Storage(chain_dir / play.CHAIN_DB_NAME))
+    try:
+        for height in range(20, 31):
+            block = service.chain.block_at_height(height)
+            assert block is not None
+            assert block.block.transactions or block.block.proofs, f"block {height} is empty"
+        epochs = sorted({match.epoch for match in service.chain.state.matches.values()})
+        assert epochs == [3, 4, 5]
+    finally:
+        service.close()
+
+
 def test_on_chain_fresh_reboots_an_existing_chain(play: ModuleType, tmp_path: Path) -> None:
     """``--fresh`` is the explicit way to throw a chain away; normal runs resume."""
     chain_dir = tmp_path / "chain"
@@ -517,7 +610,7 @@ def test_on_chain_fresh_reboots_an_existing_chain(play: ModuleType, tmp_path: Pa
     table = play._chain(fresh)
     try:
         assert table.chain is not None
-        assert table.chain.height == play.GENESIS_EPOCH
+        assert table.chain.height == bootstrap_end_height(DEVNET)
     finally:
         table.close()
 

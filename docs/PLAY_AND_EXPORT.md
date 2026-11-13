@@ -13,6 +13,10 @@ There are four commands in this workflow:
 `play_miner.py --on-chain` **starts the devnet itself**. You do not need to start
 a separate devnet or relay first.
 
+Everything below is the devnet flow. Add `--network testnet` to run the same game
+on the published testnet parameters instead; see
+[the same game on testnet parameters](#the-same-game-on-testnet-parameters).
+
 In short: step 1 creates the chain, step 2 serves it over HTTP, and step 3 reads
 it through the node API. The node is a server for the existing chain, not a
 second devnet.
@@ -127,6 +131,52 @@ python scripts/play_miner.py --on-chain --games 3 --color auto
 
 Each decisive game mines its own block; use the height printed by each
 settlement report. `--fresh` deletes the chain and starts over.
+
+### The same game on testnet parameters
+
+`--network testnet` bootstraps the published testnet chain instead of the devnet
+one, in the same `--chain-dir`. The relay, your seat, the clocks and the proof
+are unchanged: what changes is consensus — five blocks per epoch instead of one,
+a 60-second block target with difficulty retargeting instead of 1 second and
+none, and a 10-coin registration bond instead of none.
+
+```bash
+python scripts/play_miner.py --on-chain --network testnet --color auto
+```
+
+The bootstrap spreads funding, registration, availability commitments and
+reveals over the fifteen blocks a five-block epoch needs, so it parks the tip at
+height 19: the last block of epoch 3, with epochs 3 and 4 able to pair and epoch
+5's commitments already on chain. That is the state
+`deploy/bootstrap_testnet_stack.py` publishes.
+
+Playing is different in one visible way. [`PROTOCOL.md`](PROTOCOL.md) 12.2 lets a
+proof be mined only once its epoch has ended, allows a block without a proof one
+transaction, and gives a block *with* a proof only the transactions its epoch can
+spare above one per remaining block. On devnet — one block per epoch — that
+means the proof's block carries the whole pool. On testnet it carries none, so
+settling a game also mines out the rest of its epoch:
+
+- the first game settles in **block 20**, the block that opens epoch 4;
+- the next one plays epoch 4, mines blocks 21-24 with the availability
+  commitments and reveals the epochs ahead need, and settles in **block 25**;
+- then 30, 35, and so on — one game per five blocks.
+
+So a testnet game costs five blocks of chain, and every one of them carries a
+transaction or the proof. That is not padding: the four transactions are exactly
+the two seats' availability commitments and reveals for the epochs ahead, which
+is what keeps a two-miner testnet matchable epoch after epoch.
+
+The chain remembers its network in `play.json`, so resuming `--chain-dir` with
+the other `--network` is refused rather than opening a testnet chain with devnet
+parameters. Serve it with the matching network:
+
+```bash
+sccp --data-dir data-play node run --network testnet
+```
+
+The exporter then needs nothing new — it reads the network from the node it is
+pointed at, and reports it on its `node` line.
 
 ---
 

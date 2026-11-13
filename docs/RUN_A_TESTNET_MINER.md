@@ -82,6 +82,27 @@ the proofs and reports balances. It writes nothing to `--data-dir`; it is a
 deterministic demonstration, not a chain you can query afterwards. If this
 command fails, fix the install before starting real miner processes.
 
+### The same bootstrap, with you playing on it
+
+To keep the chain, and to play one of its epochs yourself against testnet
+parameters:
+
+```bash
+python scripts/play_miner.py --on-chain --network testnet --color auto
+```
+
+This bootstraps the same testnet chain `deploy/bootstrap_testnet_stack.py`
+publishes — a scripted block per height, tip at 19, epochs 3 and 4 able to pair
+— without a node, Docker or a relay process. It then seats you in epoch 3
+against a mock engine, plays the game, and mines the proof into block 20, the
+block that opens epoch 4. `--games 3` keeps going: each game takes the epoch the
+last proof opened, at blocks 25 and 30.
+
+That is the closest you can get to the deployed flow without deploying it: the
+same blocks, the same transactions, the same proof, only the node's HTTP API and
+a real engine are missing. [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md#the-same-game-on-testnet-parameters)
+has the exact heights and why a game costs five blocks.
+
 ---
 
 ## 4. Run a relay and miners (works today)

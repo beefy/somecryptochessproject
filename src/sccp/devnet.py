@@ -21,13 +21,15 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Final
 
 import httpx
 
-from sccp.chain.genesis import faucet_keypair
+from sccp.chain.block import bootstrap_end_height
+from sccp.chain.genesis import faucet_keypair, zero_address
 from sccp.chain.mempool import Mempool
 from sccp.chess.engines import Engine, MockEngine
-from sccp.config import DEVNET
+from sccp.config import DEVNET, NetworkParams
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, keypair_from_seed
 from sccp.errors import DevnetError, MempoolError, ProtocolError, RelayError
@@ -37,7 +39,7 @@ from sccp.miner.matchmaker import Matchmaker, ResignRequest
 from sccp.miner.matchmaker import create_app as create_matchmaker_app
 from sccp.node.app import create_app as create_node_app
 from sccp.node.service import NodeService
-from sccp.protocol.models import Transaction, WinProof
+from sccp.protocol.models import Block, Transaction, WinProof
 from sccp.protocol.pairing import RosterEntry
 from sccp.transport import ASGITransport
 from sccp.wallet.service import WalletService
@@ -95,11 +97,13 @@ class DevnetMiner:
     keypair: Keypair
     engine: Engine
     nonce_secret: str
+    params: NetworkParams = DEVNET
+    """The network whose address format the participant is registered under."""
 
     @property
     def address(self) -> str:
         """The miner's devnet address."""
-        return encode_address(self.keypair.public_key_bytes, DEVNET)
+        return encode_address(self.keypair.public_key_bytes, self.params)
 
 
 @dataclass(slots=True)
@@ -128,6 +132,39 @@ def _participants(count: int) -> list[DevnetMiner]:
     ]
 
 
+def _next_timestamp(service: NodeService) -> int:
+    """The timestamp the next block must carry.
+
+    A block timestamp is the chain's clock, so it advances by the network's
+    target block time: one second per block on devnet (whose one-block epochs
+    must not drift), the full block interval on testnet and mainnet.
+    """
+    return service.chain.state.timestamps[-1] + max(1, service.params.target_block_seconds)
+
+
+def _build_block(
+    service: NodeService,
+    *,
+    keypair: Keypair | None = None,
+    miner_address: str | None = None,
+    pool: Mempool | None = None,
+) -> Block | None:
+    """Build the next block with the production builder, or ``None`` if it has none.
+
+    ``pool`` defaults to the node's own mempool: a miner building the next block
+    works from what the node has accepted. The scripted bootstraps pass their own
+    pool when a block must carry exactly the transactions it chose.
+    """
+    mempool = service.mempool if pool is None else pool
+    return BlockBuilder(
+        params=service.params,
+        chain=service.chain,
+        mempool=mempool,
+        keypair=keypair,
+        miner_address=miner_address,
+    ).build(timestamp=_next_timestamp(service))
+
+
 def _build_and_ingest(
     service: NodeService,
     keypair: Keypair,
@@ -135,24 +172,30 @@ def _build_and_ingest(
     pool: Mempool | None = None,
 ) -> None:
     """Build one block with the production builder and hand it to the node."""
-    book = service.chain.book
-    mempool = (
-        pool
-        if pool is not None
-        else Mempool(params=service.params, tip_state=service.chain.state, book=book)
-    )
-    stamp = service.chain.state.timestamps[-1] + 1
-    block = BlockBuilder(
-        params=service.params,
-        chain=service.chain,
-        mempool=mempool,
-        keypair=keypair,
-    ).build(timestamp=stamp)
+    block = _build_block(service, keypair=keypair, pool=pool)
     if block is None:
         raise DevnetError(f"the builder refused a block at height {service.height + 1}")
     ingested = service.ingest_block(block)
     if not ingested.accepted:
         raise DevnetError(f"the node refused block {ingested.hash} at height {ingested.height}")
+
+
+def _mine_heartbeat(service: NodeService, keypair: Keypair) -> bool:
+    """Mine one heartbeat block from the node's pool; ``False`` if it has nothing to carry.
+
+    A proofless block is the chain's clock: it may hold one ledger transaction
+    and no proofs. Miners normally build one when they have no proof left to
+    claim, and a demo waiting for a roster to open builds them too.
+    """
+    before = service.height
+    block = _build_block(service, keypair=keypair)
+    if block is None:
+        return False
+    ingested = service.ingest_block(block)
+    if not ingested.accepted or service.height != before + 1:
+        raise DevnetError(f"the node refused block {ingested.hash} at height {ingested.height}")
+    _rebase_mempool(service)
+    return True
 
 
 def _bootstrap(service: NodeService, participants: Sequence[DevnetMiner]) -> None:
@@ -206,8 +249,125 @@ def _bootstrap(service: NodeService, participants: Sequence[DevnetMiner]) -> Non
         _build_and_ingest(service, scheduler, pool=pool)
 
 
+TESTNET_BOOTSTRAP_ACTIONS: Final = {
+    1: "transfer",
+    2: "register",
+    3: "availability",
+    5: "reveal",
+    6: "availability",
+    10: "reveal",
+    11: "availability",
+    15: "reveal",
+    16: "availability",
+}
+"""The scripted transactions of a fresh testnet bootstrap, by block height.
+
+Devnet packs funding, registration and availability into its first one-block
+epoch; a testnet epoch is five blocks long, so the same work is spread across
+the bootstrap window instead. This is exactly the schedule
+``deploy/bootstrap_testnet_stack.py`` publishes against a real node, in height
+order. Nothing here is a shortcut: every block is built by
+:class:`~sccp.miner.block_builder.BlockBuilder` and validated by the node like
+any other block, and only the empty blocks carry no transaction at all.
+"""
+
+
+def _bootstrap_transactions(
+    action: str,
+    *,
+    service: NodeService,
+    pool: Mempool,
+    participants: Sequence[DevnetMiner],
+    faucet: Keypair,
+) -> None:
+    """Add the transactions of one scripted bootstrap ``action`` to ``pool``."""
+    params = service.params
+
+    def wallet() -> WalletService:
+        return WalletService(params, pool.projection)
+
+    if action == "transfer":
+        for participant in participants:
+            pool.add_transaction(
+                wallet().build_transfer(faucet, participant.address, FUNDING, fee=params.min_fee)
+            )
+    elif action == "register":
+        for participant in participants:
+            pool.add_transaction(
+                wallet().build_register(
+                    participant.keypair,
+                    endpoint=f"tcp://{participant.address[-8:]}.{params.network_id}",
+                    engine=participant.engine.fingerprint,
+                    bond=params.min_bond,
+                )
+            )
+    elif action == "availability":
+        for participant in participants:
+            pool.add_transaction(
+                wallet().build_availability(
+                    participant.keypair,
+                    nonce_secret=participant.nonce_secret,
+                    max_games=params.rounds_per_epoch,
+                )
+            )
+    elif action == "reveal":
+        for participant in participants:
+            pool.add_transaction(
+                wallet().build_reveal(participant.keypair, participant.nonce_secret)
+            )
+    else:  # pragma: no cover - the table above is the only caller
+        raise DevnetError(f"unknown bootstrap action {action!r}")
+
+
+def _bootstrap_testnet(service: NodeService, participants: Sequence[DevnetMiner]) -> None:
+    """Bootstrap a fresh testnet up to its bootstrap tip, in process.
+
+    The result is the state ``deploy/bootstrap_testnet_stack.py`` hands to a
+    published stack: epochs 3 and 4 can pair, and epoch 5's commitments are
+    already on the chain. Blocks are mined with the zero address as their miner,
+    which is what genesis does when it has no allocation to reward.
+    """
+    params = service.params
+    if params.epoch_length != 5:  # pragma: no cover - the table assumes five-block epochs
+        raise DevnetError(
+            f"the scripted testnet bootstrap assumes five-block epochs, "
+            f"{params.network_id} has {params.epoch_length}"
+        )
+    faucet = faucet_keypair(params.network_id)
+    miner = zero_address(params)
+    for height in range(1, bootstrap_end_height(params) + 1):
+        pool = Mempool(params=params, tip_state=service.chain.state, book=service.chain.book)
+        action = TESTNET_BOOTSTRAP_ACTIONS.get(height)
+        if action is not None:
+            _bootstrap_transactions(
+                action, service=service, pool=pool, participants=participants, faucet=faucet
+            )
+        block = _build_block(service, miner_address=miner, pool=pool)
+        if block is None:
+            raise DevnetError(f"the builder refused bootstrap block {height}")
+        ingested = service.ingest_block(block)
+        if not ingested.accepted or service.height != height:
+            raise DevnetError(
+                f"the node refused bootstrap block {ingested.hash} at height {height}"
+            )
+    record = service.chain.state.epochs.get(GENESIS_EPOCH)
+    if record is None or not record.matchable:
+        raise DevnetError(
+            f"the bootstrap tip at height {service.height} left epoch {GENESIS_EPOCH} "
+            "without a roster"
+        )
+
+
 def _submit_epoch_txs(service: NodeService, participants: Sequence[DevnetMiner]) -> None:
-    """Best-effort availability commits and reveals for the epochs ahead."""
+    """Best-effort availability commits and reveals for the epochs ahead.
+
+    Both windows are one epoch wide -- availability belongs to
+    ``current + availability_lead`` and a reveal to ``current + 1`` -- so a
+    participant that misses an epoch's block loses the roster slot two epochs
+    later. Replaying this is harmless: re-committing the same nonce produces the
+    same commitment, which the ledger accepts, so a miner can call it again
+    whenever the pool runs dry.
+    """
 
     def admit(tx: Transaction) -> None:
         try:
