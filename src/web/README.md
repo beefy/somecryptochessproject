@@ -146,6 +146,11 @@ generated vectors (`src/lib/vectors.json`), so a change to canonical JSON, the h
 domains, bech32, the match id, the colour draw or the game hash fails on whichever
 side moved first.
 
+CI runs exactly those steps on every push and pull request — the `web` job in
+[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml), on Node 22 and 24,
+with `npm ci` against the committed lock file — and uploads `dist/` as the
+`web-dist` artifact.
+
 ## Where things live
 
 ```

@@ -268,7 +268,7 @@ responsibility rather than a construction phase.
 ├── Makefile                      # test / lint / typecheck / devnet / stack / dist
 ├── Dockerfile                    # image used by every stack service
 ├── docker-compose.yml            # node + relay + bootstrap + 2 Stockfish miners
-├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
+├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13); web (22, 24)
 ├── .github/workflows/deploy-testnet-miners.yml  # image + hosted testnet deploy
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
