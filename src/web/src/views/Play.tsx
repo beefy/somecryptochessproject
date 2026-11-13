@@ -391,6 +391,11 @@ function Table({
   const boardSize = width < 720 ? Math.min(width - 56, 416) : 448;
   const now = useNow(500);
 
+  const relayNetwork = relay.data?.head.network ?? null;
+  // The node and the relay have to be on one chain: a certificate, a move and a
+  // proof each name a network, so nothing can be signed across a disagreement.
+  const networkMismatch = relayNetwork !== null && relayNetwork !== network;
+
   const match = pickMatch(relay.data?.matches ?? [], address);
   const colour: Color | null =
     match === null ? null : match.certificate.white === address ? "white" : "black";
@@ -736,9 +741,20 @@ function Table({
         </HelperText>
       )}
 
+      {networkMismatch && (
+        <>
+          <Section title="Two networks" subtitle={`node ${network ?? "?"} · relay ${relayNetwork}`}>
+            <Text variant="bodyMedium" style={styles.muted}>
+              {`The node serving this page is on ${network}, but the relay at ${RELAY_BASE} is on ${relayNetwork}. Every payload this page signs names one network, so a seat on ${network} cannot be paired or certified by a ${relayNetwork} relay. Point both at one chain: restart the relay with --network ${network} and --node ${window.location.origin}, or rebuild the page with VITE_SCCP_RELAY pointing at a relay that follows this node.`}
+            </Text>
+          </Section>
+          <Divider />
+        </>
+      )}
+
       <Section
         title="Seat"
-        subtitle={`${network} · epoch ${tipEpoch} · round ${relay.data?.head.round ?? "—"}`}
+        subtitle={`${network} · relay ${relayNetwork ?? "—"} · epoch ${tipEpoch} · round ${relay.data?.head.round ?? "—"}`}
         action={
           <StatusPill
             label={stage ?? "reading"}

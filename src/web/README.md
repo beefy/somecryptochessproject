@@ -50,13 +50,17 @@ Two terminals, node first:
 
 ```bash
 # 1. a node to read
-sccp --network devnet --data-dir data node run          # 127.0.0.1:8645
+sccp --network testnet --data-dir data node run           # 127.0.0.1:8645
 
 # 2. the dev server
 cd src/web
 npm ci
 npm run dev                                            # http://localhost:5173
 ```
+
+A local devnet node is `sccp --network devnet --data-dir data-devnet node run` —
+give it its own directory, because a SQLite file is bound to the network it was
+created for and a node refuses to open it under another id.
 
 The dev server proxies `/v1` to `SCCP_NODE` (default `http://127.0.0.1:8645`), so
 the browser only ever talks to `localhost:5173` and nothing needs CORS:
@@ -69,6 +73,26 @@ npm run dev -- --port 5273                     # dev server port busy
 `npm run preview` serves the built `dist/` on `http://localhost:4173` with the
 same `/v1` proxy — the fastest way to check a production build against a local
 node.
+
+## Which network is this page on?
+
+The page has no network switch, and it should not: every address it derives,
+every epoch it counts and every payload it signs comes from the node at its API
+origin — `/v1/status` for the network id, `/v1/params` for the epoch length, the
+bond and the clock control. The header prints that id, and the parameters are
+re-read whenever it changes, so a tab left open across a restart cannot mix one
+chain's height with another chain's epochs.
+
+So "the explorer says devnet" means "the node at `API_BASE` is a devnet node":
+either `SCCP_NODE`/`VITE_SCCP_API` points at the wrong process, or the process on
+`:8645` is the devnet one from an earlier demo. `curl -s http://127.0.0.1:8645/v1/status`
+answers the question without the browser.
+
+The relay is a second process with its own `--network`, and it must match. A
+beacon, a certificate and a proof each name one network, so the relay refuses a
+beacon from another chain (`beacon is for 'devnet', relay is on 'testnet'`) and
+`#/play` shows a **Two networks** panel naming both sides before anything is
+signed.
 
 ## Against a node on another origin
 
@@ -160,31 +184,49 @@ Two limits are real and shown on the page rather than hidden:
 The reference implementation of the same flow, in one process and with a
 scripted opponent, is `python scripts/play_miner.py --on-chain`: it funds and
 registers a human seat, seats it through the relay, co-signs the result and mines
-the proof into a block. The browser needs that stack split into processes:
+the proof into a block. The browser needs that stack split into processes, and
+all three have to agree on one network:
 
 ```bash
+#!/bin/sh
+# Pick one. testnet is the shared chain; devnet is the local one (see the note).
+NETWORK=testnet
+DIR=data-$NETWORK
+
 # 1. the node: serves the page and settles announced proofs
-sccp --network devnet --data-dir data-devnet node run --web --mine \
+sccp --network "$NETWORK" --data-dir "$DIR" node run --web --mine \
      --miner-address <any-valid-address>
 #    (the settlement miner tries each announced winner as the block's miner
 #     first, so this address only matters for empty heartbeat blocks)
 
 # 2. the relay: follows that node's epochs, signs clock receipts, allows the page
-sccp --network devnet matchmaker run --config relay.json \
+sccp --network "$NETWORK" matchmaker run --config relay.json \
      --node http://127.0.0.1:8645 --witness-key relay.key \
      --origin http://127.0.0.1:8645
 
 # 3. an opponent seat
-sccp --network devnet miner run --key opponent.key \
+sccp --network "$NETWORK" miner run --key opponent.key \
      --relay http://127.0.0.1:8646 --node http://127.0.0.1:8645 \
      --engine-profile mock
 ```
 
-`relay.json` is the deployment's relay config (beacon, roster, engines); `--node`
-replaces its beacon and roster with each later epoch the chain opens. With the
-relay on another origin, build with `VITE_SCCP_RELAY=http://127.0.0.1:8646` and
-pass that origin to `--origin`. A node on `testnet` or `devnet` has a faucet; a
-`mainnet` node has none, and the page shows the node's refusal.
+`NETWORK=devnet` runs the identical stack, and it is the one to click through
+first: devnet's epochs are one block of one second, so `register` →
+`availability` → `reveal` → pairing takes seconds instead of the ~15 blocks
+(about a quarter of an hour) that testnet's five-block, sixty-second epochs need.
+Devnet is a local test chain with a zero bond; testnet is the shared one.
+
+Whichever you pick, keep it in all three commands and in `relay.json`: the relay
+refuses a config or a beacon from another network, and `#/play` shows **Two
+networks** when the node and the relay disagree rather than letting you sign a
+certificate the relay cannot verify.
+
+`relay.json` is the deployment's relay config (network, beacon, roster with
+public keys and engine fingerprints, round length); `--node` replaces its beacon
+and roster with each later epoch the chain opens. With the relay on another
+origin, build with `VITE_SCCP_RELAY=http://127.0.0.1:8646` and pass that origin
+to `--origin`. A node on `testnet` or `devnet` has a faucet; a `mainnet` node has
+none, and the page shows the node's refusal.
 
 ## Checks
 
@@ -250,6 +292,10 @@ src/
   address. Check that the seat is on the *current* epoch's roster (the page shows
   the roster size), that its availability was revealed in epoch `E - 1`, and that
   the relay is following the same chain (`--node`).
+- **"Two networks"** — the node serving the page and the relay are on different
+  chains, so nothing can be signed. Restart the relay with the node's `--network`
+  and `--node`, or rebuild with `VITE_SCCP_RELAY` pointing at the right relay; see
+  [Which network is this page on?](#which-network-is-this-page-on).
 - **`EADDRINUSE` on 8645** — something is already listening there; the compose
   stack in `deploy/` publishes 8645. Use `--port 8650`, then either open
   `http://127.0.0.1:8650/` or `SCCP_NODE=http://127.0.0.1:8650 npm run dev`.

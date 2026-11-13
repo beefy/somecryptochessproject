@@ -64,6 +64,13 @@ VITE_SCCP_API=https://testnet.example.com npm run build
 
 ## The table (`#/play`)
 
+The page has no network switch: the address it derives, the epoch it counts and
+the network it signs into are the node's (`/v1/status` and `/v1/params`), and the
+header prints that id. Change the chain by changing the node — and keep the relay
+on the same one, because a beacon, a certificate and a proof each name a network.
+`devnet` is the chain to click through first (one-block, one-second epochs, zero
+bond); `testnet` is the same flow on the shared chain and a much slower clock.
+
 The page holds one seat, not two. It registers that key with a signed `register`
 transaction (bond, endpoint, engine fingerprint), commits availability for the
 epoch two ahead, reveals the committed nonce in the epoch before it opens, and

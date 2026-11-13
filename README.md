@@ -426,6 +426,8 @@ python scripts/play_miner.py --on-chain                 # re-run: resumes that c
 python scripts/play_miner.py --on-chain --games 3       # three games, three blocks
 python scripts/play_miner.py --on-chain --chain-dir ./my-play-data --color auto
 python scripts/play_miner.py --on-chain --fresh         # discard that chain
+# …or the same game on the shared chain: testnet parameters, five-block epochs
+python scripts/play_miner.py --on-chain --network testnet --chain-dir ./data-play-testnet
 # …or take a seat on a relay that is already serving, with your own keyfile
 python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 
@@ -471,7 +473,10 @@ reports (`you played 5.Nc3`, `opponent played 5...g5`). `--seed` derives the
 beacon, so a different seed is a different opening; `--engine-seed` makes a
 given mock opponent replay the same moves.
 
-`--on-chain` is devnet-only. The first run bootstraps `--chain-dir` (default
+`--on-chain` bootstraps its own chain in process: `devnet` by default (one-block,
+one-second epochs, zero bond), or `testnet` with `--network testnet`, which is the
+same game on the shared chain's parameters and a much longer wait between epochs.
+The first run bootstraps `--chain-dir` (default
 `./data-play`); later runs **resume that chain** at its next epoch, and
 `--games N` plays several games in one sitting. `--fresh` is the explicit reset.
 The chain has three funded opponent miners, so the demo keeps the shape of a
@@ -483,7 +488,7 @@ production block builder; the final report prints the block height, proof id and
 the `node run` command that serves the chain. The mined block also carries the
 availability and reveal transactions that make the *next* game's epoch
 matchable. A draw, a time forfeit (the claim-transaction path is not wired into
-this demo), a game under devnet's 20-ply minimum, or a result the engine will not
+this demo), a game under the network's 20-ply minimum, or a result the engine will not
 co-sign produces no block, and the report says why. Opponent strength is
 irrelevant to that rule: a loss to a strong engine still mines the winner's
 proof, while a draw or a flag has no ordinary co-signed winner.

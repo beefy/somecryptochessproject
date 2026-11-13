@@ -26,9 +26,18 @@ const STATUS_POLL_MS = 5000;
 
 export function NodeProvider({ children }: { children: ReactNode }): ReactNode {
   const status = useResource((signal) => fetchStatus(signal), [], { pollMs: STATUS_POLL_MS });
-  const params = useResource((signal) => fetchParams(signal), []);
   const network = status.data?.network ?? null;
-  const value = useMemo<NodeState>(() => ({ status, params, network }), [status, params, network]);
+  // The parameters are re-read whenever the network id changes: a node restarted
+  // on another chain is another chain, and devnet's one-block epochs next to
+  // testnet's height would misplace every epoch boundary in the app.
+  const params = useResource((signal) => fetchParams(signal), [network]);
+  const value = useMemo<NodeState>(() => {
+    // While that re-read is in flight the parameters still belong to the previous
+    // network; show none rather than the wrong ones.
+    const stale =
+      params.data !== undefined && network !== null && params.data.network_id !== network;
+    return { status, params: stale ? { ...params, data: undefined } : params, network };
+  }, [status, params, network]);
   return <NodeContext.Provider value={value}>{children}</NodeContext.Provider>;
 }
 
