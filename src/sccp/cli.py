@@ -53,6 +53,7 @@ from sccp.miner.epoch_follower import EpochFollower
 from sccp.miner.matchmaker import Matchmaker
 from sccp.miner.matchmaker import create_app as create_matchmaker_app
 from sccp.node.app import create_app as create_node_app
+from sccp.node.app import web_dist_root
 from sccp.node.miner import NodeMiner, proof_summary
 from sccp.node.service import NodeService, sync_peers
 from sccp.protocol.models import Transaction, WinProof
@@ -854,6 +855,16 @@ def matchmaker_run(
         float,
         typer.Option("--node-poll-seconds", help="How often to ask the node for the tip height."),
     ] = 2.0,
+    origin: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--origin",
+            help=(
+                "Browser origin allowed to call this relay (repeatable), e.g. "
+                "--origin http://127.0.0.1:8645. Needed only when a web client plays."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Serve the matchmaking relay over HTTP (uvicorn).
 
@@ -936,7 +947,11 @@ def matchmaker_run(
     import uvicorn
 
     try:
-        uvicorn.run(create_matchmaker_app(state), host=host, port=port)
+        uvicorn.run(
+            create_matchmaker_app(state, origins=tuple(origin or ())),
+            host=host,
+            port=port,
+        )
     finally:
         stop.set()
         thread.join(timeout=5)
@@ -991,6 +1006,13 @@ def node_run(
             help="Let --mine extend the empty bootstrap window (off for pre-built chains).",
         ),
     ] = True,
+    web: Annotated[
+        bool,
+        typer.Option(
+            "--web",
+            help="Serve the built explorer (src/web/dist) at / next to the JSON API.",
+        ),
+    ] = False,
 ) -> None:
     """Serve the node API over HTTP, replaying the chain in ``--data-dir``."""
     params = _resolve_network(ctx, network)
@@ -1005,6 +1027,15 @@ def node_run(
             _fail("--mine-interval-seconds must not be negative", code=2)
     data_dir = _options(ctx).data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
+    web_root = None
+    if web:
+        web_root = web_dist_root()
+        if web_root is None:
+            _fail(
+                "no built explorer found; run `npm install && npm run build` in src/web "
+                "or point SCCP_WEB_DIST at a directory holding index.html",
+                code=2,
+            )
     service = _run(
         lambda: NodeService.open(
             params,
@@ -1068,7 +1099,7 @@ def node_run(
 
         import uvicorn
 
-        uvicorn.run(create_node_app(service), host=host, port=port)
+        uvicorn.run(create_node_app(service, web_root=web_root), host=host, port=port)
     finally:
         if stop is not None:
             stop.set()

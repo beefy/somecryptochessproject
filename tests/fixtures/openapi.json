@@ -297,6 +297,90 @@
         ],
         "type": "object"
       },
+      "BlockList": {
+        "additionalProperties": false,
+        "properties": {
+          "blocks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BlockSummary"
+            },
+            "type": "array"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "tip_height": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "network",
+          "tip_height"
+        ],
+        "type": "object"
+      },
+      "BlockSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "epoch": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "hash": {
+            "type": "string"
+          },
+          "height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "miner": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "parent_hash": {
+            "type": "string"
+          },
+          "proofs": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "seal_bits": {
+            "maximum": 32.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "timestamp": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "transactions": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "wins_required": {
+            "minimum": 1.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "hash",
+          "parent_hash",
+          "height",
+          "timestamp",
+          "epoch",
+          "miner",
+          "transactions",
+          "proofs",
+          "wins_required",
+          "seal_bits"
+        ],
+        "type": "object"
+      },
       "BlockView": {
         "additionalProperties": false,
         "properties": {
@@ -722,6 +806,26 @@
         ],
         "type": "object"
       },
+      "GameList": {
+        "additionalProperties": false,
+        "properties": {
+          "games": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/GameSummary"
+            },
+            "type": "array"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "network"
+        ],
+        "type": "object"
+      },
       "GameResult": {
         "additionalProperties": false,
         "properties": {
@@ -780,6 +884,173 @@
           "result",
           "termination",
           "plies"
+        ],
+        "type": "object"
+      },
+      "GameSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "challenge_status": {
+            "default": "none",
+            "enum": [
+              "none",
+              "open",
+              "upheld",
+              "rejected"
+            ],
+            "type": "string"
+          },
+          "epoch": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "game_hash": {
+            "type": "string"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "in_mempool": {
+            "default": false,
+            "type": "boolean"
+          },
+          "loser": {
+            "anyOf": [
+              {
+                "maxLength": 90,
+                "minLength": 8,
+                "pattern": "^[a-z0-9]+$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "low_ply": {
+            "default": false,
+            "type": "boolean"
+          },
+          "match_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plies": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "proof_id": {
+            "type": "string"
+          },
+          "quality_verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pass",
+                  "fail"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "anyOf": [
+              {
+                "enum": [
+                  "1-0",
+                  "0-1",
+                  "1/2-1/2"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "round": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "termination": {
+            "anyOf": [
+              {
+                "enum": [
+                  "checkmate",
+                  "draw",
+                  "resignation",
+                  "time_forfeit"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "winner": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          },
+          "winner_seat": {
+            "anyOf": [
+              {
+                "enum": [
+                  "white",
+                  "black"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "game_hash",
+          "proof_id",
+          "winner"
         ],
         "type": "object"
       },
@@ -1938,6 +2209,57 @@
       }
     },
     "/v1/blocks": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_height",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BlockList"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "requestBody": {
           "content": {
@@ -2189,6 +2511,59 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/FaucetView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/games": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 200,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "before_height",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GameList"
                 }
               }
             }

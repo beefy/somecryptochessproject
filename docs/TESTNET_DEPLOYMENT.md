@@ -36,6 +36,13 @@ The endpoint is plain HTTP and the chain is reset on every deploy. Do not use it
 for anything of value. The deploy workflow connects to the same name over SSH
 (`sccp@testnet.somecryptochessproject.com`); clients only need the node port.
 
+The browser client is a second, independent deploy:
+[`deploy-explorer.yml`](../.github/workflows/deploy-explorer.yml) publishes
+`src/web/dist` at `http://explorer.somecryptochessproject.com`, on the same VM,
+behind an nginx proxy that puts `/v1` and `/relay` on the page's own origin.
+This document covers the chain; the page is in
+[`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md).
+
 ## One-time setup
 
 For the GCP-side checklist (project, API, firewall, VM, Docker and SSH), see

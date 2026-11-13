@@ -268,11 +268,14 @@ responsibility rather than a construction phase.
 ├── Makefile                      # test / lint / typecheck / devnet / stack / dist
 ├── Dockerfile                    # image used by every stack service
 ├── docker-compose.yml            # node + relay + bootstrap + 2 Stockfish miners
-├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13)
+├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13); web (22, 24)
 ├── .github/workflows/deploy-testnet-miners.yml  # image + hosted testnet deploy
+├── .github/workflows/deploy-explorer.yml        # hosted explorer (explorer.*)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
 │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
+│   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
+│   ├── EXPLORER_DEPLOYMENT.md    # publish the explorer: proxy, DNS, rollback
 │   ├── GCP_RESOURCE_SETUP.md     # project, VM, firewall and deploy wiring
 │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
@@ -287,6 +290,7 @@ responsibility rather than a construction phase.
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
 ├── deploy/
 │   ├── README.md                 # what the compose stack does and does not do
+│   ├── explorer/                 # the hosted page's nginx origin + compose file
 │   └── init_testnet_stack.py     # deterministic stack keys + relay config
 ├── genesis/{devnet,testnet,mainnet}.json
 ├── scripts/
@@ -312,6 +316,11 @@ responsibility rather than a construction phase.
 │   ├── transport.py              # synchronous ASGI transport for httpx
 │   ├── devnet.py                 # in-process local network
 │   └── cli.py                    # Typer CLI
+├── src/web/                      # explorer: React Native for Web + Material
+│   ├── README.md                 # build it, serve it, run the relay, play a seat
+│   ├── src/views/                # overview, blocks, games, accounts, table
+│   └── src/lib/                  # node/relay clients, protocol ports, tx signing,
+│                                 # certificates, proofs, verifier, hash vectors
 └── tests/
     ├── unit/                     # per-module tests, including test_api.py,
     │                             # test_gossip.py, test_sync.py, test_miner_loop.py
@@ -420,6 +429,8 @@ python scripts/play_miner.py --on-chain                 # re-run: resumes that c
 python scripts/play_miner.py --on-chain --games 3       # three games, three blocks
 python scripts/play_miner.py --on-chain --chain-dir ./my-play-data --color auto
 python scripts/play_miner.py --on-chain --fresh         # discard that chain
+# …or the same game on the shared chain: testnet parameters, five-block epochs
+python scripts/play_miner.py --on-chain --network testnet --chain-dir ./data-play-testnet
 # …or take a seat on a relay that is already serving, with your own keyfile
 python scripts/play_miner.py --relay http://127.0.0.1:8646 --key alice.key
 
@@ -448,12 +459,19 @@ The wallet and miner guides are separate:
   faucet, send a transfer and watch it settle.
 - [`docs/RUN_A_TESTNET_MINER.md`](docs/RUN_A_TESTNET_MINER.md) — run the relay and
   an engine miner, register on chain and commit/reveal availability.
+- [`docs/EXPLORE_THE_CHAIN.md`](docs/EXPLORE_THE_CHAIN.md) — build the web
+  explorer, serve it from `sccp node run --web`, and play a signed table.
 
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
 [`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current
 deployment is published at
 `http://testnet.somecryptochessproject.com:8645`; the workflow connects to the
 same name over SSH (`sccp@testnet.somecryptochessproject.com`).
+
+The explorer has its own deploy and its own name:
+`http://explorer.somecryptochessproject.com` serves the built bundle with `/v1`
+and `/relay` proxied onto that origin, because the node sends no CORS headers. See
+[`docs/EXPLORER_DEPLOYMENT.md`](docs/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws
 for the match and hands you the position after it, so the script opens by
@@ -463,7 +481,10 @@ reports (`you played 5.Nc3`, `opponent played 5...g5`). `--seed` derives the
 beacon, so a different seed is a different opening; `--engine-seed` makes a
 given mock opponent replay the same moves.
 
-`--on-chain` is devnet-only. The first run bootstraps `--chain-dir` (default
+`--on-chain` bootstraps its own chain in process: `devnet` by default (one-block,
+one-second epochs, zero bond), or `testnet` with `--network testnet`, which is the
+same game on the shared chain's parameters and a much longer wait between epochs.
+The first run bootstraps `--chain-dir` (default
 `./data-play`); later runs **resume that chain** at its next epoch, and
 `--games N` plays several games in one sitting. `--fresh` is the explicit reset.
 The chain has three funded opponent miners, so the demo keeps the shape of a
@@ -475,7 +496,7 @@ production block builder; the final report prints the block height, proof id and
 the `node run` command that serves the chain. The mined block also carries the
 availability and reveal transactions that make the *next* game's epoch
 matchable. A draw, a time forfeit (the claim-transaction path is not wired into
-this demo), a game under devnet's 20-ply minimum, or a result the engine will not
+this demo), a game under the network's 20-ply minimum, or a result the engine will not
 co-sign produces no block, and the report says why. Opponent strength is
 irrelevant to that rule: a loss to a strong engine still mines the winner's
 proof, while a draw or a flag has no ordinary co-signed winner.
@@ -491,13 +512,14 @@ stops after `N` relay polls, which is how the CLI tests drive it.
 Protocol v1 and the testnet release are complete. The reference implementation
 includes the wallet and keyfile tooling, the chess proof pipeline, the timed
 relay, the ledger and consensus rules, the node and gossip layer, the unattended
-miner, quality sampling and bonded challenges, and the funded two-miner testnet
-with an automated deploy path.
+miner, quality sampling and bonded challenges, the funded two-miner testnet with
+an automated deploy path, and a web explorer with a playable, protocol-signed
+table (`src/web`).
 
 The work that remains is operational and economic rather than foundational:
 
 - run a persistent public testnet and publish a 72-hour soak report;
-- add metrics, alerting and a block explorer;
+- add metrics and alerting;
 - automate timeout-claim submission and pin the drand quicknet verifier;
 - move challenge-panel votes on chain;
 - harden storage, peer networking, faucet limits and miner/relay resilience;

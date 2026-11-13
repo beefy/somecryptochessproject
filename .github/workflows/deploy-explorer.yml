@@ -1,0 +1,202 @@
+name: deploy-explorer
+
+# Publishes the built explorer (src/web) to explorer.somecryptochessproject.com.
+#
+# The page has to be same-origin with the node: the node sends no CORS headers,
+# so a browser will not let a bundle served from one origin read `/v1` on
+# another. This workflow therefore ships an nginx sidecar that serves the bundle
+# and proxies `/v1` to the node and `/relay` to the matchmaker. The relay proxy
+# also means `#/play` works without opening 8646 to browsers or passing
+# `--origin` to `sccp matchmaker run`.
+#
+# Setup (DNS, firewall, GitHub wiring) is in docs/EXPLORER_DEPLOYMENT.md.
+#
+# Required repository configuration, in the existing `testnet` environment:
+#   vars.EXPLORER_DEPLOY_HOST    user@host of the VM; falls back to TESTNET_DEPLOY_HOST
+#   secrets.EXPLORER_SSH_KEY     private key for that user; falls back to TESTNET_SSH_KEY
+#   secrets.EXPLORER_KNOWN_HOSTS optional pinned host key; falls back to TESTNET_KNOWN_HOSTS
+#   vars.EXPLORER_DEPLOY_DIR     optional; defaults to /opt/sccp-explorer
+#   vars.EXPLORER_DEPLOY_PORT    optional; defaults to 22
+#   vars.EXPLORER_PUBLIC_URL     optional; defaults to http://explorer.somecryptochessproject.com
+#
+# Unlike deploy-testnet-miners.yml this deploy never touches the chain: it
+# uploads a release directory, switches one symlink and leaves the node alone.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/web/**"
+      - "deploy/explorer/**"
+      - ".github/workflows/deploy-explorer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-explorer
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build the bundle
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      # Same vectors as ci.yml: a bundle that cannot derive an address or hash a
+      # move correctly must not reach a browser that signs with it.
+      - name: Test
+        run: npm test
+
+      # Empty VITE_SCCP_API keeps the API on the origin that served the page,
+      # and a relative /relay keeps the matchmaker there too -- both are paths on
+      # this host, so the proxy in deploy/explorer/nginx.conf answers them.
+      - name: Build
+        env:
+          VITE_SCCP_API: ""
+          VITE_SCCP_RELAY: "/relay"
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: explorer-dist
+          path: src/web/dist/
+          if-no-files-found: error
+          retention-days: 7
+
+
+  deploy:
+    name: publish to the explorer host
+    needs: build
+    # A repository without an explorer host still gets a green bundle build; set
+    # vars.EXPLORER_DEPLOY_HOST (or keep TESTNET_DEPLOY_HOST) to turn this on.
+    if: ${{ vars.EXPLORER_DEPLOY_HOST != '' || vars.TESTNET_DEPLOY_HOST != '' }}
+    runs-on: ubuntu-latest
+    environment:
+      # The explorer runs next to the chain, so it reuses the environment that
+      # already holds the deploy host, key and known hosts.
+      name: testnet
+    env:
+      TARGET: ${{ vars.EXPLORER_DEPLOY_HOST || vars.TESTNET_DEPLOY_HOST }}
+      DEPLOY_DIR: ${{ vars.EXPLORER_DEPLOY_DIR || '/opt/sccp-explorer' }}
+      DEPLOY_PORT: ${{ vars.EXPLORER_DEPLOY_PORT || '22' }}
+      PUBLIC_URL: ${{ vars.EXPLORER_PUBLIC_URL || 'http://explorer.somecryptochessproject.com' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: explorer-dist
+          path: dist
+
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.EXPLORER_SSH_KEY || secrets.TESTNET_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.EXPLORER_KNOWN_HOSTS || secrets.TESTNET_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          if [ -z "${SSH_KEY:-}" ]; then
+            echo "::error::neither EXPLORER_SSH_KEY nor TESTNET_SSH_KEY is configured"
+            exit 1
+          fi
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          host="${TARGET#*@}"
+          if [ -n "${KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -p "$DEPLOY_PORT" -H "$host" >> "$HOME/.ssh/known_hosts"
+          fi
+          user="${TARGET%%@*}"
+          if [ "$user" = "$TARGET" ]; then user=root; fi
+          {
+            echo "Host explorer"
+            echo "  HostName $host"
+            echo "  User $user"
+            echo "  Port $DEPLOY_PORT"
+            echo "  IdentityFile $HOME/.ssh/id_ed25519"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+          } >> "$HOME/.ssh/config"
+          chmod 600 "$HOME/.ssh/config"
+
+      - name: Upload the proxy configuration
+        run: |
+          set -eu
+          ssh explorer "mkdir -p '$DEPLOY_DIR/www/releases'"
+          scp deploy/explorer/docker-compose.yml explorer:"$DEPLOY_DIR/docker-compose.yml"
+          scp deploy/explorer/nginx.conf explorer:"$DEPLOY_DIR/nginx.conf"
+
+      # Each deploy is a new directory under www/releases, so the switch below is
+      # one rename: no request ever sees a half-written bundle, and the previous
+      # release stays on disk for a rollback.
+      - name: Upload the release
+        run: |
+          set -eu
+          release="$(date -u +%Y%m%d%H%M%S)-$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
+          echo "RELEASE=$release" >> "$GITHUB_ENV"
+          ssh explorer "mkdir -p '$DEPLOY_DIR/www/releases/$release'"
+          tar -C dist -czf - . | ssh explorer "tar -C '$DEPLOY_DIR/www/releases/$release' -xzf -"
+
+      - name: Start or update the proxy
+        run: ssh explorer "cd '$DEPLOY_DIR' && docker compose up -d --remove-orphans"
+
+      - name: Switch the release
+        run: |
+          set -eu
+          ssh explorer "cd '$DEPLOY_DIR/www' \
+            && ln -sfn 'releases/$RELEASE' current.next \
+            && mv -T current.next current"
+          # `-T` is what keeps that a rename. Without it mv sees a destination
+          # that is a symlink to a directory, moves the new link *inside* the old
+          # release, and leaves the site on the previous bundle without failing.
+          live="$(ssh explorer "readlink -f '$DEPLOY_DIR/www/current'")"
+          echo "current -> $live"
+          test "$(basename "$live")" = "$RELEASE"
+
+      - name: Keep the last five releases
+        run: ssh explorer "cd '$DEPLOY_DIR/www/releases' && ls -1t | tail -n +6 | xargs -r rm -rf"
+
+      - name: Verify the deployed explorer
+        run: |
+          set -euo pipefail
+          # The document, the API path the bundle calls, and one hashed asset:
+          # together they prove the symlink, the proxy and the release line up.
+          curl -fsS --retry 12 --retry-delay 5 --retry-connrefused --max-time 20 \
+            "$PUBLIC_URL/" | grep -q 'id="root"'
+          asset="$(curl -fsS --max-time 20 "$PUBLIC_URL/" \
+            | grep -o 'assets/[A-Za-z0-9._-]*\.js' | head -n1)"
+          test -n "$asset"
+          curl -fsS -o /dev/null --max-time 20 "$PUBLIC_URL/$asset"
+          curl -fsS --max-time 20 "$PUBLIC_URL/v1/status" | jq -e '.network == "testnet"'
+          # The relay belongs to deploy-testnet-miners.yml; a missing matchmaker
+          # must not fail a bundle deploy, but #/play needs it.
+          if ! curl -fsS --max-time 10 "$PUBLIC_URL/relay/v1/status" | jq -e '.network == "testnet"'; then
+            echo "::warning::/relay is not answering on $PUBLIC_URL; #/play will show its relay error until the matchmaker is up"
+          fi
+          {
+            echo "### explorer deployed"
+            echo ""
+            echo "- $PUBLIC_URL (release \`$RELEASE\`)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show the proxy state
+        if: always()
+        run: |
+          ssh explorer "cd '$DEPLOY_DIR' && docker compose ps" || true
+          ssh explorer "cd '$DEPLOY_DIR' && docker compose logs --tail=60" || true
+

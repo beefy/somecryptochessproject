@@ -7,6 +7,66 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- `.github/workflows/deploy-explorer.yml`: on every merge that touches `src/web`
+  or `deploy/explorer`, build the bundle and publish it to
+  `explorer.somecryptochessproject.com` over SSH, as a release directory behind a
+  `current` symlink. The deploy never touches the chain.
+- `deploy/explorer/`: the nginx origin that serves the release and proxies `/v1`
+  to the node and `/relay` to the matchmaker. Same-origin paths are what make a
+  hosted page work at all -- the node sends no CORS headers -- and the relay
+  proxy means `#/play` needs neither a public `8646` nor `--origin`.
+- `docs/EXPLORER_DEPLOYMENT.md`: what the deploy does, the GCP firewall rule and
+  `A` record it needs, the GitHub variables (all falling back to `TESTNET_*`),
+  TLS options, rollback and a troubleshooting table.
+- `VITE_SCCP_RELAY` may now be a path (`/relay`): `#/play` resolves it against
+  the page (`relayPublicUrl`) so a relative base still prints a URL a reader can
+  open. `src/web/src/lib/relay.test.ts` pins the resolution.
+- `src/web/README.md`: how to build the explorer, serve it from `sccp node run
+  --web`, develop against a node with the Vite proxy, set `SCCP_NODE`,
+  `VITE_SCCP_API` and `SCCP_WEB_DIST`, and what to check when a page comes up
+  empty.
+
+## [0.14.0] - 2026-11-12
+
+A minor release: the testnet gets a face. `src/web` is a browser block explorer
+and a table you can play, built with React Native for Web and Material Design,
+and the node serves it itself with `sccp node run --web`.
+
+### Added
+
+- The explorer: an overview of the chain head, a block list paged with the node's
+  `before_height` cursor (not an offset, so a reorg cannot make a page skip a
+  block), a block page that prints every header field plus the coinbase,
+  transactions and proofs, a games list in the node's own order, a game page with
+  the match certificate and PGN, and an account page with balances, nonce, miner
+  registration and the games this node lists with that seat. Routes live in the
+  hash (`#/blocks/12`), so the bundle works from any static path.
+- `sccp node run --web` mounts the built bundle at `/` next to the JSON API;
+  `SCCP_WEB_DIST` points it at another build directory, and `VITE_SCCP_API` points
+  a hosted build at a remote node.
+- `#/play`: both seats are played from one tab. Two Ed25519 keypairs are generated
+  in the browser, their bech32 addresses derived under the node's network id, the
+  colours drawn from a room beacon with the protocol's own rule, and every move
+  signed over `sccp/v1/move`; a finished game produces the canonical game hash and
+  both `sccp/v1/result` signatures. The page submits no proof -- a game with no
+  book opening and no opponent could not verify -- and its only request is
+  `POST /v1/faucet` for the white seat.
+- TypeScript ports of canonical JSON, the hash domains, bech32, Ed25519 keys, the
+  match id, the colour draw, the move and result payloads and the game hash
+  (`src/web/src/lib`), pinned to the Python implementation by
+  `scripts/make_web_vectors.py` and `tests/unit/test_web_vectors.py`.
+- `docs/EXPLORE_THE_CHAIN.md`.
+
+### Fixed
+
+- `web_dist_root()` treats `SCCP_WEB_DIST` as an override rather than a hint: a
+  directory without an `index.html` now means "no explorer" instead of silently
+  falling back to a bundle elsewhere on disk.
+- The `.gitignore` packaging rule `lib/` no longer swallows the explorer's
+  `src/web/src/lib`, which had kept the protocol ports out of the repository.
+
 ## [0.13.0] - 2026-11-12
 
 A minor release: `scripts/play_miner.py --on-chain` plays on **testnet**

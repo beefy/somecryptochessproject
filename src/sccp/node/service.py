@@ -28,7 +28,7 @@ from sccp.chain.block import block_hash
 from sccp.chain.chain import Chain, StoredBlock
 from sccp.chain.genesis import load_genesis
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import ChallengeRecord
+from sccp.chain.state import ChallengeRecord, ProofRecord
 from sccp.chain.storage import Storage, restore_chain
 from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
@@ -47,6 +47,8 @@ from sccp.node.faucet import Faucet
 from sccp.node.models import (
     AccountView,
     BlockIngest,
+    BlockList,
+    BlockSummary,
     BlockView,
     ChallengeList,
     ChallengeView,
@@ -54,6 +56,8 @@ from sccp.node.models import (
     DifficultyView,
     EpochView,
     FaucetView,
+    GameList,
+    GameSummary,
     GameView,
     GossipResult,
     MatchInfo,
@@ -126,6 +130,88 @@ def _quality_verdict(summary: QualitySummary | None) -> Literal["pass", "fail"] 
     if summary.verdict == "fail":
         return "fail"
     return None
+
+
+def _block_summary(stored: StoredBlock) -> BlockSummary:
+    """Project one stored block onto its list row."""
+    header = stored.header
+    return BlockSummary(
+        hash=stored.block_hash,
+        parent_hash=stored.parent_hash,
+        height=stored.height,
+        timestamp=header.timestamp,
+        epoch=header.epoch,
+        miner=header.miner,
+        transactions=len(stored.block.transactions),
+        proofs=len(stored.block.proofs),
+        wins_required=header.wins_required,
+        seal_bits=header.seal_bits,
+    )
+
+
+def _proof_in(stored: StoredBlock | None, game_hash: str) -> WinProof | None:
+    """The full proof for ``game_hash`` if the node still holds its block."""
+    if stored is None:
+        return None
+    for proof in stored.block.proofs:
+        if proof.game_hash == game_hash:
+            return proof
+    return None
+
+
+def _pending_summary(proof: WinProof, status: str) -> GameSummary:
+    """Project a mempool proof onto its list row."""
+    return GameSummary(
+        game_hash=proof.game_hash,
+        proof_id=proof.proof_id,
+        match_id=proof.match_id,
+        epoch=proof.epoch,
+        round=proof.round,
+        winner=proof.winner,
+        loser=proof.loser,
+        winner_seat=proof.winner_seat,
+        result=proof.result,
+        termination=proof.termination,
+        plies=proof.plies,
+        in_mempool=True,
+        low_ply=proof.low_ply,
+        challenge_status=status,  # type: ignore[arg-type]
+        quality_verdict=_quality_verdict(proof.quality_summary),
+    )
+
+
+def _settled_summary(record: ProofRecord, proof: WinProof | None, status: str) -> GameSummary:
+    """Project a settled proof onto its list row.
+
+    The ledger keeps only ``(proof_id, height, winner)`` per game, so the result
+    fields come from the block body. A node that snapshotted away the body still
+    lists the game, it just cannot describe the game.
+    """
+    if proof is None:
+        return GameSummary(
+            game_hash=record.game_hash,
+            proof_id=record.proof_id,
+            winner=record.winner,
+            height=record.height,
+            challenge_status=status,  # type: ignore[arg-type]
+        )
+    return GameSummary(
+        game_hash=proof.game_hash,
+        proof_id=record.proof_id,
+        match_id=proof.match_id,
+        epoch=proof.epoch,
+        round=proof.round,
+        winner=proof.winner,
+        loser=proof.loser,
+        winner_seat=proof.winner_seat,
+        result=proof.result,
+        termination=proof.termination,
+        plies=proof.plies,
+        height=record.height,
+        low_ply=proof.low_ply,
+        challenge_status=status,  # type: ignore[arg-type]
+        quality_verdict=_quality_verdict(proof.quality_summary),
+    )
 
 
 @dataclass(slots=True)
@@ -283,6 +369,23 @@ class NodeService:
             block=stored.block,
         )
 
+    def blocks(self, *, limit: int = 25, before_height: int | None = None) -> BlockList:
+        """The newest ``limit`` blocks on the adopted branch, tip first.
+
+        ``before_height`` is the page cursor: pass the lowest height you already
+        have to continue backwards. The list is a projection of the header, so it
+        is cheap to poll; a block's body is one ``GET /v1/blocks/{height}`` away.
+        """
+        main = self.chain.main_chain()
+        if before_height is not None:
+            main = main[:before_height]
+        window = main[-limit:] if limit < len(main) else main
+        return BlockList(
+            network=self.params.network_id,
+            tip_height=self.height,
+            blocks=tuple(_block_summary(stored) for stored in reversed(window)),
+        )
+
     def account(self, address: str) -> AccountView:
         """Balance, bond, nonce and registration for ``address``."""
         if not validate_address(address, self.params):
@@ -410,6 +513,41 @@ class NodeService:
                     quality_trace_hash=summary.trace_hash if summary is not None else None,
                 )
         raise NotFoundError(f"unknown game {game_hash!r}")
+
+    def games(self, *, limit: int = 25, before_height: int | None = None) -> GameList:
+        """Recent settled games, newest first, preceded by the proofs in the pool.
+
+        ``before_height`` pages backwards from a settle height; pending proofs
+        only appear on the first page because they have no height to page by.
+        Each row is described from the proof itself when this node still holds
+        the block, which is what lets an explorer show result, termination and
+        ply count without a second request.
+        """
+        from sccp.protocol.challenges import challenge_status
+
+        by_height = {stored.height: stored for stored in self.chain.main_chain()}
+        pending: list[GameSummary] = []
+        if before_height is None:
+            for proof in self.mempool.proofs.values():
+                pending.append(
+                    _pending_summary(proof, challenge_status(self.chain.state, proof.game_hash))
+                )
+        settled: list[GameSummary] = []
+        for record in sorted(
+            self.chain.state.proofs.values(), key=lambda item: (-item.height, item.game_hash)
+        ):
+            if before_height is not None and record.height >= before_height:
+                continue
+            if len(settled) >= limit:
+                break
+            settled.append(
+                _settled_summary(
+                    record,
+                    _proof_in(by_height.get(record.height), record.game_hash),
+                    challenge_status(self.chain.state, record.game_hash),
+                )
+            )
+        return GameList(network=self.params.network_id, games=(*pending, *settled))
 
     def _proof_for_record(self, height: int, game_hash: str) -> WinProof | None:
         """Find the full proof in its block, if this node still has that block."""

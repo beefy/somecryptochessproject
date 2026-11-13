@@ -1,0 +1,32 @@
+# The explorer's static host: one nginx container that serves the uploaded
+# release and puts the node and the relay on the same origin, because the node
+# sends no CORS headers and `#/play` signs payloads for both.
+#
+# The workflow uploads this file, nginx.conf and a release directory, then
+# switches the `current` symlink; see docs/EXPLORER_DEPLOYMENT.md.
+#
+#   docker compose up -d
+#
+# `network_mode: host` is what lets nginx reach the node and relay through the
+# loopback ports that docker-compose.yml already publishes (8645, 8646), so no
+# Docker network has to be shared with the chain's stack and 8646 can stay
+# firewalled off from browsers.
+name: sccp-explorer
+
+services:
+  explorer:
+    image: nginx:1.27-alpine
+    network_mode: host
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # The whole serving tree, not just the current release: the bind mount
+      # resolves `current` once, so a mount of `./current` would keep serving the
+      # release that existed when the container started.
+      - ./www:/srv:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/index.html"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped

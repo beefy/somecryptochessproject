@@ -31,6 +31,7 @@ commands; see [Cost guardrails](#cost-guardrails) for the shape of that work.
 | Deploy user and SSH key | Lets the workflow reach the host without GCP credentials. | `sccp` user, key-only SSH. |
 | Docker Engine + Compose plugin | Runs the node, relay and miners. | Installed from Docker's apt repository. |
 | GitHub repository variables/secrets | Tell the workflow where and how to deploy. | `TESTNET_DEPLOY_*` variables + `TESTNET_SSH_KEY`. |
+| Explorer origin (optional) | Serves the web explorer on port 80, next to the node. | `tcp:80` on the same VM, an `A` record, one nginx container. See [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md). |
 
 You do **not** need GKE, Cloud SQL, a load balancer, Cloud Storage, Artifact
 Registry, or a GCP service account for the workflow. Images live in GHCR and
@@ -167,6 +168,29 @@ gcloud compute firewall-rules create sccp-testnet-relay \
     --project="$PROJECT_ID"
 ```
 
+### Explorer page, only if you publish the web client
+
+The explorer is served by an nginx container on the same VM, so it needs one more
+ingress rule and no other resource. It answers `80` only; the node and relay ports
+above are unchanged, and the relay can stay closed because the page reaches it
+through the proxy:
+
+```bash
+gcloud compute firewall-rules create sccp-testnet-explorer-web \
+    --network="$NETWORK" \
+    --direction=INGRESS \
+    --action=ALLOW \
+    --rules=tcp:80 \
+    --source-ranges=0.0.0.0/0 \
+    --target-tags="$NODE_TAG" \
+    --project="$PROJECT_ID"
+```
+
+The deployment itself — DNS record, deploy directory, GitHub variables, TLS
+options and rollback — is in [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md).
+Skip both if you only need the JSON API or serve the page with
+`sccp node run --web`.
+
 ### SSH
 
 The deploy workflow uses plain SSH, not IAP, and GitHub-hosted runners do not
@@ -282,9 +306,11 @@ use `$TESTNET_HOST`.
 ### DNS
 
 The current deployment publishes the node under
-`testnet.somecryptochessproject.com` in the public
-`somecryptochessproject.com` Cloud DNS zone. Create the `A` record after the
-static IP exists:
+`testnet.somecryptochessproject.com` and the web explorer under
+`explorer.somecryptochessproject.com`, both in the public
+`somecryptochessproject.com` Cloud DNS zone. Both are `A` records on the same
+static address, because both are served by containers on the same VM. Create them
+after the static IP exists:
 
 ```bash
 gcloud dns record-sets create "$TESTNET_HOST." \
@@ -293,9 +319,19 @@ gcloud dns record-sets create "$TESTNET_HOST." \
     --ttl=60 \
     --rrdatas="$STATIC_IP" \
     --project="$PROJECT_ID"
+
+gcloud dns record-sets create "explorer.somecryptochessproject.com." \
+    --zone="$DNS_ZONE" \
+    --type=A \
+    --ttl=60 \
+    --rrdatas="$STATIC_IP" \
+    --project="$PROJECT_ID"
 ```
 
-If the record already exists, use `gcloud dns record-sets update` with the same
+The explorer record is only needed if that is deployed; see
+[`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md).
+
+If a record already exists, use `gcloud dns record-sets update` with the same
 arguments. Verify before wiring GitHub:
 
 ```bash
@@ -305,7 +341,7 @@ curl -sS "http://$TESTNET_HOST:8645/v1/status" \
 ```
 
 There is no GCP load balancer or managed certificate in this setup, and the node
-still speaks plain HTTP on `8645`.
+still speaks plain HTTP on `8645`. The explorer does too, on `80`.
 
 
 ---
@@ -365,6 +401,9 @@ On the VM:
 sudo useradd --create-home --shell /bin/bash sccp 2>/dev/null || true
 sudo usermod -aG docker sccp
 sudo install -d -m 755 -o sccp -g sccp /opt/sccp-testnet
+# Only if you publish the explorer: it deploys into its own directory, so the
+# chain's `docker compose down -v` cannot remove it.
+sudo install -d -m 755 -o sccp -g sccp /opt/sccp-explorer
 id sccp
 ```
 
@@ -561,6 +600,7 @@ environment; remove those separately if you are decommissioning the repository.
 | `docker: 'compose' is not a docker command` | Compose v2 plugin missing. | `docker compose version` on the VM. |
 | GHCR `unauthorized` during deploy | Package visibility or workflow token permissions. | Check the build job and package settings. |
 | `curl :8645` times out | VM lacks `sccp-node` tag, firewall rule is wrong, or the stack is not running. | `docker compose ps` and the firewall list. |
+| `curl :80` times out | Explorer firewall rule missing, or `dig` returns nothing yet. | The `sccp-testnet-explorer-web` rule and `dig +short explorer.somecryptochessproject.com`. |
 | Deploy succeeds but faucet `404` | Node started with `--no-faucet`. | Compose environment and `docker compose logs node`. |
 | Chain height resets after every deploy | Expected: the workflow runs `docker compose down -v`. | [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md). |
 
@@ -570,6 +610,8 @@ environment; remove those separately if you are decommissioning the repository.
 
 - [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) — compose settings, workflow
   details and smoke tests.
+- [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md) — the web client's own
+  deploy, its firewall rule, DNS record and proxy.
 - [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) — fund a wallet
   against the deployed node.
 - [`RUNBOOK.md`](RUNBOOK.md) — operating and recovering the testnet.

@@ -53,6 +53,54 @@ jobs:
       - name: Coverage gate (crypto and serialization >= 95%)
         run: pytest -q --cov=sccp.crypto --cov=sccp.serialization --cov-fail-under=95
 
+  # src/web is a separate toolchain (TypeScript + Vite), so it gets its own job
+  # rather than a step in `check`: a red explorer build must not hide behind a
+  # Python matrix, and the two run in parallel. The commit is the same input the
+  # node serves with `sccp node run --web`, so a bundle that does not compile is
+  # a broken deploy. Node 22 and 24 are the LTS lines `vitest`/`react-native`
+  # declare; npm ci uses the committed src/web/package-lock.json.
+  web:
+    name: web node ${{ matrix.node-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["22", "24"]
+    defaults:
+      run:
+        working-directory: src/web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: src/web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # vitest: canonical JSON, bech32, keys and the protocol ports, all pinned
+      # to src/lib/vectors.json. tests/unit/test_web_vectors.py holds the same
+      # document to the Python implementation in the `check` job.
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.node-version == '22'
+        with:
+          name: web-dist
+          path: src/web/dist/
+          if-no-files-found: error
+          retention-days: 7
+
   engine:
     name: stockfish smoke
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

@@ -12,16 +12,20 @@ storage and peer clients on shutdown.
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from sccp.errors import NotFoundError, RateLimitError, SccpError
 from sccp.node.models import (
     AccountView,
+    BlockList,
     BlockView,
     ChallengeList,
     ChallengeView,
@@ -29,6 +33,7 @@ from sccp.node.models import (
     EpochView,
     FaucetRequest,
     FaucetView,
+    GameList,
     GameView,
     GossipResult,
     MatchInfo,
@@ -43,6 +48,27 @@ from sccp.node.p2p import GossipEnvelope
 from sccp.node.service import NodeService
 from sccp.protocol.models import Beacon, Block, Transaction, Transcript, WinProof
 from sccp.version import __version__
+
+WEB_DIST_ENV = "SCCP_WEB_DIST"
+"""Environment variable pointing at a built explorer (a directory with ``index.html``)."""
+
+
+def web_dist_root() -> Path | None:
+    """The built explorer's directory, or ``None`` when nothing has been built.
+
+    ``SCCP_WEB_DIST`` is an override, not a hint: an operator (or a container)
+    that points it at a directory without an ``index.html`` gets no explorer
+    rather than a stale bundle from somewhere else on disk. Without the variable
+    the only candidate is ``src/web/dist`` next to a source checkout; an
+    installed wheel carries no explorer, so ``None`` is the normal answer there
+    and the node simply serves its JSON API alone.
+    """
+    configured = os.environ.get(WEB_DIST_ENV)
+    if configured:
+        directory = Path(configured)
+        return directory if (directory / "index.html").is_file() else None
+    fallback = Path(__file__).resolve().parents[2] / "web" / "dist"
+    return fallback if (fallback / "index.html").is_file() else None
 
 
 def _error_response(status_code: int, message: str) -> JSONResponse:
@@ -82,8 +108,13 @@ def openapi_contract(app: FastAPI) -> dict[str, Any]:
     return schema
 
 
-def create_app(service: NodeService) -> FastAPI:
-    """Build the FastAPI app for one node service."""
+def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI:
+    """Build the FastAPI app for one node service.
+
+    ``web_root`` mounts a built explorer (``src/web/dist``) at ``/`` so the JSON
+    API and the HTML client share an origin; without it the app serves the API
+    alone and nothing about the contract changes.
+    """
     service.check_startup()
 
     @asynccontextmanager
@@ -122,6 +153,13 @@ def create_app(service: NodeService) -> FastAPI:
     def params() -> dict[str, object]:
         return service.params.model_dump(mode="json")
 
+    @app.get("/v1/blocks", response_model=BlockList)
+    def blocks(
+        limit: int = Query(default=25, ge=1, le=200),
+        before_height: int | None = Query(default=None, ge=0),
+    ) -> BlockList:
+        return service.blocks(limit=limit, before_height=before_height)
+
     @app.get("/v1/blocks/{reference}", response_model=BlockView)
     def block(reference: str) -> BlockView:
         return service.block(reference)
@@ -148,6 +186,13 @@ def create_app(service: NodeService) -> FastAPI:
     @app.get("/v1/difficulty", response_model=DifficultyView)
     def difficulty() -> DifficultyView:
         return service.difficulty()
+
+    @app.get("/v1/games", response_model=GameList)
+    def games(
+        limit: int = Query(default=25, ge=1, le=200),
+        before_height: int | None = Query(default=None, ge=0),
+    ) -> GameList:
+        return service.games(limit=limit, before_height=before_height)
 
     @app.get("/v1/games/{game_hash}", response_model=GameView)
     def game(game_hash: str) -> GameView:
@@ -206,7 +251,18 @@ def create_app(service: NodeService) -> FastAPI:
     def peers() -> tuple[PeerView, ...]:
         return service.peers_view()
 
+    if web_root is not None:
+        # Mounted last: Starlette matches routes in declaration order, so the
+        # JSON API keeps winning every path it owns.
+        app.mount("/", StaticFiles(directory=web_root, html=True), name="web")
+
     return app
 
 
-__all__ = ["CONTRACT_IGNORED_KEYS", "create_app", "openapi_contract"]
+__all__ = [
+    "CONTRACT_IGNORED_KEYS",
+    "WEB_DIST_ENV",
+    "create_app",
+    "openapi_contract",
+    "web_dist_root",
+]

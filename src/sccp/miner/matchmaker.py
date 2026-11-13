@@ -35,6 +35,7 @@ from typing import Any, TypeVar, cast
 
 import chess
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import Field
 
 from sccp.chess.openings import OpeningBook, book_for
@@ -1311,9 +1312,24 @@ class Matchmaker:
         return matchmaker
 
 
-def create_app(matchmaker: Matchmaker) -> FastAPI:
-    """Wrap a :class:`Matchmaker` in the relay's HTTP API."""
+def create_app(matchmaker: Matchmaker, *, origins: Sequence[str] = ()) -> FastAPI:
+    """Wrap a :class:`Matchmaker` in the relay's HTTP API.
+
+    ``origins`` is a browser allowlist. The relay holds no session and every
+    mutation carries a seat signature, so a page with no key can only read
+    state and re-post what it already has; the allowlist still defaults to
+    empty, because a deployment that never serves a browser should not start
+    answering preflights.
+    """
     app = FastAPI(title="sccp matchmaker", version="1")
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(origins),
+            allow_methods=["GET", "POST"],
+            allow_headers=["content-type"],
+            max_age=600,
+        )
 
     def call(action: Callable[[], T]) -> T:
         try:
