@@ -5,6 +5,8 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [Unreleased]
+
 ## [0.15.0] - 2026-11-13
 
 A minor release: the chain gets a scoreboard and a home. Derived Elo ratings turn
@@ -58,6 +60,11 @@ and a proofless block must carry exactly one transaction.
 - `VITE_SCCP_RELAY` may now be a path (`/relay`): `#/play` resolves it against
   the page (`relayPublicUrl`) so a relative base still prints a URL a reader can
   open. `src/web/src/lib/relay.test.ts` pins the resolution.
+- `src/web/public/favicon.svg`: the explorer's tab icon, the four centre squares
+  of the `#/play` board (d4, d5, e4, e5) cropped into a circle and drawn in that
+  board's own `squareLight`/`squareDark` colours. `public/` is copied verbatim
+  and `base: "./"` rewrites the `index.html` link to `./favicon.svg`, so one
+  build serves the icon from the node's `--web` root and from a subdirectory.
 - `src/web/README.md`: how to build the explorer, serve it from `sccp node run
   --web`, develop against a node with the Vite proxy, set `SCCP_NODE`,
   `VITE_SCCP_API` and `SCCP_WEB_DIST`, and what to check when a page comes up

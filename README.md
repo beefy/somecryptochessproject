@@ -9,6 +9,11 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
+ - [Block explorer](https://explorer.somecryptochessproject.com/)
+ - [Living Whitepaper](https://github.com/beefy/somecryptochessproject/blob/main/docs/WHITEPAPER.md)
+ - [Public testnet](http://testnet.somecryptochessproject.com:8645/v1/status)
+ - [Reddit](https://www.reddit.com/r/chessproofofwork/)
+
 > **Status: protocol v1 is implemented and deployed on testnet.** The repository
 > contains the complete path from wallet to block: PGN validation and canonical
 > game hashing; commit/reveal beacons, deterministic pairing, signed match
