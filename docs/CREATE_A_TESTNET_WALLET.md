@@ -30,7 +30,7 @@ sccp --version
 ```
 
 ```text
-sccp 0.14.0 (protocol v1)
+sccp 0.15.0 (protocol v1)
 ```
 
 Python 3.11 or newer is required. The HTTP examples pipe JSON through `jq` for
