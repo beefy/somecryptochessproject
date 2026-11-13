@@ -7,6 +7,62 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-12
+
+A minor release: `scripts/play_miner.py --on-chain` plays on **testnet**
+parameters as well as devnet. The deployed chain's shape can now be rehearsed on
+a laptop -- five-block epochs, one transaction per proofless block, and a proof
+settled at the epoch boundary -- with no node process, no relay process and no
+Docker stack, and `--games N` plays one game per epoch the way the published
+stack does.
+
+### Added
+
+- `--network testnet` for `play_miner.py --on-chain`, which bootstraps the
+  published testnet chain in process in the same `--chain-dir`, with the same
+  relay, seat, clocks and proof as devnet. `sccp.devnet._bootstrap_testnet`
+  replays `deploy/bootstrap_testnet_stack.py`'s schedule from
+  `TESTNET_BOOTSTRAP_ACTIONS` -- funding, registration, then a commitment or
+  reveal per block -- and parks the tip at height 19, the last block of epoch 3,
+  with epochs 3 and 4 able to pair and epoch 5's commitments already on chain.
+- Clock mining in `play_miner.py`: `_next_chain_epoch`, `_advance_chain` and
+  `_mine_clock` build heartbeat blocks until an unplayed, matchable epoch opens,
+  stocking the pool from `_submit_epoch_txs` when a proofless block has nothing
+  to carry and the protocol still demands one transaction. A chain that drifted
+  (an epoch whose reveals never landed) therefore advances instead of failing.
+- `CHAIN_NETWORKS` (`devnet`, `testnet`), `TESTNET_OPPONENTS` -- the single
+  opponent the published stack runs -- and `MAX_ADVANCE_BLOCKS`, so `--on-chain`
+  names what it can bootstrap in process instead of failing inside `get_network`.
+- `network` in the `play.json` sidecar. Resuming a chain directory on the other
+  network is refused -- `chain.sqlite is a 'testnet' chain, not 'devnet'` --
+  instead of opening a testnet chain with devnet parameters.
+
+### Changed
+
+- `play_miner.SoloTable._open_claim_window(proof)` now mines out the rest of the
+  proof's epoch by height (`sccp.chain.block.epoch_end_height`) instead of
+  assuming the next block settles it. On devnet that is one block and nothing
+  changes; on testnet it is the four blocks that close the epoch, each carrying
+  an availability commitment or a reveal, so a testnet proof lands in the block
+  that opens the next epoch -- heights 20, 25, 30, one game per five blocks.
+  Settlement order is co-sign, build the proof, stock the next epoch, then open
+  the window, which is what lets a second game find its roster ready.
+- `sccp.devnet` splits its clock into `_next_timestamp`, `_build_block`,
+  `_build_and_ingest` and `_mine_heartbeat`, so the demo and the player share one
+  path to a block and `_bootstrap` and `_bootstrap_testnet` differ only in the
+  transactions they script. Block timestamps advance by
+  `max(1, target_block_seconds)`, which keeps a five-block testnet epoch from
+  drifting against a one-second devnet one.
+
+### Fixed
+
+- `sccp.devnet` built a block from a **new, empty** mempool whenever the caller
+  left `pool` out, so a block built from the default could never carry a pending
+  transaction and heartbeat mining from the node's own pool always found nothing
+  to build. The default is now `service.mempool`, the pool the node validates
+  against; the scripted bootstraps still pass their own pool when a block must
+  carry exactly the transactions they chose.
+
 ## [0.12.0] - 2026-11-12
 
 A minor release: the wallet reads the account it spends from out of `--node`, so
