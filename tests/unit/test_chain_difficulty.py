@@ -9,6 +9,7 @@ from sccp.chain.difficulty import (
     WIN_UNIT,
     Difficulty,
     block_work,
+    earned_block_work,
     expected_interval_seconds,
     initial_difficulty,
     next_difficulty,
@@ -37,6 +38,20 @@ def test_work_counts_k_and_the_seal() -> None:
         block_work(0, 0)
     with pytest.raises(StateError):
         Difficulty(wins_required=0, seal_bits=0)
+
+
+def test_earned_work_credits_the_chess_term_only_for_carried_proofs() -> None:
+    """A proofless block earns its seal work; the k term is for real proofs."""
+    assert earned_block_work(0, 1, 0) == 1
+    assert earned_block_work(0, 1, 1) == 1 + WIN_UNIT
+    assert earned_block_work(4, 3, 0) == 16
+    assert earned_block_work(4, 3, 2) == 16
+    assert earned_block_work(4, 3, 3) == 16 + 3 * WIN_UNIT
+    assert earned_block_work(4, 3, 0) < earned_block_work(4, 3, 3)
+    with pytest.raises(StateError):
+        earned_block_work(0, 0, 0)
+    with pytest.raises(StateError):
+        earned_block_work(-1, 1, 1)
 
 
 def test_initial_difficulty_reads_the_network() -> None:

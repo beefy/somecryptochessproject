@@ -285,24 +285,23 @@ is required. This lets the faucet, registrations, availability commits and
 reveals enter the ledger before the first match can be claimed.
 
 Past the boundary a block owes `wins_required` proofs, with one strictly
-unprofitable exception: a block may carry **zero** proofs if it carries at least
-one transaction, and such a *heartbeat* block mints no subsidy (it still collects
-its transactions' fees). Without it a chain can deadlock: settled proofs are
-spent once, a two-miner roster plays fewer games than an epoch has blocks, and if
-no block may be added then the availability and reveal transactions that rebuild
-the roster can never be mined, so no proof can ever exist again. Skipping proofs
-never pays, so the exemption cannot be farmed; it only lets a chain leave a state
-it could not otherwise leave.
+unprofitable exception: a block may carry **zero** proofs if it carries
+**exactly one** transaction, and such a *heartbeat* block mints no subsidy (it
+still collects its transaction's fee). Without it a chain can deadlock: settled
+proofs are spent once, a two-miner roster plays fewer games than an epoch has
+blocks, and if no block may be added then the availability and reveal
+transactions that rebuild the roster can never be mined, so no proof can ever
+exist again. Skipping proofs never pays, so the exemption cannot be farmed; it
+only lets a chain leave a state it could not otherwise leave. A heartbeat also
+earns only its seal work in fork choice, never the `k * 65536` chess term
+(section 14.6), so a chain of them cannot outrun a chain that carries proofs.
 
-Consensus only asks a heartbeat block for at least one transaction; how much
-ledger work a block absorbs is a builder policy, and it matters. Blocks are the
-chain's clock, so an epoch of `epoch_length` blocks can only end if the ledger
-can supply `epoch_length` blocks' worth of work. The reference `BlockBuilder`
-therefore folds **exactly one** transaction into a heartbeat block: four waiting
-transactions buy four blocks, not one, and the epoch boundary comes within reach.
-Packing the whole mempool into a single block spends the same work while
+Exactly one transaction is a consensus rule, not a builder policy, and it
+matters. Blocks are the chain's clock, so an epoch of `epoch_length` blocks can
+only end if the ledger can supply `epoch_length` blocks' worth of work. Packing
+the whole mempool into a single proofless block spends the same work while
 producing one block, which is how a proofless epoch freezes one block short of
-its end.
+its end; the validator rejects it.
 
 The same arithmetic bounds a *proof* block. It already is one of the epoch's
 blocks, so the reference builder keeps one pending transaction in reserve for
@@ -1268,22 +1267,29 @@ seal bits and one required win; mainnet begins at 16 bits and three wins.
 
 ### 14.6 Fork choice
 
-Each block contributes:
+Each block declares:
 
 ```text
 block_work = (1 << seal_bits) + wins_required * 65536
 ```
 
-A branch's work is the sum of its blocks. The node adopts the branch with the
-greatest cumulative work. Ties are broken by the numerically lower block hash,
-so two nodes that see the same two branches choose the same tip.
+Fork choice credits the same expression minus the chess term when the block
+carries fewer than `wins_required` proofs. A bootstrap block and a heartbeat
+block (section 5.2) carry none, so each earns its seal work alone. The chess
+term is paid for proofs the block actually carries; crediting it for a proofless
+block would let that block claim work nobody performed.
+
+A branch's work is the sum of the work its blocks earn. The node adopts the
+branch with the greatest cumulative work. Ties are broken by the numerically
+lower block hash, so two nodes that see the same two branches choose the same
+tip.
 
 The formula is deliberately simple and documented as a v1 approximation. At
 mainnet's initial 16-bit seal target, the seal contributes 65,536 units, the
-same as one required win, so a block's work is `1 + k` such units. The formula
-does not attempt to model actual engine strength, game length or wall-clock
-cost. Fork choice is about which history has the most protocol-defined work,
-not which miner is strongest.
+same as one required win, so a proof block's work is `1 + k` such units and a
+heartbeat block's is `1`. The formula does not attempt to model actual engine
+strength, game length or wall-clock cost. Fork choice is about which history has
+the most protocol-defined work, not which miner is strongest.
 
 ### 14.7 Reorganisations
 

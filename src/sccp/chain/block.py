@@ -24,7 +24,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final, NoReturn
 
-from sccp.chain.difficulty import Difficulty, next_difficulty, seal_valid
+from sccp.chain.difficulty import (
+    Difficulty,
+    earned_block_work,
+    next_difficulty,
+    seal_valid,
+)
 from sccp.chain.state import (
     MAX_RECENT_TIMESTAMPS,
     ZERO_HASH,
@@ -211,17 +216,19 @@ def proofless_allowed(params: NetworkParams, height: int) -> bool:
     in).
 
     A proofless block is therefore admissible above the bootstrap window, on two
-    conditions the validator enforces: it must carry at least one transaction
+    conditions the validator enforces: it must carry exactly one transaction
     (it exists to move the ledger, not to pad the chain), and it mints no
     subsidy (:func:`minted_subsidy`). Skipping proofs never pays, so the rule
-    cannot be farmed; it only unblocks a chain that has no proof to spend.
+    cannot be farmed; it only unblocks a chain that has no proof to spend. The
+    block also earns its seal work only, never the chess term (see
+    :func:`sccp.chain.difficulty.earned_block_work`), so a branch made of
+    proofless blocks cannot outrun a branch of equal length that carries proofs.
 
-    How many transactions such a block absorbs is a builder policy, not a
-    consensus rule: :class:`sccp.miner.block_builder.BlockBuilder` includes
-    exactly one, because blocks are also the chain's clock -- an epoch of
-    ``epoch_length`` blocks can only end if the ledger supplies that many blocks'
-    worth of work, and folding a whole pool into one block would spend the work
-    without buying the blocks.
+    Exactly one transaction is a consensus rule, not a builder policy: blocks
+    are also the chain's clock, and an epoch of ``epoch_length`` blocks can only
+    end if the ledger supplies that many blocks' worth of work. Folding a whole
+    pool into one proofless block would spend that work while producing one
+    block, which lets a miner re-freeze the chain at the next boundary.
     """
     return height > bootstrap_end_height(params)
 
@@ -241,6 +248,7 @@ class ConnectedBlock:
 
     block: Block
     block_hash: str
+    #: Seal work plus chess work only when the block carried its proofs.
     work: int
     state: State
 
@@ -501,20 +509,34 @@ def _apply_proof(
 
 
 def _check_proof_count(params: NetworkParams, block: Block) -> None:
-    """Enforce the scheduled proof count, and the heartbeat exemption for zero."""
+    """Enforce the scheduled proof count, and the heartbeat exemption for zero.
+
+    A proofless block must carry exactly one transaction. Blocks are the chain's
+    clock, so letting one block absorb the whole pool would spend an epoch's
+    ledger work without producing the blocks that work was meant to buy; a
+    miner could then re-freeze the chain at the next boundary (PROTOCOL.md
+    12.2). This is a consensus rule, and the builder's limit is only a mirror
+    of it.
+    """
     header = block.header
     required = required_proofs(params, header.height, header.wins_required)
     count = len(block.proofs)
     if count == required:
         return
     if count == 0 and proofless_allowed(params, header.height):
-        if block.transactions:
-            return
-        _fail(
-            BlockFailure.PROOFS,
-            f"a proofless block at height {header.height} must carry a transaction "
-            f"(height {header.height} requires {required} proofs)",
-        )
+        if not block.transactions:
+            _fail(
+                BlockFailure.PROOFS,
+                f"a proofless block at height {header.height} must carry a transaction "
+                f"(height {header.height} requires {required} proofs)",
+            )
+        if len(block.transactions) != 1:
+            _fail(
+                BlockFailure.PROOFS,
+                f"a proofless block at height {header.height} must carry exactly one "
+                f"transaction, not {len(block.transactions)}",
+            )
+        return
     _fail(
         BlockFailure.PROOFS,
         f"block carries {count} proofs, height {header.height} requires {required}",
@@ -695,7 +717,7 @@ def connect_block(
     return ConnectedBlock(
         block=block,
         block_hash=hash_hex,
-        work=work.difficulty.work,
+        work=earned_block_work(header.seal_bits, header.wins_required, len(block.proofs)),
         state=work,
     )
 

@@ -172,7 +172,9 @@ def test_connect_accepts_a_valid_bootstrap_block(devnet_chain: Any, protocol_acc
     assert connected.block_hash == block_hash(block.header)
     assert connected.state.height == 1
     assert connected.state.tip_hash == connected.block_hash
-    assert connected.work == connected.state.difficulty.work
+    # A bootstrap block carries no proofs, so it earns its seal work alone.
+    assert connected.work == 1 << block.header.seal_bits
+    assert connected.work < connected.state.difficulty.work
     value = coinbase.payload["amount"]
     assert isinstance(value, int)
     assert value == block_subsidy(devnet_chain.params, 1, 0)
@@ -264,6 +266,8 @@ def test_connect_accepts_a_proofless_heartbeat_block(
     # ``minted`` counts every coinbase credit, so it grows by the fees only: the
     # heartbeat block adds no subsidy to the supply.
     assert connected.state.minted == chain.state.minted + tx.fee
+    assert connected.work == 1 << block.header.seal_bits
+    assert connected.work < connected.state.difficulty.work
     account = connected.state.account(block.header.miner)
     assert account.coinbase_queue[-1] == (block.header.height, tx.fee)
 
@@ -275,6 +279,81 @@ def test_connect_accepts_a_proofless_heartbeat_block(
     )
     stripped = _header(stripped, merkle_root=merkle_root_of(stripped))
     assert _reason(chain, stripped) is BlockFailure.PROOFS
+
+
+def test_a_proofless_block_carries_exactly_one_transaction(
+    live_chain: Any, protocol_accounts: Any
+) -> None:
+    """The one-transaction rule is consensus, not builder policy.
+
+    A proofless block is the chain's clock, so a miner that folded the pool into
+    one heartbeat could spend an epoch's ledger work without producing the
+    blocks that work was meant to buy, and re-freeze the chain at the boundary.
+    """
+    from sccp.chain.mempool import Mempool
+    from sccp.wallet.service import WalletService
+
+    chain = live_chain.chain
+    pool = Mempool(params=chain.params, tip_state=chain.state, book=chain.book)
+    first = WalletService(chain.params, pool.projection).build_transfer(
+        live_chain.faucet, protocol_accounts["alice"].address, 1
+    )
+    pool.add_transaction(first)
+    second = WalletService(chain.params, pool.projection).build_transfer(
+        live_chain.faucet, protocol_accounts["bob"].address, 1
+    )
+
+    one = _propose(chain, protocol_accounts["carol"].keypair, txs=(first,))
+    assert one.proofs == ()
+    assert len(one.transactions) == 1
+    connected = connect_block(
+        one,
+        params=chain.params,
+        parent_state=chain.state,
+        parent_hash=chain.tip_hash,
+        book=chain.book,
+    )
+    assert connected.state.height == chain.height + 1
+
+    two = one.model_copy(update={"transactions": (first, second)})
+    two = _header(two, merkle_root=merkle_root_of(two))
+    assert _reason(chain, two) is BlockFailure.PROOFS
+
+
+def test_a_proofless_block_earns_only_its_seal_work(
+    live_chain: Any, chain_match: Any, miner_keys: dict[str, Any], protocol_accounts: Any
+) -> None:
+    """Equal-height blocks: the one carrying the proof must be the heavier."""
+    from sccp.wallet.service import WalletService
+
+    chain = live_chain.chain
+    match = chain_match(chain, epoch=3)
+    miner = miner_keys[match.proof.winner]
+    proof_block = _propose(chain, miner, proofs=(match.proof,))
+    tx = WalletService(chain.params, chain.state).build_transfer(
+        live_chain.faucet, protocol_accounts["alice"].address, 1
+    )
+    heartbeat = _propose(chain, protocol_accounts["carol"].keypair, txs=(tx,))
+    assert proof_block.header.height == heartbeat.header.height
+    assert len(proof_block.proofs) == 1 and heartbeat.proofs == ()
+
+    def connect(block: Any) -> Any:
+        return connect_block(
+            block,
+            params=chain.params,
+            parent_state=chain.state,
+            parent_hash=chain.tip_hash,
+            book=chain.book,
+        )
+
+    proof_connected = connect(proof_block)
+    heartbeat_connected = connect(heartbeat)
+    # Both declare the same difficulty, so they differ only in the chess term.
+    declared = proof_connected.state.difficulty.work
+    assert proof_connected.work == declared
+    assert heartbeat_connected.work == declared - heartbeat.header.wins_required * 65536
+    assert heartbeat_connected.work == 1 << heartbeat.header.seal_bits
+    assert heartbeat_connected.work < proof_connected.work
 
 
 def test_connect_rejects_a_duplicated_transaction(

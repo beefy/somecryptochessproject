@@ -42,6 +42,27 @@ not itemised here.
   `VITE_SCCP_API` and `SCCP_WEB_DIST`, and what to check when a page comes up
   empty.
 
+### Security
+
+- Fork choice now credits chess work only to blocks that carry it. A block earns
+  `(1 << seal_bits) + k * WIN_UNIT` when it carries its `k` proofs and
+  `1 << seal_bits` otherwise (`chain/difficulty.py: earned_block_work`,
+  `chain/block.py: connect_block`). A proofless *heartbeat* block used to earn
+  the full `k * WIN_UNIT`, which made a branch of heartbeats as heavy as a
+  branch of real proofs at equal height and let any miner replace history for a
+  seal and a self-paid transfer.
+- A proofless block must now carry **exactly one** transaction, not "at least
+  one" (`chain/block.py: _check_proof_count`). The old rule was builder policy,
+  so a griefing miner could fold the whole pool into one heartbeat and re-freeze
+  the chain at the next epoch boundary.
+- Both changes are consensus changes. `chain_work` is derived rather than
+  committed, so stored blocks replay unchanged and `restore_chain` re-derives
+  each weight, but nodes must agree on the credit rule: upgrade them together
+  (and before the mainnet genesis freeze, since post-genesis this needs an
+  activation height).
+- `docs/THREAT_MODEL.md` and `docs/PROTOCOL.md` now document the heartbeat
+  trade-off, the seal-only fork residual risk and the unenforced `reorg_depth`.
+
 ## [0.14.0] - 2026-11-12
 
 A minor release: the testnet gets a face. `src/web` is a browser block explorer

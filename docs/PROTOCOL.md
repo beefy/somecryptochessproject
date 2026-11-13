@@ -695,8 +695,14 @@ therefore has a zero body root and no coinbase.
 
 ### 12.1 The seal and difficulty
 
-`block_work(seal_bits, k) = (1 << seal_bits) + k * 65536`; a chain's weight is
-the sum of that over its blocks, so depth plus declared work decide forks.
+`block_work(seal_bits, k) = (1 << seal_bits) + k * 65536` is what a header
+*declares*. Fork choice credits `earned_work`: the same expression minus
+`k * 65536` when the block carries fewer than the `k` proofs it owes. A bootstrap
+block and a heartbeat block (section 12.2) carry none, so each earns its seal
+work alone; crediting the chess term regardless would let a proofless branch
+claim work nobody performed. A chain's weight is the sum of earned work over its
+blocks, so depth plus work *actually performed* decide forks. Genesis is the
+root and contributes its declared work as a constant every chain shares.
 
 The seal is valid when `int(block_hash, 16) < 2 ** (256 - seal_bits)`; with
 `seal_bits = 0` every hash passes, which is why testnet and devnet can seal for
@@ -734,17 +740,20 @@ testnet and devnet let a small roster settle every game it plays; mainnet keeps
 Proofs are ordered by `proof_id`, which makes the body canonical.
 
 The exception is the *heartbeat*: past the bootstrap window a block may instead
-carry **zero** proofs if it carries at least one transaction, and such a block
-mints no subsidy (it still collects its transactions' fees). Without it a chain
+carry **zero** proofs if it carries **exactly one** transaction, and such a block
+mints no subsidy (it still collects its transaction's fee). Without it a chain
 can deadlock -- settled proofs are spent once, a small roster plays fewer games
 than an epoch has blocks, and if no block may be added then the availability and
 reveal transactions that rebuild the roster can never be mined, so no proof can
 ever exist again. The exemption cannot be farmed because skipping `k` proofs
-always costs more than it saves. How much ledger work a heartbeat block absorbs
-is a builder choice, not a consensus rule; the reference `BlockBuilder` includes
-exactly one transaction, because a block is also the chain's clock and an epoch
-of `epoch_length` blocks can only end if the ledger supplies that many blocks'
-worth of work.
+always costs more than it saves, and a heartbeat earns seal work only, never the
+`k * 65536` chess term (section 12.1), so a branch of proofless blocks cannot
+outrun a branch of equal length that carries proofs. Exactly one transaction is
+a consensus rule, not a builder policy: a block is also the chain's clock, and an
+epoch of `epoch_length` blocks can only end if the ledger supplies that many
+blocks' worth of work. A miner that folded the whole pool into one proofless
+block would spend that work while producing one block, re-freezing the chain at
+the next boundary; the validator rejects such a block.
 
 The same reasoning bounds the transactions a *proof* block carries. A proof
 block is one of the epoch's blocks without spending any ledger work, so the

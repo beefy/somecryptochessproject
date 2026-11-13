@@ -126,7 +126,8 @@ neutral band and `wins_required` at `1`. `GET /v1/difficulty` reports the curren
 values and the retarget history. The bootstrap script paces its synthesized
 timestamps the same way.
 
-After height 19 a block needs a proof or at least one transaction. The stack's
+After height 19 a block needs a proof, or exactly one transaction when it is a
+proofless heartbeat block. The stack's
 miners commit and reveal availability every epoch, so those transactions carry
 the chain forward even when a round ends in a draw; without them (a miner started
 without `--nonce-secret-file`) the chain can only advance when somebody plays a
