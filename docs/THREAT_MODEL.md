@@ -79,7 +79,9 @@ competing honestly. It is not "cheating is impossible".
 | Loser stalls to deny a win | Clocks auto-flag, receipts are signed, a bonded `timeout_claim` has a dispute window (`protocol/clocks.py`, `chain/timeout.py`) | Needs available witnesses; see forged timeout |
 | Forged timeout | Receipt signatures, monotonic plies, later-move dispute, claimant bond (`chain/timeout.py`) | A colluding witness quorum can still fabricate a flag |
 | Replayed game | `game_hash`/`match_id` registries, proof-id uniqueness, registries rebuilt on reorg (`chain/state.py`, `chain/tx.py`) | A game can be reused on a competing fork inside the finality window |
+| Self-assigned or inflated Elo | Ratings are not consensus state: no block field, transaction or route accepts a rating, and the node replays settled proofs with Glicko-2 (`ratings.py`, `node/service.py: ratings`, `tests/unit/test_ratings.py`) | Two colluding seats can trade wins and inflate each other; a rating measures results, not intent, and is provisional until 10 games |
 | Invalid block | Full validation on receipt and on replay, headers-first sync (`chain/block.py`, `chain/chain.py`, `node/service.py: sync_from`, `node/p2p.py: plan_sync`) | A bug in validation code; tested, not proven absent |
+| Cheap proofless fork (heartbeat abuse) | A block earns the `k * WIN_UNIT` chess term only when it carries its `k` proofs, so a heartbeat earns seal work alone; a proofless block must carry exactly one transaction (`chain/difficulty.py: earned_block_work`, `chain/block.py: _check_proof_count`) | Seal work is the only barrier: the required transaction can be one the miner pays to itself, so it adds no real cost (16 bits per block on mainnet, 0 on devnet/testnet, where history is valueless). There is no finality gadget and `reorg_depth` is reserved and unenforced (whitepaper 16.5) |
 | Long-range reorg | Coinbase maturity today; bonded finality and checkpoints are planned | Not solved in v1 |
 | DoS via analysis | Deterministic sampling with a per-call limit, dedup by proof id, bounded retries, bounded queue (`node/quality_sampler.py`) | Operators must size the queue and engine pool |
 | Engine poisoning | The engine fingerprint is the binary's SHA-256 and is part of every certificate, summary and challenge evidence; operators can therefore blacklist a build | Nets (NNUE) are not pinned by hash yet, and a repacked cheating binary is out of scope |
@@ -104,6 +106,7 @@ The attacks above are exercised by:
 | Stalling loser, forged receipt, late dispute | `tests/unit/test_clocks.py`, `tests/unit/test_chain_timeout.py` |
 | Refused checkmate | `tests/unit/test_clocks.py::test_refused_checkmate_needs_the_signed_move_stream` |
 | Witness equivocation | `tests/unit/test_chain_timeout.py::test_an_equivocating_witness_loses_its_bond` |
+| Cheap proofless fork | `tests/unit/test_chain_chain.py::test_a_proofless_branch_cannot_outrun_a_proof_branch`, `tests/unit/test_chain_block.py::test_a_proofless_block_earns_only_its_seal_work`, `::test_a_proofless_block_carries_exactly_one_transaction` |
 
 The first five rows are the adversarial suite: `make adversarial` runs
 `pytest -m adversarial`, which the default suite deselects.
@@ -169,6 +172,42 @@ Goal: make honest miners waste CPU or lose bonds
     └── One open challenge per challenger; bonds lock on open
 ```
 
+### 5.4 Buy a fork with heartbeat blocks
+
+```
+Goal: replace history without playing chess
+├── Mine a proofless block at every height
+│   ├── Skip the k proofs → allowed only with exactly one transaction
+│   ├── Claim k * WIN_UNIT of chess work anyway
+│   │   └── rejected: work is credited by proofs carried, so the block earns
+│   │       its seal work alone (difficulty.earned_block_work)
+│   └── Fold the pool into one proofless block to re-freeze the chain
+│       └── rejected: a proofless block carries exactly one transaction
+├── Let the hash tie-break favour the proofless branch
+│   └── no longer applies: at equal height a branch carrying proofs is heavier
+└── Grind a long cheap branch anyway
+    └── residual: it still costs seal work per block (16 bits on mainnet);
+        there is no finality gadget and reorg_depth is not enforced (16.5)
+```
+
+### 5.5 Inflate a rating
+
+```
+Goal: appear stronger than the games support
+├── Write a rating into a transaction or block
+│   └── rejected: there is no such field; a rating is not consensus state
+├── Submit a rating to the node
+│   └── rejected: there is no POST route; /v1/ratings is derived on demand
+├── Edit the explorer's copy
+│   └── no effect: the page renders the node's replay of the chain, and any
+│       other node replays the same proofs to the same numbers
+├── Replay an old winning game → rejected: game_hash/match_id registries
+└── Collude with a second seat and trade wins
+    └── residual: the games are legal, so they count; pairing's identity
+        heuristics raise the cost, and the rating is marked provisional
+        until 10 settled games
+```
+
 ---
 
 ## 6. Assumptions and verification status
@@ -181,6 +220,8 @@ Goal: make honest miners waste CPU or lose bonds
 | Bonds exceed the expected value of one bad proof | Parameter choice; mainnet sizing is an open question in the implementation plan | `config.py: challenge_window`, `bond` fields |
 | Panel votes are delivered honestly | Not yet enforced on chain: there is no `panel_vote` transaction, so the node/operator transport is trusted | open item |
 | Witnesses for timeouts are available and honest enough | Mainnet requires a 3-witness quorum (`PROTOCOL.md` section 10.4) | `chain/timeout.py` |
+| A proofless block cannot claim chess work | Implemented: `earned_block_work` credits the `k * WIN_UNIT` term only when the block carries its `k` proofs, and a proofless block must carry exactly one transaction | `chain/difficulty.py`, `chain/block.py` |
+| A miner cannot set its own displayed rating | Implemented: the rating is a pure function of settled proofs, with no wire field and no submit route; the node recomputes it from the adopted chain | `ratings.build_ledger`, `node/service.py: ratings` |
 
 Open items that affect this model:
 

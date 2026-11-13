@@ -73,6 +73,11 @@ export function AccountView({ address }: { address: string }): ReactNode {
         <KeyValue label="Public key">
           {view.public_key === null ? "-" : <Mono copy>{view.public_key}</Mono>}
         </KeyValue>
+        {registered && (
+          <KeyValue label="Elo">
+            <Link href={`#/miners/${address}`}>rating history</Link>
+          </KeyValue>
+        )}
         {params.data !== undefined && (
           <KeyValue label="Minimum bond" mono>
             {formatAmount(params.data.min_bond)}

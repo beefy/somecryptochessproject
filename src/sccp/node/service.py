@@ -64,9 +64,15 @@ from sccp.node.models import (
     MatchInfo,
     MempoolStatus,
     MempoolView,
+    MinerRatingDetail,
+    MinerRatingView,
     NodeStatus,
     PeerView,
     ProofAccepted,
+    RatingBucketView,
+    RatingDistribution,
+    RatingPointView,
+    RatingsView,
     SyncReport,
     TransactionRecord,
     TxAccepted,
@@ -85,6 +91,17 @@ from sccp.node.p2p import (
     verify_envelope,
 )
 from sccp.protocol.models import Beacon, Block, QualitySummary, Transaction, Transcript, WinProof
+from sccp.ratings import (
+    DEFAULT_DEVIATION,
+    DEFAULT_RATING,
+    DEFAULT_VOLATILITY,
+    MinerRating,
+    RatingLedger,
+    build_ledger,
+    rating_buckets,
+    rating_mean,
+    rating_median,
+)
 from sccp.version import PROTOCOL_VERSION
 
 GENESIS_DIR_ENV = "SCCP_GENESIS_DIR"
@@ -120,6 +137,16 @@ def default_genesis_path(network: str) -> Path:
         f"no genesis document for {network!r}; set {GENESIS_DIR_ENV} or pass an explicit path "
         f"(searched: {searched})"
     )
+
+
+def _rounded(value: float) -> float:
+    """Two decimals: enough to compare two ratings, short enough to read."""
+    return round(value, 2)
+
+
+def _rounded_volatility(value: float) -> float:
+    """Volatility lives near 0.06, so it needs more than two decimals."""
+    return round(value, 5)
 
 
 def _quality_verdict(summary: QualitySummary | None) -> Literal["pass", "fail"] | None:
@@ -234,6 +261,8 @@ class NodeService:
     fanout: int = MAX_FANOUT
     max_sync_blocks: int = 512
     syncing: bool = False
+    _ratings: tuple[str, RatingLedger] | None = field(default=None, repr=False, compare=False)
+    """Cached derived ratings, keyed by the tip hash they were replayed at."""
 
     def __post_init__(self) -> None:
         if self.chain.params.network_id != self.params.network_id:
@@ -468,6 +497,125 @@ class NodeService:
             retarget_interval=interval,
             retarget_enabled=self.params.retarget_enabled,
             history=tuple(history[-16:]),
+        )
+
+    def _rating_ledger(self) -> RatingLedger:
+        """The derived ratings at the tip, replayed only when the tip moves.
+
+        Rebuilding walks every block and is cheap, but the explorer polls this
+        route, and a cache keyed by the tip hash cannot go stale: a reorg or a
+        new block changes the key, and replaying an unchanged chain is pure.
+        """
+        cached = self._ratings
+        if cached is not None and cached[0] == self.chain.tip_hash:
+            return cached[1]
+        ledger = build_ledger(self.chain)
+        self._ratings = (self.chain.tip_hash, ledger)
+        return ledger
+
+    @staticmethod
+    def _miner_rating_view(miner: MinerRating) -> MinerRatingView:
+        """Project one ledger row onto the leaderboard shape."""
+        return MinerRatingView(
+            address=miner.address,
+            rank=miner.rank,
+            rating=_rounded(miner.rating),
+            deviation=_rounded(miner.deviation),
+            volatility=_rounded_volatility(miner.volatility),
+            games=miner.games,
+            wins=miner.wins,
+            draws=miner.draws,
+            losses=miner.losses,
+            provisional=miner.provisional,
+            last_epoch=miner.last_epoch,
+            last_height=miner.last_height,
+        )
+
+    def ratings(self, *, limit: int = 100) -> RatingsView:
+        """Derived Glicko-2 ratings for every rated miner (``GET /v1/ratings``).
+
+        The numbers come from settled proofs only: a miner cannot announce a
+        rating, and no transaction or block field carries one. A node that has
+        not yet synced a proof simply has a shorter game list to replay.
+        """
+        ledger = self._rating_ledger()
+        current = ledger.ratings
+        return RatingsView(
+            network=self.params.network_id,
+            height=self.height,
+            tip_hash=self.tip_hash,
+            rated_epochs=ledger.rated_epochs,
+            games=ledger.games,
+            miners=tuple(self._miner_rating_view(miner) for miner in ledger.miners[:limit]),
+            distribution=RatingDistribution(
+                buckets=tuple(
+                    RatingBucketView(
+                        label=bucket.label,
+                        low=bucket.low,
+                        high=bucket.high,
+                        count=bucket.count,
+                    )
+                    for bucket in rating_buckets(current)
+                ),
+                rated=len(current),
+                mean=_rounded(rating_mean(current)),
+                median=_rounded(rating_median(current)),
+            ),
+        )
+
+    def miner_rating(self, address: str) -> MinerRatingDetail:
+        """One miner's rating and its history (``GET /v1/ratings/{address}``).
+
+        An address with no settled game returns the prior rather than a 404, so
+        a freshly registered miner's page has something honest to show. The
+        history is one point per epoch the miner played in, plus the tip if it
+        has been idle since, which is what the explorer plots.
+        """
+        if not validate_address(address, self.params):
+            raise AddressError(f"{address!r} is not a {self.params.network_id} address")
+        ledger = self._rating_ledger()
+        found = ledger.find(address)
+        if found is None:
+            return MinerRatingDetail(
+                network=self.params.network_id,
+                address=address,
+                rating=DEFAULT_RATING,
+                deviation=DEFAULT_DEVIATION,
+                volatility=DEFAULT_VOLATILITY,
+                games=0,
+                wins=0,
+                draws=0,
+                losses=0,
+                provisional=True,
+            )
+        return MinerRatingDetail(
+            network=self.params.network_id,
+            address=found.address,
+            rank=found.rank,
+            rating=_rounded(found.rating),
+            deviation=_rounded(found.deviation),
+            volatility=_rounded_volatility(found.volatility),
+            games=found.games,
+            wins=found.wins,
+            draws=found.draws,
+            losses=found.losses,
+            provisional=found.provisional,
+            last_epoch=found.last_epoch,
+            last_height=found.last_height,
+            history=tuple(
+                RatingPointView(
+                    epoch=point.epoch,
+                    height=point.height,
+                    rating=_rounded(point.rating),
+                    deviation=_rounded(point.deviation),
+                    volatility=_rounded_volatility(point.volatility),
+                    games=point.games,
+                    wins=point.wins,
+                    draws=point.draws,
+                    losses=point.losses,
+                )
+                for point in found.history
+            ),
         )
 
     def mempool_view(self) -> MempoolView:

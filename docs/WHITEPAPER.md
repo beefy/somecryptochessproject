@@ -2,7 +2,7 @@
 
 ## Chess as proof of work
 
-**Whitepaper for protocol v1 · reference implementation 0.14.0 · November 2026**
+**Whitepaper for protocol v1 · reference implementation 0.15.0 · November 2026**
 
 > **Scope.** This document explains how the current reference implementation
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,
@@ -285,24 +285,23 @@ is required. This lets the faucet, registrations, availability commits and
 reveals enter the ledger before the first match can be claimed.
 
 Past the boundary a block owes `wins_required` proofs, with one strictly
-unprofitable exception: a block may carry **zero** proofs if it carries at least
-one transaction, and such a *heartbeat* block mints no subsidy (it still collects
-its transactions' fees). Without it a chain can deadlock: settled proofs are
-spent once, a two-miner roster plays fewer games than an epoch has blocks, and if
-no block may be added then the availability and reveal transactions that rebuild
-the roster can never be mined, so no proof can ever exist again. Skipping proofs
-never pays, so the exemption cannot be farmed; it only lets a chain leave a state
-it could not otherwise leave.
+unprofitable exception: a block may carry **zero** proofs if it carries
+**exactly one** transaction, and such a *heartbeat* block mints no subsidy (it
+still collects its transaction's fee). Without it a chain can deadlock: settled
+proofs are spent once, a two-miner roster plays fewer games than an epoch has
+blocks, and if no block may be added then the availability and reveal
+transactions that rebuild the roster can never be mined, so no proof can ever
+exist again. Skipping proofs never pays, so the exemption cannot be farmed; it
+only lets a chain leave a state it could not otherwise leave. A heartbeat also
+earns only its seal work in fork choice, never the `k * 65536` chess term
+(section 14.6), so a chain of them cannot outrun a chain that carries proofs.
 
-Consensus only asks a heartbeat block for at least one transaction; how much
-ledger work a block absorbs is a builder policy, and it matters. Blocks are the
-chain's clock, so an epoch of `epoch_length` blocks can only end if the ledger
-can supply `epoch_length` blocks' worth of work. The reference `BlockBuilder`
-therefore folds **exactly one** transaction into a heartbeat block: four waiting
-transactions buy four blocks, not one, and the epoch boundary comes within reach.
-Packing the whole mempool into a single block spends the same work while
+Exactly one transaction is a consensus rule, not a builder policy, and it
+matters. Blocks are the chain's clock, so an epoch of `epoch_length` blocks can
+only end if the ledger can supply `epoch_length` blocks' worth of work. Packing
+the whole mempool into a single proofless block spends the same work while
 producing one block, which is how a proofless epoch freezes one block short of
-its end.
+its end; the validator rejects it.
 
 The same arithmetic bounds a *proof* block. It already is one of the epoch's
 blocks, so the reference builder keeps one pending transaction in reserve for
@@ -1082,6 +1081,23 @@ beacon-ranked panel re-runs the pinned quality profile and resolves the
 challenge on chain. The challenge path is implemented; moving panel votes on
 chain and calibrating bond sizes remain open work.
 
+### 12.6 Ratings are a derived view
+
+A proof settles a result, and a result is all a rating needs. A node replays
+every proof on the adopted branch as a Glicko-2 tournament — one rating period
+per epoch, both seats rated, a 1500/350/0.06 prior, inactivity widening the
+deviation — and serves the outcome at `/v1/ratings`. The rating is not in a
+header, not in a transaction and not in `state_root`: a miner cannot announce
+one, and every node at the same tip replays the same blocks into the same table.
+The one-period arithmetic is the pinned `glicko2` package; the replay, the epoch
+boundary and the prior are the node's.
+
+That placement is the security argument as much as a convenience. A rating is
+only as meaningful as the games under it: a legal, co-signed game that nobody
+contested still counts, so the number is a lens on settled proofs, not a second
+consensus rule. It is also why the explorer can draw a rating history without
+trusting a server-side database — the chart is the chain, grouped by epoch.
+
 ---
 
 
@@ -1268,22 +1284,29 @@ seal bits and one required win; mainnet begins at 16 bits and three wins.
 
 ### 14.6 Fork choice
 
-Each block contributes:
+Each block declares:
 
 ```text
 block_work = (1 << seal_bits) + wins_required * 65536
 ```
 
-A branch's work is the sum of its blocks. The node adopts the branch with the
-greatest cumulative work. Ties are broken by the numerically lower block hash,
-so two nodes that see the same two branches choose the same tip.
+Fork choice credits the same expression minus the chess term when the block
+carries fewer than `wins_required` proofs. A bootstrap block and a heartbeat
+block (section 5.2) carry none, so each earns its seal work alone. The chess
+term is paid for proofs the block actually carries; crediting it for a proofless
+block would let that block claim work nobody performed.
+
+A branch's work is the sum of the work its blocks earn. The node adopts the
+branch with the greatest cumulative work. Ties are broken by the numerically
+lower block hash, so two nodes that see the same two branches choose the same
+tip.
 
 The formula is deliberately simple and documented as a v1 approximation. At
 mainnet's initial 16-bit seal target, the seal contributes 65,536 units, the
-same as one required win, so a block's work is `1 + k` such units. The formula
-does not attempt to model actual engine strength, game length or wall-clock
-cost. Fork choice is about which history has the most protocol-defined work,
-not which miner is strongest.
+same as one required win, so a proof block's work is `1 + k` such units and a
+heartbeat block's is `1`. The formula does not attempt to model actual engine
+strength, game length or wall-clock cost. Fork choice is about which history has
+the most protocol-defined work, not which miner is strongest.
 
 ### 14.7 Reorganisations
 
@@ -1695,7 +1718,9 @@ sccp --version
 ```
 
 The project pins `python-chess` deliberately. Upgrading it can change PGN
-semantics and therefore consensus behaviour.
+semantics and therefore consensus behaviour. It also pins `glicko2`, the
+one-period rating update; upgrading that changes displayed ratings, never
+consensus.
 
 ### 18.2 Create a wallet
 
@@ -1960,6 +1985,8 @@ the engine-marked tests.
 - **UCI** — Universal Chess Interface, the engine protocol.
 - **PGN** — Portable Game Notation, the transcript text format.
 - **python-chess** — board state, move generation, PGN and UCI support.
+- **glicko2** — the Glicko-2 one-period rating update behind the derived Elo view
+  (MIT).
 - **drand quicknet** — BLS12-381 randomness beacon, supported as an optional
   mix-in; a pinned verifier is still outstanding.
 

@@ -105,6 +105,54 @@ def test_fork_choice_breaks_ties_on_the_lower_hash(
     assert chain.tip_hash == block_hash(winner.header)
 
 
+def test_a_proofless_branch_cannot_outrun_a_proof_branch(
+    live_chain: Any, chain_match: Any, miner_keys: dict[str, Any], protocol_accounts: Any
+) -> None:
+    """Equal-height branches: the one carrying the proof must be heavier.
+
+    Crediting the declared ``block_work`` to a proofless block made both
+    branches equal, so a fork fell to the hash tie-break and any miner could
+    rewrite history for a seal and a self-paid transfer.
+    """
+    from sccp.wallet.service import WalletService
+
+    chain = live_chain.chain
+    match = chain_match(chain, epoch=3)
+    miner = miner_keys[match.proof.winner]
+    prefix = [stored.block for stored in chain.main_chain() if stored.height > 0]
+    stamp = chain.state.timestamps[-1] + 1
+
+    heartbeat_branch = _replay(chain, prefix)
+    tx = WalletService(chain.params, heartbeat_branch.state).build_transfer(
+        live_chain.faucet, protocol_accounts["alice"].address, 1
+    )
+    heartbeat_pool = Mempool(
+        params=chain.params, tip_state=heartbeat_branch.state, book=heartbeat_branch.book
+    )
+    heartbeat_pool.add_transaction(tx)
+    heartbeat = BlockBuilder(
+        params=chain.params, chain=heartbeat_branch, mempool=heartbeat_pool, keypair=miner
+    ).build(timestamp=stamp)
+    assert heartbeat is not None and heartbeat.proofs == ()
+    heartbeat_branch.add_block(heartbeat)
+
+    proof_branch = _replay(chain, prefix)
+    proof_pool = Mempool(params=chain.params, tip_state=proof_branch.state, book=proof_branch.book)
+    proof_pool.add_proof(match.proof)
+    proof = BlockBuilder(
+        params=chain.params, chain=proof_branch, mempool=proof_pool, keypair=miner
+    ).build(timestamp=stamp)
+    assert proof is not None and len(proof.proofs) == 1
+    proof_branch.add_block(proof)
+
+    assert proof.header.height == heartbeat.header.height
+    assert proof_branch.tip.chain_work > heartbeat_branch.tip.chain_work
+
+    chain.add_block(heartbeat)
+    chain.add_block(proof)
+    assert chain.tip_hash == block_hash(proof.header)
+
+
 def test_a_heavier_branch_reorganises_the_tip(devnet_chain: Chain, protocol_accounts: Any) -> None:
     from sccp.chain.genesis import faucet_keypair
     from sccp.wallet.service import WalletService

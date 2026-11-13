@@ -65,6 +65,13 @@ deploy that does exactly this is
 - **A game** — settlement state, the match certificate (both seats, opening,
   engines, start signatures) and the PGN, when this node has cached the
   transcript.
+- **Elo** — the derived Glicko-2 leaderboard: the top ten miners with their rating
+  deviation and record, and the distribution of current ratings across every
+  rated miner in fixed 100-point bands.
+- **A miner** — its current rating, the rank and record behind it, and a line
+  chart of one point per epoch. Each point carries its rating and deviation as a
+  hover tooltip; the chart is an SVG the page draws from the node's replay, with
+  no charting dependency and no server-side history.
 - **An account** — spendable, immature and bonded balances, the next nonce, miner
   registration and the games this node lists with that seat.
 

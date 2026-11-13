@@ -55,7 +55,12 @@ class Difficulty:
 
     @property
     def work(self) -> int:
-        """``(1 << seal_bits) + k * WIN_UNIT`` -- the per-block work credit."""
+        """``(1 << seal_bits) + k * WIN_UNIT`` -- the work a header declares.
+
+        Fork choice does not use this directly: it credits
+        :func:`earned_block_work`, which drops the chess term when the block
+        does not carry the proofs that term is paid for.
+        """
         return block_work(self.seal_bits, self.wins_required)
 
     def as_dict(self) -> dict[str, int]:
@@ -70,6 +75,24 @@ def block_work(seal_bits: int, wins_required: int) -> int:
     if wins_required < 1:
         raise StateError(f"wins_required must be at least 1, got {wins_required}")
     return (1 << seal_bits) + wins_required * WIN_UNIT
+
+
+def earned_block_work(seal_bits: int, wins_required: int, proof_count: int) -> int:
+    """Fork-choice credit for a block, counting only work it actually carries.
+
+    :func:`block_work` is what a header *declares*; this is what the block
+    *earns*. The ``wins_required * WIN_UNIT`` chess term is credited only when
+    the block carries the proofs it owes. A bootstrap block and a proofless
+    *heartbeat* block carry none, so each earns its seal work alone.
+
+    Crediting the chess term regardless would let a branch of proofless blocks
+    claim work nobody performed and outrun a branch of the same length that
+    carries real proofs -- which is the whole cost of extending a fork.
+    """
+    declared = block_work(seal_bits, wins_required)
+    if proof_count < wins_required:
+        return declared - wins_required * WIN_UNIT
+    return declared
 
 
 def initial_difficulty(params: NetworkParams) -> Difficulty:
@@ -178,6 +201,7 @@ __all__ = [
     "WIN_UNIT",
     "Difficulty",
     "block_work",
+    "earned_block_work",
     "expected_interval_seconds",
     "initial_difficulty",
     "next_difficulty",

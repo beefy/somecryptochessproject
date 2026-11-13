@@ -92,7 +92,7 @@ export function BlockRow({ block }: { block: BlockSummary }): ReactNode {
       </Text>
       {wide && (
         <View style={styles.colMiner}>
-          <Link href={`#/accounts/${block.miner}`} mono>
+          <Link href={`#/miners/${block.miner}`} mono>
             {shortAddress(block.miner)}
           </Link>
         </View>

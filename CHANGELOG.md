@@ -5,10 +5,31 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
-## [Unreleased]
+## [0.15.0] - 2026-11-13
+
+A minor release: the chain gets a scoreboard and a home. Derived Elo ratings turn
+settled games into a leaderboard and a per-miner history without adding a byte of
+consensus state, the node serves the PGN behind a settlement proof, and the
+explorer is published over HTTPS by its own workflow. Two fork-choice rules
+tighten at the same time: chess work is credited only to blocks that carry it,
+and a proofless block must carry exactly one transaction.
 
 ### Added
 
+- Derived miner ratings: `GET /v1/ratings` and `GET /v1/ratings/{address}` replay
+  every settled proof as a Glicko-2 tournament (one rating period per epoch) and
+  serve the leaderboard, a fixed 100-point distribution and each miner's history.
+  The rating is not consensus state and has no submit route: no block field,
+  transaction or API call accepts one, so a miner can only move it by settling a
+  verified game (`sccp/ratings.py`, `node/service.py`). The one-period arithmetic
+  is the pinned `glicko2` package (2.1.x, MIT); the replay, the epoch boundary and
+  the prior stay in `sccp/ratings.py`, so a dependency bump moves a displayed
+  number, never a block. A regression test covers the extreme upset (a 2200
+  player losing to an 840 one) that used to drive a hand-rolled volatility search
+  to a meaningless root. The explorer gains an **Elo** page (top 10 plus
+  distribution) and a miner page (`#/miners/{address}`) whose SVG line chart
+  plots rating per epoch; block and game rows now link a miner to that page
+  instead of the bare account.
 - `GET /v1/games/{game_hash}/pgn`: the move text a settlement proof carries, so
   a game page can print the PGN on a node that never cached the match's
   transcript. The moves live in the proof body inside its block, which is what
@@ -41,6 +62,27 @@ not itemised here.
   --web`, develop against a node with the Vite proxy, set `SCCP_NODE`,
   `VITE_SCCP_API` and `SCCP_WEB_DIST`, and what to check when a page comes up
   empty.
+
+### Security
+
+- Fork choice now credits chess work only to blocks that carry it. A block earns
+  `(1 << seal_bits) + k * WIN_UNIT` when it carries its `k` proofs and
+  `1 << seal_bits` otherwise (`chain/difficulty.py: earned_block_work`,
+  `chain/block.py: connect_block`). A proofless *heartbeat* block used to earn
+  the full `k * WIN_UNIT`, which made a branch of heartbeats as heavy as a
+  branch of real proofs at equal height and let any miner replace history for a
+  seal and a self-paid transfer.
+- A proofless block must now carry **exactly one** transaction, not "at least
+  one" (`chain/block.py: _check_proof_count`). The old rule was builder policy,
+  so a griefing miner could fold the whole pool into one heartbeat and re-freeze
+  the chain at the next epoch boundary.
+- Both changes are consensus changes. `chain_work` is derived rather than
+  committed, so stored blocks replay unchanged and `restore_chain` re-derives
+  each weight, but nodes must agree on the credit rule: upgrade them together
+  (and before the mainnet genesis freeze, since post-genesis this needs an
+  activation height).
+- `docs/THREAT_MODEL.md` and `docs/PROTOCOL.md` now document the heartbeat
+  trade-off, the seal-only fork residual risk and the unenforced `reorg_depth`.
 
 ## [0.14.0] - 2026-11-12
 

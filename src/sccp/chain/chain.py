@@ -6,8 +6,10 @@ reorg is just "adopt the other branch's tip". At prototype scale the memory cost
 of that cache is irrelevant; :mod:`sccp.chain.storage` keeps the durable copy and
 periodic snapshots for restarts.
 
-Fork choice is ``block_work = (1 << seal_bits) + k * WIN_UNIT`` summed over the
-branch, with ties broken by the lower block hash so two nodes always agree.
+Fork choice sums the work each block *earns*: the seal, plus ``k * WIN_UNIT``
+only when the block carries the proofs it owes
+(:func:`sccp.chain.difficulty.earned_block_work`). Ties are broken by the lower
+block hash so two nodes always agree.
 """
 
 from __future__ import annotations

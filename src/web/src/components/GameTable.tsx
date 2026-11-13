@@ -41,13 +41,13 @@ export function GameRow({ game }: { game: GameSummary }): ReactNode {
         </Text>
       </View>
       <View style={styles.colSeats}>
-        <Link href={`#/accounts/${game.winner}`} mono>
+        <Link href={`#/miners/${game.winner}`} mono>
           {shortAddress(game.winner)}
         </Link>
         <Text variant="bodySmall" style={styles.muted}>
           {game.loser === null ? "opponent unknown" : "beat "}
           {game.loser !== null && (
-            <Link href={`#/accounts/${game.loser}`} mono>
+            <Link href={`#/miners/${game.loser}`} mono>
               {shortAddress(game.loser)}
             </Link>
           )}

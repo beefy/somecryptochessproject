@@ -695,8 +695,14 @@ therefore has a zero body root and no coinbase.
 
 ### 12.1 The seal and difficulty
 
-`block_work(seal_bits, k) = (1 << seal_bits) + k * 65536`; a chain's weight is
-the sum of that over its blocks, so depth plus declared work decide forks.
+`block_work(seal_bits, k) = (1 << seal_bits) + k * 65536` is what a header
+*declares*. Fork choice credits `earned_work`: the same expression minus
+`k * 65536` when the block carries fewer than the `k` proofs it owes. A bootstrap
+block and a heartbeat block (section 12.2) carry none, so each earns its seal
+work alone; crediting the chess term regardless would let a proofless branch
+claim work nobody performed. A chain's weight is the sum of earned work over its
+blocks, so depth plus work *actually performed* decide forks. Genesis is the
+root and contributes its declared work as a constant every chain shares.
 
 The seal is valid when `int(block_hash, 16) < 2 ** (256 - seal_bits)`; with
 `seal_bits = 0` every hash passes, which is why testnet and devnet can seal for
@@ -734,17 +740,20 @@ testnet and devnet let a small roster settle every game it plays; mainnet keeps
 Proofs are ordered by `proof_id`, which makes the body canonical.
 
 The exception is the *heartbeat*: past the bootstrap window a block may instead
-carry **zero** proofs if it carries at least one transaction, and such a block
-mints no subsidy (it still collects its transactions' fees). Without it a chain
+carry **zero** proofs if it carries **exactly one** transaction, and such a block
+mints no subsidy (it still collects its transaction's fee). Without it a chain
 can deadlock -- settled proofs are spent once, a small roster plays fewer games
 than an epoch has blocks, and if no block may be added then the availability and
 reveal transactions that rebuild the roster can never be mined, so no proof can
 ever exist again. The exemption cannot be farmed because skipping `k` proofs
-always costs more than it saves. How much ledger work a heartbeat block absorbs
-is a builder choice, not a consensus rule; the reference `BlockBuilder` includes
-exactly one transaction, because a block is also the chain's clock and an epoch
-of `epoch_length` blocks can only end if the ledger supplies that many blocks'
-worth of work.
+always costs more than it saves, and a heartbeat earns seal work only, never the
+`k * 65536` chess term (section 12.1), so a branch of proofless blocks cannot
+outrun a branch of equal length that carries proofs. Exactly one transaction is
+a consensus rule, not a builder policy: a block is also the chain's clock, and an
+epoch of `epoch_length` blocks can only end if the ledger supplies that many
+blocks' worth of work. A miner that folded the whole pool into one proofless
+block would spend that work while producing one block, re-freezing the chain at
+the next boundary; the validator rejects such a block.
 
 The same reasoning bounds the transactions a *proof* block carries. A proof
 block is one of the epoch's blocks without spending any ledger work, so the
@@ -830,6 +839,8 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/epochs/{epoch}` | `EpochView`: beacon, roster, availability, quotas, matchable flag |
 | GET | `/v1/epochs/{epoch}/beacon` | `Beacon` (404 when the chain has none) |
 | GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |
+| GET | `/v1/ratings` | `RatingsView`: derived Glicko-2 rating per miner, strongest first (`?limit=`, default 100), plus the fixed-bucket distribution |
+| GET | `/v1/ratings/{address}` | `MinerRatingDetail`: rating, deviation, volatility, record, rank and one history point per epoch (the 1500 prior when the seat has no settled game) |
 | GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, height, mempool flag |
 | GET | `/v1/games/{game_hash}/pgn` | `GamePgn`: the move text the proof for that game carries (404 when this node holds no block body for it) |
 | GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, certificate, transcript |
@@ -900,6 +911,60 @@ missing) is counted as `orphaned` and retried by a later sync.
 `sccp.node.service.sync_peers`. A peer that cannot be reached at all is recorded
 as one failure and skipped: startup must not depend on a peer being up, and the
 peer table bans an address that keeps failing.
+
+### 14.4 Derived miner ratings (Elo)
+
+`GET /v1/ratings` and `GET /v1/ratings/{address}` expose a Glicko-2 rating for
+every address that has settled a game. The rating is **derived, not committed**:
+
+- It is replayed from the proofs on the adopted branch (`block.proofs`) in block
+  order, and each proof is one game for both named seats. Only proofs the chain
+  already accepted (section 9) contribute.
+- Nothing in a block, a transaction or the API accepts a rating from a miner.
+  There is no `rating` field, no `rating` transaction and no `POST` route: the
+  only way to move a rating is to settle a verified game.
+- It is not in `state_root`. A node that has not synced a proof simply has a
+  shorter history to replay; two nodes at the same tip replay the same blocks in
+  the same order, and the node caches that replay by tip hash.
+
+The parameters are the paper's: the prior is 1500 with deviation 350 and
+volatility 0.06, `tau = 0.5`, and one rating period is one block epoch. Every
+game in a period is evaluated against the opponents' pre-period ratings, so the
+update is simultaneous; two games against the same opponent in a period are
+averaged into one score, which is the paper's prescription. A miner that sits
+out a period keeps its rating and its deviation grows by `sigma^2` per period,
+which is why an idle miner's rating becomes visibly wider on its page. A rating
+is marked `provisional` until it has 10 settled games.
+
+The arithmetic for one period is delegated to the pinned `glicko2` package (an
+MIT-licensed reference implementation of the paper). `sccp/ratings.py` owns
+everything the paper does not: the replay in block order, the epoch boundary,
+the prior, the duplicate-opponent averaging, validation and the presentation. A
+library upgrade can therefore move a number on the explorer; it cannot move a
+block, and it is a deliberate dependency bump rather than an incidental one.
+
+The package is the reference, with one known quirk: its volatility objective
+squares the pre-period rating (`mu^2`) where the paper squares the pre-period
+deviation (`phi^2`). It reproduces the paper's worked example, but results for
+ratings far from 1500 can differ slightly from a literal transcription. A node
+follows this package, and since the value is derived, that difference is a
+display detail rather than a consensus one; `sccp/ratings.py` records it.
+
+The distribution is a fixed histogram: `<1000`, 100-wide bands from 1000 to
+1999, then `>=2000`. It always covers every rated miner, even when `?limit=`
+truncates the leaderboard; fixed bounds keep two polls and two networks
+comparable.
+
+Three limits are worth stating plainly:
+
+- A rating measures results, not intent. Two colluding seats can trade wins and
+  inflate each other; pairing's identity heuristics make that harder, but no
+  number derived from legal games can prove a game was contested.
+- The arithmetic is floating point. That is acceptable only because the value is
+  never committed: a node on another platform may differ in the last decimal.
+- Like `GET /v1/games`, the replay reads proof bodies. This implementation keeps
+  every block, including after a snapshot; a future pruning mode would shorten
+  the history rather than change a settled game.
 
 ## 15. Devnet parameters and policy
 

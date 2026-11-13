@@ -39,9 +39,11 @@ from sccp.node.models import (
     GossipResult,
     MatchInfo,
     MempoolView,
+    MinerRatingDetail,
     NodeStatus,
     PeerView,
     ProofAccepted,
+    RatingsView,
     TransactionRecord,
     TxAccepted,
 )
@@ -187,6 +189,14 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     @app.get("/v1/difficulty", response_model=DifficultyView)
     def difficulty() -> DifficultyView:
         return service.difficulty()
+
+    @app.get("/v1/ratings", response_model=RatingsView)
+    def ratings(limit: int = Query(default=100, ge=1, le=1000)) -> RatingsView:
+        return service.ratings(limit=limit)
+
+    @app.get("/v1/ratings/{address}", response_model=MinerRatingDetail)
+    def miner_rating(address: str) -> MinerRatingDetail:
+        return service.miner_rating(address)
 
     @app.get("/v1/games", response_model=GameList)
     def games(

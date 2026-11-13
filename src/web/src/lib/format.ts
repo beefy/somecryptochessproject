@@ -30,6 +30,15 @@ export function formatInteger(value: number | null | undefined, locale = "en-US"
   return new Intl.NumberFormat(locale).format(value);
 }
 
+/** A Glicko-2 number with one decimal and a thousands separator, e.g. `1,512.4`. */
+export function formatRating(value: number | null | undefined, digits = 1, locale = "en-US"): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return new Intl.NumberFormat(locale, {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+}
+
 /** Amounts are integer base units: one coin is 100 000 000 units. */
 export const UNITS_PER_COIN = 100_000_000;
 
