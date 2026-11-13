@@ -5,12 +5,13 @@ Every merge that touches `src/web` or `deploy/explorer` runs
 the built bundle to:
 
 ```text
-http://explorer.somecryptochessproject.com
+https://explorer.somecryptochessproject.com
 ```
 
 That host serves three things on one origin: the bundle at `/`, the node API
-under `/v1` and the matchmaking relay under `/relay`. It is an nginx container,
-not a bucket, for the reason in the next section.
+under `/v1` and the matchmaking relay under `/relay`. It is two containers, not a
+bucket, for the reason in the next section: a Caddy terminator, which owns the
+certificate, in front of an nginx origin.
 
 The deploy never touches the chain. It uploads a new release directory, moves one
 symlink and leaves the node, the relay and the SQLite file alone — unlike
@@ -33,16 +34,20 @@ with `VITE_SCCP_RELAY=/relay`, the page calls `/relay/v1/...` on its own origin,
 nginx strips the prefix, and `8646` can stay closed. Same-origin requests are not
 preflighted, so the relay needs no CORS configuration at all.
 
+Caddy answers `:80` and `:443`, obtains and renews a Let's Encrypt certificate,
+redirects `http://` to `https://`, and proxies every request to nginx on
+`127.0.0.1:8080`. What nginx then does is the table:
+
 | Browser asks for | nginx does | Reaches |
 | --- | --- | --- |
 | `GET /` and `/assets/*` | serves `/srv/current` | the uploaded release |
 | `GET /v1/status` | `proxy_pass http://127.0.0.1:8645` | the node |
 | `POST /relay/v1/matches/{id}/move` | `proxy_pass http://127.0.0.1:8646/` | the matchmaker |
 
-Both proxy targets are loopback ports on the VM. The explorer container runs with
-`network_mode: host`, so it shares the host's network namespace and reaches the
-ports that [`docker-compose.yml`](../docker-compose.yml) already publishes. It
-needs no Docker network in common with the chain's stack and no credentials.
+Both containers run with `network_mode: host`, so they share the host's network
+namespace: Caddy binds `80`/`443`, nginx binds `8080`, and both reach the loopback
+ports that [`docker-compose.yml`](../docker-compose.yml) already publishes. They
+need no Docker network in common with the chain's stack and no credentials.
 
 ## What the workflow does
 
@@ -50,32 +55,37 @@ needs no Docker network in common with the chain's stack and no credentials.
    `VITE_SCCP_API=""` and `VITE_SCCP_RELAY=/relay`, uploaded as an artifact. The
    vectors that `ci.yml` runs are run again here: a bundle that derives an address
    or hashes a move wrongly must not reach a browser that signs with it.
-2. **upload** — copies `deploy/explorer/docker-compose.yml` and
-   `deploy/explorer/nginx.conf` to the deploy directory, then extracts the bundle
-   into a new `www/releases/<UTC timestamp>-<sha>` directory.
+2. **upload** — copies `deploy/explorer/docker-compose.yml`, `nginx.conf` and
+   `Caddyfile` to the deploy directory, then extracts the bundle into a new
+   `www/releases/<UTC timestamp>-<sha>` directory.
 3. **start** — `docker compose up -d` in the deploy directory. Idempotent: it
-   recreates the container only when the configuration changed.
+   recreates a container only when its configuration changed, and the certificate
+   lives in the `caddy_data` volume, so a deploy never re-issues it.
 4. **switch** — `ln -sfn` a `current.next` link and `mv -T` it over `current`.
    That rename is the deploy: nginx resolves the symlink per request, so no
    container is restarted and no request can see a half-written bundle. The step
    then asserts that `current` really resolves to the new release.
 5. **prune** — keeps the last five releases, for rollback.
 6. **verify** — over the public URL: the document, one hashed asset referenced by
-   it, and `/v1/status` returning `"network": "testnet"`. `/relay/v1/status` is
-   checked too but only warns, because the relay belongs to the chain's deploy.
+   it, and `/v1/status` returning `"network": "testnet"`. `curl -f` also fails on
+   a certificate that does not verify, so the TLS terminator is part of the smoke
+   check. `/relay/v1/status` is checked too but only warns, because the relay
+   belongs to the chain's deploy.
 
 ## Public endpoint
 
 ```bash
-curl -sS http://explorer.somecryptochessproject.com/v1/status \
+curl -sS https://explorer.somecryptochessproject.com/v1/status \
   | jq '{network, height, tip_hash}'
-curl -sS http://explorer.somecryptochessproject.com/relay/v1/status \
+curl -sS https://explorer.somecryptochessproject.com/relay/v1/status \
   | jq '{network, epoch, matches}'
-curl -sSI http://explorer.somecryptochessproject.com/ | head -3
+curl -sSI https://explorer.somecryptochessproject.com/ | head -3
+curl -sSI http://explorer.somecryptochessproject.com/ | head -1   # 308 -> https
 ```
 
-The first two answer because of the proxy; the third is the bundle. Open the root
-in a browser for the explorer, or `#/play` for the table.
+The first two answer because of the proxy; the third is the bundle; the fourth is
+Caddy sending the plain-HTTP name to the secure one. Open the root in a browser
+for the explorer, or `#/play` for the table.
 
 ## Layout on the host
 
@@ -83,6 +93,7 @@ in a browser for the explorer, or `#/play` for the table.
 /opt/sccp-explorer/
 ├── docker-compose.yml        # from deploy/explorer/docker-compose.yml
 ├── nginx.conf                # from deploy/explorer/nginx.conf
+├── Caddyfile                 # from deploy/explorer/Caddyfile
 └── www/                      # bind-mounted at /srv, read-only
     ├── current -> releases/20261112T183045-1a2b3c4
     └── releases/
@@ -91,7 +102,9 @@ in a browser for the explorer, or `#/play` for the table.
 ```
 
 `current` points at the live release. Everything else in `releases/` is a
-rollback target and is deleted when a sixth deploy lands.
+rollback target and is deleted when a sixth deploy lands. The certificate is not
+in this tree: it lives in the `sccp-explorer_caddy_data` Docker volume, so a
+deploy, a release rollback or a wiped `www` never costs a re-issue.
 
 ---
 
@@ -113,7 +126,7 @@ gcloud compute firewall-rules create sccp-testnet-explorer-web \
     --network="$NETWORK" \
     --direction=INGRESS \
     --action=ALLOW \
-    --rules=tcp:80 \
+    --rules=tcp:80,tcp:443 \
     --source-ranges=0.0.0.0/0 \
     --target-tags="$NODE_TAG" \
     --project="$PROJECT_ID"
@@ -121,7 +134,14 @@ gcloud compute firewall-rules create sccp-testnet-explorer-web \
 
 `--target-tags` must be the tag the instance already carries. This adds a rule to
 the existing policy; it does not touch the node (`8645`) or relay (`8646`) rules,
-and those keep working unchanged.
+and those keep working unchanged. `80` is not optional even though the site is
+served on `443`: Let's Encrypt validates the name over plain HTTP, and Caddy uses
+`80` to redirect. An existing rule can be widened instead of recreated:
+
+```bash
+gcloud compute firewall-rules update sccp-testnet-explorer-web \
+    --rules=tcp:80,tcp:443 --project="$PROJECT_ID"
+```
 
 Then point the name at the same address the node uses:
 
@@ -188,7 +208,7 @@ needs **no new configuration at all**.
 | variable | `EXPLORER_DEPLOY_HOST` | `TESTNET_DEPLOY_HOST` | `user@host` of the VM |
 | variable | `EXPLORER_DEPLOY_DIR` | — (default `/opt/sccp-explorer`) | where the releases live |
 | variable | `EXPLORER_DEPLOY_PORT` | — (default `22`) | SSH port |
-| variable | `EXPLORER_PUBLIC_URL` | — (default `http://explorer.somecryptochessproject.com`) | what the smoke check requests |
+| variable | `EXPLORER_PUBLIC_URL` | — (default `https://explorer.somecryptochessproject.com`) | what the smoke check requests |
 | secret | `EXPLORER_SSH_KEY` | `TESTNET_SSH_KEY` | private key for that user |
 | secret | `EXPLORER_KNOWN_HOSTS` | `TESTNET_KNOWN_HOSTS` | pinned host key |
 
@@ -196,7 +216,7 @@ Set them explicitly only when the explorer is somewhere else:
 
 ```bash
 gh variable set EXPLORER_DEPLOY_HOST --body "sccp@$EXPLORER_HOST"
-gh variable set EXPLORER_PUBLIC_URL  --body "http://$EXPLORER_HOST"
+gh variable set EXPLORER_PUBLIC_URL  --body "https://$EXPLORER_HOST"
 gh secret   set EXPLORER_SSH_KEY < ~/.ssh/sccp_explorer_deploy
 ```
 
@@ -214,26 +234,40 @@ builds, so a repository without a VM keeps a useful check.
 
 ## TLS
 
-This deployment speaks plain HTTP, like the rest of the testnet. That is a
-deliberate limit, not an oversight — and it matters more here than for a JSON
-endpoint, because `#/play` generates a seat keypair **in the page** and signs
-moves with it. Anyone who can read the traffic can read that key. Treat the page
-as a testnet toy, or terminate TLS before pointing anyone at it.
+TLS is part of the deployment, not an option. The `tls` service in
+[`deploy/explorer/docker-compose.yml`](../deploy/explorer/docker-compose.yml) runs
+Caddy with
+[`deploy/explorer/Caddyfile`](../deploy/explorer/Caddyfile), which on first start
+asks Let's Encrypt for a certificate for the name, renews it in the background,
+redirects `http://` to `https://`, and proxies to the nginx origin on
+`127.0.0.1:8080`.
 
-Two ways, both outside this workflow:
+The certificate matters here more than for a JSON endpoint: `#/play` generates a
+seat keypair **in the page** and signs moves with it, so plain HTTP would put that
+key on the wire. It is also what a browser expects — an address bar defaults to
+`https://`, and a VM with no listener on `443` answers that with
+`ERR_CONNECTION_TIMED_OUT`, which looks like the deploy failed when it did not.
 
-- **In front.** Put Cloudflare, a load balancer, or a Caddy/nginx TLS terminator
-  ahead of the VM and proxy to `:80`. Set
-  `gh variable set EXPLORER_PUBLIC_URL --body "https://$EXPLORER_HOST"` so the
-  smoke check follows the new scheme. Nothing in the bundle has to change:
-  `VITE_SCCP_RELAY=/relay` is a path, so it picks up whatever origin served the
-  page.
-- **Here.** Add a `listen 443 ssl` server block with the same locations to
-  [`deploy/explorer/nginx.conf`](../deploy/explorer/nginx.conf), mount the
-  certificate in [`docker-compose.yml`](../deploy/explorer/docker-compose.yml),
-  and add `tcp:443` to the firewall rule. Keep `/v1` and `/relay` on the same
-  origin — splitting them across hosts brings back the CORS problem this design
-  removes.
+Three things have to be true for the first issue, and all three are in the
+one-time setup above: the `A` record resolves to this VM, `tcp:80` is open from
+everywhere, and Caddy can reach Let's Encrypt outbound (GCP's default egress rule
+allows it). If one is missing, the container logs the challenge failure:
+
+```bash
+ssh sccp@explorer.somecryptochessproject.com \
+  "cd /opt/sccp-explorer && docker compose logs --tail 20 tls"
+```
+
+The certificate and its account key live in the `sccp-explorer_caddy_data` volume.
+Deleting that volume is the way to force a re-issue — do it sparingly, because
+Let's Encrypt rate-limits duplicate certificates per name and week.
+
+To run without TLS on a throwaway VM, drop the `tls` service and the `volumes`
+block from the compose file and change `listen 127.0.0.1:8080` back to
+`listen 80` in [`deploy/explorer/nginx.conf`](../deploy/explorer/nginx.conf), then
+set `EXPLORER_PUBLIC_URL` to the `http://` URL so the smoke check follows. Keep
+`/v1` and `/relay` on the same origin either way — splitting them across hosts
+brings back the CORS problem this design removes.
 
 ## Rollback
 
@@ -268,6 +302,8 @@ an old bundle may show errors instead of data; the fix is a forward deploy, or a
   and never writes to the node's data directory;
 - the chain deploy works in `/opt/sccp-testnet` and does not look at
   `/opt/sccp-explorer`, so `down -v` cannot take the page offline;
+- the explorer's certificate is in a volume of its own
+  (`sccp-explorer_caddy_data`), so neither deploy can trigger a re-issue;
 - a merge that changes both runs both, in either order.
 
 The one visible overlap is timing: while the chain deploy restarts the node, the
@@ -297,6 +333,10 @@ even though `#/play` plays real matches.
 | `EADDRINUSE` on port 80 | Something else on the host owns it | `sudo ss -ltnp 'sport = :80'`; move that service or run the explorer elsewhere |
 | `dig` returns nothing | DNS record missing or not propagated | `gcloud dns record-sets list --zone="$DNS_ZONE"`; wait for the 60 s TTL |
 | `curl` times out on port 80 | Firewall rule missing, or the instance lost its tag | `gcloud compute firewall-rules list --filter="network:$NETWORK"` |
+| Browser says `ERR_CONNECTION_TIMED_OUT` on `https://` | `tcp:443` is not open, or the `tls` container is not up | `curl -sSI https://…` from your machine; `docker compose ps` on the VM |
+| Browser says `ERR_CERT_*` / a certificate warning | The challenge never completed, so Caddy serves its own CA or nothing | `docker compose logs tls`; check `dig +short <name>` and that `tcp:80` is open |
+| `curl -I http://…` returns `308`, not the page | Working as designed: Caddy redirects to `https://` | Follow the `location:` header, or use `https://` |
+| `docker compose ps` shows `tls` restarting | Port `443` (or `80`) is already bound on the host | `sudo ss -ltnp 'sport = :443'`; move that service |
 | Workflow deploy job skipped | No host configured | `gh variable list \| grep -i deploy_host` |
 | `#/play` says "the relay at … is on devnet" | The relay follows a different chain than the node | The **Two networks** panel names both; restart the relay with the node's `--network`, see [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) |
 
