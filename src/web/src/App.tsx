@@ -6,15 +6,15 @@
  * owns its own request, its loading state and its empty state.
  */
 
-import { useMemo, useState, type ReactNode } from "react";
-import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
-import { Banner, Button, IconButton, Surface, Text } from "react-native-paper";
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
+import { ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
+import { Banner, Button, IconButton, PaperProvider, Surface, Text, useTheme } from "react-native-paper";
 
-import { Page } from "./components/Chrome";
+import { Anchor, Loading, Page } from "./components/Chrome";
 import { formatInteger, shortHash } from "./lib/format";
 import { NodeProvider, useNode } from "./node";
 import { activeSection, navigate, useRoute, type Route } from "./router";
-import { ThemeModeContext, preferredMode, useThemeMode, type ThemeMode } from "./theme";
+import { darkTheme, lightTheme, ThemeModeContext, preferredMode, useThemeMode, type ThemeMode } from "./theme";
 import { AccountView } from "./views/AccountView";
 import { BlockDetail } from "./views/BlockDetail";
 import { Blocks } from "./views/Blocks";
@@ -22,7 +22,15 @@ import { Dashboard } from "./views/Dashboard";
 import { GameDetail } from "./views/GameDetail";
 import { Games } from "./views/Games";
 import { NotFound } from "./views/NotFound";
-import { Play } from "./views/Play";
+
+/**
+ * The table pulls in `chess.js`, which the explorer itself never needs, so it
+ * loads on demand: an explorer visit should not pay for a move generator.
+ */
+const Play = lazy(async () => {
+  const module = await import("./views/Play");
+  return { default: module.Play };
+});
 
 const SECTIONS = [
   { key: "dashboard", label: "Overview", href: "#/" },
@@ -39,7 +47,11 @@ export function App(): ReactNode {
   );
   return (
     <ThemeModeContext.Provider value={theme}>
-      <Shell />
+      <PaperProvider theme={mode === "dark" ? darkTheme : lightTheme}>
+        <NodeProvider>
+          <Shell />
+        </NodeProvider>
+      </PaperProvider>
     </ThemeModeContext.Provider>
   );
 }
@@ -48,16 +60,17 @@ function Shell(): ReactNode {
   const route = useRoute();
   const { status } = useNode();
   const { mode, toggle } = useThemeMode();
+  const paper = useTheme();
   const { width } = useWindowDimensions();
   const compact = width < 720;
   const section = activeSection(route);
   const offline = status.error !== undefined;
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { backgroundColor: paper.colors.background }]}>
       <Surface elevation={2} style={styles.header}>
         <View style={styles.headerRow}>
-          <Pressable href="#/" onPress={() => navigate("#/")} style={styles.brand}>
+          <Anchor href="#/" onPress={() => navigate("#/")} style={styles.brand}>
             <Text variant="titleLarge" style={styles.brandText}>
               SCCP
             </Text>
@@ -66,18 +79,18 @@ function Shell(): ReactNode {
                 explorer
               </Text>
             )}
-          </Pressable>
+          </Anchor>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nav}>
             {SECTIONS.map((item) => {
               const active = item.key === section;
               return (
-                <Pressable key={item.key} href={item.href} onPress={() => navigate(item.href)} style={styles.navItem}>
+                <Anchor key={item.key} href={item.href} onPress={() => navigate(item.href)} style={styles.navItem}>
                   <Text variant="labelLarge" style={active ? styles.navActive : styles.navLabel}>
                     {item.label}
                   </Text>
                   {active && <View style={styles.navUnderline} />}
-                </Pressable>
+                </Anchor>
               );
             })}
           </ScrollView>
@@ -139,7 +152,11 @@ function RouteView({ route }: { route: Route }): ReactNode {
     case "game":
       return <GameDetail gameHash={route.gameHash} />;
     case "play":
-      return <Play />;
+      return (
+        <Suspense fallback={<Loading />}>
+          <Play />
+        </Suspense>
+      );
     case "account":
       return <AccountView address={route.address} />;
     case "notFound":

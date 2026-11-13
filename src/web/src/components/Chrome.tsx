@@ -5,7 +5,7 @@
  * `react-native-web` renders to DOM, so these would run unchanged on a phone.
  */
 
-import type { ReactNode } from "react";
+import type { ComponentProps, ComponentType, ReactNode } from "react";
 import { useMemo } from "react";
 import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 import { ActivityIndicator, Chip, Text } from "react-native-paper";
@@ -13,6 +13,16 @@ import { ActivityIndicator, Chip, Text } from "react-native-paper";
 import { copyText, shortHash } from "../lib/format";
 import { navigate } from "../router";
 import { monospace } from "../theme";
+
+/**
+ * `Pressable` with the web-only `href` prop typed.
+ *
+ * react-native-web turns `href` into a real anchor, so a hash link is also a
+ * middle-clickable URL; `react-native`'s own types do not declare the prop.
+ */
+export const Anchor = Pressable as unknown as ComponentType<
+  ComponentProps<typeof Pressable> & { href?: string }
+>;
 
 /** Page width: a readable column on desktop, full width on a phone. */
 export function Page({ children }: { children: ReactNode }): ReactNode {
@@ -109,11 +119,11 @@ export function Link({
   mono?: boolean;
 }): ReactNode {
   return (
-    <Pressable href={href} onPress={() => navigate(href)} style={styles.inlinePressable}>
+    <Anchor href={href} onPress={() => navigate(href)} style={styles.inlinePressable}>
       <Text variant="bodyMedium" style={[styles.link, mono && styles.mono]}>
         {children}
       </Text>
-    </Pressable>
+    </Anchor>
   );
 }
 
@@ -179,7 +189,7 @@ export function FailureNotice({ error }: { error: Error }): ReactNode {
         {error.message}
       </Text>
       <Text variant="bodySmall" style={styles.muted}>
-        Is the node running? Start one with <Text style={styles.mono}>sccp serve --web</Text>, or point{" "}
+        Is the node running? Start one with <Text style={styles.mono}>sccp node run --web</Text>, or point{" "}
         <Text style={styles.mono}>VITE_SCCP_API</Text> at a node URL.
       </Text>
     </View>

@@ -1,10 +1,10 @@
 /**
  * The node API client.
  *
- * The explorer talks to `/v1/...` on whatever origin served it: `sccp serve --web`
- * mounts the built bundle on the node itself, and the Vite dev server proxies
- * `/v1` to `SCCP_NODE`. `VITE_SCCP_API` overrides both, which is what a hosted
- * static build uses to point at a remote node.
+ * The explorer talks to `/v1/...` on whatever origin served it: `sccp node run
+ * --web` mounts the built bundle on the node itself, and the Vite dev server
+ * proxies `/v1` to `SCCP_NODE`. `VITE_SCCP_API` overrides both, which is what a
+ * hosted static build uses to point at a remote node.
  *
  * Every response is typed in `types.ts`; nothing here guesses at a shape.
  */
@@ -14,7 +14,8 @@ import type {
   BlockList,
   BlockView,
   ChallengeList,
-  DifficultyPoint,
+  DifficultyView,
+  FaucetView,
   GameList,
   GameView,
   MatchInfo,
@@ -160,8 +161,13 @@ export function fetchAccount(address: string, signal?: AbortSignal): Promise<Acc
   return request<AccountView>(`/v1/accounts/${encodeURIComponent(address)}`, { signal });
 }
 
-/** `GET /v1/difficulty`: the retarget history. */
-export function fetchDifficulty(signal?: AbortSignal): Promise<DifficultyPoint[]> {
-  return request<DifficultyPoint[]>("/v1/difficulty", { signal });
+/** `GET /v1/difficulty`: the current target and its retarget history. */
+export function fetchDifficulty(signal?: AbortSignal): Promise<DifficultyView> {
+  return request<DifficultyView>("/v1/difficulty", { signal });
+}
+
+/** `POST /v1/faucet`: ask the testnet faucet to fund `address`. */
+export function requestFaucet(address: string, signal?: AbortSignal): Promise<FaucetView> {
+  return request<FaucetView>("/v1/faucet", { method: "POST", body: { address }, signal });
 }
 

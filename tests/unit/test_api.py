@@ -236,7 +236,7 @@ def test_game_list_shows_pending_then_settled_results(
     assert pending[0]["height"] is None
     assert pending[0]["result"] == match.proof.result
 
-    block = mine_block(chain, miner_keys[match.proof.winner], proofs=(match.proof,))
+    mine_block(chain, miner_keys[match.proof.winner], proofs=(match.proof,))
     service.mempool = Mempool(params=chain.params, tip_state=chain.state, book=chain.book)
     with _client(service) as client:
         settled = client.get("/v1/games").json()["games"]

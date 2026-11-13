@@ -148,7 +148,7 @@ export interface MatchCertificate {
   time_control: TimeControl;
   engine_white: EngineFingerprint;
   engine_black: EngineFingerprint;
-  signatures: Record<string, string>;
+  start_signatures: Record<string, string>;
 }
 
 export interface GameResult {
@@ -300,5 +300,23 @@ export interface DifficultyPoint {
   height: number;
   wins_required: number;
   seal_bits: number;
+}
+
+export interface DifficultyView {
+  network: string;
+  height: number;
+  wins_required: number;
+  seal_bits: number;
+  retarget_interval: number;
+  retarget_enabled: boolean;
+  history: DifficultyPoint[];
+}
+
+/** `POST /v1/faucet`: a dispensed grant, already in the mempool. */
+export interface FaucetView {
+  network: string;
+  address: string;
+  amount: number;
+  txid: string;
 }
 

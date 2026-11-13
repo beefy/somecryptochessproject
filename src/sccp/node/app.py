@@ -56,20 +56,19 @@ WEB_DIST_ENV = "SCCP_WEB_DIST"
 def web_dist_root() -> Path | None:
     """The built explorer's directory, or ``None`` when nothing has been built.
 
-    Search order is the ``SCCP_WEB_DIST`` override (containers), then the
-    ``src/web/dist`` directory next to a source checkout. An installed wheel
-    carries no explorer, so ``None`` is the normal answer there and the node
-    simply serves its JSON API alone.
+    ``SCCP_WEB_DIST`` is an override, not a hint: an operator (or a container)
+    that points it at a directory without an ``index.html`` gets no explorer
+    rather than a stale bundle from somewhere else on disk. Without the variable
+    the only candidate is ``src/web/dist`` next to a source checkout; an
+    installed wheel carries no explorer, so ``None`` is the normal answer there
+    and the node simply serves its JSON API alone.
     """
-    candidates: list[Path] = []
     configured = os.environ.get(WEB_DIST_ENV)
     if configured:
-        candidates.append(Path(configured))
-    candidates.append(Path(__file__).resolve().parents[2] / "web" / "dist")
-    for directory in candidates:
-        if (directory / "index.html").is_file():
-            return directory
-    return None
+        directory = Path(configured)
+        return directory if (directory / "index.html").is_file() else None
+    fallback = Path(__file__).resolve().parents[2] / "web" / "dist"
+    return fallback if (fallback / "index.html").is_file() else None
 
 
 def _error_response(status_code: int, message: str) -> JSONResponse:

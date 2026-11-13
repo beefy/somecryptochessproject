@@ -273,6 +273,7 @@ responsibility rather than a construction phase.
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
 │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
+│   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a table
 │   ├── GCP_RESOURCE_SETUP.md     # project, VM, firewall and deploy wiring
 │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
 │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
@@ -312,6 +313,9 @@ responsibility rather than a construction phase.
 │   ├── transport.py              # synchronous ASGI transport for httpx
 │   ├── devnet.py                 # in-process local network
 │   └── cli.py                    # Typer CLI
+├── src/web/                      # explorer: React Native for Web + Material
+│   ├── src/views/                # overview, blocks, games, accounts, table
+│   └── src/lib/                  # node client, protocol ports, generated vectors
 └── tests/
     ├── unit/                     # per-module tests, including test_api.py,
     │                             # test_gossip.py, test_sync.py, test_miner_loop.py
@@ -448,6 +452,8 @@ The wallet and miner guides are separate:
   faucet, send a transfer and watch it settle.
 - [`docs/RUN_A_TESTNET_MINER.md`](docs/RUN_A_TESTNET_MINER.md) — run the relay and
   an engine miner, register on chain and commit/reveal availability.
+- [`docs/EXPLORE_THE_CHAIN.md`](docs/EXPLORE_THE_CHAIN.md) — build the web
+  explorer, serve it from `sccp node run --web`, and play a signed table.
 
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
 [`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current
@@ -491,13 +497,14 @@ stops after `N` relay polls, which is how the CLI tests drive it.
 Protocol v1 and the testnet release are complete. The reference implementation
 includes the wallet and keyfile tooling, the chess proof pipeline, the timed
 relay, the ledger and consensus rules, the node and gossip layer, the unattended
-miner, quality sampling and bonded challenges, and the funded two-miner testnet
-with an automated deploy path.
+miner, quality sampling and bonded challenges, the funded two-miner testnet with
+an automated deploy path, and a web explorer with a playable, protocol-signed
+table (`src/web`).
 
 The work that remains is operational and economic rather than foundational:
 
 - run a persistent public testnet and publish a 72-hour soak report;
-- add metrics, alerting and a block explorer;
+- add metrics and alerting;
 - automate timeout-claim submission and pin the drand quicknet verifier;
 - move challenge-panel votes on chain;
 - harden storage, peer networking, faucet limits and miner/relay resilience;
