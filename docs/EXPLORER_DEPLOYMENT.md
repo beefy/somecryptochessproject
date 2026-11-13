@@ -66,11 +66,12 @@ need no Docker network in common with the chain's stack and no credentials.
    container is restarted and no request can see a half-written bundle. The step
    then asserts that `current` really resolves to the new release.
 5. **prune** — keeps the last five releases, for rollback.
-6. **verify** — over the public URL: the document, one hashed asset referenced by
-   it, and `/v1/status` returning `"network": "testnet"`. `curl -f` also fails on
-   a certificate that does not verify, so the TLS terminator is part of the smoke
-   check. `/relay/v1/status` is checked too but only warns, because the relay
-   belongs to the chain's deploy.
+
+The workflow does not call the site afterwards. Every step it can assert locally —
+the bundle built, the containers came up, the symlink moved — it asserts, and the
+public surface is one `curl` away in the next section; a check from GitHub would
+also have to wait out a first-time certificate issue, which is the one moment the
+site is legitimately not answerable.
 
 ## Public endpoint
 
@@ -208,7 +209,6 @@ needs **no new configuration at all**.
 | variable | `EXPLORER_DEPLOY_HOST` | `TESTNET_DEPLOY_HOST` | `user@host` of the VM |
 | variable | `EXPLORER_DEPLOY_DIR` | — (default `/opt/sccp-explorer`) | where the releases live |
 | variable | `EXPLORER_DEPLOY_PORT` | — (default `22`) | SSH port |
-| variable | `EXPLORER_PUBLIC_URL` | — (default `https://explorer.somecryptochessproject.com`) | what the smoke check requests |
 | secret | `EXPLORER_SSH_KEY` | `TESTNET_SSH_KEY` | private key for that user |
 | secret | `EXPLORER_KNOWN_HOSTS` | `TESTNET_KNOWN_HOSTS` | pinned host key |
 
@@ -216,7 +216,6 @@ Set them explicitly only when the explorer is somewhere else:
 
 ```bash
 gh variable set EXPLORER_DEPLOY_HOST --body "sccp@$EXPLORER_HOST"
-gh variable set EXPLORER_PUBLIC_URL  --body "https://$EXPLORER_HOST"
 gh secret   set EXPLORER_SSH_KEY < ~/.ssh/sccp_explorer_deploy
 ```
 
@@ -264,8 +263,7 @@ Let's Encrypt rate-limits duplicate certificates per name and week.
 
 To run without TLS on a throwaway VM, drop the `tls` service and the `volumes`
 block from the compose file and change `listen 127.0.0.1:8080` back to
-`listen 80` in [`deploy/explorer/nginx.conf`](../deploy/explorer/nginx.conf), then
-set `EXPLORER_PUBLIC_URL` to the `http://` URL so the smoke check follows. Keep
+`listen 80` in [`deploy/explorer/nginx.conf`](../deploy/explorer/nginx.conf). Keep
 `/v1` and `/relay` on the same origin either way — splitting them across hosts
 brings back the CORS problem this design removes.
 

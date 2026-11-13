@@ -247,6 +247,13 @@ export interface GameView {
   quality_trace_hash: string | null;
 }
 
+/** `GET /v1/games/{game_hash}/pgn`: the move text the settlement proof carries. */
+export interface GamePgn {
+  game_hash: string;
+  network: string;
+  pgn: string;
+}
+
 export interface MatchInfo {
   match_id: string;
   network: string;

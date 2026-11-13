@@ -57,6 +57,7 @@ from sccp.node.models import (
     EpochView,
     FaucetView,
     GameList,
+    GamePgn,
     GameSummary,
     GameView,
     GossipResult,
@@ -512,6 +513,27 @@ class NodeService:
                     quality_verdict=_quality_verdict(summary),
                     quality_trace_hash=summary.trace_hash if summary is not None else None,
                 )
+        raise NotFoundError(f"unknown game {game_hash!r}")
+
+    def game_pgn(self, game_hash: str) -> GamePgn:
+        """The PGN the proof for ``game_hash`` carries.
+
+        The moves live in the proof body, not in the ledger, so this is the one
+        route that can print a game the node has no transcript for. A node that
+        snapshotted the block away still knows the game settled but cannot quote
+        it, which is a 404 with a reason, never an empty PGN.
+        """
+        record = self.chain.state.proofs.get(game_hash)
+        if record is not None:
+            proof = self._proof_for_record(record.height, game_hash)
+            if proof is None:
+                raise NotFoundError(
+                    f"this node no longer holds the block body for game {game_hash!r}"
+                )
+            return GamePgn(game_hash=game_hash, network=self.params.network_id, pgn=proof.pgn)
+        for proof in self.mempool.proofs.values():
+            if proof.game_hash == game_hash:
+                return GamePgn(game_hash=game_hash, network=self.params.network_id, pgn=proof.pgn)
         raise NotFoundError(f"unknown game {game_hash!r}")
 
     def games(self, *, limit: int = 25, before_height: int | None = None) -> GameList:

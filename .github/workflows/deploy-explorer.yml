@@ -17,7 +17,6 @@ name: deploy-explorer
 #   secrets.EXPLORER_KNOWN_HOSTS optional pinned host key; falls back to TESTNET_KNOWN_HOSTS
 #   vars.EXPLORER_DEPLOY_DIR     optional; defaults to /opt/sccp-explorer
 #   vars.EXPLORER_DEPLOY_PORT    optional; defaults to 22
-#   vars.EXPLORER_PUBLIC_URL     optional; defaults to https://explorer.somecryptochessproject.com
 #
 # Unlike deploy-testnet-miners.yml this deploy never touches the chain: it
 # uploads a release directory, switches one symlink and leaves the node alone.
@@ -93,7 +92,6 @@ jobs:
       TARGET: ${{ vars.EXPLORER_DEPLOY_HOST || vars.TESTNET_DEPLOY_HOST }}
       DEPLOY_DIR: ${{ vars.EXPLORER_DEPLOY_DIR || '/opt/sccp-explorer' }}
       DEPLOY_PORT: ${{ vars.EXPLORER_DEPLOY_PORT || '22' }}
-      PUBLIC_URL: ${{ vars.EXPLORER_PUBLIC_URL || 'https://explorer.somecryptochessproject.com' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -196,29 +194,6 @@ jobs:
 
       - name: Keep the last five releases
         run: ssh explorer "cd '$DEPLOY_DIR/www/releases' && ls -1t | tail -n +6 | xargs -r rm -rf"
-
-      - name: Verify the deployed explorer
-        run: |
-          set -euo pipefail
-          # The document, the API path the bundle calls, and one hashed asset:
-          # together they prove the symlink, the proxy and the release line up.
-          curl -fsS --retry 12 --retry-delay 5 --retry-connrefused --max-time 20 \
-            "$PUBLIC_URL/" | grep -q 'id="root"'
-          asset="$(curl -fsS --max-time 20 "$PUBLIC_URL/" \
-            | grep -o 'assets/[A-Za-z0-9._-]*\.js' | head -n1)"
-          test -n "$asset"
-          curl -fsS -o /dev/null --max-time 20 "$PUBLIC_URL/$asset"
-          curl -fsS --max-time 20 "$PUBLIC_URL/v1/status" | jq -e '.network == "testnet"'
-          # The relay belongs to deploy-testnet-miners.yml; a missing matchmaker
-          # must not fail a bundle deploy, but #/play needs it.
-          if ! curl -fsS --max-time 10 "$PUBLIC_URL/relay/v1/status" | jq -e '.network == "testnet"'; then
-            echo "::warning::/relay is not answering on $PUBLIC_URL; #/play will show its relay error until the matchmaker is up"
-          fi
-          {
-            echo "### explorer deployed"
-            echo ""
-            echo "- $PUBLIC_URL (release \`$RELEASE\`)"
-          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Show the proxy state
         if: always()

@@ -18,6 +18,7 @@ import type {
   EpochView,
   FaucetView,
   GameList,
+  GamePgn,
   GameView,
   MatchInfo,
   MempoolView,
@@ -137,6 +138,11 @@ export function fetchGames(signal?: AbortSignal): Promise<GameList> {
 /** `GET /v1/games/{game_hash}`: one game's settlement state. */
 export function fetchGame(gameHash: string, signal?: AbortSignal): Promise<GameView> {
   return request<GameView>(`/v1/games/${encodeURIComponent(gameHash)}`, { signal });
+}
+
+/** `GET /v1/games/{game_hash}/pgn`: the move text the proof carries. */
+export function fetchGamePgn(gameHash: string, signal?: AbortSignal): Promise<GamePgn> {
+  return request<GamePgn>(`/v1/games/${encodeURIComponent(gameHash)}/pgn`, { signal });
 }
 
 /** `GET /v1/matches/{match_id}`: seats, certificate and transcript. */
