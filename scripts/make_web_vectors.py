@@ -26,9 +26,11 @@ from sccp.chess.openings import books_from_document
 from sccp.chess.pgn import GameResult, canonical_game_hash
 from sccp.config import DEVNET
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed, sign_domain
+from sccp.crypto.keys import sign_domain
+from sccp.crypto.pq import hybrid_keypair_from_seed, hybrid_sign_domain
 from sccp.protocol.beacon import commitment, compute_beacon
 from sccp.protocol.clocks import move_payload
+from sccp.protocol.commitments import ZERO_ROOT, fold, move_leaf
 from sccp.protocol.models import (
     Availability,
     BeaconReveal,
@@ -90,7 +92,7 @@ def _devnet_accounts() -> dict[str, tuple[bytes, str]]:
     """Two fixed seats and their bech32 addresses on devnet."""
     accounts = {}
     for name, seed in (("alice", bytes([1]) * 32), ("bob", bytes([2]) * 32)):
-        keypair = keypair_from_seed(seed)
+        keypair = hybrid_keypair_from_seed(seed)
         accounts[name] = (seed, encode_address(keypair.public_key_bytes, DEVNET))
     return accounts
 
@@ -105,7 +107,7 @@ def build_match_vectors() -> dict[str, object]:
     """
     params = DEVNET.model_copy(update={"min_plies": 1})
     book = books_from_document(TEST_BOOK)[params.book_version]
-    keys = {name: keypair_from_seed(seed) for name, (seed, _) in _devnet_accounts().items()}
+    keys = {name: hybrid_keypair_from_seed(seed) for name, (seed, _) in _devnet_accounts().items()}
     addresses = {name: address for name, (_, address) in _devnet_accounts().items()}
     nonces = {"alice": "11" * 32, "bob": "22" * 32}
 
@@ -200,7 +202,7 @@ def build_match_vectors() -> dict[str, object]:
 
 def build_ledger_vectors() -> dict[str, object]:
     """A signed ``register`` transaction and an availability commitment."""
-    keypair = keypair_from_seed(bytes([7]) * 32)
+    keypair = hybrid_keypair_from_seed(bytes([7]) * 32)
     sender = encode_address(keypair.public_key_bytes, DEVNET)
     unsigned = Transaction(
         network=DEVNET.network_id,
@@ -218,6 +220,8 @@ def build_ledger_vectors() -> dict[str, object]:
     signed = sign_transaction(keypair, unsigned)
     return {
         "seed_hex": keypair.seed.hex(),
+        "public_key_hex": keypair.public_key_hex,
+        "ed25519_public_key_hex": keypair.ed25519.public_key_hex,
         "register": {
             "transaction": signed.model_dump(mode="json", by_alias=True),
             "txid": txid(signed),
@@ -233,8 +237,8 @@ def build_ledger_vectors() -> dict[str, object]:
 
 def build_vectors() -> dict[str, object]:
     """Return the vector document the web UI's TypeScript tests are pinned to."""
-    white_key = keypair_from_seed(bytes(range(32)))
-    black_key = keypair_from_seed(bytes(range(1, 33)))
+    white_key = hybrid_keypair_from_seed(bytes(range(32)))
+    black_key = hybrid_keypair_from_seed(bytes(range(1, 33)))
     white_address = encode_address(white_key.public_key_bytes, NETWORK)
     black_address = encode_address(black_key.public_key_bytes, NETWORK)
 
@@ -251,6 +255,16 @@ def build_vectors() -> dict[str, object]:
         san="f3",
         signature="00" * 64,
     )
+    move_commitment = fold(
+        move_leaf(
+            network=NETWORK,
+            match_id=match,
+            seat=white_address if ply % 2 == 0 else black_address,
+            ply=ply,
+            san=san,
+        )
+        for ply, san in enumerate(FOOLS_MATE)
+    )
     result_fields = {
         "network": NETWORK,
         "match_id": match,
@@ -258,6 +272,7 @@ def build_vectors() -> dict[str, object]:
         "result": "0-1",
         "termination": "checkmate",
         "plies": len(FOOLS_MATE),
+        "move_commitment": move_commitment,
     }
 
     vectors = {
@@ -277,10 +292,13 @@ def build_vectors() -> dict[str, object]:
         },
         "keys": {
             "seed_hex": white_key.seed.hex(),
-            "public_key_hex": white_key.public_key_hex,
+            "hybrid_public_key_hex": white_key.public_key_hex,
+            "public_key_hex": white_key.ed25519.public_key_hex,
             "address_testnet": white_address,
             "address_mainnet": encode_address(white_key.public_key_bytes, "mainnet"),
-            "peer_public_key_hex": black_key.public_key_hex,
+            "address_devnet": encode_address(white_key.public_key_bytes, "devnet"),
+            "peer_hybrid_public_key_hex": black_key.public_key_hex,
+            "peer_public_key_hex": black_key.ed25519.public_key_hex,
             "peer_address_testnet": black_address,
         },
         "pairing": {
@@ -293,7 +311,7 @@ def build_vectors() -> dict[str, object]:
         },
         "move": {
             "payload": move_payload(move),
-            "signature_hex": sign_domain(white_key, Domain.MOVE, move_payload(move)).hex(),
+            "signature_hex": sign_domain(white_key.ed25519, Domain.MOVE, move_payload(move)).hex(),
         },
         "game": {
             "san_moves": list(FOOLS_MATE),
@@ -302,7 +320,27 @@ def build_vectors() -> dict[str, object]:
         },
         "result": {
             "payload": result_fields,
-            "signature_hex": sign_domain(black_key, Domain.RESULT, result_fields).hex(),
+            # The Ed25519 half over the same payload: this is the byte-level
+            # check a browser can make. The ledger signature is the hybrid blob
+            # over exactly these bytes and is recorded for reference only.
+            "signature_hex": sign_domain(black_key.ed25519, Domain.RESULT, result_fields).hex(),
+            "ledger_signature_hex": hybrid_sign_domain(
+                black_key, Domain.RESULT, result_fields
+            ).hex(),
+        },
+        "commitment": {
+            "empty_root": ZERO_ROOT,
+            "move_commitment": move_commitment,
+            "leaves": [
+                move_leaf(
+                    network=NETWORK,
+                    match_id=match,
+                    seat=white_address if ply % 2 == 0 else black_address,
+                    ply=ply,
+                    san=san,
+                )
+                for ply, san in enumerate(FOOLS_MATE)
+            ],
         },
         "ledger": build_ledger_vectors(),
         "match": build_match_vectors(),

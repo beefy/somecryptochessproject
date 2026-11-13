@@ -25,7 +25,6 @@ from typing import Final
 
 from sccp.chain.difficulty import Difficulty, initial_difficulty
 from sccp.config import NetworkParams
-from sccp.crypto.pq import ed25519_public_key_hex
 from sccp.errors import StateError
 from sccp.protocol.models import (
     Availability,
@@ -536,19 +535,19 @@ class State:
         return dict(record.roster)
 
     def public_keys(self) -> dict[str, str]:
-        """``address -> Ed25519 public key hex`` for every address the chain trusts.
+        """``address -> hybrid public key hex`` for every address the chain trusts.
 
-        Hybrid accounts store a longer key blob on their account, but every
-        consumer of this map signs Ed25519 (clock receipts, move receipts), so
-        it hands out the classical half. The full blob stays on the account,
-        where ledger signature checks read it.
+        The map holds the full 1985-byte blob exactly as it was registered; the
+        per-stream verifiers project the Ed25519 half when they check a move or a
+        clock receipt. Keeping one authoritative representation is what removes
+        the "which scheme is this key?" question from the ledger.
         """
         keys: dict[str, str] = {}
         for address, account in self.accounts.items():
             if account.public_key:
-                keys[address] = ed25519_public_key_hex(account.public_key)
+                keys[address] = account.public_key
         for address, witness in self.witnesses.items():
-            keys.setdefault(address, ed25519_public_key_hex(witness.public_key))
+            keys.setdefault(address, witness.public_key)
         return keys
 
     def known_game_hashes(self) -> frozenset[str]:
@@ -658,7 +657,7 @@ class State:
                 account = self.account(address)
                 quota = min(availability[address].max_games, params.rounds_per_epoch)
                 roster[address] = RosterMember(
-                    public_key=ed25519_public_key_hex(account.public_key or ""),
+                    public_key=account.public_key or "",
                     engine=account.engine,
                     max_games=quota,
                 )

@@ -7,11 +7,87 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+**One signature scheme.** The protocol, the ledger, the relay, the CLI and the
+web bundle now have exactly one identity: hybrid Ed25519 + ML-DSA-65. The
+optional dual-path feature is gone rather than deprecated, because every
+`if scheme == ...` branch is a seam an attacker can aim at. This is a wire-format
+break: addresses, keyfiles, transactions, certificates, results, evidence and
+every fixture are regenerated. Nodes from before this change cannot interoperate
+with nodes after it, and there is no migration path other than recreating
+keyfiles from their 24-word phrase. Nothing had been deployed beyond a private
+testnet, so the rewrite is cheaper than carrying two schemes forever.
+
+- **Addresses** are version-1 programs over the full 32-byte digest of the
+  hybrid key blob (`H("sccp/v1/address", {algorithm, network, public_key})`).
+  Version 0 and its truncated hash are removed; a 21-byte program no longer
+  parses.
+- **Keyfiles** are `version: 2` with `"scheme": "ed25519-mldsa65"`, always, at
+  scrypt `N = 2**17`. Version-1 documents and classical schemes are refused.
+  `--scheme` no longer exists (`wallet new --scheme …` exits 2).
+- **Transactions** are always signed by the hybrid blob (6748 hex). The
+  `TxSignatureHex` / `HybridSignatureHex` unions, the key-length scheme dispatch
+  and the classical `resolve_public_key` path are removed.
+- **Certificates and results** are hybrid-signed, so a quantum attacker cannot
+  impersonate a seat or forge a settled result. `GameResult` and `WinProof` carry
+  `move_commitment`.
+- **New: stream commitments** (`sccp/protocol/commitments.py`, section 8.5). The
+  move stream folds into a 32-byte root, hybrid-signed once inside the result;
+  refused-checkmate evidence is a compact `MoveEvidence` (plies + witness
+  checkpoint) instead of a tuple of signed moves.
+- **New: clock checkpoints and a bounded evidence window.**
+  `ClockEvidence.receipts` is now at most `CLOCK_EVIDENCE_PLIES = 64`
+  consecutive receipts ending at the flag, anchored by the first receipt's
+  absolute clocks, plus a witness-quorum hybrid `StreamCheckpoint` over the
+  window and the flag. The chain-level `timeout_claim` validator verifies the
+  root and the quorum, so a forged Ed25519 receipt cannot open a claim.
+- **Caps**: `max_tx_bytes` rises from 65 536 to 131 072. A 400-ply
+  `timeout_claim` overflowed the old cap with Ed25519 signatures alone; the
+  window fixes the size, and 128 KiB leaves room for a larger quorum. See
+  section 12.5 for the budget table.
+- **Fail-closed startup**: `require_pq()` is called by the node, miner, relay and
+  devnet, so a build without an ML-DSA provider refuses to run instead of
+  rejecting every transaction it sees.
+- **CLI**: `wallet sign-result --payload <hex>` signs a canonical result payload
+  produced by the web tab, and miner/witness commands accept the same keyfile as
+  everything else (the "a hybrid keyfile cannot mine" guard is gone).
+- **Web**: `bech32.ts` encodes version-1 programs; `keys.ts` derives addresses
+  from the hybrid blob and the Ed25519 half from the master seed (HMAC label
+  `sccp/v1/pq/ed25519`); `commitment.ts` reproduces the fold; `tx.ts` refuses to
+  sign (`signTransaction` throws) instead of emitting a classical downgrade;
+  `verify.ts` reports the hybrid signature rules as *skipped* unless a
+  `verifyLedgerSignature` hook is supplied. `vectors.json` regenerated with the
+  new addresses, the hybrid public key and commitment vectors (hybrid signatures
+  are hedged, so they are verified rather than compared).
+- **Genesis** documents and the pinned hashes are regenerated for all three
+  networks (hybrid faucet keys).
+- **Tests**: 1004 Python tests, the adversarial suite and 74 vitest cases updated
+  to the one-scheme invariants; `tests/unit/test_pq.py` is rewritten as the
+  acceptance suite (`ADDRESS_VERSION == 1`, hybrid-only transactions and
+  keyfiles, no `SCHEMES`/`SigningKey`/`ADDRESS_PQ`, `--scheme` gone),
+  `tests/unit/test_commitments.py` pins the fold, and
+  `tests/unit/test_tx_budget.py` measures the largest transaction and the
+  unwindowed overflow it replaces.
+
+### Fixed
+
+- A mempool selection bug: a transaction whose funding transfer had not yet been
+  applied was dropped instead of deferred, so which transactions made it into a
+  block depended on address sort order. The pool now defers a sender and retries
+  it after other senders make progress.
+- The latent `clock_evidence` overflow described above.
+
+## [0.16.0] - 2026-11-13
+
 Hybrid post-quantum signing for wallets, addresses and transactions. A wallet may
 now hold an Ed25519 + ML-DSA-65 keypair whose spend needs both signatures. Ed25519
 addresses, version-1 keyfiles, Ed25519 transactions, genesis and the web vectors
 are unchanged byte for byte, and a node that never sees a hybrid signature stores
 exactly the state it stored before.
+
+*Superseded by the one-scheme rewrite above: that release kept both schemes side
+by side, and this one removes the classical path entirely.*
 
 ### Added
 

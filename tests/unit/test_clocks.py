@@ -13,6 +13,8 @@ from sccp.errors import ClockError, PgnValidationError, ProofVerificationError, 
 from sccp.protocol.clocks import (
     FIXED_TIME_CONTROL,
     MatchClock,
+    build_clock_evidence,
+    build_move_evidence,
     flag_result,
     sign_move,
     sign_receipt,
@@ -44,6 +46,46 @@ from sccp.protocol.verification import ProofFailure, verify_win_proof
 
 def _account_for(signed_match, address: str):
     return next(account for account in signed_match.accounts.values() if account.address == address)
+
+
+def _witness(signed_match):
+    """The test witness (Carol) as ``(address, keypair)``."""
+    carol = signed_match.accounts["carol"]
+    return carol.address, carol.keypair
+
+
+def _evidence(signed_match, receipts, final) -> ClockEvidence:
+    """A clock-evidence bundle with Carol's hybrid checkpoint signature."""
+    return build_clock_evidence(
+        network=signed_match.params.network_id,
+        time_control=FIXED_TIME_CONTROL,
+        receipts=receipts,
+        final=final,
+        signers=(_witness(signed_match),),
+    )
+
+
+def _check(signed_match, evidence, **kwargs) -> None:
+    """Verify a *mutated* bundle, re-anchoring the checkpoint first.
+
+    Tamper tests change a receipt or the flag and expect the arithmetic
+    rule to fire, not the commitment. Re-signing the checkpoint with the
+    test witness keeps the commitment honest so the rule under test is
+    the one that runs; the commitment itself is covered by the
+    dedicated checkpoint tests.
+    """
+    anchored = _evidence(signed_match, evidence.receipts, evidence.final)
+    anchored = anchored.model_copy(update={"time_control": evidence.time_control})
+    verify_clock_evidence(anchored, **kwargs)
+
+
+def _move_evidence(signed_match):
+    """The refused-checkmate bundle for the fixture's scholar's mate."""
+    return build_move_evidence(
+        signed_match.certificate,
+        signed_match.parsed.san_moves,
+        (_witness(signed_match),),
+    )
 
 
 def _flag_game(signed_match) -> tuple[str, ClockEvidence, object]:
@@ -88,12 +130,7 @@ def _flag_game(signed_match) -> tuple[str, ClockEvidence, object]:
         witness,
         network=network,
     )
-    evidence = ClockEvidence(
-        time_control=FIXED_TIME_CONTROL,
-        final=final,
-        receipts=(receipt,),
-    )
-    return pgn, evidence
+    return pgn, _evidence(signed_match, (receipt,), final)
 
 
 def _long_flag_game(signed_match) -> tuple[str, ClockEvidence]:
@@ -149,11 +186,7 @@ def _long_flag_game(signed_match) -> tuple[str, ClockEvidence]:
         witness,
         network=network,
     )
-    return pgn, ClockEvidence(
-        time_control=FIXED_TIME_CONTROL,
-        final=final,
-        receipts=receipts,
-    )
+    return pgn, _evidence(signed_match, receipts, final)
 
 
 def _signed_result(signed_match, pgn: str):
@@ -306,61 +339,68 @@ def test_clock_evidence_verifies_and_rejects_tampering(signed_match) -> None:
         update={"final": evidence.final.model_copy(update={"black_ms": 1})}
     )
     with pytest.raises(ClockError, match="not zero"):
-        verify_clock_evidence(broken, **kwargs)
+        _check(signed_match, broken, **kwargs)
 
     retimed = evidence.model_copy(
         update={"time_control": TimeControl(initial_ms=60_000, increment_ms=0)}
     )
     with pytest.raises(ClockError, match="protocol-fixed"):
-        verify_clock_evidence(retimed, **kwargs)
+        _check(signed_match, retimed, **kwargs)
 
     unsigned = evidence.model_copy(
-        update={"final": evidence.final.model_copy(update={"witnesses": ()})}
+        update={"checkpoint": evidence.checkpoint.model_copy(update={"witnesses": ()})}
     )
     with pytest.raises(ClockError, match="quorum"):
         verify_clock_evidence(unsigned, **kwargs)
 
-    forged_witness = evidence.final.model_copy(
+    forged = evidence.model_copy(
         update={
-            "witnesses": (evidence.final.witnesses[0].model_copy(update={"signature": "00" * 64}),)
+            "checkpoint": evidence.checkpoint.model_copy(
+                update={
+                    "witnesses": (
+                        evidence.checkpoint.witnesses[0].model_copy(
+                            update={"signature": "00" * 6748}
+                        ),
+                    )
+                }
+            )
         }
     )
-    forged = evidence.model_copy(update={"final": forged_witness})
-    with pytest.raises(ClockError, match="invalid clock witness"):
+    with pytest.raises(ClockError, match="invalid checkpoint signature"):
         verify_clock_evidence(forged, **kwargs)
 
     other_match = evidence.model_copy(
         update={"final": evidence.final.model_copy(update={"match_id": "00" * 32})}
     )
     with pytest.raises(ClockError, match="does not belong"):
-        verify_clock_evidence(other_match, **kwargs)
+        _check(signed_match, other_match, **kwargs)
     with pytest.raises(ClockError, match="no-show"):
-        verify_clock_evidence(evidence, **{**kwargs, "san_moves": ()})
+        _check(signed_match, evidence, **{**kwargs, "san_moves": ()})
     wrong_ply = evidence.model_copy(
         update={"final": evidence.final.model_copy(update={"ply": evidence.final.ply + 1})}
     )
     with pytest.raises(ClockError, match="flag receipt is for ply"):
-        verify_clock_evidence(wrong_ply, **kwargs)
+        _check(signed_match, wrong_ply, **kwargs)
     wrong_final_seat = evidence.model_copy(
         update={"final": evidence.final.model_copy(update={"seat": signed_match.certificate.white})}
     )
     with pytest.raises(ClockError, match="side to move"):
-        verify_clock_evidence(wrong_final_seat, **kwargs)
+        _check(signed_match, wrong_final_seat, **kwargs)
     with pytest.raises(ClockError, match="does not agree"):
-        verify_clock_evidence(evidence, **{**kwargs, "result": "0-1"})
+        _check(signed_match, evidence, **{**kwargs, "result": "0-1"})
     empty_clocks = evidence.model_copy(
         update={"final": evidence.final.model_copy(update={"white_ms": 0, "black_ms": 0})}
     )
     with pytest.raises(ClockError, match="winner's clock"):
-        verify_clock_evidence(empty_clocks, **kwargs)
-    with pytest.raises(ClockError, match="exactly once"):
-        verify_clock_evidence(evidence.model_copy(update={"receipts": ()}), **kwargs)
+        _check(signed_match, empty_clocks, **kwargs)
+    with pytest.raises(ClockError, match="no move receipts"):
+        _check(signed_match, evidence.model_copy(update={"receipts": ()}), **kwargs)
 
     retimed_but_required_off = evidence.model_copy(
         update={"time_control": TimeControl(initial_ms=60_000, increment_ms=0)}
     )
     with pytest.raises(ClockError, match="does not match the certificate"):
-        verify_clock_evidence(retimed_but_required_off, require_fixed=False, **kwargs)
+        _check(signed_match, retimed_but_required_off, require_fixed=False, **kwargs)
 
 
 def test_receipt_witnesses_must_be_unique_registered_and_quorate(signed_match) -> None:
@@ -417,7 +457,7 @@ def test_clock_receipts_follow_monotonic_running_clocks(signed_match) -> None:
         }
     )
     with pytest.raises(ClockError, match="monotonic"):
-        verify_clock_evidence(out_of_order, **kwargs)
+        _check(signed_match, out_of_order, **kwargs)
 
     witness = signed_match.accounts["carol"].keypair
     bad_clock = sign_receipt(
@@ -437,7 +477,7 @@ def test_clock_receipts_follow_monotonic_running_clocks(signed_match) -> None:
         }
     )
     with pytest.raises(ClockError, match="expected"):
-        verify_clock_evidence(wrong_clock, **kwargs)
+        _check(signed_match, wrong_clock, **kwargs)
 
 
 def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> None:
@@ -461,7 +501,8 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
 
     wrong_match = evidence.receipts[1].model_copy(update={"match_id": "00" * 32})
     with pytest.raises(ClockError, match="does not belong"):
-        verify_clock_evidence(
+        _check(
+            signed_match,
             evidence.model_copy(
                 update={"receipts": (evidence.receipts[0], wrong_match, evidence.receipts[2])}
             ),
@@ -469,7 +510,8 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
         )
     wrong_san = evidence.receipts[1].model_copy(update={"san": "Qh5"})
     with pytest.raises(ClockError, match="receipt SAN at ply"):
-        verify_clock_evidence(
+        _check(
+            signed_match,
             evidence.model_copy(
                 update={"receipts": (evidence.receipts[0], wrong_san, evidence.receipts[2])}
             ),
@@ -477,7 +519,8 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
         )
     wrong_seat = evidence.receipts[1].model_copy(update={"seat": signed_match.certificate.white})
     with pytest.raises(ClockError, match="belongs to black"):
-        verify_clock_evidence(
+        _check(
+            signed_match,
             evidence.model_copy(
                 update={"receipts": (evidence.receipts[0], wrong_seat, evidence.receipts[2])}
             ),
@@ -486,21 +529,24 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
 
     zero_black = evidence.receipts[0].model_copy(update={"black_ms": 0})
     with pytest.raises(ClockError, match="black clock is out of range"):
-        verify_clock_evidence(
+        _check(
+            signed_match,
             evidence.model_copy(update={"receipts": (resign(zero_black), *evidence.receipts[1:])}),
             **kwargs,
         )
 
     zero_first = evidence.receipts[0].model_copy(update={"white_ms": 0})
     with pytest.raises(ClockError, match="out of range"):
-        verify_clock_evidence(
+        _check(
+            signed_match,
             evidence.model_copy(update={"receipts": (resign(zero_first), *evidence.receipts[1:])}),
             **kwargs,
         )
 
     changed_idle = evidence.receipts[0].model_copy(update={"black_ms": 1_799_999})
     with pytest.raises(ClockError, match="idle side"):
-        verify_clock_evidence(
+        _check(
+            signed_match,
             evidence.model_copy(
                 update={"receipts": (resign(changed_idle), *evidence.receipts[1:])}
             ),
@@ -511,7 +557,8 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
         update={"received_at_ms": 2_800_250, "black_ms": 0}
     )
     with pytest.raises(ClockError, match="flagged before"):
-        verify_clock_evidence(
+        _check(
+            signed_match,
             evidence.model_copy(
                 update={
                     "receipts": (
@@ -526,7 +573,8 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
 
     changed_later_idle = evidence.receipts[2].model_copy(update={"black_ms": 1_799_251})
     with pytest.raises(ClockError, match="idle side"):
-        verify_clock_evidence(
+        _check(
+            signed_match,
             evidence.model_copy(
                 update={
                     "receipts": (
@@ -543,19 +591,19 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
         update={"received_at_ms": evidence.receipts[-1].received_at_ms}
     )
     with pytest.raises(ClockError, match="before the flagged clock"):
-        verify_clock_evidence(evidence.model_copy(update={"final": resign(early_final)}), **kwargs)
+        _check(signed_match, evidence.model_copy(update={"final": resign(early_final)}), **kwargs)
 
     changed_winner = evidence.final.model_copy(update={"white_ms": evidence.final.white_ms + 1})
     with pytest.raises(ClockError, match="changed the winner's clock"):
-        verify_clock_evidence(
-            evidence.model_copy(update={"final": resign(changed_winner)}), **kwargs
+        _check(
+            signed_match, evidence.model_copy(update={"final": resign(changed_winner)}), **kwargs
         )
 
     predated = evidence.final.model_copy(
         update={"received_at_ms": evidence.receipts[-1].received_at_ms - 1}
     )
     with pytest.raises(ClockError, match="predates"):
-        verify_clock_evidence(evidence.model_copy(update={"final": resign(predated)}), **kwargs)
+        _check(signed_match, evidence.model_copy(update={"final": resign(predated)}), **kwargs)
 
 
 def test_time_forfeit_proof_round_trips(signed_match) -> None:
@@ -728,97 +776,94 @@ def test_timeout_claim_validates_its_fields(signed_match) -> None:
         verify_timeout_claim(bad_flag, **kwargs)
 
 
-def test_refused_checkmate_needs_the_signed_move_stream(signed_match) -> None:
+def test_refused_checkmate_needs_a_hybrid_checkpoint(signed_match) -> None:
     certificate = signed_match.certificate
-    opening_plies = len(certificate.opening.moves)
-    moves = tuple(
-        sign_move(
-            SignedMove(
-                network=certificate.network,
-                match_id=certificate.match_id,
-                seat=(certificate.white if ply % 2 == 0 else certificate.black),
-                ply=ply,
-                san=signed_match.parsed.san_moves[ply],
-                signature="00" * 64,
-            ),
-            _account_for(
-                signed_match,
-                certificate.white if ply % 2 == 0 else certificate.black,
-            ).keypair,
-        )
-        for ply in range(opening_plies, len(signed_match.parsed.san_moves))
-    )
+    evidence = _move_evidence(signed_match)
     white_only = {"white": signed_match.result.result_signatures["white"]}
     proof = build_win_proof(
         certificate,
         signed_match.pgn,
         white_only,
         params=signed_match.params,
-        move_evidence=moves,
+        move_evidence=evidence,
     )
-    assert proof.move_evidence == moves
+    assert proof.move_evidence == evidence
     assert verify_win_proof(proof, signed_match.context).proof == proof
 
-    tampered = proof.model_copy(update={"move_evidence": moves[:-1]})
+    # Dropping a ply changes the committed root, so the checkpoint no longer
+    # covers the evidence.
+    tampered = proof.model_copy(
+        update={"move_evidence": evidence.model_copy(update={"moves": evidence.moves[:-1]})}
+    )
     with pytest.raises(ProofVerificationError) as caught:
         verify_win_proof(tampered, signed_match.context)
     assert caught.value.reason is ProofFailure.RESULT
 
 
-def test_move_evidence_validates_order_authorship_and_signatures(signed_match) -> None:
+def test_move_evidence_validates_order_authorship_and_commitment(signed_match) -> None:
     certificate = signed_match.certificate
-    opening_plies = len(certificate.opening.moves)
-    moves = tuple(
-        sign_move(
-            SignedMove(
-                network=certificate.network,
-                match_id=certificate.match_id,
-                seat=(certificate.white if ply % 2 == 0 else certificate.black),
-                ply=ply,
-                san=signed_match.parsed.san_moves[ply],
-                signature="00" * 64,
-            ),
-            _account_for(
-                signed_match,
-                certificate.white if ply % 2 == 0 else certificate.black,
-            ).keypair,
-        )
-        for ply in range(opening_plies, len(signed_match.parsed.san_moves))
-    )
+    evidence = _move_evidence(signed_match)
     kwargs = {
         "certificate": certificate,
         "public_keys": signed_match.public_keys,
         "san_moves": signed_match.parsed.san_moves,
+        "quorum": signed_match.params.clock_witness_quorum,
     }
+    verify_move_evidence(evidence, **kwargs)
+
+    def with_moves(moves) -> object:
+        return evidence.model_copy(update={"moves": tuple(moves)})
+
+    def with_checkpoint(**updates) -> object:
+        return evidence.model_copy(
+            update={"checkpoint": evidence.checkpoint.model_copy(update=updates)}
+        )
+
     with pytest.raises(ClockError, match="empty"):
-        verify_move_evidence((), **kwargs)
+        verify_move_evidence(None, **kwargs)
     with pytest.raises(ClockError, match="cover every"):
-        verify_move_evidence(moves[1:], **kwargs)
+        verify_move_evidence(with_moves(evidence.moves[1:]), **kwargs)
     with pytest.raises(ClockError, match="SAN at ply"):
-        verify_move_evidence((moves[0].model_copy(update={"san": "Nf6"}), *moves[1:]), **kwargs)
-    with pytest.raises(ClockError, match="move is for"):
         verify_move_evidence(
-            (moves[0].model_copy(update={"network": "mainnet"}), *moves[1:]),
+            with_moves(
+                (
+                    evidence.moves[0].model_copy(update={"san": "Nf6"}),
+                    *evidence.moves[1:],
+                )
+            ),
             **kwargs,
         )
+    other_seat = (
+        certificate.black if evidence.moves[0].seat == certificate.white else certificate.white
+    )
+    with pytest.raises(ClockError, match="was played by"):
+        verify_move_evidence(
+            with_moves(
+                (
+                    evidence.moves[0].model_copy(update={"seat": other_seat}),
+                    *evidence.moves[1:],
+                )
+            ),
+            **kwargs,
+        )
+    with pytest.raises(ClockError, match="another network"):
+        verify_move_evidence(with_checkpoint(network="mainnet"), **kwargs)
     with pytest.raises(ClockError, match="does not belong"):
+        verify_move_evidence(with_checkpoint(match_id="00" * 32), **kwargs)
+    with pytest.raises(ClockError, match="expected 'moves'"):
+        verify_move_evidence(with_checkpoint(kind="clock"), **kwargs)
+    with pytest.raises(ClockError, match="commits to"):
+        verify_move_evidence(with_checkpoint(ply=99), **kwargs)
+    with pytest.raises(ClockError, match="root does not cover"):
+        verify_move_evidence(with_checkpoint(root="00" * 32), **kwargs)
+    with pytest.raises(ClockError, match="quorum"):
+        verify_move_evidence(with_checkpoint(witnesses=()), **kwargs)
+    with pytest.raises(ClockError, match="invalid checkpoint signature"):
         verify_move_evidence(
-            (moves[0].model_copy(update={"match_id": "00" * 32}), *moves[1:]),
-            **kwargs,
-        )
-    with pytest.raises(ClockError, match="not a seat"):
-        verify_move_evidence(
-            (moves[0].model_copy(update={"seat": "sccpt1stranger"}), *moves[1:]),
-            **kwargs,
-        )
-    other_seat = certificate.black if moves[0].seat == certificate.white else certificate.white
-    with pytest.raises(ClockError, match="belongs to"):
-        verify_move_evidence(
-            (moves[0].model_copy(update={"seat": other_seat}), *moves[1:]),
-            **kwargs,
-        )
-    with pytest.raises(ClockError, match=r"invalid .* move signature"):
-        verify_move_evidence(
-            (moves[0].model_copy(update={"signature": "00" * 64}), *moves[1:]),
+            with_checkpoint(
+                witnesses=(
+                    evidence.checkpoint.witnesses[0].model_copy(update={"signature": "00" * 6748}),
+                )
+            ),
             **kwargs,
         )

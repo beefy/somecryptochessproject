@@ -1,36 +1,37 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ADDRESS_VERSION,
   Bech32Error,
-  HYBRID_ADDRESS_VERSION,
+  PROGRAM_SIZE,
   addressHrp,
   convertBits,
   encodeProgram,
 } from "./bech32";
 import { fromHex } from "./canonical";
-import { addressFor, addressProgram, addressHash, keypairFromSeed, publicKeyHex } from "./keys";
+import { addressFor, addressHash, addressProgram } from "./keys";
 import vectors from "./vectors.json";
 
 const keys = vectors.keys;
+const hybridPublicKey = fromHex(keys.hybrid_public_key_hex);
 
 describe("bech32", () => {
   it("encodes the programs Python encodes", () => {
-    const keypair = keypairFromSeed(fromHex(keys.seed_hex));
-    expect(encodeProgram("sccpt", addressProgram(keypair.publicKey, "testnet"))).toBe(
+    expect(encodeProgram("sccpt", addressProgram(hybridPublicKey, "testnet"))).toBe(
       keys.address_testnet,
     );
-    expect(encodeProgram("sccp", addressProgram(keypair.publicKey, "mainnet"))).toBe(
+    expect(encodeProgram("sccp", addressProgram(hybridPublicKey, "mainnet"))).toBe(
       keys.address_mainnet,
     );
   });
 
   it("refuses programs it cannot represent", () => {
     expect(() => encodeProgram("sccpt", new Uint8Array(20))).toThrow(Bech32Error);
-    const wrongVersion = new Uint8Array(21);
-    wrongVersion[0] = HYBRID_ADDRESS_VERSION;
-    expect(() => encodeProgram("sccpt", wrongVersion)).toThrow(Bech32Error);
-    expect(() => encodeProgram("sccpt", wrongVersion)).toThrow(/hybrid address version 1/);
-    const nonsense = new Uint8Array(21);
+    expect(() => encodeProgram("sccpt", new Uint8Array(21))).toThrow(/33 bytes/);
+    const wrongVersion = new Uint8Array(PROGRAM_SIZE);
+    wrongVersion[0] = 0;
+    expect(() => encodeProgram("sccpt", wrongVersion)).toThrow(/unsupported address version 0/);
+    const nonsense = new Uint8Array(PROGRAM_SIZE);
     nonsense[0] = 7;
     expect(() => encodeProgram("sccpt", nonsense)).toThrow(/unsupported address version 7/);
   });
@@ -50,10 +51,18 @@ describe("bech32", () => {
     expect(addressHrp("unknown-net")).toBe("sccpt");
   });
 
-  it("puts the network inside the address hash", () => {
-    const keypair = keypairFromSeed(fromHex(keys.seed_hex));
-    const hex = publicKeyHex(keypair);
+  it("puts the network and the algorithm inside the address hash", () => {
+    const hex = keys.hybrid_public_key_hex;
     expect(addressHash("testnet", hex)).not.toStrictEqual(addressHash("mainnet", hex));
-    expect(addressFor(keypair.publicKey, "testnet")).toHaveLength(keys.address_testnet.length);
+    expect(addressHash("testnet", hex)).toHaveLength(32);
+    expect(addressFor(hybridPublicKey, "testnet")).toHaveLength(keys.address_testnet.length);
+  });
+
+  it("uses version 1 over the full digest", () => {
+    const program = addressProgram(hybridPublicKey, "testnet");
+    expect(ADDRESS_VERSION).toBe(1);
+    expect(program).toHaveLength(PROGRAM_SIZE);
+    expect(program[0]).toBe(1);
   });
 });
+

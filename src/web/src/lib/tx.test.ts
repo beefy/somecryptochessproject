@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { fromHex } from "./canonical";
-import { keypairFromSeedHex, publicKeyHex, verifyDigest } from "./keys";
+import { certificateMoveRoot, evidenceRoot, foldCommitment, moveLeaf, ZERO_ROOT } from "./commitment";
+import { keypairFromSeedHex } from "./keys";
 import {
-  HYBRID_SIGNATURE_HEX_LENGTH,
+  LEDGER_SIGNATURE_HEX_LENGTH,
+  TxError,
   availabilityCommitment,
   buildAvailability,
   buildRegister,
   buildReveal,
-  isHybridSignatureHex,
+  isLedgerSignatureHex,
   signTransaction,
   txId,
   type Transaction,
@@ -34,23 +35,23 @@ describe("ledger transactions", () => {
     expect(txId(unsignedRegister())).toBe(ledger.register.txid);
   });
 
-  it("signs a register transaction exactly like Python", () => {
+  it("refuses to sign instead of emitting a classical downgrade", () => {
     const keypair = keypairFromSeedHex(ledger.seed_hex);
-    const signed = signTransaction(keypair, unsignedRegister());
-    expect(signed.signature).toBe(wire.signature);
-    expect(signed).toStrictEqual(wire);
+    expect(() => signTransaction(keypair, unsignedRegister())).toThrow(TxError);
+    expect(() => signTransaction(keypair, unsignedRegister())).toThrow(/ML-DSA-65/);
   });
 
-  it("signs the txid, not the wire JSON", () => {
-    const keypair = keypairFromSeedHex(ledger.seed_hex);
-    const signed = signTransaction(keypair, unsignedRegister());
-    const digest = fromHex(txId(signed));
-    expect(verifyDigest(publicKeyHex(keypair), digest, signed.signature as string)).toBe(true);
-    expect(verifyDigest(publicKeyHex(keypair), digest, "00".repeat(64))).toBe(false);
+  it("recognises the hybrid signature the CLI produced", () => {
+    expect(isLedgerSignatureHex(wire.signature)).toBe(true);
+    expect(wire.signature).toHaveLength(LEDGER_SIGNATURE_HEX_LENGTH);
+    // A 64-byte Ed25519 signature is not a ledger signature any more.
+    expect(isLedgerSignatureHex("00".repeat(64))).toBe(false);
+    expect(isLedgerSignatureHex(null)).toBe(false);
+    expect(isLedgerSignatureHex(undefined)).toBe(false);
+    expect(isLedgerSignatureHex(`02${"00".repeat(3373)}`)).toBe(false);
   });
 
   it("builds the register payload a seat needs", () => {
-    const keypair = keypairFromSeedHex(ledger.seed_hex);
     const built = buildRegister({
       network: wire.network,
       sender: wire.from,
@@ -59,7 +60,7 @@ describe("ledger transactions", () => {
       bond: 0,
       endpoint: String(wire.payload.endpoint),
       engine: String(wire.payload.engine),
-      publicKeyHex: publicKeyHex(keypair),
+      publicKeyHex: ledger.public_key_hex,
     });
     expect(built).toStrictEqual(unsignedRegister());
     expect(txId(built)).toBe(ledger.register.txid);
@@ -70,22 +71,12 @@ describe("ledger transactions", () => {
     expect(availabilityCommitment(entry.address, entry.epoch, entry.nonce)).toBe(entry.commitment);
   });
 
-  it("tells a hybrid signature from an Ed25519 one", () => {
-    expect(isHybridSignatureHex(wire.signature)).toBe(false);
-    expect(isHybridSignatureHex(null)).toBe(false);
-    expect(isHybridSignatureHex(undefined)).toBe(false);
-    expect(isHybridSignatureHex(`02${"00".repeat(3373)}`)).toBe(false);
-    const hybrid = `01${"ab".repeat(3373)}`;
-    expect(hybrid).toHaveLength(HYBRID_SIGNATURE_HEX_LENGTH);
-    expect(isHybridSignatureHex(hybrid)).toBe(true);
-  });
-
   it("refuses an availability nonce that is not 32 bytes of hex", () => {
     expect(() => availabilityCommitment(ledger.availability_commitment.address, 3, "11")).toThrow();
   });
 
   it("builds availability and reveal payloads the chain's validators accept", () => {
-    const keypair = keypairFromSeedHex(ledger.seed_hex);
+    const publicKeyHex = ledger.public_key_hex;
     const entry = ledger.availability_commitment;
     const availability = buildAvailability({
       network: wire.network,
@@ -95,11 +86,11 @@ describe("ledger transactions", () => {
       epoch: 5,
       maxGames: 3,
       commitment: entry.commitment,
-      publicKeyHex: publicKeyHex(keypair),
+      publicKeyHex,
     });
     expect(availability.type).toBe("availability");
     expect(availability.payload).toStrictEqual({
-      public_key: publicKeyHex(keypair),
+      public_key: publicKeyHex,
       epoch: 5,
       max_games: 3,
       commitment: entry.commitment,
@@ -111,13 +102,63 @@ describe("ledger transactions", () => {
       fee: wire.fee,
       epoch: 6,
       nonceSecret: entry.nonce,
-      publicKeyHex: publicKeyHex(keypair),
+      publicKeyHex,
     });
     expect(reveal.type).toBe("reveal");
     expect(reveal.payload).toStrictEqual({
-      public_key: publicKeyHex(keypair),
+      public_key: publicKeyHex,
       epoch: 6,
       nonce: entry.nonce,
     });
   });
 });
+
+describe("commitments", () => {
+  it("starts at the zero root", () => {
+    expect(foldCommitment([])).toBe(ZERO_ROOT);
+    expect(ZERO_ROOT).toBe("00".repeat(32));
+  });
+
+  it("reproduces the move commitment a result signs", () => {
+    expect(foldCommitment(vectors.commitment.leaves)).toBe(vectors.commitment.move_commitment);
+  });
+
+  it("folds the same leaves a certificate commits to", () => {
+    const commitment = vectors.commitment;
+    const leaves = commitment.leaves as { seat: string; ply: number; san: string }[];
+    const last = leaves[leaves.length - 1] as { ply: number };
+
+    expect(
+      certificateMoveRoot(
+        vectors.network,
+        vectors.pairing.match_id,
+        { white: vectors.keys.address_testnet, black: vectors.keys.peer_address_testnet },
+        vectors.game.san_moves,
+        0,
+      ),
+    ).toBe(commitment.move_commitment);
+
+    expect(
+      evidenceRoot(
+        vectors.network,
+        vectors.pairing.match_id,
+        leaves.map((leaf) => ({ ply: leaf.ply, seat: leaf.seat, san: leaf.san })),
+      ),
+    ).toBe(commitment.move_commitment);
+    expect(last.ply).toBe(leaves.length - 1);
+  });
+
+  it("changes when a ply changes", () => {
+    const leaves = [...(vectors.commitment.leaves as Record<string, unknown>[])];
+    const first = leaves[0] as { ply: number; seat: string; san: string };
+    leaves[0] = moveLeaf({
+      network: vectors.network,
+      matchId: vectors.pairing.match_id,
+      seat: first.seat,
+      ply: first.ply,
+      san: "e4",
+    });
+    expect(foldCommitment(leaves)).not.toBe(vectors.commitment.move_commitment);
+  });
+});
+

@@ -32,25 +32,26 @@ from sccp.chess.pgn import (
 )
 from sccp.config import NetworkParams
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import (
-    Keypair,
-    PublicKeyLike,
-    public_key_from_hex,
-    sign_domain,
-    verify_domain,
+from sccp.crypto.pq import (
+    HybridKeypair,
+    HybridPublicKey,
+    hybrid_public_key,
+    hybrid_sign_domain,
+    hybrid_verify_domain,
 )
-from sccp.errors import TranscriptError
+from sccp.errors import KeyEncodingError, TranscriptError
 from sccp.protocol.clocks import FIXED_TIME_CONTROL, time_control_tag
+from sccp.protocol.commitments import certificate_move_root
 from sccp.protocol.models import (
     ClockEvidence,
     Color,
     GameResult,
     MatchCertificate,
     Matchup,
+    MoveEvidence,
     OpeningRef,
     QualitySummary,
     ResultValue,
-    SignedMove,
     TerminationValue,
     Transcript,
     WinProof,
@@ -170,7 +171,13 @@ def certificate_payload(cert: MatchCertificate) -> dict[str, object]:
 
 
 def result_payload(result: GameResult) -> dict[str, object]:
-    """The exact payload both seats sign when the game ends."""
+    """The exact payload both seats sign when the game ends.
+
+    ``move_commitment`` is inside the signed payload on purpose: a hybrid
+    signature over the result then covers the whole move stream, so a forged
+    per-ply Ed25519 signature cannot change what the game was (PROTOCOL.md
+    section 8.5).
+    """
     return {
         "network": result.network,
         "match_id": result.match_id,
@@ -178,6 +185,7 @@ def result_payload(result: GameResult) -> dict[str, object]:
         "result": result.result,
         "termination": result.termination,
         "plies": result.plies,
+        "move_commitment": result.move_commitment,
     }
 
 
@@ -185,7 +193,7 @@ def _seat_address(cert: MatchCertificate, seat: Color) -> str:
     return cert.white if seat == "white" else cert.black
 
 
-def _require_key_for_seat(cert: MatchCertificate, seat: Color, keypair: Keypair) -> None:
+def _require_key_for_seat(cert: MatchCertificate, seat: Color, keypair: HybridKeypair) -> None:
     expected = _seat_address(cert, seat)
     actual = encode_address(keypair.public_key_bytes, cert.network)
     if actual != expected:
@@ -197,23 +205,32 @@ def _require_key_for_seat(cert: MatchCertificate, seat: Color, keypair: Keypair)
 def sign_certificate(
     cert: MatchCertificate,
     seat: Color,
-    keypair: Keypair,
+    keypair: HybridKeypair,
 ) -> MatchCertificate:
-    """Return ``cert`` with ``seat``'s start signature added."""
+    """Return ``cert`` with ``seat``'s hybrid start signature added.
+
+    Signing the certificate binds the seat's ML-DSA-65 key to the match, which
+    is what stops a quantum attacker from impersonating a player for the rest of
+    the game (PROTOCOL.md section 8.1).
+    """
     _require_key_for_seat(cert, seat, keypair)
-    signature = sign_domain(keypair, Domain.CERTIFICATE, certificate_payload(cert)).hex()
+    signature = hybrid_sign_domain(keypair, Domain.CERTIFICATE, certificate_payload(cert)).hex()
     signatures = dict(cert.start_signatures)
     signatures[seat] = signature
     return cert.model_copy(update={"start_signatures": signatures})
 
 
-def _public_key(value: PublicKeyLike | str) -> PublicKeyLike:
-    return public_key_from_hex(value) if isinstance(value, str) else value
+def _public_key(value: str) -> HybridPublicKey:
+    """Parse a registered key as a hybrid blob, or raise a typed error."""
+    try:
+        return hybrid_public_key(value)
+    except KeyEncodingError as exc:
+        raise TranscriptError(f"registered public key is malformed: {exc}") from None
 
 
 def verify_certificate_signatures(
     cert: MatchCertificate,
-    public_keys: Mapping[str, PublicKeyLike | str],
+    public_keys: Mapping[str, str],
 ) -> None:
     """Check both start signatures against the registered seat keys."""
     payload = certificate_payload(cert)
@@ -225,7 +242,7 @@ def verify_certificate_signatures(
         key = public_keys.get(address)
         if key is None:
             raise TranscriptError(f"no registered public key for {address}")
-        if not verify_domain(
+        if not hybrid_verify_domain(
             _public_key(key), Domain.CERTIFICATE, payload, bytes.fromhex(signature)
         ):
             raise TranscriptError(f"invalid {seat} start signature for {cert.match_id}")
@@ -235,13 +252,17 @@ def sign_result(
     result: GameResult,
     cert: MatchCertificate,
     seat: Color,
-    keypair: Keypair,
+    keypair: HybridKeypair,
 ) -> GameResult:
-    """Return ``result`` with ``seat``'s result signature added."""
+    """Return ``result`` with ``seat``'s hybrid result signature added.
+
+    The signed payload includes ``move_commitment``, so this one signature
+    covers the whole move stream as well as the result (PROTOCOL.md section 8.5).
+    """
     _require_key_for_seat(cert, seat, keypair)
     if result.match_id != cert.match_id or result.network != cert.network:
         raise TranscriptError("result does not belong to this certificate")
-    signature = sign_domain(keypair, Domain.RESULT, result_payload(result)).hex()
+    signature = hybrid_sign_domain(keypair, Domain.RESULT, result_payload(result)).hex()
     signatures = dict(result.result_signatures)
     signatures[seat] = signature
     return result.model_copy(update={"result_signatures": signatures})
@@ -250,7 +271,7 @@ def sign_result(
 def verify_result_signatures(
     result: GameResult,
     cert: MatchCertificate,
-    public_keys: Mapping[str, PublicKeyLike | str],
+    public_keys: Mapping[str, str],
     *,
     seats: tuple[Color, ...] = SEATS,
 ) -> None:
@@ -274,7 +295,9 @@ def verify_result_signatures(
         key = public_keys.get(address)
         if key is None:
             raise TranscriptError(f"no registered public key for {address}")
-        if not verify_domain(_public_key(key), Domain.RESULT, payload, bytes.fromhex(signature)):
+        if not hybrid_verify_domain(
+            _public_key(key), Domain.RESULT, payload, bytes.fromhex(signature)
+        ):
             raise TranscriptError(f"invalid {seat} result signature for {cert.match_id}")
 
 
@@ -350,6 +373,7 @@ def create_result(
         result=cast(ResultValue, parsed.result.value),
         termination=cast(TerminationValue, parsed.termination.value),
         plies=parsed.plies,
+        move_commitment=certificate_move_root(cert, parsed.san_moves),
         result_signatures=signatures,
     )
 
@@ -362,7 +386,7 @@ def build_win_proof(
     params: NetworkParams,
     quality_summary: QualitySummary | None = None,
     clock_evidence: ClockEvidence | None = None,
-    move_evidence: tuple[SignedMove, ...] | None = None,
+    move_evidence: MoveEvidence | None = None,
     timeout_claim_id: str | None = None,
 ) -> WinProof:
     """Validate a game and wrap it into a :class:`WinProof`.
@@ -455,6 +479,7 @@ def build_win_proof(
         result=result.result,
         termination=result.termination,
         plies=result.plies,
+        move_commitment=result.move_commitment,
         low_ply=parsed.low_ply,
         opening=cert.opening,
         pgn=pgn_text,
@@ -472,7 +497,7 @@ def proof_from_transcript(
     *,
     params: NetworkParams,
     clock_evidence: ClockEvidence | None = None,
-    move_evidence: tuple[SignedMove, ...] | None = None,
+    move_evidence: MoveEvidence | None = None,
     timeout_claim_id: str | None = None,
 ) -> WinProof:
     """Wrap an already co-signed transcript into a proof.

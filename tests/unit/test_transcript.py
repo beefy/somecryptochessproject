@@ -145,6 +145,7 @@ def test_result_payload_covers_every_attested_field(signed_match) -> None:
         "result": signed_match.result.result,
         "termination": signed_match.result.termination,
         "plies": signed_match.result.plies,
+        "move_commitment": signed_match.result.move_commitment,
     }
 
 

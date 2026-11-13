@@ -8,14 +8,14 @@ import pytest
 from sccp.chain.tx import txid
 from sccp.config import DEVNET
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import FaucetError, RateLimitError
 from sccp.node.app import create_app
 from sccp.node.faucet import FaucetPolicy
 from sccp.node.service import NodeService
 from sccp.transport import client_for
 
-RECIPIENT = encode_address(keypair_from_seed(bytes([7]) * 32).public_key_bytes, DEVNET)
+RECIPIENT = encode_address(hybrid_keypair_from_seed(bytes([7]) * 32).public_key_bytes, DEVNET)
 
 
 def _client(service: NodeService) -> httpx.Client:
@@ -58,7 +58,7 @@ def test_faucet_rate_limits_the_address_and_the_client() -> None:
     with pytest.raises(RateLimitError) as address_limit:
         service.faucet_request(RECIPIENT, client="second")
     assert address_limit.value.retry_after > 0
-    other = encode_address(keypair_from_seed(bytes([8]) * 32).public_key_bytes, DEVNET)
+    other = encode_address(hybrid_keypair_from_seed(bytes([8]) * 32).public_key_bytes, DEVNET)
     with pytest.raises(RateLimitError, match="client first"):
         service.faucet_request(other, client="first")
     service.close()

@@ -30,7 +30,7 @@ import hashlib
 import hmac
 import secrets
 from dataclasses import dataclass
-from typing import Any, Final, TypeAlias
+from typing import Any, Final
 
 from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
 from cryptography.hazmat.backends.openssl.backend import backend
@@ -41,6 +41,7 @@ from sccp.crypto.keys import SEED_SIZE as ED25519_SEED_SIZE
 from sccp.crypto.keys import SIGNATURE_SIZE as ED25519_SIGNATURE_SIZE
 from sccp.crypto.keys import Keypair, keypair_from_seed, public_key_from_bytes, sign, verify
 from sccp.errors import KeyEncodingError, PQUnavailableError
+from sccp.serialization import domain_hash
 
 HYBRID_SCHEME_ID: Final = 1
 """Leading byte identifying the hybrid ``ed25519-mldsa65`` scheme."""
@@ -101,6 +102,22 @@ def pq_available() -> bool:
         return bool(supported())
     except (UnsupportedAlgorithm, ValueError):  # pragma: no cover - backend-specific
         return False
+
+
+def require_pq() -> None:
+    """Raise unless this process can sign and verify the only scheme.
+
+    Called at the start of every long-running command (node, miner, relay,
+    devnet). A process that cannot check an ML-DSA-65 signature cannot tell a real
+    transaction from a forged one, so it must refuse to run rather than silently
+    fail closed on every block it is handed.
+    """
+    if not pq_available():
+        raise PQUnavailableError(
+            "this build has no ML-DSA-65 support (cryptography>=50 with the "
+            "post-quantum provider is required); sccp has one signature scheme "
+            "and cannot run without it"
+        )
 
 
 def _derive_seed(master: bytes, label: bytes) -> bytes:
@@ -272,6 +289,55 @@ def hybrid_verify(
     return True
 
 
+def hybrid_sign_domain(
+    keypair: HybridKeypair,
+    domain: str,
+    payload: object,
+) -> bytes:
+    """Sign ``sha256(domain + 0x00 + canonical_json(payload))`` with both halves."""
+    return hybrid_sign(keypair, domain_hash(domain, payload))
+
+
+def hybrid_verify_domain(
+    public_key: HybridPublicKey | bytes | bytearray,
+    domain: str,
+    payload: object,
+    signature: bytes | bytearray,
+) -> bool:
+    """Verify a signature produced by :func:`hybrid_sign_domain`."""
+    return hybrid_verify(public_key, domain_hash(domain, payload), signature)
+
+
+def ed25519_public_key(value: str | bytes | bytearray) -> Ed25519PublicKey:
+    """Parse the Ed25519 half of a registered key.
+
+    Registry maps hold whatever the account registered, which is always a hybrid
+    blob now. The high-volume streams (moves, receipts) verify against the
+    classical half, so this projects one out of a blob and also accepts a raw
+    32-byte key for callers that carry a half directly. Malformed input raises
+    :class:`~sccp.errors.KeyEncodingError`; stream verifiers turn that into a
+    typed failure.
+    """
+    raw = bytes(value) if not isinstance(value, str) else _hex_bytes(value)
+    if len(raw) == HYBRID_PUBLIC_KEY_SIZE:
+        return hybrid_public_key_from_bytes(raw).ed25519
+    return public_key_from_bytes(raw)
+
+
+def hybrid_public_key(value: str | bytes | bytearray) -> HybridPublicKey:
+    """Parse a registered key as a hybrid blob, rejecting anything else."""
+    if isinstance(value, str):
+        return hybrid_public_key_from_hex(value)
+    return hybrid_public_key_from_bytes(value)
+
+
+def _hex_bytes(text: str) -> bytes:
+    try:
+        return bytes.fromhex(text)
+    except ValueError:
+        raise KeyEncodingError(f"public key is not valid hex: {text[:16]!r}") from None
+
+
 def _is_lower_hex(text: str) -> bool:
     if text != text.lower():
         return False
@@ -289,20 +355,15 @@ def is_hybrid_public_key_hex(value: object) -> bool:
     )
 
 
-SigningKey: TypeAlias = Keypair | HybridKeypair
-"""Anything that can sign a ledger transaction: Ed25519 or hybrid."""
-
-
 def ed25519_public_key_hex(value: str) -> str:
-    """The Ed25519 half of a stored public key, as raw 32-byte hex.
+    """The Ed25519 half of a stored hybrid public key, as raw 32-byte hex.
 
-    The ledger stores whichever key its owner registered: a raw Ed25519 key
-    (64 hex characters) or a hybrid blob (3970 hex characters). Every
-    Ed25519-only verifier -- match transcripts, clock receipts -- needs the
-    classical half, and for a hybrid account that is the 32 bytes right after
-    the scheme byte. Anything that is not a hybrid blob is returned unchanged,
-    so a malformed key still fails closed inside the verifier rather than being
-    silently rewritten here.
+    Every account is hybrid, and two high-volume streams stay Ed25519: seat move
+    signatures and clock-witness receipts. Both are anchored by a hybrid
+    signature over a commitment (docs/PROTOCOL.md section 8.5), so verification
+    of those streams reads the 32 bytes right after the scheme byte. Anything
+    that is not a hybrid blob is returned unchanged, so a malformed key still
+    fails closed inside the verifier rather than being silently rewritten here.
     """
     if is_hybrid_public_key_hex(value):
         return value[2 : 2 + ED25519_PUBLIC_KEY_SIZE * 2]
@@ -321,14 +382,16 @@ __all__ = [
     "SIGNATURE_CONTEXT",
     "HybridKeypair",
     "HybridPublicKey",
-    "SigningKey",
     "ed25519_public_key_hex",
     "generate_hybrid_keypair",
     "hybrid_keypair_from_seed",
     "hybrid_public_key_from_bytes",
     "hybrid_public_key_from_hex",
     "hybrid_sign",
+    "hybrid_sign_domain",
     "hybrid_verify",
+    "hybrid_verify_domain",
     "is_hybrid_public_key_hex",
     "pq_available",
+    "require_pq",
 ]

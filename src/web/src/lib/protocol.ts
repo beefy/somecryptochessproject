@@ -91,10 +91,13 @@ export interface ResultFields {
   result: ResultValue;
   termination: TerminationValue;
   plies: number;
+  move_commitment: string;
 }
 
 /** The exact payload both seats sign when the game ends (section 8.5). */
 export function resultPayload(result: ResultFields): Record<string, string | number> {
+  // `move_commitment` is inside the signed payload on purpose: the hybrid result
+  // signature then covers the whole move stream (PROTOCOL.md section 8.5).
   return {
     network: result.network,
     match_id: result.match_id,
@@ -102,6 +105,7 @@ export function resultPayload(result: ResultFields): Record<string, string | num
     result: result.result,
     termination: result.termination,
     plies: result.plies,
+    move_commitment: result.move_commitment,
   };
 }
 

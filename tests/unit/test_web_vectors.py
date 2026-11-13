@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -20,7 +21,8 @@ import pytest
 from sccp.chain.tx import sign_transaction, tx_body, txid
 from sccp.chess.pgn import GameResult, canonical_game_hash
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed, verify_domain
+from sccp.crypto.keys import verify_domain
+from sccp.crypto.pq import hybrid_keypair_from_seed, hybrid_verify_domain
 from sccp.protocol.beacon import commitment
 from sccp.protocol.models import GameResult as ProtocolGameResult
 from sccp.protocol.models import MatchCertificate, Transaction, WinProof
@@ -49,10 +51,31 @@ def vectors(generator: ModuleType) -> dict[str, object]:
     return json.loads(generator.target_path().read_text(encoding="utf-8"))
 
 
+HYBRID_SIGNATURE = re.compile(r"^01[0-9a-f]{6746}$")
+"""A well-formed hybrid ledger signature: randomized, so never part of a diff."""
+
+
+def _stable(value: object) -> object:
+    """The document with hybrid signature bytes replaced by a placeholder.
+
+    Ed25519 is deterministic and stays pinned byte for byte, but ML-DSA-65 is
+    hedged: signing the same payload twice yields two valid signatures. Pinning
+    those bytes would make every regeneration a spurious diff, so the check is
+    "everything else is identical, and the signatures verify".
+    """
+    if isinstance(value, dict):
+        return {key: _stable(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_stable(item) for item in value]
+    if isinstance(value, str) and HYBRID_SIGNATURE.match(value):
+        return "<hybrid-signature>"
+    return value
+
+
 def test_checked_in_vectors_match_the_generator(generator: ModuleType) -> None:
-    """Regenerating must be a no-op; otherwise the TS tests are stale."""
-    expected = generator.render(generator.build_vectors())
-    actual = generator.target_path().read_text(encoding="utf-8")
+    """Regenerating must be a no-op apart from randomized hybrid signatures."""
+    expected = _stable(generator.build_vectors())
+    actual = _stable(json.loads(generator.target_path().read_text(encoding="utf-8")))
     assert actual == expected, "run python scripts/make_web_vectors.py"
 
 
@@ -74,8 +97,9 @@ def test_key_vectors_describe_this_implementation(vectors: dict[str, object]) ->
     """The seed, public key and both addresses still round-trip."""
     keys = vectors["keys"]
     assert isinstance(keys, dict)
-    keypair = keypair_from_seed(bytes.fromhex(keys["seed_hex"]))
-    assert keypair.public_key_hex == keys["public_key_hex"]
+    keypair = hybrid_keypair_from_seed(bytes.fromhex(keys["seed_hex"]))
+    assert keypair.public_key_hex == keys["hybrid_public_key_hex"]
+    assert keypair.ed25519.public_key_hex == keys["public_key_hex"]
     assert encode_address(keypair.public_key_bytes, "testnet") == keys["address_testnet"]
     assert encode_address(keypair.public_key_bytes, "mainnet") == keys["address_mainnet"]
 
@@ -113,11 +137,19 @@ def test_signature_vectors_verify(vectors: dict[str, object]) -> None:
         move["payload"],
         bytes.fromhex(move["signature_hex"]),
     )
+    # The result vector carries the Ed25519 half (which a browser can check)
+    # and the ledger blob (which the chain requires).
     assert verify_domain(
         bytes.fromhex(keys["peer_public_key_hex"]),
         Domain.RESULT,
         result["payload"],
         bytes.fromhex(result["signature_hex"]),
+    )
+    assert hybrid_verify_domain(
+        bytes.fromhex(keys["peer_hybrid_public_key_hex"]),
+        Domain.RESULT,
+        result["payload"],
+        bytes.fromhex(result["ledger_signature_hex"]),
     )
 
 
@@ -125,17 +157,25 @@ def test_ledger_vectors_describe_this_implementation(vectors: dict[str, object])
     """The register transaction and the availability commitment still round-trip."""
     ledger = vectors["ledger"]
     assert isinstance(ledger, dict)
-    keypair = keypair_from_seed(bytes.fromhex(ledger["seed_hex"]))
+    keypair = hybrid_keypair_from_seed(bytes.fromhex(ledger["seed_hex"]))
     wire = ledger["register"]["transaction"]
     unsigned = Transaction.model_validate({**wire, "signature": None})
     assert txid(unsigned) == ledger["register"]["txid"]
     signed = sign_transaction(keypair, unsigned)
-    assert signed.signature == wire["signature"]
+    # ML-DSA-65 is hedged, so re-signing produces a different (valid) blob; the
+    # stored one is verified against the tx body below.
+    assert signed.signature is not None
+    assert hybrid_verify_domain(
+        bytes.fromhex(keypair.public_key_hex),
+        Domain.TX,
+        tx_body(unsigned),
+        bytes.fromhex(signed.signature),
+    )
     body = tx_body(unsigned)
     # `sign_transaction` signs the txid bytes, which *are* `H("sccp/v1/tx", body)`,
     # so the domain verifier accepts it without a second hashing step.
-    assert verify_domain(
-        keypair.public_key,
+    assert hybrid_verify_domain(
+        bytes.fromhex(keypair.public_key_hex),
         Domain.TX,
         body,
         bytes.fromhex(wire["signature"]),
@@ -158,11 +198,11 @@ def test_match_vectors_describe_this_implementation(vectors: dict[str, object]) 
     assert certificate_payload(certificate) == match["certificate_payload"]
 
     for seat, entry in match["seats"].items():
-        keypair = keypair_from_seed(bytes.fromhex(entry["seed_hex"]))
+        keypair = hybrid_keypair_from_seed(bytes.fromhex(entry["seed_hex"]))
         assert encode_address(keypair.public_key_bytes, certificate.network) == entry["address"]
         assert entry["public_key_hex"] == keypair.public_key_hex
-        assert verify_domain(
-            keypair.public_key,
+        assert hybrid_verify_domain(
+            bytes.fromhex(keypair.public_key_hex),
             Domain.CERTIFICATE,
             certificate_payload(certificate),
             bytes.fromhex(certificate.start_signatures[seat]),

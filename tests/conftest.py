@@ -15,7 +15,8 @@ from sccp.chess.openings import OpeningBook, books_from_document
 from sccp.chess.pgn import GameExpectations, ParsedGame, validate_pgn
 from sccp.config import DEVNET, NetworkParams
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import Keypair, keypair_from_seed
+from sccp.crypto.keys import Keypair
+from sccp.crypto.pq import HybridKeypair, hybrid_keypair_from_seed
 from sccp.crypto.wallet import FAST_KDF, KdfParams
 from sccp.protocol.beacon import commitment, compute_beacon
 from sccp.protocol.models import (
@@ -132,7 +133,7 @@ def expectations(match_tags: Mapping[str, str]) -> GameExpectations:
 class ProtocolAccount:
     """A deterministic keypair plus its testnet address."""
 
-    keypair: Keypair
+    keypair: HybridKeypair
     address: str
 
 
@@ -188,7 +189,7 @@ def protocol_accounts(protocol_params: NetworkParams) -> dict[str, ProtocolAccou
     """Alice, Bob and Carol, derived from fixed seeds."""
     accounts: dict[str, ProtocolAccount] = {}
     for index, name in enumerate(("alice", "bob", "carol"), start=1):
-        keypair = keypair_from_seed(bytes([index]) * 32)
+        keypair = hybrid_keypair_from_seed(bytes([index]) * 32)
         accounts[name] = ProtocolAccount(
             keypair=keypair,
             address=encode_address(keypair.public_key_bytes, protocol_params),

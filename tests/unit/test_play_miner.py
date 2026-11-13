@@ -24,7 +24,7 @@ import pytest
 from sccp.chain.block import bootstrap_end_height
 from sccp.chess.engines import MockEngine
 from sccp.config import DEVNET, TESTNET
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.devnet import GENESIS_EPOCH
 from sccp.miner.matchmaker import ResignRequest
 from sccp.protocol.clocks import FIXED_TIME_CONTROL
@@ -57,7 +57,7 @@ def _solo(play: ModuleType, *, clock_ms: Callable[[], int], **options: Any) -> I
     """A solo table with a fake clock, closed even when an assertion fails."""
     table = play._solo_table(
         DEVNET,
-        keypair_from_seed(HUMAN_SEED),
+        hybrid_keypair_from_seed(HUMAN_SEED),
         play.Options(**{"poll_seconds": 0.01, **options}),
         clock_ms=clock_ms,
         engine=MockEngine(seed=11),
@@ -183,7 +183,7 @@ def test_a_seed_picks_its_own_opening(play: ModuleType) -> None:
     def opening(seed: str) -> tuple[str, ...]:
         table = play._solo_table(
             DEVNET,
-            keypair_from_seed(HUMAN_SEED),
+            hybrid_keypair_from_seed(HUMAN_SEED),
             play.Options(seed=seed),
             clock_ms=lambda: 5_000_000,
             engine=MockEngine(seed=11),
@@ -196,7 +196,7 @@ def test_a_seed_picks_its_own_opening(play: ModuleType) -> None:
         finally:
             table.close()
 
-    seeds = (play.HUMAN_SEED, "aa" * 32, "5a" * 32)
+    seeds = ("01" * 32, "02" * 32, "03" * 32)
     openings = [opening(seed) for seed in seeds]
     assert all(openings)
     assert len(set(openings)) == len(openings)
@@ -309,7 +309,7 @@ def _chain_table(play: ModuleType, chain_dir: Path) -> Any:
     """A fresh on-chain solo table with a fixed clock and deterministic engine."""
     return play._chain_table(
         DEVNET,
-        keypair_from_seed(HUMAN_SEED),
+        hybrid_keypair_from_seed(HUMAN_SEED),
         play.Options(on_chain=True, chain_dir=chain_dir, color="auto", ascii=True),
         clock_ms=lambda: 5_000_000,
         engine=MockEngine(seed=11),

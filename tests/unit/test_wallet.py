@@ -11,12 +11,11 @@ from typing import Any
 import pytest
 
 from sccp.config import get_network
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.crypto.wallet import (
     DEFAULT_KDF,
     KEYFILE_VERSION,
     MNEMONIC_WORD_COUNT,
-    SCRYPT_N,
     KdfParams,
     create_wallet,
     derive_key,
@@ -62,13 +61,14 @@ def test_create_and_load(
 
     assert wallet.address == vectors["addresses"]["testnet"]
     assert wallet.network == "testnet"
-    assert wallet.public_key_hex == vectors["public_key_hex"]
+    assert wallet.public_key_hex == vectors["hybrid_public_key_hex"]
     assert wallet.path == path
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
     document = _document(path)
     assert set(document) == {
         "version",
+        "scheme",
         "network",
         "address",
         "public_key",
@@ -84,7 +84,7 @@ def test_create_and_load(
     assert len(document["ciphertext"]) == 2 * (32 + 16)
 
     loaded = load_wallet(path, passphrase)
-    assert loaded.keypair.seed == _seed(vectors)
+    assert loaded.signer.seed == _seed(vectors)
     assert loaded.address == wallet.address
     assert loaded.header == read_header(path)
 
@@ -167,7 +167,8 @@ def test_malformed_keyfiles_are_rejected(
 ) -> None:
     cases: list[tuple[Any, str]] = [
         (lambda d: d.pop("created_at"), "missing field"),
-        (lambda d: d.update(version=2), "version"),
+        (lambda d: d.update(version=1), "version"),
+        (lambda d: d.update(scheme="ed25519"), "scheme"),
         (lambda d: d.update(network="regtest"), "network"),
         (lambda d: d.update(address=123), "address"),
         (lambda d: d["kdf"].update(name="pbkdf2"), "kdf"),
@@ -226,7 +227,8 @@ def test_mnemonic_matches_golden(vectors: Vectors) -> None:
     assert phrase == vectors["mnemonic"]
     assert len(phrase.split()) == MNEMONIC_WORD_COUNT
     assert mnemonic_to_seed(phrase) == seed
-    assert keypair_from_seed(mnemonic_to_seed(phrase)).public_key_hex == vectors["public_key_hex"]
+    hybrid = hybrid_keypair_from_seed(mnemonic_to_seed(phrase))
+    assert hybrid.public_key_hex == vectors["hybrid_public_key_hex"]
 
 
 @pytest.mark.parametrize(
@@ -260,7 +262,7 @@ def test_export_and_import_mnemonic(
         tmp_path / "restored.key", phrase, "testnet", passphrase, kdf=fast_kdf
     )
     assert restored.address == vectors["addresses"]["testnet"]
-    assert restored.keypair.seed == _seed(vectors)
+    assert restored.signer.seed == _seed(vectors)
 
 
 def test_passphrase_file(tmp_path: Path, passphrase: str) -> None:
@@ -290,8 +292,11 @@ def test_derive_key_is_salt_bound(fast_kdf: KdfParams) -> None:
     assert derive_key("pass", bytes(16), fast_kdf) == first
 
 
-def test_default_kdf_matches_spec() -> None:
-    assert KdfParams(n=SCRYPT_N, r=8, p=1) == DEFAULT_KDF
+def test_default_kdf_is_the_hard_profile() -> None:
+    """One profile: 128 MiB per guess, because the key must outlive a quantum computer."""
+    assert DEFAULT_KDF.n == 2**17
+    assert DEFAULT_KDF.r == 8 and DEFAULT_KDF.p == 1
+    assert KdfParams(n=2**17, r=8, p=1) == DEFAULT_KDF
     assert len(derive_key("pass", bytes(16))) == 32
 
 

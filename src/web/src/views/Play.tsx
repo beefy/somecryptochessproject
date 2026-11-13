@@ -44,7 +44,7 @@ import {
   StatusPill,
 } from "../components/Chrome";
 import { certificatePayload, signCertificate } from "../lib/certificate";
-import { DOMAINS } from "../lib/canonical";
+import { DOMAINS, canonicalJson, toHex } from "../lib/canonical";
 import { formatAmount, formatClock, formatInteger, shortAddress } from "../lib/format";
 import {
   addressFor,
@@ -57,6 +57,7 @@ import {
 } from "../lib/keys";
 import { movePayload, resultPayload } from "../lib/protocol";
 import { buildWinProof, webQualitySummary } from "../lib/proof";
+import { TxError } from "../lib/tx";
 import {
   relayJoin,
   relayMatches,
@@ -603,13 +604,17 @@ function Table({
         result: result.result,
         termination: result.termination,
         plies: result.plies,
+        move_commitment: result.move_commitment,
       });
-      await relaySignResult(view.matchup.match_id, {
-        seat: address,
-        signature: signDomain(keypair, DOMAINS.RESULT, payload),
-      });
-      relay.reload();
-      return `${seat} result signature delivered`;
+      // A result signature is a *hybrid* Ed25519 + ML-DSA-65 signature, and this
+      // bundle has no ML-DSA implementation: signing with the Ed25519 half would
+      // produce bytes the chain rejects. Fail closed and hand the exact payload
+      // to the wallet that can sign it (`sccp wallet sign-result`).
+      const payloadText = toHex(new TextEncoder().encode(canonicalJson(payload)));
+      throw new TxError(
+        `this seat's result signature needs ML-DSA-65; run ` +
+          `sccp wallet sign-result --payload ${payloadText} with the CLI wallet`,
+      );
     },
     [address, keypair, relay],
   );

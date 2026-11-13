@@ -28,7 +28,7 @@ from pathlib import Path
 
 from sccp.config import TESTNET, NetworkParams
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import Keypair, keypair_from_seed
+from sccp.crypto.pq import HybridKeypair, hybrid_keypair_from_seed
 from sccp.crypto.wallet import KdfParams, create_wallet
 from sccp.protocol.beacon import commitment
 
@@ -51,7 +51,7 @@ class StackMiner:
     """One deterministic stack miner."""
 
     name: str
-    keypair: Keypair
+    keypair: HybridKeypair
     address: str
     keyfile: Path
     nonce_secret: str
@@ -63,7 +63,7 @@ def miner_seed(index: int) -> bytes:
 
 
 def _miner(index: int, directory: Path, params: NetworkParams) -> StackMiner:
-    keypair = keypair_from_seed(miner_seed(index))
+    keypair = hybrid_keypair_from_seed(miner_seed(index))
     return StackMiner(
         name=f"miner-{index + 1}",
         keypair=keypair,

@@ -26,13 +26,16 @@ from collections.abc import Mapping
 from typing import NoReturn
 
 from sccp.chain.state import State, TimeoutClaimRecord, WitnessRecord
-from sccp.crypto.keys import public_key_from_hex, verify_domain
-from sccp.errors import ClockError, TimeoutClaimError, TranscriptError
+from sccp.crypto.keys import verify_domain
+from sccp.crypto.pq import ed25519_public_key
+from sccp.errors import ClockError, KeyEncodingError, TimeoutClaimError, TranscriptError
 from sccp.protocol.clocks import (
     move_payload,
+    verify_checkpoint_signatures,
     verify_move_signature,
     verify_receipt_signatures,
 )
+from sccp.protocol.commitments import clock_root
 from sccp.protocol.models import (
     ClockEvidence,
     FlagReceipt,
@@ -167,6 +170,27 @@ def validate_claim(state: State, tx: Transaction, height: int) -> TimeoutClaimRe
     except ClockError as exc:
         _fail(f"flag receipt fails witness verification: {exc}")
 
+    # The per-ply receipts are Ed25519, so the hybrid checkpoint is what makes
+    # the flag quantum-resistant: it commits to the window plus the flag and is
+    # signed by the same witness quorum (PROTOCOL.md section 8.5).
+    checkpoint = claim.clock_evidence.checkpoint
+    if checkpoint.kind != "clock":
+        _fail(f"clock evidence checkpoint kind is {checkpoint.kind!r}, expected 'clock'")
+    if checkpoint.network != state.network or checkpoint.match_id != certificate.match_id:
+        _fail("clock evidence checkpoint is for another network or match")
+    if checkpoint.ply != final.ply:
+        _fail("clock evidence checkpoint does not commit to the flag's ply")
+    if checkpoint.root != clock_root(state.network, claim.clock_evidence.receipts, final):
+        _fail("clock evidence checkpoint does not cover the receipts and flag")
+    try:
+        verify_checkpoint_signatures(
+            checkpoint,
+            public_keys=_active_witnesses(state, certificate.epoch),
+            quorum=params.clock_witness_quorum,
+        )
+    except ClockError as exc:
+        _fail(f"flag receipt fails checkpoint verification: {exc}")
+
     for existing in state.timeout_claims.values():
         if existing.open and existing.match_id == claim.match_id:
             _fail(f"match {claim.match_id} already has an open timeout claim")
@@ -228,7 +252,11 @@ def validate_dispute(state: State, tx: Transaction, height: int) -> TimeoutClaim
         raw_signature = bytes.fromhex(signature)
     except ValueError:
         _fail("dispute move signature is not valid hex")
-    if not verify_domain(public_key_from_hex(key), Domain.MOVE, move_payload(move), raw_signature):
+    try:
+        ed25519_key = ed25519_public_key(key)
+    except KeyEncodingError as exc:
+        _fail(f"registered key for {move.seat} is malformed: {exc}")
+    if not verify_domain(ed25519_key, Domain.MOVE, move_payload(move), raw_signature):
         _fail("dispute move signature does not verify")
     return record
 

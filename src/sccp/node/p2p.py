@@ -33,12 +33,13 @@ from sccp.chain.block import block_hash
 from sccp.chain.tx import txid
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, sign_domain, verify_domain
-from sccp.errors import GossipError
+from sccp.crypto.pq import HybridKeypair, ed25519_public_key
+from sccp.errors import GossipError, KeyEncodingError
 from sccp.protocol.models import (
     AddressText,
     Block,
+    Ed25519SignatureHex,
     ProtocolModel,
-    SignatureHex,
     Transaction,
     WinProof,
 )
@@ -73,7 +74,7 @@ class GossipEnvelope(ProtocolModel):
     kind: GossipKind
     payload: dict[str, object]
     sender: AddressText
-    signature: SignatureHex
+    signature: Ed25519SignatureHex
 
 
 def envelope_payload(
@@ -92,16 +93,22 @@ def envelope_payload(
 
 
 def sign_envelope(
-    keypair: Keypair,
+    keypair: Keypair | HybridKeypair,
     *,
     network: str,
     kind: GossipKind | str,
     payload: Mapping[str, object],
 ) -> GossipEnvelope:
-    """Sign ``payload`` as ``keypair``'s address on ``network``."""
+    """Sign ``payload`` as ``keypair``'s address on ``network``.
+
+    Gossip is transport authentication for messages the ledger already checks,
+    so it stays on the cheap Ed25519 half of the node's key; the address it
+    sends from is still the hybrid identity.
+    """
     sender = encode_address(keypair.public_key_bytes, network)
     body = envelope_payload(network, kind, payload, sender)
-    signature = sign_domain(keypair, Domain.GOSSIP, body).hex()
+    stream_key = keypair.ed25519 if isinstance(keypair, HybridKeypair) else keypair
+    signature = sign_domain(stream_key, Domain.GOSSIP, body).hex()
     return GossipEnvelope(
         network=network,
         kind=GossipKind(kind),
@@ -126,9 +133,9 @@ def verify_envelope(
         raise GossipError(f"envelope signature is not hex: {exc}") from exc
     body = envelope_payload(envelope.network, envelope.kind, envelope.payload, envelope.sender)
     try:
-        key_bytes = bytes.fromhex(public_key)
-        valid = verify_domain(key_bytes, Domain.GOSSIP, body, signature)
-    except (ValueError, TypeError) as exc:
+        key = ed25519_public_key(public_key)
+        valid = verify_domain(key, Domain.GOSSIP, body, signature)
+    except (KeyEncodingError, ValueError, TypeError) as exc:
         raise GossipError(f"cannot verify envelope signature: {exc}") from exc
     if not valid:
         raise GossipError(f"envelope from {envelope.sender} has a bad signature")

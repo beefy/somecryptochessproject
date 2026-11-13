@@ -26,10 +26,14 @@ describe("match certificates", () => {
     expect(certificatePayload(certificate)).toStrictEqual(match.certificate_payload);
   });
 
-  it("reproduces each seat's start signature", () => {
+  it("carries a well-formed hybrid start signature per seat", () => {
+    // ML-DSA-65 is hedged and this bundle cannot produce it, so the bytes are
+    // pinned by the Python generator rather than reproduced here; what a browser
+    // can check is the shape (scheme byte 0x01, 3374 bytes).
     for (const seat of ["white", "black"] as const) {
-      const keypair = keypairFromSeedHex(match.seats[seat].seed_hex);
-      expect(signCertificate(keypair, certificate)).toBe(certificate.start_signatures[seat]);
+      const signature = certificate.start_signatures[seat];
+      expect(signature).toHaveLength(6748);
+      expect(signature?.startsWith("01")).toBe(true);
     }
   });
 
@@ -124,19 +128,30 @@ describe("the browser verifier", () => {
     expect(failed).toContain("proof id");
   });
 
-  it("catches a forged start signature", () => {
+  it("reports the hybrid signature rules as skipped without a verifier", () => {
+    const verdict = verifyProof(proof, context);
+    for (const rule of ["start signatures", "result signatures"]) {
+      const check = verdict.checks.find((item) => item.rule === rule);
+      expect(check?.skipped).toBe(true);
+      expect(check?.ok).toBe(true);
+    }
+    expect(verdict.ok).toBe(true);
+  });
+
+  it("catches a forged start signature once a verifier is supplied", () => {
     const tampered: WinProof = {
       ...proof,
       certificate: {
         ...certificate,
         start_signatures: {
           ...certificate.start_signatures,
-          white: "00".repeat(64),
+          white: "00".repeat(6748),
         },
       },
     };
-    const verdict = verifyProof(tampered, context);
-    expect(verdict.checks.find((check) => check.rule === "start signatures")?.ok).toBe(false);
+    const strict = verifyProof(tampered, { ...context, verifyLedgerSignature: () => false });
+    expect(strict.checks.find((check) => check.rule === "start signatures")?.ok).toBe(false);
+    expect(strict.ok).toBe(false);
   });
 
   it("catches a proof checked against the wrong beacon", () => {

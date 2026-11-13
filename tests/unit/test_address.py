@@ -18,7 +18,7 @@ from sccp.crypto.address import (
     encode_address,
     validate_address,
 )
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import AddressError, KeyEncodingError
 
 Vectors = dict[str, Any]
@@ -26,7 +26,7 @@ Vectors = dict[str, Any]
 
 @pytest.fixture(scope="module")
 def public_key(vectors: Vectors) -> bytes:
-    keypair = keypair_from_seed(bytes.fromhex(vectors["seed_hex"]))
+    keypair = hybrid_keypair_from_seed(bytes.fromhex(vectors["seed_hex"]))
     return keypair.public_key_bytes
 
 
@@ -45,10 +45,10 @@ def test_addresses_are_lowercase_and_prefixed(public_key: bytes) -> None:
 
 def test_address_program_layout(public_key: bytes) -> None:
     program = address_program(TESTNET.network_id, public_key)
-    assert len(program) == PROGRAM_SIZE == 21
-    assert program[0] == ADDRESS_VERSION
+    assert len(program) == PROGRAM_SIZE == 33
+    assert program[0] == ADDRESS_VERSION == 1
     assert program[1:] == address_hash("testnet", public_key)
-    assert len(program[1:]) == HASH_SIZE
+    assert len(program[1:]) == HASH_SIZE == 32
 
 
 def test_decode_round_trip(vectors: Vectors, public_key: bytes) -> None:

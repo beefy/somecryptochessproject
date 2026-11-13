@@ -25,8 +25,8 @@ from sccp.chain.chain import Chain
 from sccp.chain.state import Account, State, epoch_of
 from sccp.chain.tx import sign_transaction, txid
 from sccp.config import NetworkParams, format_coins, get_network
-from sccp.crypto.address import encode_address, encode_hybrid_address, validate_address
-from sccp.crypto.pq import HybridKeypair, SigningKey
+from sccp.crypto.address import encode_address, validate_address
+from sccp.crypto.pq import HybridKeypair
 from sccp.errors import StateError, WalletServiceError
 from sccp.protocol.models import Transaction, TxType
 
@@ -34,15 +34,8 @@ DEFAULT_SOURCE = "the local chain in --data-dir"
 """Where a wallet's state came from, when the caller does not say."""
 
 
-def derive_address(keypair: SigningKey, params: NetworkParams) -> str:
-    """The bech32 address of ``keypair`` on ``params``.
-
-    The scheme decides the program version: an Ed25519 key derives a version-0
-    address, a hybrid key a version-1 one. Both expose ``public_key_bytes``, so
-    only the version byte and the hash domain differ.
-    """
-    if isinstance(keypair, HybridKeypair):
-        return encode_hybrid_address(keypair.public_key_bytes, params)
+def derive_address(keypair: HybridKeypair, params: NetworkParams) -> str:
+    """The bech32 address of ``keypair`` on ``params``."""
     return encode_address(keypair.public_key_bytes, params)
 
 
@@ -138,7 +131,7 @@ class WalletService:
         """The network id of this service."""
         return self.params.network_id
 
-    def address_for(self, keypair: SigningKey) -> str:
+    def address_for(self, keypair: HybridKeypair) -> str:
         """The bech32 address of ``keypair`` on this network (0x00 or 0x01)."""
         return derive_address(keypair, self.params)
 
@@ -213,7 +206,7 @@ class WalletService:
 
     def build_transfer(
         self,
-        keypair: SigningKey,
+        keypair: HybridKeypair,
         to: str,
         amount: int,
         *,
@@ -252,7 +245,7 @@ class WalletService:
 
     def build_register(
         self,
-        keypair: SigningKey,
+        keypair: HybridKeypair,
         *,
         endpoint: str,
         engine: str,
@@ -290,7 +283,7 @@ class WalletService:
 
     def build_availability(
         self,
-        keypair: SigningKey,
+        keypair: HybridKeypair,
         *,
         nonce_secret: str,
         max_games: int = 1,
@@ -324,7 +317,7 @@ class WalletService:
 
     def build_reveal(
         self,
-        keypair: SigningKey,
+        keypair: HybridKeypair,
         nonce_secret: str,
         *,
         epoch: int | None = None,

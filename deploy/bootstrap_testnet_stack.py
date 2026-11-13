@@ -37,7 +37,7 @@ from sccp.chain.mempool import Mempool
 from sccp.chain.state import epoch_start_height
 from sccp.chess.engines import EngineError, engine_fingerprint
 from sccp.config import TESTNET, NetworkParams, coins_to_units
-from sccp.crypto.keys import Keypair
+from sccp.crypto.pq import HybridKeypair
 from sccp.crypto.wallet import load_wallet
 from sccp.errors import SccpError
 from sccp.miner.block_builder import BlockBuilder
@@ -76,7 +76,7 @@ class BootstrapMiner:
 
     name: str
     address: str
-    keypair: Keypair
+    keypair: HybridKeypair
     nonce_secret: str
 
 
@@ -126,7 +126,7 @@ def load_stack(directory: Path) -> tuple[BootstrapMiner, ...]:
             BootstrapMiner(
                 name=name,
                 address=address,
-                keypair=wallet.keypair,
+                keypair=wallet.signer,
                 nonce_secret=nonce_secret,
             )
         )
@@ -151,7 +151,7 @@ def _transactions_for(
     service: NodeService,
     pool: Mempool,
     miners: Sequence[BootstrapMiner],
-    faucet: Keypair,
+    faucet: HybridKeypair,
     engine: str,
 ) -> list[Transaction]:
     """The deterministic transactions that belong in bootstrap block ``height``."""

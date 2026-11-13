@@ -22,6 +22,7 @@ export const DOMAINS = {
   CERTIFICATE: "sccp/v1/certificate",
   CHALLENGE: "sccp/v1/challenge",
   CLOCK: "sccp/v1/clock",
+  COMMITMENT: "sccp/v1/commitment",
   GAME: "sccp/v1/game",
   GOSSIP: "sccp/v1/gossip",
   HEADER: "sccp/v1/header",

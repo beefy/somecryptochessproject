@@ -43,32 +43,42 @@ from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import Termination, canonical_game_hash, outcome_result
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import Keypair, public_key_from_hex, verify_domain
+from sccp.crypto.pq import (
+    HybridKeypair,
+    hybrid_public_key,
+    hybrid_verify_domain,
+    require_pq,
+)
 from sccp.errors import ClockError, KeyEncodingError, RelayError
 from sccp.protocol.clocks import (
     DEFAULT_LAG_GRACE_MS,
     FIXED_TIME_CONTROL,
     MatchClock,
+    build_checkpoint,
+    clock_window,
     flag_result,
     sign_receipt,
     verify_move_signature,
 )
+from sccp.protocol.commitments import certificate_move_root, clock_root
 from sccp.protocol.models import (
     MAX_CLOCK_MS,
     AddressText,
     Beacon,
     Color,
+    Ed25519SignatureHex,
     FlagReceipt,
     GameResult,
+    HybridPublicKeyHex,
+    LedgerSignatureHex,
     MatchCertificate,
     Matchup,
     MoveMessage,
     MoveReceipt,
     ProtocolModel,
-    PublicKeyHex,
     ResultValue,
     RosterMember,
-    SignatureHex,
+    StreamCheckpoint,
     TerminationValue,
     TimeControl,
     Transcript,
@@ -113,11 +123,11 @@ class SessionStatus(StrEnum):
 
 
 class JoinRequest(ProtocolModel):
-    """A seat joins a match by signing its certificate."""
+    """A seat joins a match by hybrid-signing its certificate."""
 
     seat: AddressText
-    public_key: PublicKeyHex
-    signature: SignatureHex
+    public_key: HybridPublicKeyHex
+    signature: LedgerSignatureHex
 
 
 class MoveRequest(ProtocolModel):
@@ -135,7 +145,7 @@ class MoveRequest(ProtocolModel):
     network: str | None = Field(default=None, min_length=1, max_length=32)
     ply: int | None = Field(default=None, ge=0)
     clock_ms: int | None = Field(default=None, ge=0, le=MAX_CLOCK_MS)
-    signature: SignatureHex | None = None
+    signature: Ed25519SignatureHex | None = None
 
     @property
     def signed(self) -> bool:
@@ -150,10 +160,10 @@ class ResignRequest(ProtocolModel):
 
 
 class ResultRequest(ProtocolModel):
-    """A seat co-signs the result."""
+    """A seat hybrid-signs the result."""
 
     seat: AddressText
-    signature: SignatureHex
+    signature: LedgerSignatureHex
 
 
 class RoundRequest(ProtocolModel):
@@ -206,6 +216,8 @@ class ClockBundle(ProtocolModel):
     started: bool
     receipts: tuple[MoveReceipt, ...] = ()
     flag: FlagReceipt | None = None
+    checkpoint: StreamCheckpoint | None = None
+    """The relay hybrid signature over the evidence root, when it has a key."""
 
 
 def _clock_document(clock: MatchClock | None) -> dict[str, object] | None:
@@ -473,7 +485,7 @@ class Matchmaker:
         clock: Callable[[], int] | None = None,
         clock_ms: Callable[[], int] | None = None,
         timeout_seconds: int = 300,
-        witness_keypair: Keypair | None = None,
+        witness_keypair: HybridKeypair | None = None,
         lag_grace_ms: int | None = None,
     ) -> None:
         if beacon.network != params.network_id:
@@ -484,6 +496,7 @@ class Matchmaker:
         if not 0 <= grace <= 1_000:
             raise RelayError("lag_grace_ms must be in [0, 1000]")
 
+        require_pq()
         entries = list(roster.values()) if isinstance(roster, Mapping) else list(roster)
         self.params = params
         self._roster: dict[str, RosterEntry] = self._validated_roster(entries, public_keys, engines)
@@ -741,7 +754,7 @@ class Matchmaker:
             return receipt
         return sign_receipt(
             receipt,
-            self.witness_keypair,
+            self.witness_keypair.ed25519,
             network=self.params.network_id,
             witness=self.witness,
         )
@@ -810,6 +823,7 @@ class Matchmaker:
             result=cast(ResultValue, result.value),
             termination=cast(TerminationValue, termination.value),
             plies=len(session.san_moves),
+            move_commitment=certificate_move_root(session.certificate, session.san_moves),
         )
         session.status = SessionStatus.FINISHED
 
@@ -951,6 +965,17 @@ class Matchmaker:
                 self._persist_locked()
             session = self._require_session(match_id)
             clocks = session.snapshot(now_ms)
+            checkpoint: StreamCheckpoint | None = None
+            if self.witness_keypair is not None and session.flag is not None:
+                window = clock_window(session.receipts)
+                checkpoint = build_checkpoint(
+                    network=self.params.network_id,
+                    kind="clock",
+                    match_id=session.matchup.match_id,
+                    ply=session.flag.ply,
+                    root=clock_root(self.params.network_id, window, session.flag),
+                    signers=((self.witness or "", self.witness_keypair),),
+                )
             return ClockBundle(
                 match_id=session.matchup.match_id,
                 time_control=session.certificate.time_control,
@@ -961,6 +986,7 @@ class Matchmaker:
                 started=session.clock is not None,
                 receipts=tuple(session.receipts),
                 flag=session.flag,
+                checkpoint=checkpoint,
             )
 
     def transcript(self, match_id: str) -> Transcript:
@@ -1002,14 +1028,14 @@ class Matchmaker:
                 raise RelayError(f"public key does not match the registered key for {request.seat}")
             try:
                 raw_key = bytes.fromhex(request.public_key)
-                key = public_key_from_hex(request.public_key)
+                key = hybrid_public_key(request.public_key)
             except (ValueError, KeyEncodingError):
-                raise RelayError("public key is not valid hex") from None
+                raise RelayError("public key is not a hybrid key blob") from None
             if encode_address(raw_key, self.params) != request.seat:
                 raise RelayError(f"public key derives a different address than {request.seat}")
             if seat in session.certificate.start_signatures:
                 raise RelayError(f"{request.seat} has already joined match {match_id}")
-            if not verify_domain(
+            if not hybrid_verify_domain(
                 key,
                 Domain.CERTIFICATE,
                 certificate_payload(session.certificate),
@@ -1161,8 +1187,11 @@ class Matchmaker:
             seat = _seat_colour(session, request.seat)
             if seat in session.result.result_signatures:
                 raise RelayError(f"{request.seat} has already signed match {match_id}")
-            key = public_key_from_hex(self._public_keys[request.seat])
-            if not verify_domain(
+            try:
+                key = hybrid_public_key(self._public_keys[request.seat])
+            except (KeyEncodingError, ValueError) as exc:
+                raise RelayError(f"registered key for {request.seat} is malformed: {exc}") from None
+            if not hybrid_verify_domain(
                 key,
                 Domain.RESULT,
                 result_payload(session.result),
@@ -1218,7 +1247,7 @@ class Matchmaker:
         params: NetworkParams | None = None,
         store: Path | None = None,
         book: OpeningBook | None = None,
-        witness_keypair: Keypair | None = None,
+        witness_keypair: HybridKeypair | None = None,
         clock: Callable[[], int] | None = None,
         clock_ms: Callable[[], int] | None = None,
         lag_grace_ms: int = DEFAULT_LAG_GRACE_MS,

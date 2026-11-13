@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from sccp.chess.engines import ScriptedEngine
 from sccp.config import DEVNET
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import generate_keypair, sign_domain
+from sccp.crypto.pq import generate_hybrid_keypair, hybrid_sign_domain
 from sccp.miner.engine_miner import EngineMiner, MinerConfig, RelayClient
 from sccp.miner.matchmaker import Matchmaker, SessionStatus, create_app
 from sccp.protocol.clocks import (
@@ -99,7 +99,7 @@ def _join(client: TestClient, signed_match: Any, view: dict[str, Any], seat: str
     address = view["certificate"][seat]
     account = _account(signed_match, address)
     certificate = signed_match.certificate.__class__.model_validate(view["certificate"])
-    signature = sign_domain(
+    signature = hybrid_sign_domain(
         account.keypair, Domain.CERTIFICATE, certificate_payload(certificate)
     ).hex()
     response = client.post(
@@ -177,7 +177,7 @@ def test_activation_starts_both_clocks_at_the_fixed_control(signed_match: Any) -
 
 def test_a_signed_move_is_charged_and_receipted(signed_match: Any) -> None:
     time = FakeTime()
-    state, client, view = _start(signed_match, time=time, witness=generate_keypair())
+    state, client, view = _start(signed_match, time=time, witness=generate_hybrid_keypair())
     witness = state.witness
     assert witness is not None
     match_id = view["matchup"]["match_id"]
@@ -211,7 +211,7 @@ def test_a_signed_move_is_charged_and_receipted(signed_match: Any) -> None:
 
 def test_the_clock_only_runs_for_the_side_to_move(signed_match: Any) -> None:
     time = FakeTime()
-    _state, client, view = _start(signed_match, time=time, witness=generate_keypair())
+    _state, client, view = _start(signed_match, time=time, witness=generate_hybrid_keypair())
     match_id = view["matchup"]["match_id"]
     ply = len(view["san_moves"])
 
@@ -246,7 +246,7 @@ def test_a_forged_or_inconsistent_move_body_is_refused(
     signed_match: Any, overrides: dict[str, Any], message: str
 ) -> None:
     time = FakeTime()
-    _state, client, view = _start(signed_match, time=time, witness=generate_keypair())
+    _state, client, view = _start(signed_match, time=time, witness=generate_hybrid_keypair())
     match_id = view["matchup"]["match_id"]
     ply = len(view["san_moves"])
     body = _move_body(signed_match, view, "white", ply, CONTINUATION[0][1])
@@ -263,7 +263,7 @@ def test_a_forged_or_inconsistent_move_body_is_refused(
 
 def test_a_clock_that_reaches_zero_flags_without_the_loser(signed_match: Any) -> None:
     time = FakeTime()
-    state, client, view = _start(signed_match, time=time, witness=generate_keypair())
+    state, client, view = _start(signed_match, time=time, witness=generate_hybrid_keypair())
     match_id = view["matchup"]["match_id"]
     ply = len(view["san_moves"])
     time.advance(2_000)
@@ -295,7 +295,7 @@ def test_a_clock_that_reaches_zero_flags_without_the_loser(signed_match: Any) ->
 
 def test_a_late_move_is_refused_and_the_session_flags_the_mover(signed_match: Any) -> None:
     time = FakeTime()
-    _state, client, view = _start(signed_match, time=time, witness=generate_keypair())
+    _state, client, view = _start(signed_match, time=time, witness=generate_hybrid_keypair())
     match_id = view["matchup"]["match_id"]
     ply = len(view["san_moves"])
     time.advance(FIXED_TIME_CONTROL.initial_ms + 1_000)
@@ -315,7 +315,7 @@ def test_a_late_move_is_refused_and_the_session_flags_the_mover(signed_match: An
 
 def test_the_relay_flag_settles_as_a_verifiable_timeout_claim(signed_match: Any) -> None:
     time = FakeTime()
-    witness_keypair = generate_keypair()
+    witness_keypair = generate_hybrid_keypair()
     state, client, view = _start(signed_match, time=time, witness=witness_keypair)
     witness = state.witness
     assert witness is not None
@@ -349,6 +349,7 @@ def test_the_relay_flag_settles_as_a_verifiable_timeout_claim(signed_match: Any)
                 "time_control": bundle["time_control"],
                 "final": bundle["flag"],
                 "receipts": bundle["receipts"],
+                "checkpoint": bundle["checkpoint"],
             },
             "bond": DEVNET.min_timeout_bond,
         }
@@ -407,7 +408,8 @@ def test_a_silent_join_is_still_reaped(signed_match: Any) -> None:
 def test_a_relay_restart_re_bases_the_live_clock(signed_match: Any, tmp_path: Path) -> None:
     store = tmp_path / "relay.json"
     time = FakeTime()
-    _state, client, view = _start(signed_match, time=time, witness=generate_keypair(), store=store)
+    witness = generate_hybrid_keypair()
+    _state, client, view = _start(signed_match, time=time, witness=witness, store=store)
     match_id = view["matchup"]["match_id"]
     ply = len(view["san_moves"])
     time.advance(4_000)
@@ -420,7 +422,7 @@ def test_a_relay_restart_re_bases_the_live_clock(signed_match: Any, tmp_path: Pa
     # Six hours later a new process loads the store: the old monotonic
     # timestamps mean nothing, so the side to move gets its turn again.
     later = FakeTime(ms=time.ms + 6 * 60 * 60 * 1_000)
-    reloaded = _relay(signed_match, time=later, witness=generate_keypair(), store=store)
+    reloaded = _relay(signed_match, time=later, witness=generate_hybrid_keypair(), store=store)
     resumed = reloaded.get(match_id)
     assert resumed.status == "active"
     assert resumed.white_ms == moved["white_ms"]
@@ -458,7 +460,7 @@ def test_the_round_schedule_opens_one_round_per_interval(signed_match: Any) -> N
 def test_a_relay_config_document_carries_the_witness_and_schedule(
     signed_match: Any, tmp_path: Path
 ) -> None:
-    witness = generate_keypair()
+    witness = generate_hybrid_keypair()
     document = {
         "network": DEVNET.network_id,
         "beacon": signed_match.beacon.model_dump(mode="json"),
@@ -511,7 +513,7 @@ def _miner(
 
 def test_a_miner_settles_a_relay_flag_from_the_relay_receipts(signed_match: Any) -> None:
     time = FakeTime()
-    witness = generate_keypair()
+    witness = generate_hybrid_keypair()
     state = _relay(signed_match, time=time, witness=witness)
     app = create_app(state)
     client = TestClient(app)
@@ -554,7 +556,7 @@ def test_a_miner_settles_a_relay_flag_from_the_relay_receipts(signed_match: Any)
 
 def test_a_miner_without_witness_keys_refuses_the_flag(signed_match: Any) -> None:
     time = FakeTime()
-    state = _relay(signed_match, time=time, witness=generate_keypair())
+    state = _relay(signed_match, time=time, witness=generate_hybrid_keypair())
     app = create_app(state)
     client = TestClient(app)
     client.post("/v1/rounds", json={"round": 0})

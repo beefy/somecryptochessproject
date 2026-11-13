@@ -22,10 +22,11 @@ import type {
   MatchCertificate,
   QualitySummary,
   ResultValue,
-  SignedMove,
+  MoveEvidence,
   WinProof,
 } from "../types";
 import { DOMAINS, domainHex } from "./canonical";
+import { certificateMoveRoot } from "./commitment";
 import { canonicalGameHash } from "./protocol";
 
 /** The network constants a proof is checked against. */
@@ -46,7 +47,7 @@ export interface BuildProofFields {
   params: ProofParams;
   qualitySummary?: QualitySummary | null;
   clockEvidence?: ClockEvidence | null;
-  moveEvidence?: SignedMove[] | null;
+  moveEvidence?: MoveEvidence | null;
   timeoutClaimId?: string | null;
 }
 
@@ -125,6 +126,19 @@ export function buildWinProof(fields: BuildProofFields): WinProof {
     );
   }
 
+  const moveCommitment = certificateMoveRoot(
+    certificate.network,
+    certificate.match_id,
+    { white: certificate.white, black: certificate.black },
+    fields.sanMoves,
+    certificate.opening.moves.length,
+  );
+  if (moveCommitment !== result.move_commitment) {
+    throw new ProofBuildError(
+      "the moves do not fold to the move_commitment the result was signed over",
+    );
+  }
+
   return {
     network: certificate.network,
     proof_id: proofId(gameHash, certificate.match_id, winner),
@@ -138,6 +152,7 @@ export function buildWinProof(fields: BuildProofFields): WinProof {
     result: result.result,
     termination: result.termination,
     plies: result.plies,
+    move_commitment: moveCommitment,
     low_ply: result.plies < params.min_plies,
     opening: certificate.opening,
     pgn: fields.pgn,

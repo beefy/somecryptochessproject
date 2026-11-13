@@ -162,6 +162,7 @@ def test_recomputed_game_hash_mismatch_fails(signed_match) -> None:
         network=signed_match.proof.network,
         match_id=signed_match.proof.match_id,
         game_hash=bad_hash,
+        move_commitment=signed_match.proof.move_commitment,
         result=signed_match.proof.result,
         termination=signed_match.proof.termination,
         plies=signed_match.proof.plies,

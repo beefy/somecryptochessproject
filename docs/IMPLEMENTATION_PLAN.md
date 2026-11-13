@@ -13,7 +13,7 @@
 
 The reference implementation covers the full wallet-to-block path:
 
-- Ed25519 keys, bech32 addresses, encrypted keyfiles and mnemonic backup.
+- Hybrid Ed25519 + ML-DSA-65 keys (the only scheme), version-1 bech32 addresses over the full digest, encrypted keyfiles and mnemonic backup.
 - PGN validation, canonical game hashing, opening-book selection and UCI engine
   abstraction, with offline `sccp verify pgn`.
 - Commit/reveal beacons, deterministic pairing, signed match certificates,

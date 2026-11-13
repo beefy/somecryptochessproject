@@ -22,7 +22,6 @@ from sccp.chess.openings import OpeningBook, book_for
 from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import ParsedGame, validate_pgn
 from sccp.config import NetworkParams, QualityMode, get_network
-from sccp.crypto.keys import PublicKeyLike
 from sccp.errors import (
     BeaconError,
     ClockError,
@@ -40,6 +39,7 @@ from sccp.protocol.clocks import (
     verify_clock_evidence,
     verify_move_evidence,
 )
+from sccp.protocol.commitments import certificate_move_root
 from sccp.protocol.models import (
     Beacon,
     Color,
@@ -88,7 +88,7 @@ class ProofContext:
     params: NetworkParams
     beacon: Beacon
     roster: Mapping[str, RosterEntry]
-    public_keys: Mapping[str, PublicKeyLike | str]
+    public_keys: Mapping[str, str]
     book: OpeningBook | None = None
     quotas: Mapping[str, int] | None = None
     availability: Mapping[str, str] | None = None
@@ -281,6 +281,7 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         result=proof.result,
         termination=proof.termination,
         plies=proof.plies,
+        move_commitment=proof.move_commitment,
         result_signatures=proof.result_signatures,
     )
     try:
@@ -315,6 +316,12 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         _fail(
             ProofFailure.RESULT,
             "proof result/termination/plies do not match the replayed game",
+        )
+    replayed_commitment = certificate_move_root(cert, parsed.san_moves)
+    if proof.move_commitment != replayed_commitment:
+        _fail(
+            ProofFailure.RESULT,
+            "proof move_commitment does not cover the replayed move stream",
         )
     parsed_seat = "white" if parsed.result is PgnResult.WHITE else "black"
     if parsed_seat != proof.winner_seat:
@@ -359,11 +366,12 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
                     certificate=cert,
                     public_keys=context.public_keys,
                     san_moves=parsed.san_moves,
+                    quorum=params.clock_witness_quorum,
                 )
             except ClockError as exc:
                 _fail(ProofFailure.RESULT, f"invalid move evidence: {exc}")
             final_mover = cert.white if proof.winner_seat == "white" else cert.black
-            if proof.move_evidence[-1].seat != final_mover:
+            if proof.move_evidence.moves[-1].seat != final_mover:
                 _fail(ProofFailure.RESULT, "the final move was not made by the winner")
 
     expected_proof_id = domain_hex(

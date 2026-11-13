@@ -411,26 +411,25 @@ addresses short without losing self-authentication.
 
 ### 6.2 Keyfiles
 
-`sccp wallet new` writes a JSON keyfile containing the network, address,
-public key, KDF parameters, cipher parameters, nonce and ciphertext. The seed is
-encrypted with AES-256-GCM under a key derived by scrypt (default `N = 2^15`,
-`r = 8`, `p = 1`). The header is authenticated as associated data, so editing
-the address, network or KDF fields breaks decryption. The file stores no
+`sccp wallet new` writes a JSON keyfile containing the version, scheme, network,
+address, public key, KDF parameters, cipher parameters, nonce and ciphertext. The
+master seed is encrypted with AES-256-GCM under a key derived by scrypt (default
+`N = 2^17`, `r = 8`, `p = 1`). The header is authenticated as associated data, so
+editing the address, network or KDF fields breaks decryption. The file stores no
 plaintext seed and the CLI never prints it.
 
-`--scheme ed25519-mldsa65` writes a version-2 keyfile instead: the same layout
-plus a `"scheme"` field, the hybrid public key blob, and a password-derived key
-at `N = 2^17` (a passphrase now protects two schemes) with a 12-character
-minimum. It stores one 32-byte master seed that derives both halves through
-HMAC-SHA-256 labels, so a mnemonic restores both. Version-1 keyfiles are
-unchanged byte for byte, and old software rejects version 2 rather than
-misreading it.
+There is one keyfile version: `version: 2` with `"scheme": "ed25519-mldsa65"`.
+It holds the hybrid public key blob and one 32-byte master seed that derives both
+halves through HMAC-SHA-256 labels, so a mnemonic restores both. The passphrase
+minimum is 12 characters because one passphrase protects two schemes. A version-1
+(Ed25519-only) document, or a different `scheme`, is refused rather than upgraded
+in place.
 
 A 24-word English BIP-39 mnemonic is a lossless backup of the 32-byte seed:
 
 ```text
 sccp wallet export-mnemonic --key alice.key
-sccp wallet import-mnemonic --out alice.key --scheme ed25519-mldsa65
+sccp wallet import-mnemonic --out alice-restored.key
 ```
 
 The mnemonic is not an HD wallet. It restores exactly one keypair, not a tree of
@@ -468,16 +467,17 @@ the txid. Canonical serialization is what makes this safe: object key order,
 integer encoding and byte escapes are fixed by the serializer, not by the JSON
 producer.
 
-A hybrid account signs the same `digest` with both halves (6.5). Its `signature`
-is the 6748-hex blob `0x01 || ed25519_sig(64) || mldsa65_sig(3309)`, and the
+A transaction signs the same `digest` with both halves (6.5). Its `signature` is
+the 6748-hex blob `0x01 || ed25519_sig(64) || mldsa65_sig(3309)`, and the
 transaction is valid only if both halves verify over the scheme-tagged digest.
+There is no other signature shape on the ledger.
 
-### 6.5 Hybrid addresses
+### 6.5 One post-quantum identity
 
-A hybrid key gets a version-1 address over the complete 32-byte digest:
+Every account has a version-1 address over the complete 32-byte digest:
 
 ```text
-address_program = 0x01 || H("sccp/v1/address-pq", {
+address_program = 0x01 || H("sccp/v1/address", {
     "network": <network_id>,
     "algorithm": "ed25519-mldsa65",
     "public_key": <1985-byte blob as lowercase hex>
@@ -485,15 +485,46 @@ address_program = 0x01 || H("sccp/v1/address-pq", {
 address = bech32(<hrp>, address_program)
 ```
 
-The version byte makes the scheme explicit: a version-1 address accepts only a
-hybrid transaction signature (6748 hex characters, both halves over the same
-scheme-tagged txid) and a version-0 address only an Ed25519 one (128 hex). A
-quantum attacker who forges the Ed25519 half alone still has to break ML-DSA-65.
-Match transcripts, clock receipts and the relay roster remain Ed25519-only, so
-hybrid keys guard funds and bonds first; hybrid signing for play and witness
-messages is future work (17.2).
+The full digest (not the earlier 20-byte truncation) keeps 128-bit preimage
+security under Grover's quadratic speedup, and the algorithm name inside the hash
+means a future scheme is a new version rather than a guess. A transaction is
+always signed by both halves, so a quantum attacker who forges the Ed25519 half
+alone still has to break ML-DSA-65.
+
+The high-volume streams stay on the cheap half. Moves, clock receipts and gossip
+envelopes are Ed25519-signed, and every claim about them is anchored by a hybrid
+signature over a commitment to the stream (6.6): `move_commitment` inside the
+cross-signed result, and witness checkpoints inside refused-result evidence. That
+is what makes a quantum attacker unable to forge a game result, not just a spend.
 
 ---
+
+### 6.6 Stream commitments
+
+A chess game is 300–400 plies. A 3374-byte signature per ply would make a game a
+megabyte, and evidence out of that would not fit in a transaction. The protocol
+signs the *stream* instead of every leaf:
+
+```text
+root_0     = 00 * 32
+root_{i+1} = SHA-256("sccp/v1/commitment" || 0x00 || root_i || canonical_json(leaf_i))
+leaf       = {network, match_id, seat, ply, san}
+```
+
+The fold is a single SHA-256 chain over canonical JSON, so any implementation with
+`sha256` and a canonical encoder reproduces it — the web bundle ships it. Both
+seats put the resulting `move_commitment` inside the result payload they hybrid
+sign, so one signature covers every ply. When a seat refuses to sign, a registered
+clock witness hybrid-signs a `StreamCheckpoint` over the same root, and that
+checkpoint is the evidence; a per-ply Ed25519 signature is never presented as a
+claim on its own.
+
+Clock evidence uses the same construction over receipt leaves: a bundle carries at
+most 64 consecutive receipts (a suffix ending at the flag, anchored by the first
+receipt's absolute clock values) plus one witness checkpoint over the window and
+the flag. That is what keeps the largest transaction near 55 KiB inside the
+128 KiB cap, and it closes the old overflow that a 400-ply claim hit even with
+Ed25519-only signatures.
 
 ## 7. Canonical encoding and hashing
 
@@ -1603,7 +1634,7 @@ claim otherwise.
 | Eclipse a node | Multiple peers, manual configuration | No DHT or automatic diversity in v1 |
 | DoS the HTTP API | Validation before storage, size caps, peer bans | No auth, rate limiting or TLS |
 | Stolen wallet key | Passphrase-encrypted keyfile | Key compromise is identity compromise |
-| Quantum key recovery | Hybrid Ed25519 + ML-DSA-65 wallets (6.5): a spend carries both signatures and the account's version-1 address rejects a classical-only signature | Transcripts, clock receipts and the roster are still Ed25519-only, so a quantum attacker holding a seat key could forge game results; funds and bonds need both schemes broken |
+| Quantum key recovery | One scheme: hybrid Ed25519 + ML-DSA-65 (6.5). Every account is a version-1 address over the full 32-byte digest, every spend carries both signatures, and certificates, results and evidence checkpoints are hybrid-signed | Breaking ML-DSA-65 is the only path; the scheme is younger than Ed25519 and its implementation surface is larger |
 | Weak engine / thrown game | Structural checks, deterministic sampling and bonded challenges | Sampling is probabilistic; panel votes still have an operator-trusted transport |
 
 ### 16.5 Finality
@@ -1686,7 +1717,7 @@ honest play".
 | Continuous public testnet and 72-hour soak | Not yet run |
 | Metrics, alerting and block explorer | Not implemented |
 | On-chain challenge-panel votes | Votes use an operator-trusted transport |
-| Hybrid signatures for transcripts, clock receipts and the roster | Ed25519-only today; hybrid keys guard ledger funds and bonds |
+| Browser ledger signing (ML-DSA in JS) | Web wallet plays and verifies; result signatures go through `sccp wallet sign-result` |
 | Automatic timeout-claim submission in CLI/demo | Incomplete integration |
 | drand quicknet verifier wiring | Hook exists; pinned verifier not bundled |
 | Faucet limit persistence | Limits are in memory |

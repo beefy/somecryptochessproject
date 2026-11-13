@@ -159,6 +159,8 @@ export interface GameResult {
   result: ResultValue;
   termination: TerminationValue;
   plies: number;
+  /** The folded root of the post-opening move stream (`PROTOCOL.md` 8.5). */
+  move_commitment: string;
   result_signatures: Record<string, string>;
 }
 
@@ -181,13 +183,15 @@ export interface WinProof {
   result: ResultValue;
   termination: TerminationValue;
   plies: number;
+  /** The commit-to-the-move-stream root; the result signatures cover it. */
+  move_commitment: string;
   low_ply: boolean;
   opening: OpeningRef;
   pgn: string;
   certificate: MatchCertificate;
   result_signatures: Record<string, string>;
   clock_evidence?: ClockEvidence | null;
-  move_evidence?: SignedMove[] | null;
+  move_evidence?: MoveEvidence | null;
   quality_summary?: QualitySummary | null;
   timeout_claim_id?: string | null;
 }
@@ -421,11 +425,45 @@ export interface FlagReceipt {
   witnesses: ClockWitnessSignature[];
 }
 
+/** One witness's hybrid signature over a stream root. */
+export interface CheckpointSignature {
+  witness: string;
+  signature: string;
+}
+
+/**
+ * A witness-quorum hybrid signature over a folded stream root
+ * (`StreamCheckpoint` in Python).
+ */
+export interface StreamCheckpoint {
+  network: string;
+  kind: "moves" | "clock";
+  match_id: string;
+  ply: number;
+  root: string;
+  witnesses: CheckpointSignature[];
+}
+
+/** One ply inside a refused-checkmate bundle: no per-ply signature. */
+export interface CommittedMove {
+  ply: number;
+  seat: string;
+  san: string;
+}
+
+/** A refused-checkmate bundle: the plies plus the witness checkpoint. */
+export interface MoveEvidence {
+  moves: CommittedMove[];
+  checkpoint: StreamCheckpoint;
+}
+
 /** The evidence a time-forfeit proof needs (`ClockEvidence`). */
 export interface ClockEvidence {
   time_control: TimeControl;
   final: FlagReceipt;
+  /** A suffix of the receipts, at most `CLOCK_EVIDENCE_PLIES` long. */
   receipts: MoveReceipt[];
+  checkpoint: StreamCheckpoint;
 }
 
 /** `GET /v1/matches/{id}/receipts` on the relay: everything it saw of the clock. */
@@ -439,6 +477,7 @@ export interface ClockBundleView {
   started: boolean;
   receipts: MoveReceipt[];
   flag: FlagReceipt | null;
+  checkpoint: StreamCheckpoint | null;
 }
 
 /** One round pairing, as the relay derives it. */

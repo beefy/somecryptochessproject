@@ -31,7 +31,7 @@ from sccp.chain.mempool import Mempool
 from sccp.chess.engines import Engine, MockEngine
 from sccp.config import DEVNET, NetworkParams
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import Keypair, keypair_from_seed
+from sccp.crypto.pq import HybridKeypair, hybrid_keypair_from_seed, require_pq
 from sccp.errors import DevnetError, MempoolError, ProtocolError, RelayError
 from sccp.miner.block_builder import BlockBuilder
 from sccp.miner.engine_miner import EngineMiner, MinerConfig, NodeClient, RelayClient
@@ -94,7 +94,7 @@ class DevnetSummary:
 class DevnetMiner:
     """One devnet participant: keys, engine, availability secret."""
 
-    keypair: Keypair
+    keypair: HybridKeypair
     engine: Engine
     nonce_secret: str
     params: NetworkParams = DEVNET
@@ -124,7 +124,7 @@ def _participants(count: int) -> list[DevnetMiner]:
     """Deterministic devnet keys and seeded mock engines."""
     return [
         DevnetMiner(
-            keypair=keypair_from_seed(bytes([index + 1]) * 32),
+            keypair=hybrid_keypair_from_seed(bytes([index + 1]) * 32),
             engine=MockEngine(seed=index + 1),
             nonce_secret=f"{index + 1:02x}" * 32,
         )
@@ -145,7 +145,7 @@ def _next_timestamp(service: NodeService) -> int:
 def _build_block(
     service: NodeService,
     *,
-    keypair: Keypair | None = None,
+    keypair: HybridKeypair | None = None,
     miner_address: str | None = None,
     pool: Mempool | None = None,
 ) -> Block | None:
@@ -167,7 +167,7 @@ def _build_block(
 
 def _build_and_ingest(
     service: NodeService,
-    keypair: Keypair,
+    keypair: HybridKeypair,
     *,
     pool: Mempool | None = None,
 ) -> None:
@@ -180,7 +180,7 @@ def _build_and_ingest(
         raise DevnetError(f"the node refused block {ingested.hash} at height {ingested.height}")
 
 
-def _mine_heartbeat(service: NodeService, keypair: Keypair) -> bool:
+def _mine_heartbeat(service: NodeService, keypair: HybridKeypair) -> bool:
     """Mine one heartbeat block from the node's pool; ``False`` if it has nothing to carry.
 
     A proofless block is the chain's clock: it may hold one ledger transaction
@@ -278,7 +278,7 @@ def _bootstrap_transactions(
     service: NodeService,
     pool: Mempool,
     participants: Sequence[DevnetMiner],
-    faucet: Keypair,
+    faucet: HybridKeypair,
 ) -> None:
     """Add the transactions of one scripted bootstrap ``action`` to ``pool``."""
     params = service.params
@@ -396,7 +396,7 @@ def _relay_for_epoch(
     clock: Callable[[], int] | None = None,
     clock_ms: Callable[[], int] | None = None,
     timeout_seconds: int = 3600,
-    witness_keypair: Keypair | None = None,
+    witness_keypair: HybridKeypair | None = None,
 ) -> _RelayPair:
     state = service.chain.state
     record = state.epochs.get(epoch)
@@ -557,7 +557,7 @@ def _rebase_mempool(service: NodeService) -> None:
 
 def _mine_pending(
     service: NodeService,
-    keypairs: Mapping[str, Keypair],
+    keypairs: Mapping[str, HybridKeypair],
     mined: list[str],
 ) -> bool:
     """Mine one block from a pending proof; return whether the height moved."""
@@ -583,6 +583,7 @@ def run_devnet(
     max_epochs: int = 6,
 ) -> DevnetSummary:
     """Run a complete in-process network and return what it produced."""
+    require_pq()
     if miners < 2:
         raise DevnetError("a devnet needs at least two miners")
     if blocks < 1:

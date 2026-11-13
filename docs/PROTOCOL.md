@@ -2,12 +2,18 @@
 
 Status: **normative** for protocol v1 (canonical encoding, game hash, PGN
 contract, opening book, engine fingerprints, epoch beacons, pairing,
-certificates, transcripts, clocks and clock evidence, win-proof verification,
-the ledger — transaction envelopes, account state, block headers and bodies,
-difficulty, fork choice and genesis documents — the quality and challenge
-lifecycle, and the node: HTTP API, gossip envelopes, peer scoring and
-pull-sync). The clock layer covers the off-chain primitives *and* on-chain
+certificates, transcripts, clocks and clock evidence, stream commitments,
+win-proof verification, the ledger — transaction envelopes, account state, block
+headers and bodies, difficulty, fork choice and genesis documents — the quality
+and challenge lifecycle, and the node: HTTP API, gossip envelopes, peer scoring
+and pull-sync). The clock layer covers the off-chain primitives *and* on-chain
 settlement.
+
+There is exactly **one signature scheme**: hybrid Ed25519 + ML-DSA-65. Every
+address, account, transaction, certificate, result and piece of evidence is
+post-quantum by construction; nothing in this document describes a classical
+fallback, because there is none (section 10.5 lists what was removed and the
+grep-level invariants that keep it removed).
 
 Reference implementation: `src/sccp/protocol/`, `src/sccp/chess/`,
 `src/sccp/chain/`, `src/sccp/node/`, `src/sccp/miner/`, `src/sccp/devnet.py` and
@@ -23,15 +29,33 @@ rules; forward work is tracked in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN
   compact, UTF-8, NFC-normalized JSON with no floats and integers in
   `[-2**63, 2**64 - 1]`. `src/sccp/serialization.py` is the only encoder.
   The beacon and pairing-score constructions in sections 6 and 7 are byte-level
-  concatenations instead and specify their own input encoding.
+  concatenations instead and specify their own input encoding. Section 8.5
+  defines one more non-`H` construction, the stream fold, byte for byte.
 - **Domains.** Every domain starts with `sccp/v1/`. Chess uses `game` and
   `opening`; matchmaking uses `beacon`, `beacon-commit`, `pair`, `match`,
-  `certificate`, `result` and `proof`.
+  `certificate`, `result` and `proof`; evidence uses `commitment`.
 - **Digests.** Lowercase hex, 32 bytes (64 characters).
+- **Signatures.** Two encodings, one scheme, and **no union type at runtime**:
+
+  | Role | Encoding | Hex length | Where |
+  | --- | --- | --- | --- |
+  | ledger, identity, commitments | hybrid `0x01 \|\| ed25519_sig(64) \|\| mldsa65_sig(3309)` | 6748 | transactions, certificates, results, stream checkpoints |
+  | live streams | Ed25519 `64` bytes | 128 | move messages, clock receipts, gossip envelopes |
+
+  The stream signatures are the *inner half* of the same key and are anchored by
+  a hybrid signature over a commitment (section 8.5), so no claim ever rests on
+  Ed25519 alone. A verifier chooses the check from the field it is reading, never
+  from a length or from unauthenticated data.
 - **Ints, never floats.** All numeric protocol values are integers. No
   wall-clock value enters a game hash.
 - **Network binding.** `network_id` (`testnet`, `mainnet`, `devnet`) is part of
-  every game hash, so a testnet game can never be replayed as a mainnet game.
+  every game hash and every address hash, so a testnet game can never be
+  replayed as a mainnet one.
+- **No encryption.** Nothing in this protocol encrypts anything. Addresses,
+  move streams, receipts and proofs are public data by design, so there is no
+  key-exchange message, no ML-KEM and no ciphertext on the wire. Keyfiles are the
+  one place a secret exists at rest, and they use scrypt + AES-256-GCM locally
+  (`src/sccp/crypto/wallet.py`), not a network protocol.
 
 ## 2. Canonical game hash
 
@@ -303,9 +327,12 @@ Both seats sign this payload with `H("sccp/v1/certificate", …)`:
  "engine_fingerprints": {"white": "...", "black": "..."}}
 ```
 
-`start_signatures` is excluded from the payload. A certificate is valid only
-when both signatures verify against the addresses' registered Ed25519 keys, the
-colour draw matches the beacon, and `match_id` recomputes from the seats.
+`start_signatures` is excluded from the payload. Both signatures are **hybrid**
+(section 10.5): a certificate is valid only when both verify against the
+addresses' registered 1985-byte hybrid keys, the colour draw matches the beacon,
+and `match_id` recomputes from the seats. Signing the certificate is what binds
+each seat's ML-DSA-65 key to the match, so a quantum attacker cannot impersonate
+a player for the moves that follow.
 
 The certificate commits to `time_control = {initial_ms, increment_ms}` and the
 signed payload covers it. Every match uses one protocol-fixed **30+0** control
@@ -321,22 +348,26 @@ When the board is terminal or a seat resigns, both seats sign:
  "result": "1-0" | "0-1" | "1/2-1/2",
  "termination": "checkmate" | "draw" | "resignation" | "time_forfeit",
  "plies": 87,
+ "move_commitment": "hex",
  "result_signatures": {"white": "hex", "black": "hex"}}
 ```
 
 The signature domain is `sccp/v1/result`; `result_signatures` is excluded from
 the signed payload. `game_hash` is the canonical game hash from section 2, so the
-two seats also attest the exact move list.
+two seats also attest the exact move list. `move_commitment` is the folded root
+of the post-opening move stream (section 8.5): because it is *inside* the signed
+payload, one hybrid result signature covers every ply as well as the score.
 
 A checkmate may be proven without the loser's result signature: the winner
-supplies its own signature plus the signed move messages (`move_evidence`), and
-the verifier replays them to checkmate. A time forfeit likewise needs only the
-winner's signature when the proof carries the `timeout_claim_id` and complete
-`clock_evidence`; the evidence includes witness-signed move receipts and the
-final flag receipt. Resignation and agreed draws still need both signatures.
-Exactly one missing result signature is tolerated, and the winner must be the
-seat that signed. The offline verifier checks the actual signature bytes against
-the registered keys.
+supplies its own signature plus a `move_evidence` bundle — the committed plies
+and a witness checkpoint over their root (section 8.5) — and the verifier
+replays them to checkmate. A time forfeit likewise needs only the winner's
+signature when the proof carries the `timeout_claim_id` and complete
+`clock_evidence`; the evidence is a bounded receipt window plus a witness
+checkpoint over the window and the flag. Resignation and agreed draws still need
+both signatures. Exactly one missing result signature is tolerated, and the
+winner must be the seat that signed. The offline verifier checks the actual
+signature bytes against the registered keys.
 
 ### 8.3 PGN assembly
 
@@ -372,9 +403,13 @@ Timed sessions work like this:
 - Every accepted post-opening ply gets a **move receipt** (`kind: "move"`, `ply`,
   `seat`, `san`, `received_at_ms`, both clocks); a flag adds a **flag receipt**
   (`kind: "flag"`, `ply` = total plies, the flagged `seat`, both clocks, the
-  flagged clock at zero). Both are signed by the relay's clock witness when the
-  relay runs with a witness key, and carry no witness signatures when it does
-  not (a relay may observe without attesting).
+  flagged clock at zero). A witness signs each receipt with the Ed25519 half of
+  its key — one cheap signature per ply — and additionally hybrid-signs a
+  **clock checkpoint** over the receipt window and the flag, which is what makes
+  a forged receipt useless as evidence (section 8.5). A relay without a witness
+  key still runs the clock and returns receipts with no signatures and a `null`
+  checkpoint: it observes without attesting, and a claim built from its bundle
+  will fail the quorum check.
 - A live clocked session is never abandoned by `timeout_seconds`: that reaper
   only applies to pending joins, because abandoning a clocked game would let the
   losing seat escape the flag.
@@ -387,7 +422,7 @@ Timed sessions work like this:
 | POST | `/v1/rounds` | `{"round": 0}` — derive and create that round's sessions |
 | GET | `/v1/matches` | all sessions, with live clocks |
 | GET | `/v1/matches/{id}` | one session: certificate, SAN list, result, PGN, clocks |
-| GET | `/v1/matches/{id}/receipts` | the `ClockBundle`: time control, clocks, every receipt, the flag |
+| GET | `/v1/matches/{id}/receipts` | the `ClockBundle`: time control, clocks, every receipt, the flag, the clock checkpoint |
 | GET | `/v1/matches/{id}/transcript` | co-signed transcript, 404 until both signs |
 | POST | `/v1/matches/{id}/join` | `{"seat", "public_key", "signature"}` |
 | POST | `/v1/matches/{id}/move` | `{"seat", "san"}`, or the signed form below |
@@ -397,8 +432,11 @@ Timed sessions work like this:
 
 `MatchView` carries `time_control`, `white_ms`, `black_ms`, `turn`, `last_ply`,
 `flagged` and `receipts` (a count; fetch the bundle for the objects).
-`ClockBundle.receipts` is exactly the `clock_evidence.receipts` list of a
-`TimeoutClaim`, and `ClockBundle.flag` is its `final`.
+`ClockBundle.receipts` is the full observed stream; `ClockBundle.flag` is the
+final flag receipt and `ClockBundle.checkpoint` is the relay's hybrid clock
+checkpoint over the evidence window, or `null` when it has no witness key. A
+`TimeoutClaim` carries `time_control`, `final`, a *suffix* of the receipts
+(section 8.5) and the checkpoint.
 
 The signed move body is `{network, match_id, seat, ply, san, clock_ms, signature}`;
 `clock_ms` is neither signed nor trusted. The signed payload is
@@ -444,6 +482,119 @@ receipts. A miner given the matching `--relay-witness-key` (the witness's public
 key in hex) verifies those receipts locally before it builds a `timeout_claim`;
 without it the claim is refused rather than guessed at.
 
+### 8.5 Stream commitments
+
+Live play cannot afford a 3374-byte signature per ply, and evidence cannot afford
+2 MB per game. Both problems have the same answer: sign the *stream* once.
+
+A seat signs each move message with the Ed25519 half of its key (section 8.4), and
+a witness signs each clock receipt the same way. Those signatures are cheap
+authentication for a live peer. The **claim** is different: both seats (or the
+witness quorum, when a seat refuses) fold the whole stream into one 32-byte root
+and hybrid-sign that root exactly once.
+
+**The fold.** Leaves are folded in order with a single SHA-256 chain. This is the
+one construction in the protocol that is not `H(domain, payload)`, so it is
+defined byte for byte:
+
+```text
+root_0     = 00 * 32
+root_{i+1} = SHA-256("sccp/v1/commitment" || 0x00 || root_i || canonical_json(leaf_i))
+```
+
+`canonical_json` is the encoder of section 1, the domain string is UTF-8, and
+`root_i` is the raw 32-byte digest (not its hex). An empty stream folds to
+`00 * 32`. A browser needs only `sha256` and the canonical encoder to reproduce
+this, which is why the web library ships it (`src/web/src/lib/commitment.ts`)
+even though it cannot sign.
+
+**Move leaves.** A move leaf is
+
+```json
+{"network": "...", "match_id": "hex", "seat": "<address>", "ply": 12, "san": "Nf6"}
+```
+
+with `seat` fixed by the ply (`white` on even plies) and `ply` the zero-based SAN
+index in the *full* game. The committed stream is the post-opening plies only:
+`ply >= len(certificate.opening.moves)`.
+
+`move_commitment` in a game result (section 8.2) is the fold of exactly those
+leaves for the whole game. The relay folds the same leaves as it accepts moves, so
+its checkpoint and a result's commitment are the same 32 bytes.
+
+**Checkpoints.** A `StreamCheckpoint` is
+
+```json
+{"network": "...", "kind": "moves" | "clock", "match_id": "hex",
+ "ply": 87, "root": "hex",
+ "witnesses": [{"witness": "<address>", "signature": "6748-hex"}, ...]}
+```
+
+Each witness hybrid-signs `H("sccp/v1/commitment", {network, kind, match_id, ply,
+root})`. `ply` is the number of plies the root commits to, so a checkpoint also
+pins the game's length. Verification is: the checkpoint names this network and
+match, `ply` matches the evidence, `root` recomputes from the evidence, and at
+least `clock_witness_quorum` *distinct registered* witnesses produced a valid
+hybrid signature over the payload.
+
+**Move evidence.** A refused-checkmate proof carries
+
+```json
+{"moves": [{"ply": 4, "seat": "sccpt1...", "san": "Qh5"}, ...],
+ "checkpoint": {"kind": "moves", "ply": 7, "root": "hex", "witnesses": [...]}}
+```
+
+`moves` covers every post-opening ply exactly once, in order, each authored by
+the seat whose turn it was. There are **no per-ply signatures**: with the
+checkpoint in place they would be 2,000-odd redundant hex characters per ply.
+The verifier replays `san` values, folds the leaves, compares `root`, then
+verifies the witness quorum. A quantum attacker who can forge the loser's Ed25519
+move signatures still cannot produce a root covered by an honest witness's
+ML-DSA-65 signature, which is exactly the gap this section closes.
+
+**Clock evidence.** A flag bundle carries
+
+```json
+{"time_control": {...},
+ "final": {"kind": "flag", "ply": 400, "seat": "<flagged>", ...},
+ "receipts": [<MoveReceipt>, ...],
+ "checkpoint": {"kind": "clock", "ply": 400, "root": "hex", "witnesses": [...]}}
+```
+
+`receipts` is a **window**, not the whole game: at most
+`CLOCK_EVIDENCE_PLIES = 64` consecutive receipts ending at the flag, and at least
+one whenever the game has a post-opening move. The first receipt in the window
+carries absolute `white_ms`/`black_ms` and is the arithmetic anchor; every later
+receipt is checked as a delta from it (section 8.4's charging rule), so a suffix
+is sufficient evidence and a 400-ply game no longer overflows the transaction
+cap. `checkpoint.root` is the fold of the window followed by the flag receipt
+leaf, and the same witness quorum hybrid-signs it.
+
+Receipt leaves use the exact payload the witness signs:
+
+```json
+{"network": "...", "kind": "move" | "flag", "match_id": "hex", "ply": 12,
+ "seat": "<address>", "san": "Nf6", "received_at_ms": 1700000000000,
+ "white_ms": 1790000, "black_ms": 1800000}
+```
+
+(`san` is absent on a flag leaf.) The chain-level `timeout_claim` validator
+recomputes `checkpoint.root` and verifies the quorum before it opens a bonded
+record, so a forged flag receipt cannot start a claim even if every per-ply
+Ed25519 signature on it is fake.
+
+**Why this is enough.** Every value that moves money or reputation is covered by
+a hybrid signature over a commitment to the data it depends on:
+
+| Claim | Anchored by |
+| --- | --- |
+| this game was played by these two keys | hybrid certificate signatures (8.1) |
+| this is the game that was played | `move_commitment` inside the hybrid result payload (8.2, 8.5) |
+| the loser refused, but these are the moves | witness-quorum hybrid move checkpoint (8.5) |
+| this seat's clock reached zero | witness-quorum hybrid clock checkpoint + window (8.5) |
+
+---
+
 ## 9. Win proofs and offline verification
 
 A proof wraps the co-signed transcript:
@@ -452,7 +603,8 @@ A proof wraps the co-signed transcript:
 {"network": "testnet", "proof_id": "hex", "game_hash": "hex",
  "match_id": "hex", "epoch": 3, "round": 0,
  "winner": "sccpt1...", "loser": "sccpt1...", "winner_seat": "white",
- "result": "1-0", "termination": "checkmate", "plies": 87, "low_ply": false,
+ "result": "1-0", "termination": "checkmate", "plies": 87,
+ "move_commitment": "hex", "low_ply": false,
  "opening": {...}, "pgn": "[Event ...] ...",
  "certificate": {...}, "result_signatures": {"white": "hex", "black": "hex"},
  "clock_evidence": null, "move_evidence": null, "timeout_claim_id": null,
@@ -463,11 +615,17 @@ A proof wraps the co-signed transcript:
 `quality_summary` is evidence for the quality layer and is ignored by structural
 verification.
 `clock_evidence` is required for every `time_forfeit` and carries the time
-control, the witness-signed final flag receipt and every post-opening move
-receipt. `timeout_claim_id` binds a single-signature proof to its bonded timeout
-claim; it is null for every other termination.
-`move_evidence` is the signed post-opening move stream for a single-signature
-`checkmate`. Both evidence fields must be absent for other terminations.
+control, a window of witness-signed move receipts, the final flag receipt and the
+witness checkpoint over them (section 8.5). `timeout_claim_id` binds a
+single-signature proof to its bonded timeout claim; it is null for every other
+termination.
+`move_evidence` is the committed post-opening move stream plus its witness
+checkpoint for a single-signature `checkmate`. Both evidence fields must be absent
+for other terminations.
+
+`move_commitment` is re-derived from the replayed SAN list and must equal both the
+proof's field and the value inside the signed result payload. A proof whose PGN
+does not fold to that root is rejected even if every result signature verifies.
 
 Verification runs cheap checks first and stops at the first typed failure:
 
@@ -479,10 +637,11 @@ Verification runs cheap checks first and stops at the first typed failure:
 | `opening` | line hash, canonical SAN, book version and beacon-selected line |
 | `roster` | both seats are in the verifier's roster |
 | `pairing` | the matchup is exactly what the beacon and roster produce |
-| `signature` | both start signatures and every present result signature verify; a missing loser signature requires matching clock or move evidence |
+| `signature` | both hybrid start signatures and every present hybrid result signature verify; a missing loser signature requires matching clock or move evidence |
 | `pgn` | section 3 replay, headers including `TimeControl`, and opening prefix |
 | `game-hash` | the replayed SAN list hashes to `game_hash` |
-| `result` | result, termination, plies and winner seat match the replay; clock and move evidence are checked for `time_forfeit` and `checkmate` |
+| `commitment` | the replayed post-opening plies fold to `move_commitment`, which is the value inside the signed result payload |
+| `result` | result, termination, plies and winner seat match the replay; clock and move evidence are rooted in a witness checkpoint and checked against the replay for `time_forfeit` and `checkmate` |
 | `proof-id` | `proof_id` recomputes from its fields |
 | `duplicate` | neither hash has already been seen by the caller |
 
@@ -544,7 +703,7 @@ block body and on the wire. `src/sccp/chain/tx.py` is the only validator, and
 | `nonce` | int ≥ 0 | equals the sender's current nonce; a gap is a rejection |
 | `fee` | int ≥ 0 | at least `min_fee`, debited from spendable balance, never from a bond |
 | `payload` | object | type-specific; unknown keys are rejected |
-| `signature` | 128 or 6748 hex chars | Ed25519 (128) or hybrid Ed25519 + ML-DSA-65 (6748) over the txid; `null` only for a coinbase |
+| `signature` | 6748 hex chars | hybrid Ed25519 + ML-DSA-65 over the txid (section 10.5); `null` only for a coinbase |
 
 `txid = H("sccp/v1/tx", {network, type, from, nonce, fee, payload})`. The
 signature is outside the hash, so signing is well defined and re-signing never
@@ -569,12 +728,27 @@ transaction; consensus then checks that the key re-encodes to the `from` address
 before storing it. The reveal is self-authenticating, so no key registry and no
 extra signature format is needed.
 
-The stored key is either a 32-byte Ed25519 key (64 hex) or a hybrid key blob
-(3970 hex, 10.5). The address pins the scheme: a version-0 address accepts only
-an Ed25519 key and a version-1 address only a hybrid one, and the signature
-length picks the verifier. Offering the wrong key for an address, or signing a
-hybrid account with its Ed25519 half alone, fails the same `signature` check as
-a forged signature — the key never overrides the address version.
+The stored key is *always* the 1985-byte hybrid blob (3970 hex). There is one
+address version, one key length and one signature length, so a validator never
+infers a scheme from unauthenticated data:
+
+| Check | Rule |
+| --- | --- |
+| program | `0x01` and exactly 33 bytes; anything else is not an address |
+| address | `H("sccp/v1/address", {algorithm, network, public_key})` over the full 32-byte digest |
+| key | exactly 1985 bytes, scheme byte `0x01` |
+| key ↔ address | the blob must re-encode to `from`; a different key or address fails `signature` |
+| signature | exactly 3374 bytes, scheme byte `0x01`, both halves verify over `sha256("sccp/v1/pq-hybrid" \|\| 0x00 \|\| txid)` |
+
+Because the address hash is not truncated, a quantum adversary gets no shortcut
+from Grover's algorithm beyond the generic 128-bit preimage margin, and because
+the algorithm name is inside the hash, a future scheme is a new address version
+rather than a guess.
+
+The relay roster and the epoch records carry the same blob. Verifiers of the
+high-volume streams (moves, receipts) project its Ed25519 half explicitly
+(`sccp.crypto.pq.ed25519_public_key_hex`); that projection is a documented part of
+the one scheme, not a second way to spend.
 
 ### 10.2 Types and payloads
 
@@ -640,49 +814,77 @@ the witness is de-registered and `banned_until = height + unbond_delay`.
 Equivocation about proofs (`proof_id` in the payload) is refused here; proof
 disputes go through the bonded challenge layer (9.2).
 
-### 10.5 Hybrid post-quantum accounts
+### 10.5 One post-quantum identity
 
-A wallet may hold a hybrid Ed25519 + ML-DSA-65 key (NIST FIPS 204, category 3)
-instead of a bare Ed25519 one. Two encodings are self-describing by a leading
-scheme byte, so nothing has to be negotiated:
+A key is hybrid Ed25519 + ML-DSA-65 (NIST FIPS 204, category 3). Two encodings are
+self-describing by a leading scheme byte:
 
 ```text
 public key = 0x01 || ed25519_pub(32) || mldsa65_pub(1952)   = 1985 bytes
 signature  = 0x01 || ed25519_sig(64) || mldsa65_sig(3309)   = 3374 bytes
 ```
 
-A hybrid **address** is a version-1 bech32 program over the *full* SHA-256
-digest, not the 20-byte truncation of version 0 — a shortened digest would lose
-to Grover's quadratic speedup:
+Both halves are derived from one 32-byte master seed with HMAC-SHA-256 domain
+separation (`sccp/v1/pq/ed25519` and `sccp/v1/pq/mldsa65`), so a mnemonic backs
+up the whole account and neither half can be replayed as the other.
+
+A **transaction signature** covers the txid digest of section 10 through
+`sha256("sccp/v1/pq-hybrid" || 0x00 || digest)` with the FIPS 204 context
+`sccp/v1/hybrid-ed25519-mldsa65`. Verification is the conjunction: invalid unless
+*both* halves verify, so an attacker must break Ed25519 and ML-DSA-65.
+**Certificates, results and stream checkpoints** use the same construction over
+their own `H(domain, payload)` digests. **Moves, clock receipts and gossip
+envelopes** use Ed25519 over `H(domain, payload)` directly, because they are
+per-ply data; each is anchored by a hybrid commitment (section 8.5).
+
+The keyfile (`src/sccp/crypto/wallet.py`) is `version: 2` with `"scheme": "ed25519-mldsa65"`, and
+it is the only version. A version-1 (Ed25519-only) keyfile, or a `scheme` other
+than `ed25519-mldsa65`, is refused with a typed error rather than upgraded in
+place: silent upgrading would be a downgrade attack waiting to happen.
+
+**Nothing classical is left.** The dual-path plumbing of the earlier optional
+feature is gone, not deprecated:
+
+| Removed | Why it was a seam |
+| --- | --- |
+| address version `0` and its truncated hash | two program shapes, two hash domains |
+| `ADDRESS_VERSION` dispatch in `encode_address` / `decode_address` | a scheme choice inside address parsing |
+| `HybridSignatureHex` / `TxSignatureHex` unions | a classical signature could satisfy a hybrid field |
+| scheme dispatch in `chain/tx.py` (key length → verifier) | an attacker aims at the branch |
+| `SCHEMES`, `SCHEME_ED25519`, `KEYFILE_VERSION_PQ`, `DEFAULT_KDF` | two keyfiles, two KDF profiles |
+| `--scheme` / `--kdf-n` scheme selection | an operator could mint a weak account |
+| `SigningKey = Keypair \| HybridKeypair` | a type-level invitation to dual paths |
+| web `HYBRID_ADDRESS_VERSION` refusal and `isHybridSignatureHex` | a second address/signature shape in JS |
+| "a hybrid key cannot mine" guard | the opposite of the point |
+
+The acceptance invariants, checked by `tests/unit/test_pq.py` and the codebase
+itself:
 
 ```text
-program = 0x01 || H("sccp/v1/address-pq", {
-    "network": <network_id>,
-    "algorithm": "ed25519-mldsa65",
-    "public_key": <1985-byte blob as lowercase hex>
-})
+SCHEMES, SCHEME_ED25519, SigningKey, ADDRESS_PQ, encode_hybrid_address  -> 0 hits
+ADDRESS_VERSION                                                        -> exactly 1 (value 1)
+sccp wallet new --scheme ...                                           -> exit 2 (no such option)
+keyfile                                                                -> version 2, scheme ed25519-mldsa65
+transaction signature                                                  -> always 6748 hex
 ```
 
-A hybrid **transaction signature** covers the same txid digest as an Ed25519
-one, and every signature is over `sha256("sccp/v1/pq-hybrid" || 0x00 || digest)`
-with the FIPS 204 context `sccp/v1/hybrid-ed25519-mldsa65`, so the two halves
-sign the same scheme-tagged message. Verification is the conjunction: the
-transaction is invalid unless *both* halves verify, so an attacker must break
-Ed25519 and ML-DSA-65. The type byte and the length of `signature` choose the
-check (`128` hex → Ed25519, `6748` hex → hybrid); a length that is neither is a
-`schema` failure, and a hybrid signature offered for a version-0 address (or an
-Ed25519 signature for a version-1 one) is a `signature` failure. Older nodes
-reject a `6748`-hex `signature` outright, so a hybrid spend is opt-in per
-account and the chain commits no new state for a chain that never sees one.
+**Fail closed on a backend without ML-DSA.** Verification returns `False` for
+everything when the OpenSSL build exposes no ML-DSA provider, and key generation
+raises `PQUnavailableError`. A node or miner must refuse to start rather than run
+a chain whose signatures it cannot make or check; `sccp node run`, `sccp miner
+run` and `sccp devnet up` check `pq_available()` at startup.
 
-The hybrid scope is deliberately narrow. Match certificates, move and clock
-receipts, win proofs and the relay roster keep raw Ed25519 keys
-(`sccp.crypto.pq.ed25519_public_key_hex` extracts the Ed25519 half of a hybrid
-account's key for those verifiers), so `register`, `register_witness` and the
-relay-side identity remain version-0 addresses. Hybrid keys therefore protect
-funds and bonds today; playing and witnessing follow when those messages grow a
-hybrid form. `pq.py` verifies fail-closed when the OpenSSL build exposes no
-ML-DSA provider, and key generation raises `PQUnavailableError`.
+**Browsers.** `src/web` re-implements canonical JSON, bech32 (version 1), the
+Ed25519 half, addresses, tx bodies/txids and the commitment fold. It can therefore
+create and derive an account, play moves (the Ed25519 half is HMAC-derived from the
+same master seed), verify every stream signature and verify a result's
+`move_commitment`. It cannot *produce* a hybrid signature without an ML-DSA
+implementation, so ledger signing fails closed in the library
+(`signTransaction` throws) and the hand-play tab hands the exact result payload to
+`sccp wallet sign-result --payload <hex>`, which signs it with the same keyfile.
+Adding `@noble/post-quantum` and implementing `hybridSign` in `keys.ts` is the one
+change that turns the tab into a full ledger wallet; `verifyProof` already accepts
+an injected `verifyLedgerSignature` hook for the same purpose.
 
 ## 11. Ledger state
 
@@ -836,6 +1038,42 @@ the candidate branch is adopted, and the orphaned transactions and proofs are
 returned to the mempool. Storage keeps canonical block JSON, the adopted tip and
 periodic snapshots, and replays from the last snapshot on restart instead of
 trusting it.
+
+### 12.5 Size budgets
+
+Every cap is a consensus constant in `NetworkParams`, chosen so the largest legal
+object fits with room to spare. All three networks share the same numbers because
+the signature sizes are the same:
+
+| Cap | Value | Bounds |
+| --- | --- | --- |
+| `max_tx_bytes` | 131 072 (128 KiB) | one transaction, including its 6748-hex signature |
+| `max_pgn_bytes` | 262 144 (256 KiB) | proof PGN text, and therefore `max_plies` at the 16-character SAN limit |
+| `max_block_bytes` | 1 048 576 (1 MiB) | header + coinbase + transactions + proofs |
+| `CLOCK_EVIDENCE_PLIES` | 64 | receipts a `clock_evidence` bundle may carry |
+
+The largest transaction the protocol can produce is a 400-ply `timeout_claim`.
+`tests/unit/test_tx_budget.py` builds exactly that — a real certificate, a real
+window of witness-signed receipts, a three-witness hybrid checkpoint and the
+claim — and asserts the result:
+
+```text
+window: 64 receipts (3 witness signatures each)    ~55 000 B
+final flag receipt + 3-signature hybrid checkpoint
+unsigned transaction, before the claim signature    53 030 B   (measured)
+cap                                              131 072 B
+headroom                                          78 042 B
+```
+
+The same claim carrying all 396 receipts instead of the window is **142 236
+bytes**; the test asserts that too, so the window cannot be removed by accident.
+The old cap was already too small for a 400-ply flag bundle with Ed25519-only
+signatures — a latent bug that had nothing to do with post-quantum sizes — and
+the hybrid checkpoint is what let the evidence shrink enough to fit without a
+block-size change.
+
+A `move_evidence` bundle is smaller still: 400 plies of `{ply, seat, san}` are
+about 36 KiB, plus one 3.4 KiB checkpoint signature per quorum member.
 
 ## 13. Genesis documents
 
@@ -1055,9 +1293,26 @@ testnet of equal-strength engines from drawing every game in an epoch.
 - Adding a header tag, changing a hash payload key, changing result or
   termination semantics, or changing selection all require a protocol version
   bump (`sccp/v2`) and a golden-vector update.
+- The **one-scheme** rule is not a versioned option. These must stay true, and
+  each has a test or a grep invariant behind it:
+  - `SCHEMES`, `SCHEME_ED25519`, `SigningKey`, `ADDRESS_PQ` and
+    `encode_hybrid_address` do not exist;
+  - there is exactly one `ADDRESS_VERSION` (value `1`) and one keyfile version
+    (`2`, scheme `ed25519-mldsa65`);
+  - a transaction signature is always 6748 hex characters, and
+    `sccp wallet new --scheme …` exits 2 because the option is gone;
+  - `node run`, `miner run`, the relay and `devnet up` refuse to start when
+    `pq_available()` is false.
 - Golden vectors for the game hash and opening hash live in
-  `tests/fixtures/chess_vectors.json`; changing them is a deliberate consensus
-  change, never a test fix.
+  `tests/fixtures/chess_vectors.json`; the crypto/address vectors live in
+  `tests/fixtures/crypto_vectors.json` and the web vectors in
+  `src/web/src/lib/vectors.json` (generated by `scripts/make_web_vectors.py`).
+  Changing them is a deliberate consensus change, never a test fix. Hybrid
+  signature *bytes* are hedged (randomized), so the web vectors pin payloads,
+  commitments and the deterministic Ed25519-half signatures, and verify the
+  hybrid blobs rather than comparing them.
+- Genesis documents are generated by `scripts/make_genesis.py` and pinned in
+  `NetworkParams`; regenerate both together.
 - The gossip envelope fields, the signed payload and the documented HTTP paths
   and response fields are part of this document: adding a field is a compatible
   change only if clients ignore unknown fields, and anything else needs a

@@ -1,17 +1,17 @@
 # Open a wallet
 
 A wallet in this project is a single encrypted **keyfile** on your machine. There
-is no sign-up and no server: the keyfile holds your Ed25519 keypair, and the
-address printed when you create it is your public identity on the network. A
-keyfile can instead hold a **hybrid** Ed25519 + ML-DSA-65 keypair, which gets
-its own address version and stays spendable even if Ed25519 falls to a quantum
-attacker (section 2.1).
+is no sign-up and no server: the keyfile holds a **hybrid** Ed25519 + ML-DSA-65
+keypair, and the address printed when you create it is your public identity on
+the network. Every account is post-quantum — there is no classical-only keyfile
+to choose (section 2.1) — and a spend needs both halves of the signature, so a
+quantum attacker has to break ML-DSA-65 as well as Ed25519.
 
 There are three commands in this workflow:
 
 | Step | Command | What it does |
 | --- | --- | --- |
-| 1 | `sccp wallet new --network testnet --out alice.key` | Generates a keypair and writes an encrypted keyfile. Add `--scheme ed25519-mldsa65` for a post-quantum keyfile. |
+| 1 | `sccp wallet new --network testnet --out alice.key` | Generates a hybrid keypair and writes an encrypted keyfile. |
 | 2 | `sccp wallet export-mnemonic --key alice.key` | Prints the 24-word recovery phrase. Do this immediately. |
 | 3 | `sccp wallet address --key alice.key` | Prints the address without needing the passphrase. |
 
@@ -68,12 +68,12 @@ you fund the wallet.
 -rw-------  1 you  staff  ...  alice.key
 ```
 
-The public fields are `version`, `network`, `address`, `public_key`, `kdf`,
-`cipher` and `created_at`; the private seed is present only as an AES-256-GCM
-`ciphertext`. A hybrid keyfile is version `2` and adds a `scheme` field, and its
-`public_key` is the 1985-byte blob rather than a 32-byte key (section 2.1). The
-key is derived from your passphrase with scrypt
-(`N=2**15, r=8, p=1`) and a random 16-byte salt. The header is authenticated as
+The public fields are `version`, `scheme`, `network`, `address`, `public_key`,
+`kdf`, `cipher` and `created_at`; the private master seed is present only as an
+AES-256-GCM `ciphertext`. The keyfile is always version `2` with
+`"scheme": "ed25519-mldsa65"`, and `public_key` is the 1985-byte hybrid blob
+(section 2.1). The key is derived from your passphrase with scrypt
+(`N=2**17, r=8, p=1`) and a random 16-byte salt. The header is authenticated as
 associated data, so editing `address`, `network` or the KDF parameters makes
 decryption fail instead of silently producing another key.
 
@@ -137,42 +137,46 @@ Never put the passphrase in the keyfile, in shell history, or in a repository.
 
 ### 2.1 Post-quantum wallets
 
-Ed25519 signatures fall to Shor's algorithm on a large quantum computer, so a
-wallet can instead hold a hybrid **Ed25519 + ML-DSA-65** key (NIST FIPS 204):
+Ed25519 signatures fall to Shor's algorithm on a large quantum computer, so the
+keyfile holds a hybrid **Ed25519 + ML-DSA-65** key (NIST FIPS 204). There is no
+flag to add and no classical variant: `wallet new` always creates one.
 
 ```bash
-sccp wallet new --network testnet --scheme ed25519-mldsa65 --out alice-pq.key
+sccp wallet new --network testnet --out alice.key
 ```
 
-The address is a version-1 bech32 program over the full 32-byte digest, so it
-is longer than the Ed25519 form (65 characters instead of 46 on testnet), and a
-spend needs *both* signatures, so an attacker has to break ML-DSA-65 as well. The
-keyfile is version `2` and stores the 1985-byte hybrid public key; the private
-key is still one 32-byte seed, so the 24-word phrase restores both halves:
+The address is a version-1 bech32 program over the full 32-byte digest, so it is
+65 characters on testnet, and a spend needs *both* signatures, so an attacker has
+to break ML-DSA-65 as well. The keyfile stores the 1985-byte hybrid public key;
+the private side is one 32-byte master seed from which both halves are derived, so
+the 24-word phrase restores both:
 
 ```bash
-sccp wallet export-mnemonic --key alice-pq.key
-sccp wallet import-mnemonic --network testnet --out alice-pq.key \
-    --scheme ed25519-mldsa65
+sccp wallet export-mnemonic --key alice.key
+sccp wallet import-mnemonic --network testnet --out alice-restored.key
 ```
 
-Three differences from an Ed25519 keyfile:
+What that means in practice:
 
-- **Longer passphrase.** A hybrid keyfile needs at least 12 characters, because
-  the same passphrase now protects both schemes.
-- **Harder KDF.** scrypt defaults to `N=2**17` instead of `2**15`; `--kdf-n`
-  overrides it.
-- **No miner or witness identity.** Match certificates, clock receipts and the
-  relay roster are Ed25519-only, so miner and witness commands refuse a hybrid
-  keyfile: `a hybrid keyfile cannot ...: match transcripts, clock receipts and
-  the relay roster are Ed25519-only`. Fund and spend with it; register with an
-  Ed25519 keyfile.
+- **Longer passphrase.** At least 12 characters, because the same passphrase now
+  protects both schemes.
+- **Harder KDF.** scrypt runs at `N=2**17`; `--kdf-n` exists only so tests can be
+  fast.
+- **The same key plays, witnesses and spends.** Match certificates, results,
+  moves and clock receipts use the Ed25519 half of this key and are anchored by
+  hybrid commitments, so there is one keyfile per participant and no second
+  identity for chess.
+- **The browser can play with it.** The web hand-play tab derives the Ed25519
+  half from the same master seed, so a seat can join, move and co-sign moves
+  there. Producing a *result* signature needs ML-DSA-65 and no browser
+  implementation ships here: `sccp wallet sign-result --key alice.key --payload
+  <hex>` signs the payload the tab prints.
 
-Hybrid support needs a `cryptography` build whose OpenSSL exposes ML-DSA (50.0
-or later on a current OpenSSL). Without it, `wallet new --scheme
-ed25519-mldsa65` fails with a clear error instead of writing a half-working key,
-and a node rejects hybrid signatures rather than trusting the Ed25519 half
-alone.
+Hybrid support needs a `cryptography` build whose OpenSSL exposes ML-DSA (50.0 or
+later on a current OpenSSL). Without it, `wallet new` fails with a clear error
+instead of writing a half-working key, and `node run`, `miner run`, the relay and
+`devnet up` refuse to start — a node that cannot check the only signature scheme
+cannot tell a real transaction from a forged one.
 
 ---
 
@@ -238,16 +242,22 @@ sccp --json wallet address --key alice.key
 ```
 
 ```json
-{"address": "sccpt1...", "keyfile": "alice.key", "network": "testnet", "public_key": "...", "scheme": "ed25519"}
+{"address": "sccpt1...", "keyfile": "alice.key", "network": "testnet", "public_key": "...", "scheme": "ed25519-mldsa65"}
 ```
 
 `wallet new`, `wallet import-mnemonic` and `wallet address` all print only the
 address by default; each supports `--json` with the fields above. `scheme` is
-`ed25519` or `ed25519-mldsa65`, and a hybrid `public_key` is the 3970-hex
+always `ed25519-mldsa65` and `public_key` is the 3970-hex
 `0x01 || ed25519 || mldsa65` blob. `wallet export-mnemonic --json` returns
-`{"mnemonic", "address", "network", "scheme"}`: the phrase is only the 32-byte
-seed, so the `scheme` field is what tells a restore to re-expand it into two
-keypairs.
+`{"mnemonic", "address", "network", "scheme"}`.
+
+`wallet sign-result` signs a canonical result payload (hex, as printed by the web
+hand-play tab) with the hybrid key and prints the 6748-hex signature the relay's
+`POST /v1/matches/{id}/result` expects:
+
+```bash
+sccp wallet sign-result --key alice.key --payload 7b226e6574...
+```
 
 ---
 
@@ -291,10 +301,11 @@ and next nonce from `--node` (see [`SEND_COINS.md`](SEND_COINS.md)).
 | `passphrase file ... is empty` | The file has no first line. | Write the passphrase and a newline. |
 | `expected 24 words, got N` | The imported phrase is incomplete. | Re-enter all 24 words in order. |
 | `unknown network '...'; known networks: ...` | A command named a network this build does not know. | Use `mainnet`, `testnet` or `devnet`. |
-| `unknown scheme '...'; use one of: ed25519, ed25519-mldsa65` | `--scheme` named a key scheme this build does not know. | Use `ed25519` or `ed25519-mldsa65`. |
-| `a hybrid keyfile passphrase must be at least 12 characters` | A post-quantum keyfile was given a short passphrase. | Use 12+ characters; the same phrase protects two schemes. |
-| `a hybrid keyfile cannot ...: match transcripts, clock receipts and the relay roster are Ed25519-only` | A miner or witness command was pointed at a hybrid keyfile. | Register and play with an Ed25519 keyfile; spend with the hybrid one. |
-| `keyfile version 2 requires scheme 'ed25519-mldsa65', not 'ed25519'` | The header was hand-edited, or `--scheme` disagrees with the file. | Do not edit the header; recreate the keyfile. |
+| `No such option: --scheme` | There is one key scheme; the flag is gone. | Drop `--scheme`; `wallet new` always writes a hybrid keyfile. |
+| `a keyfile passphrase must be at least 12 characters` | A short passphrase was given. | Use 12+ characters. |
+| `unsupported keyfile version 1` | The file predates the one-scheme rewrite. | Recreate it from its 24-word phrase with `wallet import-mnemonic`. |
+| `unsupported keyfile scheme 'ed25519' (only 'ed25519-mldsa65')` | The header was hand-edited, or the file is classical. | Do not edit the header; recreate the keyfile. |
+| `this build has no ML-DSA-65 support ...` | The `cryptography` wheel has no post-quantum provider. | Install `cryptography>=50` built against an OpenSSL with ML-DSA. |
 | `keyfile names unknown network '...' (known: ...)` | The keyfile header names a network this build does not know. | Use a current build; do not edit the header. |
 | `no chain database at ...` | A chain command ran without `--data-dir` pointing at a node's data. | Start a node or pass the directory that holds `chain.sqlite`. |
 
@@ -313,9 +324,9 @@ unknown network.
 - [ ] You have restored the phrase once and seen the same address.
 - [ ] You are using the keyfile for the network you think you are: check the
       address prefix (`sccp1` mainnet, `sccpt1` testnet/devnet).
-- [ ] For a hybrid keyfile: the passphrase is at least 12 characters, the
-      address is a version-1 program (65 characters on testnet), and the file
-      says `"version": 2` with `"scheme": "ed25519-mldsa65"`.
+- [ ] The passphrase is at least 12 characters, the address is a version-1
+      program (65 characters on testnet), and the file says `"version": 2` with
+      `"scheme": "ed25519-mldsa65"`.
 
 ---
 

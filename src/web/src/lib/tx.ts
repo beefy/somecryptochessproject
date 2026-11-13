@@ -12,16 +12,17 @@
  * produces come out of {@link buildRegister}, which is what lets a seat created
  * in this tab be paired by the relay like any other.
  *
- * Signing is Ed25519-only on purpose. A CLI wallet may hold a hybrid
- * Ed25519 + ML-DSA-65 key, and the chain accepts its 6748-hex signature, but no
- * browser primitive signs ML-DSA-65 and a miner seat must be a version-0
- * address anyway (`PROTOCOL.md` section 10.5). {@link isHybridSignatureHex}
- * exists so a viewer can label such a transaction instead of mistaking it for a
- * malformed one.
+ * Every transaction carries a hybrid Ed25519 + ML-DSA-65 signature: there is one
+ * scheme and no classical fallback on the ledger (`PROTOCOL.md` section 2).
+ * {@link signTransaction} therefore fails closed: no primitive in this bundle
+ * signs ML-DSA-65, and quietly emitting a 64-byte Ed25519 signature would be a
+ * downgrade. Add `@noble/post-quantum` (ML-DSA-65) and implement
+ * `hybridSign` in `keys.ts` to make the browser a full ledger wallet; until
+ * then this tab builds and verifies transactions and the CLI wallet signs them.
  */
 
-import { DOMAINS, domainHex, fromHex } from "./canonical";
-import { type Keypair, signDigest } from "./keys";
+import { DOMAINS, domainHex } from "./canonical";
+import { type Keypair } from "./keys";
 
 /** Wire spellings from `sccp.protocol.models.TxType`. */
 export type TxType = "transfer" | "register" | "register_witness" | "availability" | "reveal";
@@ -34,7 +35,7 @@ export interface Transaction {
   nonce: number;
   fee: number;
   payload: Record<string, unknown>;
-  /** 128 hex characters for Ed25519, 6748 for a hybrid account (or absent). */
+  /** 6748 hex characters (3374 bytes: scheme || ed25519 || mldsa65), or absent. */
   signature?: string;
 }
 
@@ -43,19 +44,22 @@ export class TxError extends Error {
 }
 
 /** Hex length of a hybrid Ed25519 + ML-DSA-65 signature (3374 bytes). */
-export const HYBRID_SIGNATURE_HEX_LENGTH = 6748;
+export const LEDGER_SIGNATURE_HEX_LENGTH = 6748;
+
+/** Bytes in the same signature: `scheme || ed25519(64) || mldsa65(3309)`. */
+export const LEDGER_SIGNATURE_SIZE = 3374;
 
 /**
- * Whether `signature` is a hybrid blob rather than an Ed25519 signature.
+ * Whether `signature` is a well-formed ledger signature.
  *
- * The scheme byte is `0x01`, so a well-formed hybrid signature starts with
- * `"01"`; the length check alone is enough to tell the two apart on the wire,
- * which is what the chain does (`sccp.protocol.models.TxSignatureHex`).
+ * The scheme byte is `0x01`, so a hybrid signature starts with `"01"`. There is
+ * no second shape to tell it apart from: an Ed25519-only 128-hex string is not a
+ * ledger signature at all any more (`sccp.protocol.models.LedgerSignatureHex`).
  */
-export function isHybridSignatureHex(signature: string | null | undefined): boolean {
+export function isLedgerSignatureHex(signature: string | null | undefined): boolean {
   return (
     typeof signature === "string" &&
-    signature.length === HYBRID_SIGNATURE_HEX_LENGTH &&
+    signature.length === LEDGER_SIGNATURE_HEX_LENGTH &&
     /^01[0-9a-f]*$/.test(signature)
   );
 }
@@ -77,11 +81,22 @@ export function txId(tx: Transaction): string {
   return domainHex(DOMAINS.TX, txBody(tx));
 }
 
-/** Sign `tx` and return the wire form (`signature` present, never `undefined`). */
+/**
+ * Refuse to sign: this bundle has no ML-DSA-65 implementation.
+ *
+ * The signature this function would have to produce is the 3374-byte hybrid
+ * blob. Producing a 64-byte Ed25519 signature instead would be accepted by
+ * nothing (the chain requires the hybrid blob) and would look like a bug, so the
+ * call fails loudly and points at the one dependency that fixes it.
+ */
 export function signTransaction(keypair: Keypair, tx: Transaction): Transaction {
-  const unsigned: Transaction = { ...tx };
-  delete unsigned.signature;
-  return { ...unsigned, signature: signDigest(keypair, fromHex(txId(unsigned))) };
+  void keypair;
+  void tx;
+  throw new TxError(
+    "ledger transactions need a hybrid Ed25519 + ML-DSA-65 signature, and this " +
+      "bundle cannot produce one; add @noble/post-quantum and implement hybrid " +
+      "signing in keys.ts, or sign with the CLI wallet",
+  );
 }
 
 /** The exact JSON body a node's `POST /v1/tx` expects. */

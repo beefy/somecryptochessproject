@@ -53,13 +53,14 @@ competing honestly. It is not "cheating is impossible".
 
 ## 3. Trust boundaries
 
-- **Keys.** Ed25519 per miner; bech32 addresses derive from the public key
-  (`crypto/address.py`). A seat's signature is the only proof of authorship of a
-  move, a result, or a bond. A wallet may hold a hybrid Ed25519 + ML-DSA-65 key
-  instead (`crypto/pq.py`): its version-1 address commits to the full 32-byte
-  digest, and a spend needs both halves, so a quantum attacker must break
-  ML-DSA-65 as well. Match certificates, clock receipts and the roster are
-  Ed25519-only.
+- **Keys.** One scheme: hybrid Ed25519 + ML-DSA-65 per account
+  (`crypto/pq.py`). A bech32 address is a version-1 program over the full 32-byte
+  digest of the 1985-byte key blob (`crypto/address.py`), and a transaction needs
+  a signature whose Ed25519 and ML-DSA-65 halves both verify. Match
+  certificates, results and stream checkpoints are hybrid-signed; moves, clock
+  receipts and gossip use the Ed25519 half and are anchored by a hybrid-signed
+  commitment (`PROTOCOL.md` sections 8.5 and 10.5), so a quantum attacker must
+  break ML-DSA-65 to forge anything that moves value or reputation.
 - **Relay.** The relay schedules games and signs clock receipts, but it cannot
   move funds or mint proofs. A proof is valid without the relay being online.
 - **Chain.** Consensus-critical validation is deterministic and engine-free:
@@ -86,7 +87,8 @@ competing honestly. It is not "cheating is impossible".
 | Replayed game | `game_hash`/`match_id` registries, proof-id uniqueness, registries rebuilt on reorg (`chain/state.py`, `chain/tx.py`) | A game can be reused on a competing fork inside the finality window |
 | Self-assigned or inflated Elo | Ratings are not consensus state: no block field, transaction or route accepts a rating, and the node replays settled proofs with Glicko-2 (`ratings.py`, `node/service.py: ratings`, `tests/unit/test_ratings.py`) | Two colluding seats can trade wins and inflate each other; a rating measures results, not intent, and is provisional until 10 games |
 | Invalid block | Full validation on receipt and on replay, headers-first sync (`chain/block.py`, `chain/chain.py`, `node/service.py: sync_from`, `node/p2p.py: plan_sync`) | A bug in validation code; tested, not proven absent |
-| Quantum forgery of a spend | Hybrid wallets: a version-1 address accepts only a signature whose Ed25519 *and* ML-DSA-65 halves verify over the same scheme-tagged txid, and the address commits to the full 32-byte digest (`crypto/pq.py`, `crypto/address.py`, `chain/tx.py`, `tests/unit/test_pq.py`) | Opt-in per account: a version-0 address still spends on Ed25519 alone. Seat, witness and relay keys, and every transcript, clock receipt and proof, remain Ed25519-only, so a quantum attacker could still forge game results even though it cannot move a hybrid account's funds |
+| Quantum forgery of a spend | Every address is a version-1 program over the full 32-byte digest, every transaction signature must have both Ed25519 and ML-DSA-65 halves verify over the same scheme-tagged txid, and there is no classical path to fall back to (`crypto/pq.py`, `crypto/address.py`, `chain/tx.py`, `tests/unit/test_pq.py`) | Breaking ML-DSA-65 (or its implementation) is the only way in; the curve is young and its implementation surface is larger than Ed25519's |
+| Quantum forgery of a game result or clock | Certificates and results are hybrid-signed, and the result payload carries `move_commitment`; refused-checkmate and flag evidence carry a witness-quorum hybrid checkpoint over the folded stream (`protocol/commitments.py`, `protocol/clocks.py`, `chain/timeout.py`, `tests/unit/test_commitments.py`, `tests/unit/test_clocks.py`) | A colluding witness quorum can still fabricate a flag; per-ply signatures stay Ed25519 and are only as good as the checkpoint that anchors them |
 | Cheap proofless fork (heartbeat abuse) | A block earns the `k * WIN_UNIT` chess term only when it carries its `k` proofs, so a heartbeat earns seal work alone; a proofless block must carry exactly one transaction (`chain/difficulty.py: earned_block_work`, `chain/block.py: _check_proof_count`) | Seal work is the only barrier: the required transaction can be one the miner pays to itself, so it adds no real cost (16 bits per block on mainnet, 0 on devnet/testnet, where history is valueless). There is no finality gadget and `reorg_depth` is reserved and unenforced (whitepaper 16.5) |
 | Long-range reorg | Coinbase maturity today; bonded finality and checkpoints are planned | Not solved in v1 |
 | DoS via analysis | Deterministic sampling with a per-call limit, dedup by proof id, bounded retries, bounded queue (`node/quality_sampler.py`) | Operators must size the queue and engine pool |
@@ -110,9 +112,10 @@ The attacks above are exercised by:
 | Engine version mismatch | `tests/unit/test_transcript.py::test_certificate_signatures_verify_and_reject_tampering` |
 | Withheld reveal | `tests/unit/test_beacon.py::test_epoch_reveals_detects_withholding_and_orphans` |
 | Stalling loser, forged receipt, late dispute | `tests/unit/test_clocks.py`, `tests/unit/test_chain_timeout.py` |
-| Refused checkmate | `tests/unit/test_clocks.py::test_refused_checkmate_needs_the_signed_move_stream` |
+| Refused checkmate | `tests/unit/test_clocks.py::test_refused_checkmate_needs_a_hybrid_checkpoint`, `tests/unit/test_commitments.py` |
 | Witness equivocation | `tests/unit/test_chain_timeout.py::test_an_equivocating_witness_loses_its_bond` |
-| Quantum forgery of a spend | `tests/unit/test_pq.py::test_a_classical_signature_cannot_spend_a_hybrid_account`, `::test_a_hybrid_key_cannot_spend_a_classical_address`, `::test_transaction_signature_sizes_are_scheme_tagged` |
+| Quantum forgery of a spend | `tests/unit/test_pq.py::test_a_transaction_signature_is_always_hybrid`, `::test_signing_refuses_a_classical_keypair`, `::test_a_classical_signature_is_a_schema_error`, `::test_a_classical_key_cannot_be_encoded` |
+| Quantum forgery of a result or clock | `tests/unit/test_pq.py::test_the_dual_scheme_plumbing_is_gone`, `tests/unit/test_clocks.py::test_move_evidence_validates_order_authorship_and_commitment`, `tests/unit/test_chain_timeout.py` |
 | Cheap proofless fork | `tests/unit/test_chain_chain.py::test_a_proofless_branch_cannot_outrun_a_proof_branch`, `tests/unit/test_chain_block.py::test_a_proofless_block_earns_only_its_seal_work`, `::test_a_proofless_block_carries_exactly_one_transaction` |
 
 The first five rows are the adversarial suite: `make adversarial` runs
@@ -229,7 +232,7 @@ Goal: appear stronger than the games support
 | Witnesses for timeouts are available and honest enough | Mainnet requires a 3-witness quorum (`PROTOCOL.md` section 10.4) | `chain/timeout.py` |
 | A proofless block cannot claim chess work | Implemented: `earned_block_work` credits the `k * WIN_UNIT` term only when the block carries its `k` proofs, and a proofless block must carry exactly one transaction | `chain/difficulty.py`, `chain/block.py` |
 | A miner cannot set its own displayed rating | Implemented: the rating is a pure function of settled proofs, with no wire field and no submit route; the node recomputes it from the adopted chain | `ratings.build_ledger`, `node/service.py: ratings` |
-| ML-DSA-65 is available wherever a hybrid signature is verified | Backend-gated by `cryptography`: verification returns `False` and key generation raises `PQUnavailableError` when the OpenSSL build has no ML-DSA provider, so a node without it rejects hybrid spends instead of trusting one half | `crypto/pq.py`, `errors.PQUnavailableError` |
+| ML-DSA-65 is available wherever a signature is verified | Backend-gated by `cryptography`: verification returns `False` and key generation raises `PQUnavailableError` when the OpenSSL build has no ML-DSA provider, and `node run`, `miner run`, the relay and `devnet up` call `require_pq()` and refuse to start | `crypto/pq.py`, `errors.PQUnavailableError` |
 
 Open items that affect this model:
 
@@ -242,9 +245,11 @@ Open items that affect this model:
 5. Benchmarks for games/minute with mock engines and analysis seconds/ply at
    depth 14 (see the implementation plan); published figures are still estimates, not
    measurements, and the sampler's disagreement rate across CPUs is unmeasured.
-6. Hybrid signatures for the seat, witness and relay identities, so transcripts,
-   clock receipts and the roster are not Ed25519-only. Today a hybrid key guards
-   ledger funds and bonds (`PROTOCOL.md` section 10.5).
+6. Browser ledger signing: the web library can verify everything and sign the
+   move stream, but producing a hybrid signature needs an ML-DSA implementation.
+   It fails closed (`signTransaction` throws) and the hand-play tab hands the
+   result payload to `sccp wallet sign-result`; adding `@noble/post-quantum`
+   closes this (`PROTOCOL.md` section 10.5).
 
 ## 7. Explicit non-goals
 

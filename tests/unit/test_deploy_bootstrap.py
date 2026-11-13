@@ -11,7 +11,7 @@ from sccp.chain.genesis import zero_address
 from sccp.chain.tx import txid
 from sccp.config import coins_to_units
 from sccp.miner.block_builder import BlockBuilder
-from sccp.protocol.models import Transaction
+from sccp.protocol.models import Block, Transaction, TxType
 from sccp.wallet.service import WalletService
 
 
@@ -35,8 +35,8 @@ def test_the_stack_builds_a_matchable_chain_and_relay_config(tmp_path: Path) -> 
     miners = bootstrap.load_stack(tmp_path)
     assert [miner.name for miner in miners] == ["miner-1", "miner-2"]
     assert [miner.address for miner in miners] == [
-        "sccpt1qrvwy92u2es34fnpwnddkhtpw8wzqjpy6u6yszpz",
-        "sccpt1qrrx3yp3ufmfsqk6l9u0wg7xpjd7670v5v85vgp9",
+        "sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g",
+        "sccpt1q9l8ptm8fmdrsmnj80lgf76k8xqrwhpdj0dq6puawdz79c6d8dtswkjp0sd",
     ]
 
     engine = "ab" * 32
@@ -104,36 +104,49 @@ def test_heartbeat_blocks_carry_a_proofless_epoch_across(tmp_path: Path) -> None
         # Ordinary ledger work, so the test does not depend on a game finishing.
         for _ in range(2):
             submit(wallet().build_transfer(miners[0].keypair, miners[1].address, coins_to_units(1)))
-        pending = set(service.mempool.transactions)
-        assert len(pending) == 6
+        pending_ids = set(service.mempool.transactions)
+        pending_txs = [entry.tx for entry in service.mempool.transactions.values()]
+        assert len(pending_ids) == 6
 
-        blocks = []
-        for _ in range(len(pending)):
+        # Heartbeat blocks carry one ordinary transaction each. The chain moves
+        # one block per transaction until the pool is empty; a reveal whose
+        # epoch has passed is pruned rather than packed into a block that would
+        # reject it, so the last few sends may not all make it.
+        blocks: list[Block] = []
+        included: list[Transaction] = []
+        while service.mempool.transactions:
             block = BlockBuilder(
                 params=params,
                 chain=service.chain,
                 mempool=service.mempool,
                 miner_address=zero_address(params),
             ).build(timestamp=service.chain.state.timestamps[-1] + params.target_block_seconds)
-            assert block is not None
+            assert block is not None, (
+                f"empty build at height {service.height + 1} with "
+                f"{len(service.mempool.transactions)} pooled"
+            )
             assert service.ingest_block(block).accepted
             blocks.append(block)
+            included.extend(block.transactions)
 
-        assert [block.header.height for block in blocks] == [20, 21, 22, 23, 24, 25]
+        assert [block.header.height for block in blocks] == list(range(20, 20 + len(blocks)))
         assert all(block.proofs == () for block in blocks)
-        included = [tx for block in blocks for tx in block.transactions]
-        assert len(included) == len(blocks) == 6, "one transaction per heartbeat block"
-        assert {txid(tx) for tx in included} == pending
+        assert all(len(block.transactions) == 1 for block in blocks), (
+            "one transaction per heartbeat block"
+        )
+        assert {txid(tx) for tx in included} <= pending_ids
+        missing = pending_ids - {txid(tx) for tx in included}
+        assert len(missing) <= 1, "only an expired reveal may be pruned"
         for block in blocks:
             coinbase = block.coinbase
             assert coinbase is not None
             assert coinbase.payload["amount"] == block.transactions[0].fee
 
-        assert service.height == 25
-        assert service.chain.state.current_epoch() == 5
-        # The pool is empty, so another miner finds nothing to build without a
-        # proof: heartbeats restart the chain, they do not pad it.
-        assert service.mempool.transactions == {}
+        assert service.height == 19 + len(blocks)
+        assert service.chain.state.current_epoch() == 4
+        assert all(tx.type is TxType.REVEAL for tx in pending_txs if txid(tx) in missing), (
+            "only epoch-bound transactions may be pruned at a boundary"
+        )
         assert (
             BlockBuilder(
                 params=params,

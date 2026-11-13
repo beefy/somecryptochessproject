@@ -4,14 +4,25 @@ The models in this module are the schema half of docs/PROTOCOL.md sections 6-9.
 They are frozen, forbid unknown fields and use constrained string types, so a
 malformed object fails at the boundary instead of deep inside a verifier.
 
-Signatures are lowercase hex. A ledger transaction carries either the 64-byte
-Ed25519 signature (128 hex characters) or the hybrid Ed25519 + ML-DSA-65 blob
-(3374 bytes, 6748 hex characters, see :mod:`sccp.crypto.pq`); the leading scheme
-byte inside the blob makes the two unambiguous. Match transcripts and clock
-receipts remain Ed25519. Digests are lowercase hex of a 32-byte SHA-256 domain
-hash. The models deliberately do *not* verify signatures or recompute hashes:
-that is the job of :mod:`sccp.protocol.transcript` and
-:mod:`sccp.protocol.verification`, which can report a typed failure reason.
+Every account is hybrid Ed25519 + ML-DSA-65, and the two signature types are
+kept apart on purpose rather than merged into a union:
+
+* :data:`LedgerSignatureHex` -- the 3374-byte hybrid blob (6748 hex characters,
+  see :mod:`sccp.crypto.pq`). Identity, money and commitments use it:
+  transactions, match certificates, game results and stream checkpoints.
+* :data:`Ed25519SignatureHex` -- a 64-byte Ed25519 signature. The high-volume
+  streams use it: seat move messages, witness clock receipts and gossip. They
+  are anchored by a hybrid-signed commitment (``move_commitment`` on a result,
+  :class:`StreamCheckpoint` on evidence), so nothing is left resting on Ed25519
+  alone.
+
+A shared union type would let a classical signature satisfy a hybrid field, so
+there is exactly one type per role and no runtime scheme dispatch.
+
+Digests are lowercase hex of a 32-byte SHA-256 domain hash. The models
+deliberately do *not* verify signatures or recompute hashes: that is the job of
+:mod:`sccp.protocol.transcript`, :mod:`sccp.protocol.verification` and
+:mod:`sccp.protocol.commitments`, which can report a typed failure reason.
 """
 
 from __future__ import annotations
@@ -26,17 +37,14 @@ from sccp.config import MAX_PLIES_LIMIT
 DigestHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 """A 32-byte digest or 32-byte nonce, lowercase hex."""
 
-SignatureHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{128}$")]
-"""A 64-byte Ed25519 signature, lowercase hex."""
+Ed25519SignatureHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{128}$")]
+"""A 64-byte Ed25519 signature, lowercase hex (moves and witness receipts)."""
 
-HybridSignatureHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{6748}$")]
+LedgerSignatureHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{6748}$")]
 """A 3374-byte hybrid Ed25519 + ML-DSA-65 signature blob, lowercase hex."""
 
-TxSignatureHex = SignatureHex | HybridSignatureHex
-"""A ledger transaction signature: Ed25519, or hybrid on a version-1 address."""
-
-PublicKeyHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
-"""A raw 32-byte Ed25519 public key, lowercase hex."""
+HybridPublicKeyHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{3970}$")]
+"""A 1985-byte ``scheme || ed25519 || mldsa65`` public key blob, lowercase hex."""
 
 AddressText = Annotated[
     str,
@@ -89,6 +97,7 @@ class Transaction(ProtocolModel):
     and is validated by :mod:`sccp.chain.tx`, which keeps one canonical envelope
     and one place to audit per-type rules. The ``sender`` field serializes as
     ``"from"`` because that is the wire spelling; ``from`` is a Python keyword.
+    Every transaction carries a hybrid signature: there is no classical path.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
@@ -99,7 +108,7 @@ class Transaction(ProtocolModel):
     nonce: int = Field(ge=0)
     fee: int = Field(ge=0)
     payload: dict[str, object] = Field(default_factory=dict)
-    signature: TxSignatureHex | None = None
+    signature: LedgerSignatureHex | None = None
 
 
 class TimeControl(ProtocolModel):
@@ -199,8 +208,10 @@ class Matchup(ProtocolModel):
 class MatchCertificate(ProtocolModel):
     """The signed start-of-match commitment (PROTOCOL.md section 8.1).
 
-    ``start_signatures`` is keyed by colour and contains one signature per seat
-    over :func:`sccp.protocol.transcript.certificate_payload`.
+    ``start_signatures`` is keyed by colour and contains one *hybrid* signature
+    per seat over :func:`sccp.protocol.transcript.certificate_payload`. Signing
+    the certificate is what binds a seat's ML-DSA-65 key to the game, so a
+    quantum attacker cannot impersonate a player for the rest of the match.
     """
 
     network: str = Field(min_length=1, max_length=32)
@@ -215,18 +226,73 @@ class MatchCertificate(ProtocolModel):
     time_control: TimeControl = Field(
         default_factory=lambda: TimeControl(initial_ms=1_800_000, increment_ms=0)
     )
-    start_signatures: dict[Color, SignatureHex] = Field(default_factory=dict)
+    start_signatures: dict[Color, LedgerSignatureHex] = Field(default_factory=dict)
 
 
 class ClockWitnessSignature(ProtocolModel):
-    """One registered witness's signature over a clock receipt."""
+    """One registered witness's Ed25519 signature over a move or flag receipt.
+
+    Receipts are produced once per ply per witness, so they stay on the cheap
+    Ed25519 half and are anchored by the hybrid-signed
+    :class:`StreamCheckpoint` in the evidence bundle.
+    """
 
     witness: AddressText
-    signature: SignatureHex
+    signature: Ed25519SignatureHex
+
+
+class CheckpointSignature(ProtocolModel):
+    """One registered witness's *hybrid* signature over a stream checkpoint."""
+
+    witness: AddressText
+    signature: LedgerSignatureHex
+
+
+class CommittedMove(ProtocolModel):
+    """One ply inside a :class:`MoveEvidence` bundle (no per-ply signature).
+
+    The SAN and seat are the leaf of the committed move root, so the bundle only
+    needs the data plus the witness checkpoint: 2,000-odd hex characters per ply
+    of signatures are redundant once the root is hybrid-signed.
+    """
+
+    ply: int = Field(ge=0)
+    seat: AddressText
+    san: str = Field(min_length=1, max_length=16)
+
+
+class StreamCheckpoint(ProtocolModel):
+    """A witness-quorum hybrid signature over a folded stream root.
+
+    ``kind`` names the stream (``"moves"`` or ``"clock"``), ``ply`` is the number
+    of plies the root commits to and ``root`` is the fold produced by
+    :mod:`sccp.protocol.commitments`. Because the signature is hybrid, forging
+    the underlying Ed25519 stream is no longer enough to forge evidence.
+    """
+
+    network: str = Field(min_length=1, max_length=32)
+    kind: Literal["moves", "clock"]
+    match_id: DigestHex
+    ply: int = Field(ge=0)
+    root: DigestHex
+    witnesses: tuple[CheckpointSignature, ...] = ()
+
+
+class MoveEvidence(ProtocolModel):
+    """A compact, hybrid-anchored proof of a refused-checkmate move stream."""
+
+    moves: tuple[CommittedMove, ...] = Field(min_length=1, max_length=MAX_PLIES_LIMIT)
+    checkpoint: StreamCheckpoint
 
 
 class SignedMove(ProtocolModel):
     """A seat-signed move message (PROTOCOL.md section 8.4).
+
+    The signature is Ed25519 over the move payload: one cheap signature per ply
+    keeps live play fast and small. The whole stream is covered by a hybrid
+    signature later -- ``move_commitment`` in the result, or a
+    :class:`StreamCheckpoint` in evidence -- so the classical signature never
+    carries a claim on its own.
 
     ``clock_ms`` is deliberately absent: it is relay display data, never signed,
     and is carried by :class:`MoveMessage` for transport only.
@@ -237,7 +303,7 @@ class SignedMove(ProtocolModel):
     seat: AddressText
     ply: int = Field(ge=0)
     san: str = Field(min_length=1, max_length=16)
-    signature: SignatureHex
+    signature: Ed25519SignatureHex
 
 
 class MoveMessage(SignedMove):
@@ -274,11 +340,21 @@ class FlagReceipt(ProtocolModel):
 
 
 class ClockEvidence(ProtocolModel):
-    """Everything a verifier needs to settle a flag (PROTOCOL.md section 8.4)."""
+    """Everything a verifier needs to settle a flag (PROTOCOL.md section 8.4).
+
+    ``receipts`` is a *window* of at most
+    :data:`sccp.config.CLOCK_EVIDENCE_PLIES` consecutive receipts ending at the
+    flag, not the whole game. The first receipt in the window carries absolute
+    clock values and anchors the arithmetic; every later receipt is checked as a
+    delta from it. ``checkpoint`` is the witness quorum's hybrid signature over
+    the folded window (plus the flag receipt), which is what makes a forged
+    Ed25519 receipt useless as evidence and what bounds the bundle's size.
+    """
 
     time_control: TimeControl
     final: FlagReceipt
     receipts: tuple[MoveReceipt, ...] = ()
+    checkpoint: StreamCheckpoint
 
 
 class TimeoutClaim(ProtocolModel):
@@ -306,7 +382,8 @@ class GameResult(ProtocolModel):
     result: ResultValue
     termination: TerminationValue
     plies: int = Field(ge=1)
-    result_signatures: dict[Color, SignatureHex] = Field(default_factory=dict)
+    move_commitment: DigestHex
+    result_signatures: dict[Color, LedgerSignatureHex] = Field(default_factory=dict)
 
 
 class QualitySummary(ProtocolModel):
@@ -342,13 +419,14 @@ class WinProof(ProtocolModel):
     result: ResultValue
     termination: TerminationValue
     plies: int = Field(ge=1)
+    move_commitment: DigestHex
     low_ply: bool = False
     opening: OpeningRef
     pgn: str = Field(min_length=1, max_length=262_144)
     certificate: MatchCertificate
-    result_signatures: dict[Color, SignatureHex] = Field(default_factory=dict)
+    result_signatures: dict[Color, LedgerSignatureHex] = Field(default_factory=dict)
     clock_evidence: ClockEvidence | None = None
-    move_evidence: tuple[SignedMove, ...] | None = None
+    move_evidence: MoveEvidence | None = None
     timeout_claim_id: DigestHex | None = None
     quality_summary: QualitySummary | None = None
 
@@ -397,7 +475,7 @@ class Transcript(ProtocolModel):
 class RosterMember(ProtocolModel):
     """A roster entry plus its registered public key, used by offline verifiers."""
 
-    public_key: PublicKeyHex
+    public_key: HybridPublicKeyHex
     engine: EngineFingerprint | None = None
     max_games: int = Field(default=1, ge=1)
     funder: str | None = None
@@ -415,26 +493,31 @@ __all__ = [
     "BeaconReveal",
     "Block",
     "BlockHeader",
+    "CheckpointSignature",
     "ClockEvidence",
     "ClockWitnessSignature",
     "Color",
+    "CommittedMove",
     "DigestHex",
+    "Ed25519SignatureHex",
     "EngineFingerprint",
     "FlagReceipt",
     "GameResult",
+    "HybridPublicKeyHex",
+    "LedgerSignatureHex",
     "MatchCertificate",
     "Matchup",
+    "MoveEvidence",
     "MoveMessage",
     "MoveReceipt",
     "OpeningRef",
     "ProtocolModel",
-    "PublicKeyHex",
     "QualitySummary",
     "ResultValue",
     "Reveal",
     "RosterMember",
-    "SignatureHex",
     "SignedMove",
+    "StreamCheckpoint",
     "TerminationValue",
     "TimeControl",
     "TimeoutClaim",

@@ -19,7 +19,7 @@ import { Chess } from "chess.js";
 import type { WinProof } from "../types";
 import { DOMAINS, fromHex } from "./canonical";
 import { certificatePayload, openingHash } from "./certificate";
-import { verifyDomain } from "./keys";
+import { certificateMoveRoot } from "./commitment";
 import { canonicalGameHash, matchId, resultPayload, whiteSeat } from "./protocol";
 import { proofId } from "./proof";
 
@@ -30,17 +30,36 @@ export interface VerifyParams {
   quality_mode: "off" | "sampled";
 }
 
+/**
+ * Verifies one hybrid Ed25519 + ML-DSA-65 signature.
+ *
+ * The browser bundle has no ML-DSA implementation, so this is a hook rather than
+ * an import: pass `@noble/post-quantum`'s verifier (or a node's `/v1/verify`
+ * answer) and the certificate and result signature rules become real checks
+ * instead of reported skips.
+ */
+export type LedgerSignatureVerifier = (
+  publicKeyHex: string,
+  domain: string,
+  payload: unknown,
+  signatureHex: string,
+) => boolean;
+
 export interface VerifyContext {
   params: VerifyParams;
   /** The epoch's beacon as the *chain* derived it, never the proof's claim. */
   beacon: { network: string; epoch: number; hash: string };
-  /** Registered public keys of the two seats (from the epoch roster). */
+  /** Registered hybrid public keys of the two seats (from the epoch roster). */
   publicKeys: Record<string, string>;
+  /** Optional hybrid verifier; without it those two rules are skipped. */
+  verifyLedgerSignature?: LedgerSignatureVerifier;
 }
 
 export interface CheckResult {
   rule: string;
   ok: boolean;
+  /** `true` when the rule needs a primitive this bundle does not ship. */
+  skipped?: boolean;
   detail: string;
 }
 
@@ -63,6 +82,10 @@ export function verifyProof(
 ): { ok: boolean; checks: CheckResult[] } {
   const checks: CheckResult[] = [];
   const replay = new Chess();
+
+  const skip = (rule: string, detail: string): void => {
+    checks.push({ rule, ok: true, skipped: true, detail });
+  };
 
   const run = (rule: string, body: () => string): void => {
     try {
@@ -187,43 +210,56 @@ export function verifyProof(
     return expected;
   });
 
-  run("start signatures", () => {
-    for (const seat of ["white", "black"] as const) {
-      const address = seat === "white" ? proof.certificate.white : proof.certificate.black;
-      const publicKey = context.publicKeys[address];
-      if (publicKey === undefined) throw new Error(`no registered public key for ${address}`);
-      const signature = proof.certificate.start_signatures[seat];
-      if (signature === undefined) throw new Error(`the certificate has no ${seat} start signature`);
-      require(
-        verifyDomain(publicKey, DOMAINS.CERTIFICATE, certificatePayload(proof.certificate), signature),
-        `the ${seat} start signature does not verify`,
-      );
-    }
-    return "both seats signed the certificate";
-  });
+  const ledgerVerifier = context.verifyLedgerSignature;
+  const NO_MLDSA = "needs an ML-DSA-65 verifier (pass verifyLedgerSignature)";
 
-  run("result signatures", () => {
-    const payload = resultPayload({
-      network: proof.network,
-      match_id: proof.match_id,
-      game_hash: proof.game_hash,
-      result: proof.result,
-      termination: proof.termination,
-      plies: proof.plies,
+  if (ledgerVerifier === undefined) {
+    skip("start signatures", NO_MLDSA);
+  } else {
+    run("start signatures", () => {
+      const payload = certificatePayload(proof.certificate);
+      for (const seat of ["white", "black"] as const) {
+        const address = seat === "white" ? proof.certificate.white : proof.certificate.black;
+        const publicKey = context.publicKeys[address];
+        if (publicKey === undefined) throw new Error(`no registered public key for ${address}`);
+        const signature = proof.certificate.start_signatures[seat];
+        if (signature === undefined) throw new Error(`the certificate has no ${seat} start signature`);
+        require(
+          ledgerVerifier(publicKey, DOMAINS.CERTIFICATE, payload, signature),
+          `the ${seat} start signature does not verify`,
+        );
+      }
+      return "both seats signed the certificate";
     });
-    for (const seat of ["white", "black"] as const) {
-      const address = seat === "white" ? proof.certificate.white : proof.certificate.black;
-      const publicKey = context.publicKeys[address];
-      if (publicKey === undefined) throw new Error(`no registered public key for ${address}`);
-      const signature = proof.result_signatures[seat];
-      if (signature === undefined) throw new Error(`no ${seat} result signature`);
-      require(
-        verifyDomain(publicKey, DOMAINS.RESULT, payload, signature),
-        `the ${seat} result signature does not verify`,
-      );
-    }
-    return "both seats signed the result";
+  }
+
+  const signedResult = resultPayload({
+    network: proof.network,
+    match_id: proof.match_id,
+    game_hash: proof.game_hash,
+    result: proof.result,
+    termination: proof.termination,
+    plies: proof.plies,
+    move_commitment: proof.move_commitment,
   });
+  if (ledgerVerifier === undefined) {
+    skip("result signatures", NO_MLDSA);
+  } else {
+    run("result signatures", () => {
+      for (const seat of ["white", "black"] as const) {
+        const address = seat === "white" ? proof.certificate.white : proof.certificate.black;
+        const publicKey = context.publicKeys[address];
+        if (publicKey === undefined) throw new Error(`no registered public key for ${address}`);
+        const signature = proof.result_signatures[seat];
+        if (signature === undefined) throw new Error(`no ${seat} result signature`);
+        require(
+          ledgerVerifier(publicKey, DOMAINS.RESULT, signedResult, signature),
+          `the ${seat} result signature does not verify`,
+        );
+      }
+      return "both seats signed the result";
+    });
+  }
 
   run("low ply flag", () => {
     const expected = proof.plies < context.params.min_plies;

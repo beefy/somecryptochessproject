@@ -9,6 +9,7 @@ from hypothesis import strategies as st
 from sccp.config import NETWORKS
 from sccp.crypto.address import address_hash, decode_address, encode_address, validate_address
 from sccp.crypto.keys import SEED_SIZE, keypair_from_seed, verify
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.crypto.wallet import mnemonic_to_seed, seed_to_mnemonic
 from sccp.errors import KeyEncodingError
 
@@ -18,7 +19,7 @@ SEEDS = st.binary(min_size=SEED_SIZE, max_size=SEED_SIZE)
 @settings(max_examples=25, deadline=None)
 @given(SEEDS)
 def test_address_round_trips_on_every_network(seed: bytes) -> None:
-    public_key = keypair_from_seed(seed).public_key_bytes
+    public_key = hybrid_keypair_from_seed(seed).public_key_bytes
     for params in NETWORKS.values():
         encoded = encode_address(public_key, params)
         decoded = decode_address(encoded)
