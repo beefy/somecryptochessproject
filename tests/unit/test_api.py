@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from sccp.chain.genesis import faucet_keypair
+from sccp.chain.mempool import Mempool
 from sccp.chain.tx import txid
 from sccp.config import DEVNET, TESTNET
 from sccp.crypto.address import encode_address
@@ -190,6 +191,101 @@ def test_compat_shim_serves_a_genesis_only_node() -> None:
         payload = client.get("/v1/status").json()
     assert payload["network"] == "devnet"
     assert payload["height"] == 0
+
+
+# --- the explorer's list endpoints -----------------------------------------
+
+
+def test_block_list_walks_back_from_the_tip(
+    devnet_chain: Any, mine_block: Any
+) -> None:
+    """``GET /v1/blocks`` is newest first and pages with ``before_height``."""
+    service = _node()
+    for _ in range(3):
+        service.ingest_block(mine_block(devnet_chain, MINER))
+    with _client(service) as client:
+        page = client.get("/v1/blocks?limit=2").json()
+        older = client.get("/v1/blocks?limit=2&before_height=2").json()
+        too_many = client.get("/v1/blocks?limit=500")
+    assert page["network"] == "devnet"
+    assert page["tip_height"] == 3
+    assert [row["height"] for row in page["blocks"]] == [3, 2]
+    assert [row["height"] for row in older["blocks"]] == [1, 0]
+    assert page["blocks"][0]["miner"] == MINER_ADDRESS
+    assert page["blocks"][0]["parent_hash"] == page["blocks"][1]["hash"]
+    assert too_many.status_code == 422
+    service.close()
+
+
+def test_game_list_shows_pending_then_settled_results(
+    live_chain: Any, chain_match: Any, mine_block: Any, miner_keys: dict[str, Any]
+) -> None:
+    """A proof in the pool lists as pending; once mined the row carries the result."""
+    chain = live_chain.chain
+    match = chain_match(chain, epoch=3)
+    service = NodeService(
+        params=chain.params,
+        chain=chain,
+        mempool=Mempool(params=chain.params, tip_state=chain.state, book=chain.book),
+    )
+    service.mempool.add_proof(match.proof)
+    with _client(service) as client:
+        pending = client.get("/v1/games").json()["games"]
+    assert [row["game_hash"] for row in pending] == [match.proof.game_hash]
+    assert pending[0]["in_mempool"] is True
+    assert pending[0]["height"] is None
+    assert pending[0]["result"] == match.proof.result
+
+    block = mine_block(chain, miner_keys[match.proof.winner], proofs=(match.proof,))
+    service.mempool = Mempool(params=chain.params, tip_state=chain.state, book=chain.book)
+    with _client(service) as client:
+        settled = client.get("/v1/games").json()["games"]
+        older = client.get(f"/v1/games?before_height={block.height}").json()["games"]
+    assert [row["game_hash"] for row in settled] == [match.proof.game_hash]
+    row = settled[0]
+    assert row["height"] == block.height
+    assert row["in_mempool"] is False
+    assert row["winner"] == match.proof.winner
+    assert row["loser"] == match.proof.loser
+    assert row["winner_seat"] == match.proof.winner_seat
+    assert row["termination"] == match.proof.termination
+    assert row["plies"] == match.proof.plies
+    assert row["epoch"] == match.proof.epoch
+    assert row["match_id"] == match.proof.match_id
+    assert row["challenge_status"] == "none"
+    assert older == []
+    service.close()
+
+
+def test_a_built_explorer_is_served_next_to_the_api(tmp_path: Path) -> None:
+    """``web_root`` mounts a static client without shadowing the JSON API."""
+    (tmp_path / "index.html").write_text(
+        "<!doctype html><title>explorer</title>", encoding="utf-8"
+    )
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
+    service = _node()
+    with client_for(create_app(service, web_root=tmp_path)) as client:
+        page = client.get("/")
+        asset = client.get("/assets/app.js")
+        api = client.get("/v1/status")
+    assert page.status_code == 200
+    assert "explorer" in page.text
+    assert asset.status_code == 200
+    assert api.json()["network"] == "devnet"
+    service.close()
+
+
+def test_web_dist_root_honours_the_environment_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A container points ``SCCP_WEB_DIST`` at whatever it built."""
+    from sccp.node.app import WEB_DIST_ENV, web_dist_root
+
+    monkeypatch.setenv(WEB_DIST_ENV, str(tmp_path))
+    assert web_dist_root() is None
+    (tmp_path / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    assert web_dist_root() == tmp_path
 
 
 # --- the OpenAPI contract ---------------------------------------------------

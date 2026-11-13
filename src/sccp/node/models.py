@@ -14,11 +14,15 @@ from typing import Literal
 from pydantic import Field
 
 from sccp.protocol.models import (
+    AddressText,
     Beacon,
     Block,
+    Color,
     MatchCertificate,
     ProtocolModel,
+    ResultValue,
     RosterMember,
+    TerminationValue,
     Transcript,
     TxType,
 )
@@ -248,15 +252,81 @@ class FaucetView(ProtocolModel):
     txid: str = Field(min_length=1)
 
 
+class BlockSummary(ProtocolModel):
+    """One row of ``GET /v1/blocks``: enough to list a block, not to verify it.
+
+    The full block is one request away at ``GET /v1/blocks/{height}``; a list
+    response stays small so an explorer can page the tip without shipping every
+    proof's PGN.
+    """
+
+    hash: str
+    parent_hash: str
+    height: int = Field(ge=0)
+    timestamp: int = Field(ge=0)
+    epoch: int = Field(ge=0)
+    miner: AddressText
+    transactions: int = Field(ge=0)
+    proofs: int = Field(ge=0)
+    wins_required: int = Field(ge=1)
+    seal_bits: int = Field(ge=0, le=32)
+
+
+class BlockList(ProtocolModel):
+    """``GET /v1/blocks``: the newest blocks on the adopted branch, tip first."""
+
+    network: str = Field(min_length=1)
+    tip_height: int = Field(ge=0)
+    blocks: tuple[BlockSummary, ...] = ()
+
+
+class GameSummary(ProtocolModel):
+    """One row of ``GET /v1/games``: a settled proof, or one waiting for a block.
+
+    ``height`` is the block the proof settled in and is ``None`` for a proof
+    that is still in the mempool (``in_mempool``). The result fields are filled
+    from the proof itself, so they are ``None`` only when this node no longer
+    holds the block body (a pruned or snapshotted chain).
+    """
+
+    game_hash: str
+    proof_id: str
+    match_id: str | None = None
+    epoch: int | None = Field(default=None, ge=0)
+    round: int | None = Field(default=None, ge=0)
+    winner: AddressText
+    loser: AddressText | None = None
+    winner_seat: Color | None = None
+    result: ResultValue | None = None
+    termination: TerminationValue | None = None
+    plies: int | None = Field(default=None, ge=1)
+    height: int | None = Field(default=None, ge=0)
+    in_mempool: bool = False
+    low_ply: bool = False
+    challenge_status: Literal["none", "open", "upheld", "rejected"] = "none"
+    quality_verdict: Literal["pass", "fail"] | None = None
+
+
+class GameList(ProtocolModel):
+    """``GET /v1/games``: pending proofs first, then newest settle first."""
+
+    network: str = Field(min_length=1)
+    games: tuple[GameSummary, ...] = ()
+
+
 __all__ = [
     "AccountView",
     "BlockIngest",
+    "BlockList",
+    "BlockSummary",
     "BlockView",
     "DifficultyPoint",
     "DifficultyView",
     "EpochView",
     "FaucetRequest",
     "FaucetView",
+    "GameList",
+    "GameSummary",
     "GameView",
     "GossipResult",
     "MatchInfo",

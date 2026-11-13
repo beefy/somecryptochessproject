@@ -232,3 +232,12 @@ __marimo__/
 
 # Local docker-compose stack state written by `make stack`
 .stack/
+
+# Node / web explorer toolchain (src/web). `dist/`, `*.log` and `.env` are
+# already covered above; these are the rest of what npm, vite and tsc write.
+node_modules/
+*.tsbuildinfo
+npm-debug.log*
+.yarn/
+.pnpm-store/
+.eslintcache
