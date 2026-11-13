@@ -48,20 +48,31 @@ class ASGITransport(httpx.BaseTransport):
             "server": (request.url.host, request.url.port or 80),
         }
         sent = False
+        finished = asyncio.Event()
 
         async def receive() -> dict[str, Any]:
             nonlocal sent
-            if sent:
-                return {"type": "http.disconnect"}
-            sent = True
-            return {"type": "http.request", "body": body, "more_body": False}
+            if not sent:
+                sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            # A socket server blocks here until the peer hangs up; the request
+            # body is already complete. Reporting ``http.disconnect`` at once
+            # would be a lie, and Starlette believes it: a ``FileResponse``
+            # watches for a disconnect and cancels its body stream, so the
+            # caller would see headers with no content. Block until the app has
+            # produced its whole response instead.
+            await finished.wait()
+            return {"type": "http.disconnect"}
 
         messages: list[dict[str, Any]] = []
 
         async def send(message: dict[str, Any]) -> None:
             messages.append(message)
 
-        await self.app(scope, receive, send)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            finished.set()
         return self._response(request, messages)
 
     @staticmethod

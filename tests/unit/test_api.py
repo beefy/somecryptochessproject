@@ -240,10 +240,10 @@ def test_game_list_shows_pending_then_settled_results(
     service.mempool = Mempool(params=chain.params, tip_state=chain.state, book=chain.book)
     with _client(service) as client:
         settled = client.get("/v1/games").json()["games"]
-        older = client.get(f"/v1/games?before_height={block.height}").json()["games"]
+        older = client.get(f"/v1/games?before_height={chain.height}").json()["games"]
     assert [row["game_hash"] for row in settled] == [match.proof.game_hash]
     row = settled[0]
-    assert row["height"] == block.height
+    assert row["height"] == chain.height
     assert row["in_mempool"] is False
     assert row["winner"] == match.proof.winner
     assert row["loser"] == match.proof.loser
