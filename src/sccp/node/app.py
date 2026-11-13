@@ -34,6 +34,7 @@ from sccp.node.models import (
     FaucetRequest,
     FaucetView,
     GameList,
+    GamePgn,
     GameView,
     GossipResult,
     MatchInfo,
@@ -197,6 +198,10 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     @app.get("/v1/games/{game_hash}", response_model=GameView)
     def game(game_hash: str) -> GameView:
         return service.game(game_hash)
+
+    @app.get("/v1/games/{game_hash}/pgn", response_model=GamePgn)
+    def game_pgn(game_hash: str) -> GamePgn:
+        return service.game_pgn(game_hash)
 
     @app.get("/v1/matches/{match_id}", response_model=MatchInfo)
     def match(match_id: str) -> MatchInfo:

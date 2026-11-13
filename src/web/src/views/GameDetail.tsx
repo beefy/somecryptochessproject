@@ -4,14 +4,16 @@
  * The game hash is the identity here, not the match id: `/v1/games/{hash}` is the
  * canonical lookup, and the transcript (seats, opening, both start signatures,
  * the co-signed result) is fetched separately because a node only serves it for
- * matches it has actually seen.
+ * matches it has actually seen. The PGN therefore has two sources: the transcript
+ * when there is one, and otherwise the proof body in the block that settled the
+ * game, which every node that followed the chain still holds.
  */
 
 import type { ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 import { Text } from "react-native-paper";
 
-import { fetchGame, fetchTranscript } from "../api";
+import { fetchGame, fetchGamePgn, fetchTranscript, NotFoundError } from "../api";
 import {
   CodeBlock,
   EmptyState,
@@ -43,6 +45,24 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
     },
     [matchId],
   );
+  const seenPgn = transcript.data?.pgn;
+  const proofPgn = useResource(
+    async (signal) => {
+      // The transcript already carries the PGN; ask the node for the proof's
+      // copy only when it does not, which is the case for a node that followed
+      // the chain without caching the match.
+      if (seenPgn !== undefined) return undefined;
+      try {
+        return await fetchGamePgn(gameHash, signal);
+      } catch (error) {
+        // Settled on a node that snapshotted the block away: the game exists,
+        // the body does not. The section says so rather than failing the page.
+        if (error instanceof NotFoundError) return undefined;
+        throw error;
+      }
+    },
+    [gameHash, seenPgn],
+  );
 
   if (game.error !== undefined) return <FailureNotice error={game.error} />;
   if (game.data === undefined) return <Loading />;
@@ -51,6 +71,7 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
   const seen = transcript.data;
   const certificate = seen?.certificate;
   const result = seen?.result;
+  const pgn = seen?.pgn ?? proofPgn.data?.pgn;
 
   return (
     <>
@@ -140,16 +161,26 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
         </Section>
       )}
 
-      <Section
-        title="PGN"
-        subtitle={
-          seen === undefined ? "this node has no transcript for the match" : "as replayed during verification"
-        }
-      >
-        {seen === undefined ? <EmptyState>No transcript available for this game</EmptyState> : <CodeBlock>{seen.pgn}</CodeBlock>}
+      <Section title="PGN" subtitle={pgnSubtitle(seen !== undefined, pgn !== undefined)}>
+        {pgn === undefined ? (
+          proofPgn.loading ? (
+            <Loading />
+          ) : (
+            <EmptyState>No PGN available for this game</EmptyState>
+          )
+        ) : (
+          <CodeBlock>{pgn}</CodeBlock>
+        )}
       </Section>
     </>
   );
+}
+
+/** Where the move text came from, or why this node cannot show it. */
+function pgnSubtitle(fromTranscript: boolean, pgnKnown: boolean): string {
+  if (fromTranscript) return "as replayed during verification";
+  if (pgnKnown) return "from the proof body, the record that settled the game";
+  return "this node holds no block body for this game";
 }
 
 /** Settlement state as a pill label. */

@@ -148,6 +148,19 @@ class GameView(ProtocolModel):
     quality_trace_hash: str | None = None
 
 
+class GamePgn(ProtocolModel):
+    """``GET /v1/games/{game_hash}/pgn``: the move text a proof carries.
+
+    The game page needs the PGN even when this node never cached a transcript
+    for the match, which is the common case for a node that only followed the
+    chain: the proof body in its block has it, so the body is the source.
+    """
+
+    game_hash: str
+    network: str = Field(min_length=1)
+    pgn: str = Field(min_length=1)
+
+
 class MatchInfo(ProtocolModel):
     """``GET /v1/matches/{match_id}``: transcript metadata known to the node."""
 

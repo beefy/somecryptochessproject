@@ -831,6 +831,7 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/epochs/{epoch}/beacon` | `Beacon` (404 when the chain has none) |
 | GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |
 | GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, height, mempool flag |
+| GET | `/v1/games/{game_hash}/pgn` | `GamePgn`: the move text the proof for that game carries (404 when this node holds no block body for it) |
 | GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, certificate, transcript |
 | GET | `/v1/matches/{match_id}/transcript` | `Transcript` |
 | GET | `/v1/mempool` | `MempoolView`: pending txids and proof ids |

@@ -255,6 +255,41 @@ def test_game_list_shows_pending_then_settled_results(
     service.close()
 
 
+def test_game_pgn_route_serves_the_proof_body(
+    live_chain: Any, chain_match: Any, mine_block: Any, miner_keys: dict[str, Any]
+) -> None:
+    """``GET /v1/games/{hash}/pgn`` quotes the proof, transcript or not.
+
+    The moves live in the proof body, so the game page can show the PGN for a
+    match this node never cached; once mined the same body still answers.
+    """
+    chain = live_chain.chain
+    match = chain_match(chain, epoch=3)
+    service = NodeService(
+        params=chain.params,
+        chain=chain,
+        mempool=Mempool(params=chain.params, tip_state=chain.state, book=chain.book),
+    )
+    service.mempool.add_proof(match.proof)
+    with _client(service) as client:
+        pending = client.get(f"/v1/games/{match.proof.game_hash}/pgn")
+        unknown = client.get("/v1/games/unknown/pgn")
+    assert pending.status_code == 200, pending.text
+    assert pending.json() == {
+        "game_hash": match.proof.game_hash,
+        "network": "devnet",
+        "pgn": match.proof.pgn,
+    }
+    assert unknown.status_code == 404
+
+    mine_block(chain, miner_keys[match.proof.winner], proofs=(match.proof,))
+    service.mempool = Mempool(params=chain.params, tip_state=chain.state, book=chain.book)
+    with _client(service) as client:
+        settled = client.get(f"/v1/games/{match.proof.game_hash}/pgn").json()
+    assert settled["pgn"] == match.proof.pgn
+    service.close()
+
+
 def test_a_built_explorer_is_served_next_to_the_api(tmp_path: Path) -> None:
     """``web_root`` mounts a static client without shadowing the JSON API."""
     (tmp_path / "index.html").write_text("<!doctype html><title>explorer</title>", encoding="utf-8")

@@ -9,6 +9,12 @@ not itemised here.
 
 ### Added
 
+- `GET /v1/games/{game_hash}/pgn`: the move text a settlement proof carries, so
+  a game page can print the PGN on a node that never cached the match's
+  transcript. The moves live in the proof body inside its block, which is what
+  the route reads; a node that snapshotted the block away answers 404 with a
+  reason instead of an empty PGN. The explorer's game page now falls back to it,
+  which is the common case for a node that only followed the chain.
 - `.github/workflows/deploy-explorer.yml`: on every merge that touches `src/web`
   or `deploy/explorer`, build the bundle and publish it to
   `explorer.somecryptochessproject.com` over SSH, as a release directory behind a
