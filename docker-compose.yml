@@ -168,10 +168,11 @@ services:
     command:
       - --node
       - http://node:8645
-    # Ordinary wallet usage on top of the drip: each cycle seats 2-10 wallets,
-    # funds them from the faucet, sends 1-10 transfers between them and waits for
-    # both phases to be mined, then idles for 1-5 minutes. It holds no roster slot
-    # and builds no blocks; the node admits every transfer like any wallet's.
+    # Ordinary wallet usage on top of the drip: it creates ten wallets and funds
+    # them, then each cycle picks 2-10, tops up the short ones, sends 1-10 transfers
+    # between them and waits for both phases to be mined, then idles for 1-5
+    # minutes. It holds no roster slot and builds no blocks; the node admits every
+    # transfer like any wallet's.
     #
     # It runs beside the miners rather than on its own VM because its lifetime is
     # the chain's: the deploy starts from empty volumes, so a generator that

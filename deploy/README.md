@@ -38,7 +38,7 @@ proof to settle.
 | `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 60 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers both miners, commits and reveals availability, writes `relay.json` from epoch 3 |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
-| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645` | seats 2-10 reproducible wallets per cycle, funds the short ones from the faucet, sends 1-10 transfers between them, waits for both phases to be mined, then idles 1-5 minutes |
+| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle picks 2-10 of them, tops up the short ones from the faucet, sends 1-10 transfers between the pool's wallets, waits for both phases to be mined, and idles 1-5 minutes |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
 | `miner-1`, `miner-2` | `sccp miner run --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-1.nonce` | join, play, co-sign, announce win proofs and commit/reveal their own availability |
 

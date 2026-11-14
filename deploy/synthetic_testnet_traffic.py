@@ -3,9 +3,9 @@
 ``drip_testnet_traffic`` keeps an epoch supplied with the one piece of ledger work
 every block needs, but it only acts on an *empty* pool with a single faucet
 transfer: it keeps the chain moving, it does not exercise what a user does. This
-script does. Every cycle it
+script does. It creates its whole pool on startup, then every cycle it
 
-1. seats 2-10 wallets (a random count),
+1. picks 2-10 wallets from that pool (a random count),
 2. funds each one from the faucet, topping up only those that are short,
 3. waits for those grants to be mined,
 4. sends 1-10 transfers between the wallets,
@@ -26,6 +26,10 @@ Two properties keep the loop solvent and accepted by consensus:
   state, not the mempool projection, so several grants or transfers from one
   account must be numbered by the client -- the same rule ``docs/RUNBOOK.md``
   gives an operator sending two transactions in a row.
+
+Only this cycle's own transactions are waited on, never an empty pool:
+``drip_testnet_traffic`` refills a drained pool within a block, so a generator that
+waited for the pool to empty would wait forever.
 
 The public faucet allows five grants per client per hour and one per address, and
 every request here leaves one container IP. A cycle that seats more wallets than
@@ -232,12 +236,17 @@ class FaucetGateway:
         *,
         params: NetworkParams = TESTNET,
         use_faucet_endpoint: bool = True,
+        wait_seconds: float = WAIT_SECONDS,
+        poll_seconds: float = POLL_SECONDS,
     ) -> None:
         self._client = client
         self._params = params
         self._allow_endpoint = use_faucet_endpoint
         self._use_endpoint = use_faucet_endpoint
         self._nonce = 0
+        self._wait_seconds = wait_seconds
+        self._poll_seconds = poll_seconds
+        self._endpoint_grants: list[str] = []
         keypair = faucet_keypair(params.network_id)
         self._faucet = Wallet(
             index=-1,
@@ -254,6 +263,7 @@ class FaucetGateway:
         """
         self._use_endpoint = self._allow_endpoint
         self._nonce = nonce(self._client, self._faucet.address)
+        self._endpoint_grants.clear()
 
     def grant(self, address: str, coins: int) -> tuple[str, bool]:
         """Fund ``address``; return ``(txid, went through the faucet endpoint)``."""
@@ -262,15 +272,35 @@ class FaucetGateway:
                 digest = claim_from_faucet(self._client, address, coins)
             except FaucetRefused as exc:
                 self._use_endpoint = False
+                self._settle_endpoint_grants()
                 print(
                     f"traffic: {str(exc).strip()}; signing the rest of this cycle's grants "
                     "with the published faucet key",
                     file=sys.stderr,
                 )
             else:
-                self._nonce += 1
+                self._endpoint_grants.append(digest)
                 return digest, True
         return self._grant_with_key(address, coins), False
+
+    def _settle_endpoint_grants(self) -> None:
+        """Wait out this cycle's endpoint grants before numbering with the key.
+
+        The faucet route numbers against the mempool projection while
+        ``GET /v1/accounts`` reports the tip, so the two only agree once a block has
+        mined those grants. Settling first is what keeps the key path from reusing
+        a nonce the endpoint already spent.
+        """
+        if not self._endpoint_grants:
+            return
+        wait_for_transactions(
+            self._client,
+            self._endpoint_grants,
+            wait_seconds=self._wait_seconds,
+            poll_seconds=self._poll_seconds,
+        )
+        self._endpoint_grants.clear()
+        self._nonce = nonce(self._client, self._faucet.address)
 
     def _grant_with_key(self, address: str, coins: int) -> str:
         tx = transfer_transaction(
@@ -286,25 +316,6 @@ class FaucetGateway:
 
 
 # -- pacing ------------------------------------------------------------------
-
-
-def wait_for_empty_pool(
-    client: httpx.Client,
-    *,
-    wait_seconds: float = WAIT_SECONDS,
-    poll_seconds: float = POLL_SECONDS,
-) -> None:
-    """Wait until the pool holds nothing, so every committed nonce is final.
-
-    ``GET /v1/accounts`` reports the tip state, not the mempool projection, so a
-    nonce read while a transfer is still in the pool is one behind. Draining the
-    pool first is what lets the gateway number its grants itself.
-    """
-    deadline = time.monotonic() + wait_seconds
-    while pending_txids(client):
-        if time.monotonic() >= deadline:
-            raise TrafficError(f"the mempool still held transactions after {wait_seconds:g}s")
-        time.sleep(poll_seconds)
 
 
 def wait_for_transactions(
@@ -365,33 +376,26 @@ DEFAULT_OPTIONS: Final = Options()
 """The testnet defaults, shared so no function takes a constructed default argument."""
 
 
-def _seat(
-    pool: list[Wallet],
-    seats: int,
-    rng: random.Random,
-    params: NetworkParams,
-) -> list[Wallet]:
-    """Grow ``pool`` to ``seats`` wallets and return the ones this cycle uses."""
-    while len(pool) < seats:
-        pool.append(wallet(len(pool), params))
+def _seat(pool: Sequence[Wallet], seats: int, rng: random.Random) -> list[Wallet]:
+    """Pick the wallets this cycle sends from."""
     if seats >= len(pool):
         return list(pool)
-    return rng.sample(pool, seats)
+    return rng.sample(list(pool), seats)
 
 
 def _fund(
     client: httpx.Client,
-    active: Sequence[Wallet],
+    wallets: Sequence[Wallet],
     *,
     gateway: FaucetGateway,
     options: Options,
     params: NetworkParams,
 ) -> tuple[list[str], int]:
-    """Top up every seated wallet that is short; return its txids and the HTTP count."""
+    """Top up every wallet that is short; return its txids and the HTTP count."""
     minimum = coins_to_units(options.min_balance_coins)
     grants: list[str] = []
     via_endpoint = 0
-    for item in active:
+    for item in wallets:
         if balance(client, item.address) >= minimum:
             continue
         digest, endpoint = gateway.grant(item.address, options.grant_coins)
@@ -455,17 +459,25 @@ def run_cycle(
     wallet_count: int | None = None,
     transfer_count: int | None = None,
 ) -> CycleReport:
-    """Seat, fund, spend and confirm one cycle, growing ``pool`` as the cap allows."""
-    seats = wallet_count if wallet_count is not None else rng.randint(MIN_WALLETS, MAX_WALLETS)
-    seats = max(MIN_WALLETS, min(seats, options.max_wallets))
-    active = _seat(pool, seats, rng, params)
+    """Seat, fund, spend and confirm one cycle from a pre-seated ``pool``.
 
-    wait_for_empty_pool(
-        client, wait_seconds=options.wait_seconds, poll_seconds=options.poll_seconds
+    The whole pool is funded on the first cycle, so every wallet exists and holds
+    coins from the start; later cycles only top up the ones this cycle spends.
+    """
+    seats = wallet_count if wallet_count is not None else rng.randint(MIN_WALLETS, MAX_WALLETS)
+    seats = max(MIN_WALLETS, min(seats, options.max_wallets, len(pool)))
+    active = _seat(pool, seats, rng)
+    targets = list(pool) if cycle == 1 else active
+
+    gateway = FaucetGateway(
+        client,
+        params=params,
+        use_faucet_endpoint=options.use_faucet_endpoint,
+        wait_seconds=options.wait_seconds,
+        poll_seconds=options.poll_seconds,
     )
-    gateway = FaucetGateway(client, params=params, use_faucet_endpoint=options.use_faucet_endpoint)
     gateway.start_cycle()
-    grants, faucet_grants = _fund(client, active, gateway=gateway, options=options, params=params)
+    grants, faucet_grants = _fund(client, targets, gateway=gateway, options=options, params=params)
     confirmed = (
         wait_for_transactions(
             client,
@@ -545,11 +557,11 @@ def run(
 ) -> list[CycleReport]:
     """Run cycles until interrupted (or ``cycles`` times) and return the reports."""
     generator = random.Random() if rng is None else rng
-    pool: list[Wallet] = []
+    pool = [wallet(index, params) for index in range(options.max_wallets)]
     print(
-        f"synthetic traffic on {params.network_id}: {MIN_WALLETS}-{MAX_WALLETS} wallets, "
-        f"{MIN_TRANSFERS}-{MAX_TRANSFERS} sends of up to "
-        f"{format_coins(coins_to_units(options.max_transfer_coins))} coins each",
+        f"synthetic traffic on {params.network_id}: {len(pool)} wallets, "
+        f"{MIN_WALLETS}-{len(pool)} active per cycle, {MIN_TRANSFERS}-{MAX_TRANSFERS} sends "
+        f"of up to {format_coins(coins_to_units(options.max_transfer_coins))} coins each",
         flush=True,
     )
     reports: list[CycleReport] = []

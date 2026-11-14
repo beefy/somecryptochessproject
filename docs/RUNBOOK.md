@@ -39,8 +39,8 @@ Healthy after a deploy means:
   (draws produce no proof).
 
 `deploy/check_testnet_stack.py` automates the first two checks. The deploy
-workflow runs it inside the node container, then waits for the first `cycle 1:`
-line from `traffic`.
+workflow runs it inside the node container and then prints the `traffic` log;
+the generator paces itself, so it is watched rather than gated on.
 
 ## Synthetic traffic
 
@@ -52,9 +52,13 @@ exercises the paths a user takes:
   availability/reveal transactions, so without this the chain would run a block
   short at an epoch boundary that has no decisive game.
 - `traffic` (`deploy/synthetic_testnet_traffic.py`) is ordinary usage on top of
-  that. Each cycle it seats a random 2-10 wallets, funds the ones that are short,
-  waits for the grants to be mined, sends a random 1-10 transfers between those
-  wallets, waits for those to be mined, then idles for 1-5 minutes.
+  that. It creates its whole pool of ten wallets on startup and funds them in the
+  first cycle. Each later cycle picks a random 2-10 of them, tops up the ones that
+  are short, waits for its grants to be mined, sends 1-10 transfers between the
+  pool's wallets, waits for those to be mined, then idles for 1-5 minutes.
+
+Because `drip` refills the pool as soon as it drains, the generator never waits for
+an empty mempool: it tracks the txids it submitted and waits for those to leave.
 
 ```bash
 docker compose logs -f traffic   # one "cycle N: ..." line per cycle

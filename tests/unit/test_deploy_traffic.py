@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import random
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 
 import httpx
 import pytest
@@ -53,6 +53,7 @@ def _transport(
     faucet_status: int | None = None,
     mined_height: int = 20,
     settles_immediately: bool = False,
+    pool_noise: Sequence[str] = (),
 ) -> httpx.MockTransport:
     """Route the generator's requests into the real node.
 
@@ -70,6 +71,7 @@ def _transport(
             view = node.mempool_view().model_dump(mode="json")
             if settles_immediately:
                 view["transactions"] = []
+            view["transactions"] = [*view["transactions"], *pool_noise]
             return httpx.Response(200, json=view)
         if path.startswith("/v1/accounts/"):
             address = path.removeprefix("/v1/accounts/")
@@ -121,7 +123,7 @@ def test_traffic_wallets_are_fixed_testnet_addresses() -> None:
 
 def test_a_cycle_funds_three_wallets_and_spends_between_them(node: NodeService) -> None:
     """Every grant and every send is an ordinary node-admitted transaction."""
-    pool: list[traffic.Wallet] = []
+    pool = [traffic.wallet(index) for index in range(3)]
     with httpx.Client(transport=_transport(node), base_url="http://node") as client:
         report = traffic.run_cycle(
             client,
@@ -133,7 +135,6 @@ def test_a_cycle_funds_three_wallets_and_spends_between_them(node: NodeService) 
             options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
         )
 
-    assert len(pool) == 3
     assert (report.wallet_count, report.funded, report.transfers) == (3, 3, 4)
     assert (report.faucet_grants, report.operator_grants) == (3, 0)
     assert report.confirmed == 7
@@ -166,6 +167,34 @@ def test_a_cycle_funds_three_wallets_and_spends_between_them(node: NodeService) 
         assert sorted(nonces) == list(range(len(nonces)))
 
 
+def test_run_seats_and_funds_the_whole_pool_up_front(
+    node: NodeService,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Every wallet exists from the first cycle, rather than growing over time."""
+    with httpx.Client(
+        transport=_transport(node, settles_immediately=True), base_url="http://node"
+    ) as client:
+        reports = traffic.run(
+            client,
+            options=traffic.Options(
+                max_wallets=4,
+                wait_seconds=0.0,
+                poll_seconds=0.0,
+                idle_min_seconds=1.0,
+                idle_max_seconds=1.0,
+            ),
+            rng=random.Random(3),
+            cycles=1,
+            sleep=lambda _: None,
+        )
+
+    assert [(report.wallet_count, report.funded) for report in reports] == [(4, 4)]
+    grants = [tx for tx in _admitted(node) if tx.sender == _faucet_address()]
+    assert len({tx.payload["to"] for tx in grants}) == 4
+    assert "4 wallets" in capsys.readouterr().out
+
+
 def test_a_rate_limited_faucet_falls_back_to_the_published_key(
     node: NodeService,
     capsys: pytest.CaptureFixture[str],
@@ -177,7 +206,7 @@ def test_a_rate_limited_faucet_falls_back_to_the_published_key(
         report = traffic.run_cycle(
             client,
             cycle=1,
-            pool=[],
+            pool=[traffic.wallet(index) for index in range(2)],
             rng=random.Random(5),
             wallet_count=2,
             transfer_count=1,
@@ -188,6 +217,24 @@ def test_a_rate_limited_faucet_falls_back_to_the_published_key(
     assert "published faucet key" in capsys.readouterr().err
     grants = [tx for tx in _admitted(node) if tx.sender == _faucet_address()]
     assert sorted(tx.nonce for tx in grants) == [0, 1]
+
+
+def test_a_busy_mempool_does_not_stall_a_cycle(node: NodeService) -> None:
+    """The drip service keeps the pool busy, so a cycle only waits on its own work."""
+    with httpx.Client(
+        transport=_transport(node, pool_noise=["ab" * 32]), base_url="http://node"
+    ) as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=1,
+            pool=[traffic.wallet(index) for index in range(2)],
+            rng=random.Random(9),
+            wallet_count=2,
+            transfer_count=2,
+            options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
+        )
+
+    assert (report.funded, report.transfers, report.confirmed) == (2, 2, 4)
 
 
 def test_run_waits_between_cycles_and_stops_on_request(
@@ -247,8 +294,14 @@ def test_pending_txids_rejects_a_malformed_pool() -> None:
 
 def test_the_operator_key_path_numbers_grants_across_cycles(node: NodeService) -> None:
     """``--no-faucet-endpoint`` must not restart the faucet nonce at zero."""
-    pool: list[traffic.Wallet] = []
-    options = traffic.Options(wait_seconds=0.0, poll_seconds=0.0, use_faucet_endpoint=False)
+    pool = [traffic.wallet(index) for index in range(3)]
+    options = traffic.Options(
+        wait_seconds=0.0,
+        poll_seconds=0.0,
+        use_faucet_endpoint=False,
+        # Every wallet reads as short, so each cycle funds the ones it seats.
+        min_balance_coins=100,
+    )
     with httpx.Client(
         transport=_transport(node, settles_immediately=True), base_url="http://node"
     ) as client:
@@ -266,15 +319,15 @@ def test_the_operator_key_path_numbers_grants_across_cycles(node: NodeService) -
             cycle=2,
             pool=pool,
             rng=random.Random(2),
-            wallet_count=3,
+            wallet_count=2,
             transfer_count=1,
             options=options,
         )
 
-    assert first.operator_grants == 2
-    assert second.operator_grants == 1  # wallet 3 is new, so only it needs funding
+    assert (first.operator_grants, first.funded) == (3, 3)  # cycle 1 seats the whole pool
+    assert (second.operator_grants, second.funded) == (2, 2)
     grants = [tx for tx in _admitted(node) if tx.sender == _faucet_address()]
-    assert sorted(tx.nonce for tx in grants) == [0, 1, 2]
+    assert sorted(tx.nonce for tx in grants) == [0, 1, 2, 3, 4]
 
 
 def test_the_generator_speaks_the_node_apps_own_routes(node: NodeService) -> None:
