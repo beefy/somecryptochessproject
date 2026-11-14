@@ -5,7 +5,37 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
-## [Unreleased]
+## [0.17.0] - 2026-11-13
+
+### Added
+
+- **Non-interactive restore**: `sccp wallet import-mnemonic --mnemonic-file
+  <path>` reads the 24 words from a `0600` file instead of the hidden prompt,
+  which reads the controlling terminal and so cannot be fed from a pipe, a
+  container entrypoint or a provisioning script. The file's permission bits are
+  checked exactly like `--passphrase-file` (group or other bits are refused with
+  the `chmod 600` fix), whitespace is normalised so a wrapped phrase or a file
+  written by `wallet export-mnemonic` reads the same, and an empty or missing
+  file is an error rather than a fallback to the prompt. The prompt is still the
+  default when the flag is absent.
+- **`sccp miner availability` prints the reveal deadline.** The commit ends with
+  `reveal by tip N (block N+1 is the last of epoch N-1), or the commitment is
+  void`, and `--json` carries `reveal_by_tip`. A missed window already burned the
+  nonce and left the epoch unmatchable for that miner; the rule
+  (`reveal_deadline_tip` in `sccp/chain/state.py`, derived from the validator's
+  `epoch(block) + 1`) is now visible where the commitment is made instead of
+  only in the consensus source and the troubleshooting table.
+- **A devnet stack beside the testnet one.** `deploy/init_devnet_stack.py` writes
+  two deterministic devnet keyfiles, one availability secret each, a passphrase
+  file and `stack.json`. `deploy/bootstrap_devnet_stack.py` then builds the three
+  bootstrap blocks (fund, register, commit, reveal) with the same
+  `BlockBuilder` a miner uses, writes `chain.sqlite` **without a running node**,
+  and derives the relay config — beacon and roster — from the epoch the chain
+  implies. Availability is committed two epochs ahead and only a reveal makes an
+  epoch matchable, so a host with no chain cannot bootstrap a relay roster at
+  all; this does it once, offline, and `--fresh` rebuilds the chain without
+  touching the keys. The devnet bootstrap window is consensus-defined, so the
+  chain stops at height 3 and epoch 3 is matchable as soon as a node opens it.
 
 ### Changed
 
