@@ -38,6 +38,7 @@ proof to settle.
 | `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 60 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers both miners, commits and reveals availability, writes `relay.json` from epoch 3 |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
+| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645` | seats 2-10 reproducible wallets per cycle, funds the short ones from the faucet, sends 1-10 transfers between them, waits for both phases to be mined, then idles 1-5 minutes |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
 | `miner-1`, `miner-2` | `sccp miner run --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-1.nonce` | join, play, co-sign, announce win proofs and commit/reveal their own availability |
 
@@ -45,6 +46,14 @@ The bootstrap is deliberately separate from mining. It builds each block with
 the same `BlockBuilder` a miner uses and submits it through the node's public
 `POST /v1/blocks`; the node re-validates everything. The only privileged input is
 the published testnet faucet key, which pays each stack miner 100 test coins.
+
+`drip` and `traffic` are the two generators, and they answer different questions.
+`drip` closes the epoch's ledger-work gap; `traffic` is ordinary usage -- wallets
+funded from the faucet, transfers between them, then 1-5 minutes of quiet -- so a
+testnet nobody is watching still exercises the paths a client takes. Neither holds
+a roster slot or builds a block. `traffic` keeps its coins inside its own wallet
+pool, so it circulates them instead of draining the faucet; the
+[runbook](../docs/RUNBOOK.md#synthetic-traffic) has the arithmetic.
 
 ## The keys and engine are reproducible on purpose
 

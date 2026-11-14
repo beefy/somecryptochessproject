@@ -5,6 +5,32 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [Unreleased]
+
+### Added
+
+- **Synthetic wallet traffic for the hosted testnet.** The stack settled a block a
+  minute, but nothing used the chain: `drip_testnet_traffic` refills an empty pool
+  with one faucet transfer and never sends a second, so concurrent, varied usage
+  went untested. `deploy/synthetic_testnet_traffic.py` runs as a `traffic` service
+  beside the miners. Each cycle it seats a random 2-10 wallets derived from fixed
+  seeds, funds the short ones over `POST /v1/faucet` (falling back to the published
+  faucet key once the five-grants-per-client-hour budget is spent), waits for the
+  grants to be mined, sends a random 1-10 transfers between the wallets, waits for
+  those, then idles 1-5 minutes. Every sender's nonce is numbered by the client,
+  because `GET /v1/accounts` reports committed state, not the mempool projection --
+  the same rule the runbook gives an operator sending two transactions in a row.
+  The generator is a service in the same Compose project, not a second workflow like
+  the explorer, because its lifetime is the chain's: a deploy runs `down -v` and
+  rebuilds from genesis, so a generator that outlived the chain would spend with
+  stale nonces and balances. Sends stay inside the wallet pool, so the loop
+  circulates its coins and cannot drain the 1,000,000-coin genesis faucet.
+  `deploy-testnet-miners.yml` waits for the first `cycle 1:` line and fails the
+  deploy if none appears within 900 seconds.
+- **Bounded container logs.** `docker-compose.yml` applies a 10 MB x 3 `json-file`
+  cap to every service. They are `restart: unless-stopped` and can run for weeks
+  between deploys, and the new traffic generator logs a line per cycle.
+
 ## [0.17.1] - 2026-11-13
 
 ### Fixed

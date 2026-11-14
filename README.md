@@ -272,7 +272,7 @@ responsibility rather than a construction phase.
 ├── pyproject.toml                # packaging, deps, ruff/mypy/pytest config
 ├── Makefile                      # test / lint / typecheck / devnet / stack / dist
 ├── Dockerfile                    # image used by every stack service
-├── docker-compose.yml            # node + relay + bootstrap + 2 Stockfish miners
+├── docker-compose.yml            # node + relay + bootstrap + 2 miners + traffic
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13); web (22, 24)
 ├── .github/workflows/deploy-testnet-miners.yml  # image + hosted testnet deploy
 ├── .github/workflows/deploy-explorer.yml        # hosted explorer (explorer.*)

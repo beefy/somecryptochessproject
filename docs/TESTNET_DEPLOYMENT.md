@@ -7,12 +7,21 @@ Every merge to `main` runs
    `ghcr.io/<owner>/<repo>:testnet`;
 2. over SSH, copy `docker-compose.yml` to the deployment host;
 3. run `docker compose down -v` (fresh chain), pull the new image and start the
-   node, bootstrap, relay and two miners;
+   node, bootstrap, relay, two miners and the two traffic generators (`drip` and
+   `traffic`);
 4. run `deploy/check_testnet_stack.py` inside the node container and fail the
    workflow if the node has not reached the bootstrap height or the relay has no
    match;
 5. request `/v1/status` from the public URL and fail if the node is not serving
-   `testnet` through DNS.
+   `testnet` through DNS;
+6. wait for the `traffic` container's first `cycle 1:` log line, so a deploy that
+   comes up but produces no usage fails here instead of passing quietly.
+
+The traffic generators add no new port, host, firewall rule or DNS record: they
+talk to the node over the Compose network and run beside the miners on the same
+VM. Their lifetime is the chain's, which is why they are services in this project
+rather than a second workflow like the explorer. `docs/RUNBOOK.md` describes the
+loop and why it cannot drain the faucet.
 
 The deploy job is skipped until a host is configured, so the image build is
 still useful on a repository without a testnet VM.
