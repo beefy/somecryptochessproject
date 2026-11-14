@@ -43,11 +43,27 @@ not itemised here.
   chain. Its balance history is reconstructed from transfers and anchored to
   `GET /v1/accounts`, and the notebook prints the drift, which is zero when the
   reconstruction captured every movement. Fetches are cached under `analysis/cache/`
-  (git-ignored); the notebook is a manual tool and is not run by CI. Block 0 is reported
-  as its own row instead of a data point: its timestamp comes from `genesis/testnet.json`,
-  a pinned constant (2023-11-14), while every later block is wall-clock, so charting it
-  stretched every time axis by three years and turned the first interval into a
-  multi-year "confirmation".
+  (git-ignored); the notebook is a manual tool and is not run by CI. The setup window at
+  the bottom of the chain is reported as its own row instead of a data point: block 0's
+  timestamp comes from `genesis/testnet.json`, a pinned constant (2023-11-14), and the
+  bootstrap blocks up to `bootstrap_end_height` were mined one interval apart from that
+  stamp, so the first twenty blocks of a chain deployed today read as 2023. Charting them
+  stretched every time axis by three years, turned the first interval into a multi-year
+  "confirmation" and divided throughput by the chain's whole age.
+
+### Fixed
+
+- **A fresh stack mined its bootstrap blocks in 2023.**
+  `deploy/bootstrap_testnet_stack.py` and `deploy/bootstrap_devnet_stack.py` stamped
+  every block `tip + target_block_seconds`, chained from the genesis document's pinned
+  constant (`1700000000`, 2023-11-14), instead of from the wall clock. A stack deployed
+  today therefore started with a full bootstrap window dated two and a half years before
+  its first real block: the explorer labelled those blocks "1095d ago" and the analysis
+  notebook's time axes spanned 2023-2026, so its throughput read `0.0 tx/hour` and one
+  "confirmation" was years long. Both scripts now build at `max(now, tip + target)`.
+  A chain already bootstrapped this way keeps its stamps -- they are inside the block
+  hashes -- so the notebook reports that window on its own row and keeps it out of the
+  time series.
 
 ## [0.17.1] - 2026-11-13
 

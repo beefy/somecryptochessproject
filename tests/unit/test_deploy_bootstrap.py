@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from pathlib import Path
 
 from deploy import bootstrap_testnet_stack as bootstrap
@@ -11,6 +12,7 @@ from sccp.chain.genesis import zero_address
 from sccp.chain.tx import txid
 from sccp.config import coins_to_units
 from sccp.miner.block_builder import BlockBuilder
+from sccp.node.service import unix_now
 from sccp.protocol.models import Block, Transaction, TxType
 from sccp.wallet.service import WalletService
 
@@ -155,6 +157,34 @@ def test_heartbeat_blocks_carry_a_proofless_epoch_across(tmp_path: Path) -> None
                 miner_address=zero_address(params),
             ).build(timestamp=service.chain.state.timestamps[-1] + params.target_block_seconds)
             is None
+        )
+    finally:
+        service.close()
+
+
+def test_bootstrap_blocks_are_stamped_with_the_wall_clock(tmp_path: Path) -> None:
+    """The setup window must not be dated from the genesis constant.
+
+    ``genesis/testnet.json`` is stamped 2023-11-14 and the bootstrap used to walk
+    forward from it, so a stack deployed today mined its first twenty blocks
+    "in 2023": the explorer labelled them "1095d ago" and the analysis
+    notebook's time axes spanned three years, which made throughput read
+    zero. Every bootstrap block is now built at max(now, tip + target), so the
+    chain starts when it is deployed while the genesis stamp stays untouched.
+    """
+    write_stack(tmp_path, passphrase="test-stack-passphrase")
+    miners = bootstrap.load_stack(tmp_path)
+    started = unix_now()
+    service, blocks, _relay = bootstrap.build_chain(miners, engine="ab" * 32)
+    try:
+        stamps = [block.header.timestamp for block in blocks]
+        assert len(stamps) == bootstrap.BOOTSTRAP_HEIGHT
+        assert min(stamps) >= started, "bootstrap blocks are dated before the deploy"
+        assert stamps == sorted(stamps), "timestamps must stay monotonic"
+        gaps = [later - earlier for earlier, later in pairwise(stamps)]
+        assert min(gaps) >= service.params.target_block_seconds - 1
+        assert service.chain.genesis_block.header.timestamp == 1_700_000_000, (
+            "the genesis stamp is consensus data and must not move"
         )
     finally:
         service.close()

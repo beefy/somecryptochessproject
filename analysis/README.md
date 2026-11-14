@@ -77,12 +77,16 @@ few megabytes on a busy chain.
   every rated miner. A wallet that never transacted and never mined is invisible.
 * **No per-transaction timestamps.** Submit-to-mined latency is not recoverable from the
   chain; the notebook measures the block interval, which bounds it.
-* **Block 0 is dated by the genesis document, not by the deploy.** `genesis/<network>.json`
-  fixes the premine's timestamp (`1700000000`, 2023-11-14, on testnet) and that block is
-  part of the pinned genesis hash, so it cannot be re-dated without a new network. Every
-  later block is wall-clock, which leaves the first block years older than the second. The
-  notebook prints its stamp in the overview and keeps it out of the time axes and interval
-  statistics; the explorer's "1095d ago" on block 0 is the same fact.
+* **The bottom of the chain is dated by the genesis document, not by the deploy.**
+  `genesis/<network>.json` fixes the premine's timestamp (`1700000000`, 2023-11-14, on
+  testnet) and that block is part of the pinned genesis hash, so it cannot be re-dated
+  without a new network. The bootstrap blocks above it (heights 1 to
+  `bootstrap_end_height`, 19 on testnet) were mined one target interval apart from that
+  same stamp, so a chain deployed today carries about twenty blocks dated 2023 and then
+  jumps to the deploy date. The notebook prints that window in the overview and keeps it
+  out of the time axes and interval statistics; the explorer's "1095d ago" on those rows
+  is the same fact. `deploy/bootstrap_*_stack.py` now stamps new bootstraps with the wall
+  clock, so this only describes chains bootstrapped before that fix.
 * **Balances are reconstructed, then anchored.** The synthetic-wallet history is rebuilt
   from their transfers and shifted so its last point equals `GET /v1/accounts`' `total`.
   The cell prints the drift, which is zero when every movement was captured.

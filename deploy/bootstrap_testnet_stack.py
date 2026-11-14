@@ -134,7 +134,21 @@ def load_stack(directory: Path) -> tuple[BootstrapMiner, ...]:
 
 
 def _tip_timestamp(service: NodeService) -> int:
-    return service.chain.state.timestamps[-1] + service.params.target_block_seconds
+    """The next block's timestamp: the wall clock, but always after the tip.
+
+    Walking forward from the tip alone is what a simulated devnet does, and it dates every
+    bootstrap block from the genesis document's pinned stamp (2023-11-14 on testnet). A
+    stack deployed today would then mine a full bootstrap window in 2023 and leave a
+    two-year hole at the bottom of an otherwise current chain, which the analysis notebook
+    and the explorer both have to explain away.
+
+    The ``tip + target`` floor keeps the bootstrap's spacing at the target, which is what
+    the retarget reads. It runs at most one bootstrap window ahead of the wall clock (20
+    minutes on testnet), well inside ``MAX_FUTURE_SECONDS``, and the first real block only
+    has to be newer than that.
+    """
+    tip = service.chain.state.timestamps[-1]
+    return max(service.clock(), tip + service.params.target_block_seconds)
 
 
 def _add(pool: Mempool, tx: Transaction) -> None:
