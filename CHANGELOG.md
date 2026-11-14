@@ -73,11 +73,13 @@ not itemised here.
   76-block window from the deploy -- five faucet grants, no transfers -- next to
   balances read live from a chain that had since run hundreds of wallet-to-wallet
   transfers, and the transfer graph looked like the bot had never sent anything. The
-  cache now lives under `cache/<genesis-hash>/`, list snapshots record the tip they
-  were taken at and are refetched when the node reports another, and `block_bodies()`
-  returns exactly the heights asked for instead of every body it has ever seen.
-  The transactions table also prints how many transfers had a synthetic wallet at
-  both ends, so "funding only" is visible without reading the graph.
+  cache still lives under `cache/<genesis-hash>/`, but because the pinned genesis is
+  reused by every deploy that path does not distinguish two chains -- so a list snapshot
+  now records the tip height *and* tip hash it was taken at, and a cached block body
+  records the hash the block list reported for its height. Either is refetched when its
+  hash differs, and `block_bodies()` returns exactly the heights asked for instead of
+  every body it has ever seen. The transactions table also prints how many transfers had
+  a synthetic wallet at both ends, so "funding only" is visible without reading the graph.
 - **One slow grant cancelled the whole traffic cycle.** `synthetic_testnet_traffic`
   returned early when any grant in the funding batch had not confirmed, so a cycle
   that funded nine of ten wallets sent no transfers at all -- which is why a freshly

@@ -32,9 +32,10 @@ Only this cycle's own transactions are waited on, never an empty pool:
 waited for the pool to empty would wait forever. That same drip spends the one
 faucet account, and its transfer is invisible in ``GET /v1/accounts`` until a block
 takes it, so a grant numbered from that read can collide with it. The collision is
-retried, never fatal: the next block frees the nonce. A grant that still does not
-confirm costs its wallet a cycle, not the whole cycle -- the wallets funded before
-it send to each other meanwhile, which is the traffic this script exists to make.
+retried until the next block frees the nonce or ``--wait-seconds`` runs out. A grant
+that still does not confirm costs its wallet a cycle, not the whole cycle -- the
+wallets funded before it send to each other meanwhile, which is the traffic this
+script exists to make.
 
 The public faucet allows five grants per client per hour and one per address, and
 every request here leaves one container IP. A cycle that seats more wallets than
