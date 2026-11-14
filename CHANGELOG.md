@@ -33,6 +33,17 @@ not itemised here.
 - **Bounded container logs.** `docker-compose.yml` applies a 10 MB x 3 `json-file`
   cap to every service. They are `restart: unless-stopped` and can run for weeks
   between deploys, and the new traffic generator logs a line per cycle.
+- **`analysis/testnet_stats.ipynb`.** A read-only notebook that charts the live testnet
+  from its public JSON API: transactions over time, block intervals (which bound
+  confirmation latency, since the chain timestamps blocks and not transactions), the
+  count and token distribution of wallets the sampled blocks mention, a stacked area
+  chart of the ten traffic wallets' balances, a directed wallet-to-wallet transfer graph
+  and a miner graph with the games and the win matrix. The synthetic wallets are derived
+  from `deploy/synthetic_testnet_traffic.py`, so the bot's traffic is identifiable on the
+  chain. Its balance history is reconstructed from transfers and anchored to
+  `GET /v1/accounts`, and the notebook prints the drift, which is zero when the
+  reconstruction captured every movement. Fetches are cached under `analysis/cache/`
+  (git-ignored); the notebook is a manual tool and is not run by CI.
 
 ## [0.17.1] - 2026-11-13
 

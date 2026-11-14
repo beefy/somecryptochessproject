@@ -1,0 +1,12 @@
+# Charts for the live testnet.
+#
+# `pip install -e .` from the repository root first: the notebook derives the ten
+# synthetic wallets from `deploy/synthetic_testnet_traffic.py`, which needs the
+# package and its runtime dependencies (including httpx). These are what the charts
+# need on top of that.
+jupyterlab>=4,<5
+matplotlib>=3.8,<4
+networkx>=3.2,<4
+nbclient>=0.10,<1
+nbformat>=5.10,<6
+pandas>=2.2,<4

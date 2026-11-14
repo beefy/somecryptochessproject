@@ -4,6 +4,9 @@ games/
 .devnet
 *.mnemonic
 
+# The analysis notebook caches its API snapshots here; they are reproducible.
+analysis/cache/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
