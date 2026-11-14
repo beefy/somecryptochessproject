@@ -1717,7 +1717,7 @@ honest play".
 | Continuous public testnet and 72-hour soak | Not yet run |
 | Metrics, alerting and block explorer | Not implemented |
 | On-chain challenge-panel votes | Votes use an operator-trusted transport |
-| Browser ledger signing (ML-DSA in JS) | Web wallet plays and verifies; result signatures go through `sccp wallet sign-result` |
+| Browser ledger signing (ML-DSA in JS) | The web wallet signs and verifies both halves; `@noble/post-quantum` keygen is byte-identical to the reference implementation |
 | Automatic timeout-claim submission in CLI/demo | Incomplete integration |
 | drand quicknet verifier wiring | Hook exists; pinned verifier not bundled |
 | Faucet limit persistence | Limits are in memory |

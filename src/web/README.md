@@ -199,6 +199,15 @@ Stockfish miner goes through, as signed ledger transactions:
 | reveal | `reveal` | the committed nonce, valid only in epoch `E - 1` |
 | join | (signed certificate, posted to the relay) | the start signature; the second one activates the match and starts both clocks |
 
+The 64 hex characters the page asks for are a **master seed**, not an Ed25519
+seed: `HMAC-SHA-256(seed, "sccp/v1/pq/ed25519")` is the half that signs moves and
+`HMAC-SHA-256(seed, "sccp/v1/pq/mldsa65")` seeds ML-DSA-65 for everything the
+ledger and the relay check as hybrid — transactions, certificate start
+signatures, results. `@noble/curves` and `@noble/post-quantum` produce the same
+bytes as `sccp/crypto/pq.py`, so one seed is one account in the page, in
+`sccp wallet` and on chain. Nothing is written to disk: a refresh forgets the
+key.
+
 From there the page is a relay client: it publishes each move with its ply and
 signature, co-signs the result automatically when the game ends, and then builds
 the `WinProof` from the co-signed transcript. A TS port of the offline verifier

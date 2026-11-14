@@ -83,13 +83,17 @@ testnet, so the rewrite is cheaper than carrying two schemes forever.
   produced by the web tab, and miner/witness commands accept the same keyfile as
   everything else (the "a hybrid keyfile cannot mine" guard is gone).
 - **Web**: `bech32.ts` encodes version-1 programs; `keys.ts` derives addresses
-  from the hybrid blob and the Ed25519 half from the master seed (HMAC label
-  `sccp/v1/pq/ed25519`); `commitment.ts` reproduces the fold; `tx.ts` refuses to
-  sign (`signTransaction` throws) instead of emitting a classical downgrade;
-  `verify.ts` reports the hybrid signature rules as *skipped* unless a
-  `verifyLedgerSignature` hook is supplied. `vectors.json` regenerated with the
-  new addresses, the hybrid public key and commitment vectors (hybrid signatures
-  are hedged, so they are verified rather than compared).
+  from the hybrid blob, adds ML-DSA-65 through `@noble/post-quantum`, and signs
+  the hybrid blob (`hybridSign`/`hybridSignDomain`, verified against Python's
+  signatures and key generation); `commitment.ts` reproduces the fold;
+  `tx.ts` signs transactions with both halves; `certificate.ts` hybrid-signs
+  start signatures; `verify.ts` runs the certificate and result signature rules
+  with that verifier instead of reporting them as *skipped*. `vectors.json`
+  regenerated with the new addresses, the hybrid public key and commitment
+  vectors (hybrid signatures are hedged, so they are verified rather than
+  compared). `App.tsx` wraps the route in an error boundary, so a view that
+  throws while rendering shows its error where the view would be instead of
+  unmounting the shell and leaving a blank page.
 - **Genesis** documents and the pinned hashes are regenerated for all three
   networks (hybrid faucet keys).
 - **Tests**: 1004 Python tests, the adversarial suite and 74 vitest cases updated
@@ -102,6 +106,12 @@ testnet, so the rewrite is cheaper than carrying two schemes forever.
 
 ### Fixed
 
+- **The hand-play tab's black screen.** `#/play` derived its address from a
+  32-byte Ed25519 key, which the version-1 `addressFor` correctly refuses; the
+  throw happened during the first render, and with no error boundary React
+  unmounted the whole tree, so the page went blank instead of reporting it. The
+  tab now derives the full hybrid account, and `App.tsx` catches a throwing view
+  so this class of bug shows a message inside the shell.
 - A mempool selection bug: a transaction whose funding transfer had not yet been
   applied was dropped instead of deferred, so which transactions made it into a
   block depended on address sort order. The pool now defers a sender and retries

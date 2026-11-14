@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import { certificateMoveRoot, evidenceRoot, foldCommitment, moveLeaf, ZERO_ROOT } from "./commitment";
-import { keypairFromSeedHex } from "./keys";
+import { fromHex } from "./canonical";
+import {
+  HYBRID_SIGNATURE_HEX_LENGTH,
+  hybridKeypairFromSeedHex,
+  hybridVerify,
+} from "./keys";
 import {
   LEDGER_SIGNATURE_HEX_LENGTH,
-  TxError,
   availabilityCommitment,
   buildAvailability,
   buildRegister,
@@ -35,10 +39,28 @@ describe("ledger transactions", () => {
     expect(txId(unsignedRegister())).toBe(ledger.register.txid);
   });
 
-  it("refuses to sign instead of emitting a classical downgrade", () => {
-    const keypair = keypairFromSeedHex(ledger.seed_hex);
-    expect(() => signTransaction(keypair, unsignedRegister())).toThrow(TxError);
-    expect(() => signTransaction(keypair, unsignedRegister())).toThrow(/ML-DSA-65/);
+  it("signs a register transaction the chain's hybrid verifier accepts", () => {
+    const keypair = hybridKeypairFromSeedHex(ledger.seed_hex);
+    const unsigned = unsignedRegister();
+    const signed = signTransaction(keypair, unsigned);
+    expect(signed.signature).toHaveLength(LEDGER_SIGNATURE_HEX_LENGTH);
+    expect(LEDGER_SIGNATURE_HEX_LENGTH).toBe(HYBRID_SIGNATURE_HEX_LENGTH);
+    expect(isLedgerSignatureHex(signed.signature)).toBe(true);
+    // Signing covers the txid, not the envelope, so the id is unchanged by it.
+    expect(txId(signed)).toBe(ledger.register.txid);
+    expect(hybridVerify(ledger.public_key_hex, fromHex(txId(signed)), signed.signature as string)).toBe(true);
+  });
+
+  it("verifies the hybrid signature the CLI produced for the same txid", () => {
+    expect(hybridVerify(ledger.public_key_hex, fromHex(ledger.register.txid), wire.signature)).toBe(true);
+    // A signature over another transaction's digest is not this transaction's.
+    const other = signTransaction(hybridKeypairFromSeedHex(ledger.seed_hex), {
+      ...unsignedRegister(),
+      nonce: wire.nonce + 1,
+    });
+    expect(hybridVerify(ledger.public_key_hex, fromHex(ledger.register.txid), other.signature as string)).toBe(
+      false,
+    );
   });
 
   it("recognises the hybrid signature the CLI produced", () => {

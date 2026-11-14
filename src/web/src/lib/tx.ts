@@ -3,26 +3,27 @@
  * `sccp/wallet/service.py`.
  *
  * The envelope is one canonical body — `{network, type, from, nonce, fee,
- * payload}` — and the signature is Ed25519 over `H("sccp/v1/tx", body)`. The
- * payload's shape depends on `type` and is validated by the chain, so these
- * builders only fill in the fields a seat needs to join a roster:
- * `register`, `availability` and `reveal`.
+ * payload}` — and the signature is the hybrid Ed25519 + ML-DSA-65 blob over
+ * `H("sccp/v1/tx", body)`. The payload's shape depends on `type` and is
+ * validated by the chain, so these builders only fill in the fields a seat needs
+ * to join a roster: `register`, `availability` and `reveal`.
  *
  * Nothing here is specific to a browser: the same bytes `sccp miner register`
- * produces come out of {@link buildRegister}, which is what lets a seat created
- * in this tab be paired by the relay like any other.
+ * produces come out of {@link buildRegister}, and {@link signTransaction} signs
+ * them with the same wire format `sccp wallet` does, which is what lets a seat
+ * created in this tab be paired by the relay like any other.
  *
  * Every transaction carries a hybrid Ed25519 + ML-DSA-65 signature: there is one
  * scheme and no classical fallback on the ledger (`PROTOCOL.md` section 2).
- * {@link signTransaction} therefore fails closed: no primitive in this bundle
- * signs ML-DSA-65, and quietly emitting a 64-byte Ed25519 signature would be a
- * downgrade. Add `@noble/post-quantum` (ML-DSA-65) and implement
- * `hybridSign` in `keys.ts` to make the browser a full ledger wallet; until
- * then this tab builds and verifies transactions and the CLI wallet signs them.
  */
 
-import { DOMAINS, domainHex } from "./canonical";
-import { type Keypair } from "./keys";
+import { DOMAINS, domainHex, fromHex } from "./canonical";
+import {
+  HYBRID_SIGNATURE_HEX_LENGTH,
+  HYBRID_SIGNATURE_SIZE,
+  type HybridKeypair,
+  hybridSign,
+} from "./keys";
 
 /** Wire spellings from `sccp.protocol.models.TxType`. */
 export type TxType = "transfer" | "register" | "register_witness" | "availability" | "reveal";
@@ -44,10 +45,10 @@ export class TxError extends Error {
 }
 
 /** Hex length of a hybrid Ed25519 + ML-DSA-65 signature (3374 bytes). */
-export const LEDGER_SIGNATURE_HEX_LENGTH = 6748;
+export const LEDGER_SIGNATURE_HEX_LENGTH = HYBRID_SIGNATURE_HEX_LENGTH;
 
 /** Bytes in the same signature: `scheme || ed25519(64) || mldsa65(3309)`. */
-export const LEDGER_SIGNATURE_SIZE = 3374;
+export const LEDGER_SIGNATURE_SIZE = HYBRID_SIGNATURE_SIZE;
 
 /**
  * Whether `signature` is a well-formed ledger signature.
@@ -82,21 +83,14 @@ export function txId(tx: Transaction): string {
 }
 
 /**
- * Refuse to sign: this bundle has no ML-DSA-65 implementation.
+ * Sign a transaction with the account's hybrid key.
  *
- * The signature this function would have to produce is the 3374-byte hybrid
- * blob. Producing a 64-byte Ed25519 signature instead would be accepted by
- * nothing (the chain requires the hybrid blob) and would look like a bug, so the
- * call fails loudly and points at the one dependency that fixes it.
+ * `sccp.chain.tx.sign_transaction` signs the hex *txid*, not the JSON and not a
+ * domain hash — the domain was already folded in when the body was hashed — so
+ * this signs the same 32 bytes and returns the 6748-hex hybrid blob.
  */
-export function signTransaction(keypair: Keypair, tx: Transaction): Transaction {
-  void keypair;
-  void tx;
-  throw new TxError(
-    "ledger transactions need a hybrid Ed25519 + ML-DSA-65 signature, and this " +
-      "bundle cannot produce one; add @noble/post-quantum and implement hybrid " +
-      "signing in keys.ts, or sign with the CLI wallet",
-  );
+export function signTransaction(keypair: HybridKeypair, tx: Transaction): Transaction {
+  return { ...tx, signature: hybridSign(keypair, fromHex(txId(tx))) };
 }
 
 /** The exact JSON body a node's `POST /v1/tx` expects. */

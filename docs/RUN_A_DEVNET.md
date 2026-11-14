@@ -377,11 +377,12 @@ guide drives devnet play through `scripts/play_miner.py` instead.
 
 The tab's **Fund** button is the node's faucet (`POST /v1/faucet`), the same
 grant section 7 describes. Its seed is 32 bytes of hex, kept in memory only: a
-refresh forgets it, which is the point. A seat can join, move and co-sign moves
-with the Ed25519 half of the key; producing a *result* signature needs
-ML-DSA-65, so the tab prints the payload and you sign it offline with
-`sccp wallet sign-result`. [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) section 2 has
-the details.
+refresh forgets it, which is the point. It derives both halves of the hybrid key,
+so the tab registers the seat, commits and reveals availability, joins with a
+hybrid start signature, signs moves with the Ed25519 half and co-signs the result
+with both halves — every signature is accepted by the node and the relay as-is.
+[`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) section 2 has the key details, and
+`sccp wallet sign-result` is still there for a key that lives outside a browser.
 
 ---
 

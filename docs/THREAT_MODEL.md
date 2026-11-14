@@ -233,6 +233,7 @@ Goal: appear stronger than the games support
 | A proofless block cannot claim chess work | Implemented: `earned_block_work` credits the `k * WIN_UNIT` term only when the block carries its `k` proofs, and a proofless block must carry exactly one transaction | `chain/difficulty.py`, `chain/block.py` |
 | A miner cannot set its own displayed rating | Implemented: the rating is a pure function of settled proofs, with no wire field and no submit route; the node recomputes it from the adopted chain | `ratings.build_ledger`, `node/service.py: ratings` |
 | ML-DSA-65 is available wherever a signature is verified | Backend-gated by `cryptography`: verification returns `False` and key generation raises `PQUnavailableError` when the OpenSSL build has no ML-DSA provider, and `node run`, `miner run`, the relay and `devnet up` call `require_pq()` and refuse to start | `crypto/pq.py`, `errors.PQUnavailableError` |
+| The browser's ML-DSA-65 agrees with the reference implementation | Pinned by vectors: the public key derived from the master seed is byte-identical to Python's, vitest verifies Python-produced hybrid signatures, and the node accepts browser-signed transactions. The residual risk is supply chain, not cryptography: the bundle trusts `@noble/post-quantum` | `web/src/lib/keys.ts`, `keys.test.ts`, `tx.test.ts` |
 
 Open items that affect this model:
 
@@ -245,11 +246,6 @@ Open items that affect this model:
 5. Benchmarks for games/minute with mock engines and analysis seconds/ply at
    depth 14 (see the implementation plan); published figures are still estimates, not
    measurements, and the sampler's disagreement rate across CPUs is unmeasured.
-6. Browser ledger signing: the web library can verify everything and sign the
-   move stream, but producing a hybrid signature needs an ML-DSA implementation.
-   It fails closed (`signTransaction` throws) and the hand-play tab hands the
-   result payload to `sccp wallet sign-result`; adding `@noble/post-quantum`
-   closes this (`PROTOCOL.md` section 10.5).
 
 ## 7. Explicit non-goals
 

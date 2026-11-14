@@ -33,10 +33,11 @@ export interface VerifyParams {
 /**
  * Verifies one hybrid Ed25519 + ML-DSA-65 signature.
  *
- * The browser bundle has no ML-DSA implementation, so this is a hook rather than
- * an import: pass `@noble/post-quantum`'s verifier (or a node's `/v1/verify`
- * answer) and the certificate and result signature rules become real checks
- * instead of reported skips.
+ * This is a hook rather than an import so the rules can be driven by whatever
+ * the caller trusts: `keys.ts::hybridVerifyDomain` in the page, a node's
+ * `/v1/verify` answer, or nothing at all — in which case the two signature rules
+ * are reported as skips instead of passing vacuously. The payload is the
+ * domain-separated object, not its hash; the verifier folds it in.
  */
 export type LedgerSignatureVerifier = (
   publicKeyHex: string,
@@ -211,7 +212,7 @@ export function verifyProof(
   });
 
   const ledgerVerifier = context.verifyLedgerSignature;
-  const NO_MLDSA = "needs an ML-DSA-65 verifier (pass verifyLedgerSignature)";
+  const NO_MLDSA = "no hybrid verifier supplied (pass verifyLedgerSignature)";
 
   if (ledgerVerifier === undefined) {
     skip("start signatures", NO_MLDSA);

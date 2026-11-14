@@ -874,17 +874,20 @@ raises `PQUnavailableError`. A node or miner must refuse to start rather than ru
 a chain whose signatures it cannot make or check; `sccp node run`, `sccp miner
 run` and `sccp devnet up` check `pq_available()` at startup.
 
-**Browsers.** `src/web` re-implements canonical JSON, bech32 (version 1), the
-Ed25519 half, addresses, tx bodies/txids and the commitment fold. It can therefore
-create and derive an account, play moves (the Ed25519 half is HMAC-derived from the
-same master seed), verify every stream signature and verify a result's
-`move_commitment`. It cannot *produce* a hybrid signature without an ML-DSA
-implementation, so ledger signing fails closed in the library
-(`signTransaction` throws) and the hand-play tab hands the exact result payload to
-`sccp wallet sign-result --payload <hex>`, which signs it with the same keyfile.
-Adding `@noble/post-quantum` and implementing `hybridSign` in `keys.ts` is the one
-change that turns the tab into a full ledger wallet; `verifyProof` already accepts
-an injected `verifyLedgerSignature` hook for the same purpose.
+**Browsers.** `src/web` re-implements canonical JSON, bech32 (version 1), both
+halves of the hybrid key, addresses, tx bodies/txids and the commitment fold. It
+can therefore create and derive an account, play moves (the Ed25519 half is
+HMAC-derived from the same master seed), verify every stream signature, verify a
+result's `move_commitment`, and *produce* hybrid signatures: `keys.ts` derives
+ML-DSA-65 through `@noble/post-quantum`, whose FIPS 204 key generation is
+byte-identical to `cryptography`'s for the same sub-seed, so the bytes the tab
+registers and signs are the bytes the node and the relay verify. Ledger
+transactions (`signTransaction`), certificate start signatures
+(`signCertificate`) and result co-signatures are all hybrid; moves stay Ed25519
+because section 8.5 keeps that stream classical. `verifyProof` runs the two
+hybrid signature rules against the roster's keys rather than skipping them, and
+`sccp wallet sign-result --payload <hex>` remains an alternative for a key that
+is not in a browser.
 
 ## 11. Ledger state
 

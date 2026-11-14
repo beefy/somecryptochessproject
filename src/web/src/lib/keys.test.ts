@@ -1,15 +1,25 @@
 import { describe, expect, it } from "vitest";
 
-import { fromHex } from "./canonical";
+import { DOMAINS, fromHex, toHex } from "./canonical";
 import {
   addressFor,
   ed25519HalfHex,
   generateKeypair,
   hybridEd25519Keypair,
+  hybridEd25519Seed,
+  hybridKeypairFromSeed,
+  hybridMldsaSeed,
+  hybridSignDomain,
+  hybridVerify,
+  hybridVerifyDomain,
   keypairFromSeed,
   publicKeyHex,
   signDomain,
   verifyDomain,
+  HYBRID_PUBLIC_KEY_SIZE,
+  HYBRID_SIGNATURE_HEX_LENGTH,
+  HYBRID_SIGNATURE_SIZE,
+  MLDSA65_SIGNATURE_SIZE,
 } from "./keys";
 import { movePayload } from "./protocol";
 import vectors from "./vectors.json";
@@ -38,6 +48,70 @@ describe("keys", () => {
 
   it("refuses anything that is not a hybrid public key blob", () => {
     expect(() => addressFor(new Uint8Array(32), "testnet")).toThrow(/hybrid public key/);
+  });
+
+  it("derives the same hybrid public key as sccp/crypto/pq.py", () => {
+    const keypair = hybridKeypairFromSeed(fromHex(keys.seed_hex));
+    // The Ed25519 half is the HMAC-separated sub-seed, not the master seed.
+    expect(publicKeyHex(keypair.ed25519)).toBe(keys.public_key_hex);
+    // The blob is scheme || ed25519 || mldsa65, byte for byte what Python builds,
+    // which is what makes a key generated here registrable on chain.
+    expect(toHex(keypair.publicKey)).toBe(keys.hybrid_public_key_hex);
+    expect(keypair.publicKey).toHaveLength(HYBRID_PUBLIC_KEY_SIZE);
+    expect(keypair.mldsaSecretKey).toHaveLength(4032);
+  });
+
+  it("keeps the two sub-seeds under separate HMAC labels", () => {
+    const master = fromHex(keys.seed_hex);
+    expect(hybridMldsaSeed(master)).toHaveLength(32);
+    expect(hybridMldsaSeed(master)).not.toStrictEqual(hybridEd25519Seed(master));
+  });
+
+  it("signs a payload with both halves and verifies it", () => {
+    const keypair = hybridKeypairFromSeed(fromHex(keys.seed_hex));
+    const signature = hybridSignDomain(keypair, DOMAINS.RESULT, vectors.result.payload);
+    expect(signature).toHaveLength(HYBRID_SIGNATURE_HEX_LENGTH);
+    expect(signature.startsWith("01")).toBe(true);
+    expect(hybridVerifyDomain(keys.hybrid_public_key_hex, DOMAINS.RESULT, vectors.result.payload, signature)).toBe(
+      true,
+    );
+    // The domain is signed: the same bytes under another domain do not verify,
+    // and neither key can stand in for the other.
+    expect(
+      hybridVerifyDomain(keys.hybrid_public_key_hex, DOMAINS.CERTIFICATE, vectors.result.payload, signature),
+    ).toBe(false);
+    expect(
+      hybridVerifyDomain(keys.peer_hybrid_public_key_hex, DOMAINS.RESULT, vectors.result.payload, signature),
+    ).toBe(false);
+  });
+
+  it("verifies the hybrid result signature Python produced", () => {
+    const signature = vectors.result.ledger_signature_hex;
+    expect(fromHex(signature)).toHaveLength(HYBRID_SIGNATURE_SIZE);
+    expect(
+      hybridVerifyDomain(keys.peer_hybrid_public_key_hex, DOMAINS.RESULT, vectors.result.payload, signature),
+    ).toBe(true);
+    expect(
+      hybridVerifyDomain(keys.peer_hybrid_public_key_hex, DOMAINS.CERTIFICATE, vectors.result.payload, signature),
+    ).toBe(false);
+    // The Ed25519 half signs the *tagged* digest, so it is deliberately not the
+    // same bytes as the plain Ed25519 signature over the same payload.
+    expect(signature.slice(2, 2 + 64)).not.toBe(vectors.result.signature_hex);
+  });
+
+  it("refuses malformed hybrid signatures instead of throwing", () => {
+    const message = new Uint8Array(32);
+    expect(hybridVerify(keys.hybrid_public_key_hex, message, "00")).toBe(false);
+    expect(hybridVerify(keys.hybrid_public_key_hex, message, "zz")).toBe(false);
+    // An Ed25519-half key is not a hybrid blob, and a hybrid signature under
+    // another scheme byte is not this scheme's signature.
+    expect(hybridVerify(keys.public_key_hex, message, vectors.result.ledger_signature_hex)).toBe(false);
+    expect(
+      hybridVerify(keys.hybrid_public_key_hex, message, `02${vectors.result.ledger_signature_hex.slice(2)}`),
+    ).toBe(false);
+    // A truncated blob is the most likely corruption on the wire.
+    const truncated = vectors.result.ledger_signature_hex.slice(0, 2 + MLDSA65_SIGNATURE_SIZE * 2);
+    expect(hybridVerify(keys.hybrid_public_key_hex, message, truncated)).toBe(false);
   });
 
   it("verifies the move signature Python produced", () => {

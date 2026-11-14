@@ -178,11 +178,11 @@ What that means in practice:
   moves and clock receipts use the Ed25519 half of this key and are anchored by
   hybrid commitments, so there is one keyfile per participant and no second
   identity for chess.
-- **The browser can play with it.** The web hand-play tab derives the Ed25519
-  half from the same master seed, so a seat can join, move and co-sign moves
-  there. Producing a *result* signature needs ML-DSA-65 and no browser
-  implementation ships here: `sccp wallet sign-result --key alice.key --payload
-  <hex>` signs the payload the tab prints.
+- **The browser can play with it.** The web hand-play tab derives both halves from
+  the same master seed (`@noble/post-quantum` for ML-DSA-65), so a seat can
+  register, join, move, co-sign the result and announce the proof from the tab.
+  `sccp wallet sign-result --key alice.key --payload <hex>` still signs a
+  canonical result payload when the key is not in a browser.
 
 Hybrid support needs a `cryptography` build whose OpenSSL exposes ML-DSA (50.0 or
 later on a current OpenSSL). Without it, `wallet new` fails with a clear error
@@ -269,8 +269,8 @@ always `ed25519-mldsa65` and `public_key` is the 3970-hex
 `{"mnemonic", "address", "network", "scheme"}`.
 
 `wallet sign-result` signs a canonical result payload (hex, as printed by the web
-hand-play tab) with the hybrid key and prints the 6748-hex signature the relay's
-`POST /v1/matches/{id}/result` expects:
+hand-play tab when a key lives outside the browser) with the hybrid key and prints
+the 6748-hex signature the relay's `POST /v1/matches/{id}/result` expects:
 
 ```bash
 sccp wallet sign-result --key alice.key --payload 7b226e6574...
