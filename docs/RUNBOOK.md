@@ -42,6 +42,12 @@ Healthy after a deploy means:
 workflow runs it inside the node container and then prints the `traffic` log;
 the generator paces itself, so it is watched rather than gated on.
 
+For charts rather than raw JSON, `analysis/testnet_stats.ipynb` reads the same public
+API: throughput and block intervals, the token distribution, the ten traffic wallets'
+balances over time, and the wallet and miner graphs. It is read-only, caches its
+snapshots under `analysis/cache/`, and is documented in
+[`../analysis/README.md`](../analysis/README.md).
+
 ## Synthetic traffic
 
 Two containers keep the chain busy, so a testnet nobody is watching still
