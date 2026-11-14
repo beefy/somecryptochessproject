@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
-## [Unreleased]
+## [0.18.0] - 2026-11-14
 
 ### Added
 
