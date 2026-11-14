@@ -152,5 +152,5 @@ jobs:
       - name: Show service state
         if: always()
         run: |
-          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose ps" || true
-          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 bootstrap relay" || true
+          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose ps -a" || true
+          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 init node relay bootstrap" || true

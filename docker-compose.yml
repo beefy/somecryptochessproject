@@ -41,9 +41,15 @@ services:
       - "8645"
       # Settle proofs the miners announce. The bootstrap chain is pre-built, so
       # the background miner must not also extend the empty bootstrap window.
+      # Coinbases go to stack miner-1: a deterministic address derived by
+      # `deploy/init_testnet_stack.py` from a published seed, so the value below
+      # is fixed. It must be the version-1 form (the address commits to the
+      # 1985-byte hybrid public key); `tests/unit/test_deploy_compose.py` pins it
+      # against the address the init container writes, so a scheme change cannot
+      # leave a stale literal here and take the whole stack down at boot.
       - --mine
       - --miner-address
-      - sccpt1qrvwy92u2es34fnpwnddkhtpw8wzqjpy6u6yszpz
+      - sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g
       - --no-mine-bootstrap
       - --mine-poll-seconds
       - "2"
