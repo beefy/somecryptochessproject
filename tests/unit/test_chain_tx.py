@@ -316,39 +316,6 @@ def test_reveal_rejects_a_wrong_nonce_and_a_wrong_window(
     assert _reason(late, ledger) is TxFailure.WINDOW
 
 
-def test_quality_challenges_require_a_known_proof_and_evidence(
-    ledger: State, protocol_accounts: Mapping[str, Any]
-) -> None:
-    alice = protocol_accounts["alice"]
-    tx = _wallet(ledger).build_transfer(alice.keypair, protocol_accounts["bob"].address, 1)
-    no_evidence = _resigned(
-        tx.model_copy(
-            update={
-                "type": TxType.CHALLENGE,
-                "payload": {"proof_id": "00" * 32, "reason": "bad", "bond": 1},
-            }
-        ),
-        alice,
-    )
-    assert _reason(no_evidence, ledger) is TxFailure.TYPE
-
-    unknown_proof = _resigned(
-        tx.model_copy(
-            update={
-                "type": TxType.CHALLENGE,
-                "payload": {
-                    "proof_id": "00" * 32,
-                    "reason": "bad",
-                    "evidence": "trace does not replay",
-                    "bond": 1,
-                },
-            }
-        ),
-        alice,
-    )
-    assert _reason(unknown_proof, ledger) is TxFailure.TYPE
-
-
 def test_txid_ignores_the_signature_and_tracks_the_body(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:

@@ -24,26 +24,16 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
 
 import chess
 import httpx
 
 from sccp.chain.state import State
-from sccp.chain.tx import sign_transaction
 from sccp.chess.engines import Engine
-from sccp.chess.pgn import validate_pgn
-from sccp.chess.quality import (
-    QUALITY_V1,
-    AnalysisCache,
-    AnalysisEngine,
-    analyse_game,
-    summary_matches,
-)
-from sccp.config import NetworkParams, QualityMode, get_network
+from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import HybridKeypair, hybrid_sign_domain, require_pq
-from sccp.errors import ClockError, EpochPipelineError, MinerError, QualityError, RelayError
+from sccp.errors import ClockError, EpochPipelineError, MinerError, RelayError
 from sccp.miner.epoch_pipeline import EpochPipeline, PipelineAction
 from sccp.miner.matchmaker import ClockBundle, MatchView
 from sccp.protocol.clocks import (
@@ -62,12 +52,10 @@ from sccp.protocol.models import (
     MatchCertificate,
     MoveMessage,
     MoveReceipt,
-    QualitySummary,
     ResultValue,
     TimeoutClaim,
     Transaction,
     Transcript,
-    TxType,
     WinProof,
 )
 from sccp.protocol.transcript import (
@@ -137,16 +125,6 @@ class MinerConfig:
     checked locally and the claim is refused rather than guessed at.
     """
 
-    summary_policy: Literal["auto", "honest", "forged"] = "auto"
-    """When to attach a ``quality_summary`` to a proof this miner won.
-
-    ``auto`` follows the network: a sampled network requires one, a network with
-    quality off gets none. ``honest`` always attaches the miner's own analysis of
-    the game. ``forged`` attaches a summary that claims a clean search regardless
-    of how the game went: a deliberate, testnet-only lie for exercising the
-    challenge path, and never correct behaviour on a network with real value.
-    """
-
     @classmethod
     def for_network(
         cls,
@@ -161,7 +139,6 @@ class MinerConfig:
         nonce_secret: str | None = None,
         witness_keys: Sequence[tuple[str, str]] = (),
         resign_after_plies: int | None = None,
-        summary_policy: Literal["auto", "honest", "forged"] = "auto",
     ) -> MinerConfig:
         """Build a config from a network id and a wallet keypair."""
         return cls(
@@ -175,7 +152,6 @@ class MinerConfig:
             nonce_secret=nonce_secret,
             resign_after_plies=resign_after_plies,
             witness_keys=tuple(witness_keys),
-            summary_policy=summary_policy,
         )
 
     @property
@@ -419,30 +395,6 @@ class NodeClient:
             raise RelayError("node /v1/proofs did not return an object")
         return document
 
-    def challenges(self) -> list[Mapping[str, object]]:
-        """Open quality challenges, the ones a panel member has to vote on."""
-        document = self._http.get("/v1/challenges")
-        if not isinstance(document, Mapping):
-            raise RelayError("node /v1/challenges did not return an object")
-        listed = document.get("challenges")
-        if not isinstance(listed, list):
-            raise RelayError("node /v1/challenges carries no challenge list")
-        return [entry for entry in listed if isinstance(entry, Mapping)]
-
-    def challenge(self, challenge_id: str) -> Mapping[str, object]:
-        """One challenge, resolved or open."""
-        document = self._http.get(f"/v1/challenges/{challenge_id}")
-        if not isinstance(document, Mapping):
-            raise RelayError(f"node /v1/challenges/{challenge_id} did not return an object")
-        return document
-
-    def game_pgn(self, game_hash: str) -> str:
-        """The move text of a settled game, as its proof carries it."""
-        document = self._http.get(f"/v1/games/{game_hash}/pgn")
-        if not isinstance(document, Mapping) or not isinstance(document.get("pgn"), str):
-            raise RelayError(f"node /v1/games/{game_hash}/pgn carries no move text")
-        return str(document["pgn"])
-
     def close(self) -> None:
         """Close the transport."""
         self._http.close()
@@ -495,8 +447,6 @@ class MinerTick:
     refusals: tuple[str, ...] = ()
     pipeline: tuple[PipelineAction, ...] = ()
     """Availability/reveal transactions the miner submitted this tick."""
-    votes: tuple[str, ...] = ()
-    """Challenges this miner adjudicated this tick, by challenge id."""
 
 
 @dataclass(slots=True)
@@ -534,19 +484,11 @@ class EngineMiner:
         relay: RelayClient | None = None,
         node: NodeClient | None = None,
         clock_ms: Callable[[], int] = monotonic_ms,
-        quality_engine: AnalysisEngine | None = None,
         pipeline: EpochPipeline | None = None,
     ) -> None:
         require_pq()
         self.config = config
         self.engine = engine
-        if quality_engine is not None:
-            self.quality_engine: AnalysisEngine | None = quality_engine
-        elif hasattr(engine, "analyse"):
-            self.quality_engine = engine  # type: ignore[assignment]
-        else:
-            self.quality_engine = None
-        self.quality_cache = AnalysisCache()
         self.relay = relay if relay is not None else RelayClient(config.relay_url)
         if node is not None:
             self.node: NodeClient | None = node
@@ -571,8 +513,6 @@ class EngineMiner:
         self.transcripts: dict[str, Transcript] = {}
         self.proofs: dict[str, WinProof] = {}
         self.pending_proofs: dict[str, WinProof] = {}
-        self.voted: set[str] = set()
-        """Challenge ids this miner has already voted on."""
         self.claims: dict[str, TimeoutClaim] = {}
         self.books: dict[str, ReceiptBook] = {}
         self.refusals: list[str] = []
@@ -683,7 +623,6 @@ class EngineMiner:
             claims += processed[4]
             resignations += processed[5]
         proofs += self._flush_proofs()
-        votes = self._vote_on_challenges()
         return MinerTick(
             observed=observed,
             joined=tuple(joined),
@@ -694,7 +633,6 @@ class EngineMiner:
             resignations=tuple(resignations),
             refusals=tuple(self.refusals[before:]),
             pipeline=tuple(submitted),
-            votes=tuple(votes),
         )
 
     def _process(
@@ -953,44 +891,6 @@ class EngineMiner:
         self._apply_local(state, san, now)
         return [f"{state.match_id}:{san}"]
 
-    def _quality_summary(self, proof: WinProof) -> QualitySummary | None:
-        """Analyse a proof locally when the network, or the operator, asks for it."""
-        policy = self.config.summary_policy
-        if policy == "auto" and self.config.params.quality_mode is not QualityMode.SAMPLED:
-            return None
-        if self.quality_engine is None:
-            raise MinerError(
-                "this network requires a quality_summary and the configured engine "
-                "cannot analyse positions"
-            )
-        try:
-            parsed = validate_pgn(proof.pgn, params=self.config.params, require_win=True)
-            if parsed.game_hash != proof.game_hash:
-                raise QualityError("proof PGN does not match its game hash")
-            report = analyse_game(
-                parsed,
-                self.quality_engine,
-                profile=QUALITY_V1,
-                cache=self.quality_cache,
-            )
-        except (QualityError, ValueError) as exc:
-            raise MinerError(f"quality analysis failed: {exc}") from None
-        summary = report.summary()
-        if policy == "forged":
-            # The deliberate testnet lie: claim a clean search whatever happened.
-            # An honest re-run disagrees on the verdict and the counters, which is
-            # exactly the evidence a challenge needs.
-            summary = summary.model_copy(
-                update={
-                    "verdict": "pass",
-                    "white_blunders": 0,
-                    "black_blunders": 0,
-                    "worst_cpl": 0,
-                    "trace_hash": None,
-                }
-            )
-        return summary
-
     def _finish(self, view: MatchView, state: MatchState) -> tuple[list[str], list[str], list[str]]:
         result = view.result
         if result is None:
@@ -1025,9 +925,6 @@ class EngineMiner:
         state.finished = True
         if self._winner_seat(result.result) == state.seat:
             proof = proof_from_transcript(transcript, params=self.config.params)
-            summary = self._quality_summary(proof)
-            if summary is not None:
-                proof = proof.model_copy(update={"quality_summary": summary})
             self.proofs[proof.proof_id] = proof
             proofs.append(proof.proof_id)
             self._announce_proof(proof)
@@ -1131,98 +1028,6 @@ class EngineMiner:
             if self._announce_proof(proof):
                 accepted.append(proof_id)
         return accepted
-
-    # -- challenge adjudication ---------------------------------------------
-
-    def _vote_on_challenges(self) -> list[str]:
-        """Re-run the pinned profile for every open challenge this miner judges.
-
-        The node derives the panel from the beacon and the bonded set and names it
-        in the challenge view, so a member knows it was drawn without asking. The
-        ballot is a signed ``panel_vote`` transaction from this miner's own key: an
-        adjudication is attributable, and the bond it protects is the miner's own.
-        A vote the node refuses is retried on the next poll, which is what lets a
-        nonce clash with the epoch pipeline resolve itself.
-        """
-        if self.node is None or self.quality_engine is None:
-            return []
-        try:
-            views = self.node.challenges()
-        except RelayError as exc:
-            self._refuse(f"challenges unavailable: {exc}")
-            return []
-        cast: list[str] = []
-        for view in views:
-            challenge_id = str(view.get("challenge_id") or "")
-            if not challenge_id or challenge_id in self.voted:
-                continue
-            panel_raw = view.get("adjudicators")
-            panel = (
-                tuple(str(member) for member in panel_raw)
-                if isinstance(panel_raw, (list, tuple))
-                else ()
-            )
-            if self.address not in panel:
-                continue
-            try:
-                upheld = self._adjudicate(view)
-                self._submit_vote(challenge_id, upheld)
-            except (MinerError, RelayError, ValueError, KeyError) as exc:
-                self._refuse(f"{challenge_id}: vote failed: {exc}")
-                continue
-            self.voted.add(challenge_id)
-            cast.append(challenge_id)
-        return cast
-
-    def _adjudicate(self, view: Mapping[str, object]) -> bool:
-        """Whether the proof's quality summary disagrees with this miner's re-run.
-
-        A challenge is upheld when the summary on the proof is false, which is the
-        fraud the bonded challenge exists to punish. A proof whose summary agrees
-        with an honest re-run is a proof the challenger was wrong about, so this
-        votes to reject and burn the challenger's bond.
-        """
-        game_hash = str(view.get("game_hash") or "")
-        if not game_hash:
-            raise MinerError("the challenge names no game")
-        raw = view.get("summary")
-        summary = None if raw is None else QualitySummary.model_validate(raw)
-        pgn = self.node.game_pgn(game_hash) if self.node is not None else ""
-        parsed = validate_pgn(pgn, params=self.config.params, require_win=True)
-        if parsed.game_hash != game_hash:
-            raise MinerError("the node's PGN does not match the challenged game")
-        if self.quality_engine is None:  # pragma: no cover - guarded by the caller
-            raise MinerError("no engine can analyse the challenged proof")
-        report = analyse_game(
-            parsed,
-            self.quality_engine,
-            profile=QUALITY_V1,
-            cache=self.quality_cache,
-        )
-        agrees, _reason = summary_matches(summary, report)
-        return not agrees
-
-    def _submit_vote(self, challenge_id: str, upheld: bool) -> None:
-        """Announce one signed ballot to the node."""
-        if self.node is None:
-            raise MinerError("no node is configured to receive votes")
-        account = self.node.account(self.address)
-        nonce = account.get("nonce")
-        if not isinstance(nonce, int):
-            raise MinerError(f"/v1/accounts/{self.address} carries no nonce")
-        tx = Transaction(
-            network=self.config.network,
-            type=TxType.PANEL_VOTE,
-            sender=self.address,
-            nonce=nonce,
-            fee=self.config.params.min_fee,
-            payload={
-                "challenge_id": challenge_id,
-                "upheld": upheld,
-                "public_key": self.config.keypair.public_key_hex,
-            },
-        )
-        self.node.submit_transaction(sign_transaction(self.config.keypair, tx))
 
     # -- timeout claims -----------------------------------------------------
 

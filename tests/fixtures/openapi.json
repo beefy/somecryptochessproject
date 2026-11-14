@@ -420,122 +420,6 @@
         ],
         "type": "object"
       },
-      "ChallengeList": {
-        "additionalProperties": false,
-        "properties": {
-          "challenges": {
-            "default": [],
-            "items": {
-              "$ref": "#/components/schemas/ChallengeView"
-            },
-            "type": "array"
-          },
-          "network": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "network"
-        ],
-        "type": "object"
-      },
-      "ChallengeView": {
-        "additionalProperties": false,
-        "properties": {
-          "adjudicators": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "bond": {
-            "minimum": 1.0,
-            "type": "integer"
-          },
-          "challenge_id": {
-            "type": "string"
-          },
-          "challenger": {
-            "type": "string"
-          },
-          "deadline_height": {
-            "minimum": 0.0,
-            "type": "integer"
-          },
-          "evidence": {
-            "type": "string"
-          },
-          "game_hash": {
-            "type": "string"
-          },
-          "miner": {
-            "type": "string"
-          },
-          "network": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "opened_height": {
-            "minimum": 0.0,
-            "type": "integer"
-          },
-          "panel": {
-            "default": [],
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
-          "proof_id": {
-            "type": "string"
-          },
-          "reason": {
-            "type": "string"
-          },
-          "resolved_height": {
-            "anyOf": [
-              {
-                "minimum": 0.0,
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "status": {
-            "enum": [
-              "open",
-              "upheld",
-              "rejected"
-            ],
-            "type": "string"
-          },
-          "votes": {
-            "additionalProperties": {
-              "type": "boolean"
-            },
-            "type": "object"
-          }
-        },
-        "required": [
-          "challenge_id",
-          "network",
-          "proof_id",
-          "game_hash",
-          "challenger",
-          "miner",
-          "reason",
-          "evidence",
-          "bond",
-          "opened_height",
-          "deadline_height",
-          "status"
-        ],
-        "type": "object"
-      },
       "CheckpointSignature": {
         "additionalProperties": false,
         "properties": {
@@ -980,16 +864,6 @@
       "GameSummary": {
         "additionalProperties": false,
         "properties": {
-          "challenge_status": {
-            "default": "none",
-            "enum": [
-              "none",
-              "open",
-              "upheld",
-              "rejected"
-            ],
-            "type": "string"
-          },
           "epoch": {
             "anyOf": [
               {
@@ -1059,20 +933,6 @@
           },
           "proof_id": {
             "type": "string"
-          },
-          "quality_verdict": {
-            "anyOf": [
-              {
-                "enum": [
-                  "pass",
-                  "fail"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "result": {
             "anyOf": [
@@ -1147,16 +1007,6 @@
       "GameView": {
         "additionalProperties": false,
         "properties": {
-          "challenge_status": {
-            "default": "none",
-            "enum": [
-              "none",
-              "open",
-              "upheld",
-              "rejected"
-            ],
-            "type": "string"
-          },
           "game_hash": {
             "type": "string"
           },
@@ -1192,30 +1042,6 @@
           "proof_id": {
             "anyOf": [
               {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "quality_trace_hash": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "quality_verdict": {
-            "anyOf": [
-              {
-                "enum": [
-                  "pass",
-                  "fail"
-                ],
                 "type": "string"
               },
               {
@@ -1902,66 +1728,6 @@
         ],
         "type": "object"
       },
-      "QualitySummary": {
-        "additionalProperties": false,
-        "properties": {
-          "black_blunders": {
-            "default": 0,
-            "minimum": 0.0,
-            "type": "integer"
-          },
-          "engine_fingerprint": {
-            "anyOf": [
-              {
-                "maxLength": 128,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "policy": {
-            "maxLength": 64,
-            "minLength": 1,
-            "type": "string"
-          },
-          "trace_hash": {
-            "anyOf": [
-              {
-                "pattern": "^[0-9a-f]{64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "verdict": {
-            "enum": [
-              "pass",
-              "fail",
-              "unknown"
-            ],
-            "type": "string"
-          },
-          "white_blunders": {
-            "default": 0,
-            "minimum": 0.0,
-            "type": "integer"
-          },
-          "worst_cpl": {
-            "default": 0,
-            "minimum": 0.0,
-            "type": "integer"
-          }
-        },
-        "required": [
-          "policy",
-          "verdict"
-        ],
-        "type": "object"
-      },
       "RatingBucketView": {
         "additionalProperties": false,
         "properties": {
@@ -2420,8 +2186,6 @@
           "reveal",
           "timeout_claim",
           "timeout_dispute",
-          "challenge",
-          "panel_vote",
           "slash_evidence"
         ],
         "type": "string"
@@ -2531,16 +2295,6 @@
           "proof_id": {
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
-          },
-          "quality_summary": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/QualitySummary"
-              },
-              {
-                "type": "null"
-              }
-            ]
           },
           "result": {
             "enum": [
@@ -2762,75 +2516,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/BlockView"
-                }
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/challenges": {
-      "get": {
-        "parameters": [
-          {
-            "in": "query",
-            "name": "include_resolved",
-            "required": false,
-            "schema": {
-              "default": false,
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChallengeList"
-                }
-              }
-            }
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/challenges/{challenge_id}": {
-      "get": {
-        "parameters": [
-          {
-            "in": "path",
-            "name": "challenge_id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChallengeView"
                 }
               }
             }

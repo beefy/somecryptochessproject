@@ -77,11 +77,11 @@ generator is one container IP, so a wide cycle spends that budget and signs the
 rest with the published faucet key -- the bypass `sccp faucet send` already uses.
 That line is expected, not an error; the endpoint is retried on the next cycle.
 
-Two more segments can appear on that same line, and both are on by default in
+One more segment can appear on that same line, and it is on by default in
 `docker-compose.yml`:
 
 ```
-cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | miners: started extra-miner-1; online: extra-miner-1 | quality: block 41 proof a1b2c3d4e5 (injected, bucket 742): verdict pass (trace hash does not match the re-run trace); challenge upheld on 3 vote(s), 10-unit bond returned
+cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | miners: started extra-miner-1; online: extra-miner-1
 ```
 
 - `| miners: ...` comes from `deploy/synthetic_miner_creation.py`. The generator
@@ -90,46 +90,15 @@ cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | mine
   changing; `--max-extra-online` (1) caps how many run at once. They are real
   `sccp miner run` children: they register, commit availability, play what the
   relay assigns and announce their proofs, and the generator funds them through
-  the same faucet gateway as the wallets. `synthetic-miner-1` is the **liar** (16
-  nodes a move, `--quality-summary forged`); `synthetic-miner-2` posts its
-  **honest** analysis, which is what a false accusation can be filed against.
+  the same faucet gateway as the wallets. `synthetic-miner-1` is deliberately
+  **weak** (16 nodes a move): it loses most games and earns nothing, which is the
+  whole story a bad engine tells on a chain that only pays for wins.
   Capacity is measured, not assumed: half a core and 256 MiB per miner, one core
-  reserved for the node and relay and half for the quality engine, so an
-  `e2-standard-2` (2 vCPU, 8 GB) seats exactly one extra miner. A host that
+  reserved for the node and relay, so an `e2-standard-2` (2 vCPU, 8 GB) fits the
+  pool and `--max-extra-online` (1) runs one at a time. A host that
   cannot fit one logs
   `miners: no change; online: none (the host has ... leave room for 0)` and runs
   wallet traffic only; `--extra-miners 0` removes the churn entirely.
-- `| quality: ...` comes from `deploy/synthetic_quality_events.py`. Testnet sets
-  `quality_mode` off, so an honest miner attaches no summary; the auditor only
-  looks at proofs that carry one (the liar's). It re-runs the node's own
-  `QualitySampler` over one proof per cycle and, when the re-run disagrees with
-  the summary, signs a real bonded `challenge` transaction from a published,
-  faucet-funded account. The chain locks the bond, the bonded miners re-run the
-  proof and vote with their own keys (`panel_vote`), and the ballot that completes
-  the panel resolves it in the block: `upheld` slashes the liar and repays the
-  challenger, `rejected` restores the proof and burns the challenger's bond. The
-  line therefore reports `challenge submitted, wait for the panel` first and the
-  verdict on a later cycle. `--false-challenge-every N` files a knowingly wrong
-  accusation every Nth audited proof to exercise `rejected`.
-  `--no-quality-events` removes it. The re-run opens `/usr/games/stockfish` on first
-  use, so the first line of a deploy takes a few seconds longer than later ones.
-
-Working a quality event by hand, if a line reads `rejected` or carries a note:
-
-```bash
-curl -s http://127.0.0.1:8645/v1/blocks/<height> | jq '.proofs[] | {proof_id, quality_summary}'
-curl -s "http://127.0.0.1:8645/v1/challenges?include_resolved=true"   # filed and decided
-curl -s http://127.0.0.1:8645/v1/challenges/<id>                      # adjudicators and votes
-docker compose logs --tail=50 traffic                                # the event line, with its reason
-```
-
-A challenge is resolved by whichever bonded miner the beacon seats on its panel;
-on a two-miner roster that is one member, so it needs one of the fixed miners to
-be running and to have already polled. A challenge with no bonded adjudicator
-stays `open` and keeps the challenger's bond locked; the auditor names it on the
-cycle line (`has no bonded adjudicator yet`) so it cannot pass for a case in
-progress. A `rejected` verdict is the honest outcome of a knowingly false
-accusation: the proof was fine, so the challenger pays.
 
 The loop cannot drain the faucet. Transfers run between the pool's own wallets, so
 the coins circulate; the faucet is tapped only for new wallets (at most

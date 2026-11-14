@@ -14,7 +14,6 @@ from sccp.config import (
     TESTNET,
     UNITS_PER_COIN,
     NetworkParams,
-    QualityMode,
     coins_to_units,
     get_network,
     network_ids,
@@ -117,7 +116,6 @@ INVALID_OVERRIDES: list[dict[str, Any]] = [
     {"halving_interval": 210_000},  # halving without a supply cap
     {"drand_period_seconds": 3},  # drand timing without a chain
     {"drand_chain": "quicknet", "drand_period_seconds": 3},  # missing round offset
-    {"quality_mode": QualityMode.SAMPLED},  # sampled quality with zero rate
     {"min_fee": 0},
     {"lag_grace_ms": 1_001},
     {"timeout_dispute_window": 0},

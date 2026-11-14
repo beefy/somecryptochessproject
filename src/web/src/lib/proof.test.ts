@@ -5,7 +5,7 @@ import type { GameResult, MatchCertificate, WinProof } from "../types";
 import { fromHex } from "./canonical";
 import { certificatePayload, openingHash, signCertificate, verifyCertificate } from "./certificate";
 import { hybridKeypairFromSeedHex, hybridPublicKeyHex, hybridVerifyDomain } from "./keys";
-import { ProofBuildError, buildWinProof, proofId, webQualitySummary } from "./proof";
+import { ProofBuildError, buildWinProof, proofId } from "./proof";
 import { whiteSeat } from "./protocol";
 import { type VerifyContext, verifyProof } from "./verify";
 import vectors from "./vectors.json";
@@ -105,30 +105,17 @@ describe("win proofs", () => {
     ).toThrow(ProofBuildError);
   });
 
-  it("demands a quality summary only where the network samples", () => {
-    const sampled = { ...proofParams, quality_mode: "sampled" as const };
+  it("refuses a proof whose moves do not fold to the signed commitment", () => {
     expect(() =>
       buildWinProof({
         certificate,
         pgn: match.pgn,
-        sanMoves: match.san_moves,
+        sanMoves: match.san_moves.slice(0, -1),
         result,
         resultSignatures: result.result_signatures,
-        params: sampled,
+        params: proofParams,
       }),
-    ).toThrow(/quality_summary/);
-    const summary = webQualitySummary(certificate.engine_white);
-    expect(summary.verdict).toBe("unknown");
-    const built = buildWinProof({
-      certificate,
-      pgn: match.pgn,
-      sanMoves: match.san_moves,
-      result,
-      resultSignatures: result.result_signatures,
-      params: sampled,
-      qualitySummary: summary,
-    });
-    expect(built.quality_summary).toStrictEqual(summary);
+    ).toThrow(ProofBuildError);
   });
 });
 
@@ -138,7 +125,7 @@ describe("the browser verifier", () => {
     const failed = verdict.checks.filter((check) => !check.ok);
     expect(failed).toStrictEqual([]);
     expect(verdict.ok).toBe(true);
-    expect(verdict.checks).toHaveLength(15);
+    expect(verdict.checks).toHaveLength(14);
   });
 
   it("catches a wrong low-ply flag", () => {

@@ -12,8 +12,8 @@
 > [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md). If this whitepaper and
 > `PROTOCOL.md` disagree, `PROTOCOL.md` wins.
 >
-> **Status.** Protocol v1, the timed relay, quality sampling, bonded challenges
-> and the two-miner testnet are implemented. Mainnet parameters exist, but no
+> **Status.** Protocol v1, the timed relay and the two-miner testnet are
+> implemented. Mainnet parameters exist, but no
 > mainnet has been launched or audited. Testnet and devnet coins have no value.
 
 ---
@@ -62,12 +62,12 @@ The design separates three kinds of work:
   replayable PGN.
 - **Ledger work** is cheap and deterministic: signatures, nonce ordering,
   balance arithmetic, Merkle roots and hash targets.
-- **Quality work** is deliberately *not* consensus-critical in v1. Reference-
-  engine analysis is expected to be sampled and challengeable because engine
-  versions and hardware differ; forcing every node to reproduce every centipawn
-  judgement would risk consensus forks. The reference implementation therefore
-  samples games deterministically and resolves disputes through bonded
-  challenges; quality is evidence, not a block-validity rule.
+- **Quality work** is not part of the protocol at all. Reference-engine analysis
+  was once sampled and adjudicated on chain; that layer was removed because a
+  chain cannot tell a deliberately lost game from a badly played one. What a
+  proof carries is the game itself — PGN, signatures, commitments, clock
+  evidence — so anyone can replay it and form their own view. See
+  [`PROTOCOL.md` §9.2](PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain).
 
 The result is a complete, testable prototype of a different proof-of-work
 economy, not a claim that chess is a verifiable delay function or that the
@@ -109,13 +109,16 @@ The protocol must also establish:
 5. **That the winner is entitled to claim.** The proof must name the block
    miner as winner, come from an ended epoch's roster, respect the claim window
    and opponent cooldown, and carry the right evidence for its termination.
-6. **That the game was not trivial.** A minimum ply count and, eventually,
-   quality analysis raise the cost of a deliberately thrown game.
+6. **That the game was not trivial.** A minimum ply count is enforced, so a
+   one-move claim cannot pass for a game.
 
-The first five are implemented as consensus rules. The sixth is economic rather
-than consensus-critical: the minimum ply rule is enforced, and reference-engine
-sampling plus bonded challenges raise the cost of a deliberately weak game
-without making a node's engine judgement fork the chain.
+The first six are implemented as consensus rules. Move quality is deliberately
+not among them: a game record cannot distinguish "lost on purpose" from "lost
+badly", and any rule that tried would price honest weak engines out of the roster
+while a colluding pair, holding both seats, still produced a decisive game. The
+protocol therefore pays the winner of a valid proof and lets the scoreboard rank
+engines; [`PROTOCOL.md` §9.2](PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain)
+records the analysis.
 
 ### 2.3 The honest security statement
 
@@ -223,9 +226,9 @@ requirement to run two strong engines; it does not claim to eliminate it.
 - **Clocks are observed, not derived.** The chain cannot see wall-clock time at
   sub-second resolution. It relies on bonded witnesses for flags and verifies
   their arithmetic and signatures offline.
-- **Quality is not consensus-enforced.** A structural proof is not a quality
-  proof; sampling and bonded challenges are probabilistic economic controls.
-  See [section 16](#16-economics-security-and-residual-risk).
+- **Move quality is not part of the proof.** A structural proof is not a claim
+  about how well the chess was played, and the chain does not attempt to judge
+  it. See [section 16](#16-economics-security-and-residual-risk).
 
 ### 4.3 Network isolation
 
@@ -550,7 +553,6 @@ H(domain, payload) = SHA-256(domain_utf8 || 0x00 || canonical_json(payload))
 | `sccp/v1/beacon-commit` | Availability commitment |
 | `sccp/v1/block` | Reserved block-document namespace |
 | `sccp/v1/certificate` | Match certificate |
-| `sccp/v1/challenge` | Challenge panel ranking and challenge id |
 | `sccp/v1/clock` | Clock receipts and evidence bundle |
 | `sccp/v1/game` | Canonical game record |
 | `sccp/v1/gossip` | Gossip envelope |
@@ -663,7 +665,8 @@ auditable exception for a genuine flag: a clock can run out before move 20.
 
 Minimum length is not a quality measure. It merely prevents a one-move
 "game" from being used as a proof. A pair of colluding engines can still play a
-long, weak game, which is why sampling and bonded challenges exist.
+long, weak game; v1 does not try to detect that, because a game record cannot
+distinguish it from honest weakness. Only the win/loss column prices it.
 
 ### 8.5 Opening book
 
@@ -699,7 +702,7 @@ An engine is anything that implements the small UCI subset used by the miner:
 
 Registration can carry an engine fingerprint: the SHA-256 of the engine binary
 for a real engine, or a hash of its configuration for mock and scripted engines.
-The fingerprint is metadata for the quality layer and for operators; v1
+The fingerprint is metadata for operators and for rating a miner's history; v1
 consensus does not require a particular engine, and "pinned Stockfish" is a
 target policy rather than a currently enforced rule. An engine that returns an
 illegal move loses the game by protocol, so lying about strength does not help a
@@ -1132,20 +1135,27 @@ The distinct-opponent rule and cooldown slow down a miner that tries to recycle
 one cooperative opponent. They do not stop a miner from operating many keys;
 that is the Sybil problem discussed in section 16.
 
-### 12.5 Quality is evidence, not block validity
+### 12.5 Move quality is not evidence
 
-`WinProof` has an optional `quality_summary`, and the clocks/PGN modules expose a
-resignation-policy hook and reference-engine analysis. Mainnet parameters
-declare `quality_mode = sampled` and a non-zero sample rate. The structural
-verifier deliberately ignores quality: a node does not reject a proof because a
-local engine disagrees by a few centipawns, which would make heterogeneous
-hardware a consensus risk.
+`WinProof` carries no quality field. Clocks and PGN expose an optional
+resignation hook, but the node does not supply one, and no engine runs during
+validation.
 
-Instead, a node deterministically samples proofs, records an analysis summary,
-and turns a persistent disagreement into a bonded `challenge`. A
-beacon-ranked panel re-runs the pinned quality profile and resolves the
-challenge on chain. The challenge path is implemented; moving panel votes on
-chain and calibrating bond sizes remain open work.
+An earlier version of this section described an optional `quality_summary`, a
+deterministic sample and a bonded challenge panel. The code was built and run on
+a testnet, then removed: consensus checked only that the summary field was
+present, never what it said, so the field added a lie surface without adding
+assurance; the panel's verdicts were attested, never re-derived; a refundable
+challenger bond made smearing cheap; and no liveness rule existed, so one
+unavailable adjudicator could lock a challenger's bond forever. More
+fundamentally, "lost on purpose" and "lost badly" produce the same bytes, so a
+quality threshold is a tax on honest weakness rather than a fraud test.
+
+A quality signal is still possible, off chain: an indexer can replay the stored
+PGNs with any engine it likes and publish a label or a rating, wrong or right,
+without invalidating a block. The reasoning, the economics and the minimum shape
+of any future fraud court are in
+[`PROTOCOL.md` §9.2](PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain).
 
 ### 12.6 Ratings are a derived view
 
@@ -1193,7 +1203,6 @@ consensus commitment is the account root plus the block chain.
 | `timeout_claim` | Open a bonded claim that an opponent flagged |
 | `timeout_dispute` | Answer a claim with a later signed move |
 | `slash_evidence` | Prove witness equivocation |
-| `challenge` | Bond a quality challenge against an accepted proof |
 
 A transaction is rejected for the wrong network, unknown fields, wrong type,
 bad signature, wrong nonce, insufficient balance, insufficient fee, or a
@@ -1444,7 +1453,6 @@ The public v1 surface is small:
 | `GET /v1/transactions/{txid}` | Transaction status |
 | `POST /v1/tx` | Submit a signed transaction |
 | `POST /v1/proofs` | Submit a win proof |
-| `GET /v1/challenges` | Open quality challenges, plus resolved ones on request |
 | `POST /v1/gossip` | Receive a signed gossip envelope |
 | `GET /v1/peers` | Known peers and scores |
 
@@ -1594,9 +1602,10 @@ prevent this. It raises the cost and the chance of detection:
 None of these proves that the two seats are independently controlled. A
 sufficiently rich operator can register many identities and accept the bond and
 opportunity costs. The honest claim is that self-play is priced, not excluded.
-Quality sampling and bonded challenges raise the price further by making
-deliberately weak games challengeable, but they do not prove that two keys are
-independently controlled.
+In per-bond terms the pair earns what a median honest miner earns, with no
+variance, and v1 has no mechanism that can tell a deliberately lost game from a
+badly played one; that is why the protocol does not pay anyone to adjudicate
+intent.
 
 ### 16.3 Sybil resistance
 
@@ -1635,7 +1644,7 @@ claim otherwise.
 | DoS the HTTP API | Validation before storage, size caps, peer bans | No auth, rate limiting or TLS |
 | Stolen wallet key | Passphrase-encrypted keyfile | Key compromise is identity compromise |
 | Quantum key recovery | One scheme: hybrid Ed25519 + ML-DSA-65 (6.5). Every account is a version-1 address over the full 32-byte digest, every spend carries both signatures, and certificates, results and evidence checkpoints are hybrid-signed | Breaking ML-DSA-65 is the only path; the scheme is younger than Ed25519 and its implementation surface is larger |
-| Weak engine / thrown game | Structural checks, deterministic sampling and bonded challenges | Sampling is probabilistic; panel votes still have an operator-trusted transport |
+| Weak engine / thrown game | Only a winner's proof is paid, so a bad engine loses and earns nothing | A colluding pair can trade legal wins; that is self-play, priced by the bond and pairing diversity |
 
 ### 16.5 Finality
 
@@ -1654,32 +1663,41 @@ miners played. A miner's address is linkable across epochs unless it rotates
 keys, and rotating keys costs new bonds and registration. The protocol is not a
 privacy system and makes no confidentiality claim.
 
-### 16.7 The quality layer and its residual gaps
+### 16.7 The quality layer that was removed
 
-The quality layer is implemented as an economic control:
+v1 once shipped an on-chain quality layer: deterministic sampling, a
+`quality_summary` on every proof, a bonded `challenge` transaction, a
+beacon-ranked panel and `panel_vote` adjudication. It was removed, and this
+section records why rather than pretending it was never there.
 
-- deterministic sampling of games for reference-engine analysis;
-- quality summaries carrying engine identity, depth and a trace hash;
-- a bonded `challenge` transaction with a bounded reason and evidence payload;
-- panel selection from the bonded set, a complete-ballot verdict and
-  deterministic slashing of the proof miner or the challenger;
-- a resignation policy that checks the final position before accepting a loss;
-- an adversarial suite and [`THREAT_MODEL.md`](THREAT_MODEL.md).
+What the layer actually did:
 
-What remains is hardening, not a missing subsystem:
+- consensus required a summary's *presence* on a "sampled" network and never
+  inspected its contents, so a false summary was free to write;
+- panel members re-ran an engine off chain and committed a verdict, which the
+  chain trusted without re-deriving it, so a majority could invalidate any proof;
+- a successful challenge refunded the challenger's bond and paid no bounty, so a
+  smear campaign cost only the fee;
+- the panel was selected from "bonded and not a party", with the roster's
+  funder/subnet fields never populated, so every diversity rule was inert;
+- no deadline existed, so one unavailable adjudicator left a case open and a
+  challenger's bond locked;
+- two different trigger policies coexisted (the node's sampler challenged a
+  `fail` verdict; the testnet script challenged a summary mismatch).
 
-- a miner whose proof claims a clean game can be caught: the sampler re-runs the
-  profile, a bonded `challenge` names the lie, and the panel's signed
-  `panel_vote` ballots resolve it on chain (the sampler still has to submit that
-  challenge itself, which the reference node does not do yet);
-- sample rate, bond size and panel size need calibration across hardware;
-- the sampler should submit qualifying challenges automatically;
-- NNUE networks are not pinned by hash;
-- cross-CPU disagreement rates are not yet measured.
+None of that is fixable by hardening the same idea. "Lost on purpose" and "lost
+badly" produce the same game record; a quality threshold is therefore a weakness
+tax, and the colluding pair that controls both seats can always clear it. The
+subsidy pays only the winner of a valid proof, so a genuinely bad engine loses
+and earns nothing — which is the whole quality story the chain needs.
 
-The protocol's security statement is therefore structural plus economic, not a
-proof of strong chess. Do not describe sampling or challenges as "proof of
-honest play".
+A published quality *opinion* still has a home, off chain, over the PGNs the
+chain already stores. If a future design ever needed a fraud court, its minimum
+shape is recorded in
+[`PROTOCOL.md` §9.2](PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain).
+
+The protocol's security statement is structural plus economic, not a proof of
+strong chess. Do not describe a proof as "proof of honest play".
 
 ---
 
@@ -1706,8 +1724,6 @@ honest play".
 | Gossip envelopes, peer table, pull sync | Implemented |
 | SQLite persistence with replayed, snapshot-checked state | Implemented |
 | REST node API, proof settler and CLI | Implemented |
-| Deterministic quality sampling, summaries and resignation policy | Implemented |
-| Bonded challenges, panel selection, adjudication and slashing | Implemented |
 | Wallet, devnet, multi-miner demo, unit/integration tests | Implemented |
 | Public faucet, deterministic bootstrap and two-miner testnet stack | Implemented |
 | GHCR image build and SSH testnet deploy workflow | Implemented |
@@ -1718,7 +1734,6 @@ honest play".
 | --- | --- |
 | Continuous public testnet and 72-hour soak | Not yet run |
 | Metrics, alerting and block explorer | Not implemented |
-| On-chain challenge-panel votes | Votes use an operator-trusted transport |
 | Browser ledger signing (ML-DSA in JS) | The web wallet signs and verifies both halves; `@noble/post-quantum` keygen is byte-identical to the reference implementation |
 | Automatic timeout-claim submission in CLI/demo | Incomplete integration |
 | drand quicknet verifier wiring | Hook exists; pinned verifier not bundled |
@@ -1737,11 +1752,10 @@ mainnet readiness. In priority order:
 1. Run a persistent public testnet and publish a 72-hour soak report.
 2. Add metrics, alerting and a block explorer.
 3. Automate timeout-claim submission and bundle a pinned drand verifier.
-4. Commit challenge-panel votes through a signed transaction.
-5. Persist faucet limits and harden storage, peer networking and miner/relay
+4. Persist faucet limits and harden storage, peer networking and miner/relay
    recovery.
-6. Calibrate bonds and sampling, complete an external review and decide whether
-   to launch mainnet.
+5. Populate the roster's funder/subnet fields so pairing diversity has real data,
+   complete an external review and decide whether to launch mainnet.
 
 The acceptance criteria and the longer list of improvement areas are in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md). The distinction that matters
@@ -1990,8 +2004,8 @@ the engine-marked tests.
 - Treat a relay as replaceable: run more than one, and verify its pairings.
 - Keep enough peers to avoid eclipse; v1 has no automatic discovery.
 - Do not treat testnet coins or confirmations as valuable or final.
-- Do not describe quality sampling as consensus enforcement; it is probabilistic
-  evidence backed by bonds and challenges.
+- Do not describe a proof as evidence of good chess; it establishes who won a
+  legal, signed game, and nothing about how well either side played.
 
 ---
 
@@ -2092,6 +2106,7 @@ The claim it does **not** make is:
 > The two keys are controlled by different people, or both engines played
 > honestly and well.
 
-Quality sampling and bonded challenges narrow that gap, but they do not close
-it. Read every "proof of chess" statement with the structural and economic
-qualifiers attached.
+Quality is not part of that claim, and v1 does not try to judge it. A weak or
+deliberately thrown game is indistinguishable in the record from an honest loss;
+the subsidy pays only the winner, so a bad engine prices itself out. Read every
+"proof of chess" statement with the structural and economic qualifiers attached.

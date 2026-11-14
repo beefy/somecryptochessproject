@@ -13,7 +13,6 @@ import type {
   AccountView,
   BlockList,
   BlockView,
-  ChallengeList,
   DifficultyView,
   EpochView,
   FaucetView,
@@ -162,11 +161,6 @@ export function fetchTranscript(matchIdText: string, signal?: AbortSignal): Prom
 /** `GET /v1/mempool`: ids waiting for a block. */
 export function fetchMempool(signal?: AbortSignal): Promise<MempoolView> {
   return request<MempoolView>("/v1/mempool", { signal });
-}
-
-/** `GET /v1/challenges`: fraud challenges and their status. */
-export function fetchChallenges(signal?: AbortSignal): Promise<ChallengeList> {
-  return request<ChallengeList>("/v1/challenges", { signal });
 }
 
 /** `GET /v1/accounts/{address}`: balances, nonce and registration. */

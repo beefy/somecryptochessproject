@@ -108,8 +108,7 @@ def test_the_traffic_command_speaks_the_flags_the_generator_accepts(
     options = captured["options"]
     assert isinstance(options, traffic.Options)
     assert (options.node, options.relay) == ("http://node:8645", "http://relay:8646")
-    # The churn and the audit are the defaults, so the command only says where to
-    # play; naming them here would freeze a pool size the deployment must measure.
+    # The churn is the default, so the command only says where to
+    # play; naming it here would freeze a pool size the deployment must measure.
     assert options.extra_miners == traffic.EXTRA_MINERS >= 1
     assert options.max_extra_online == traffic.MAX_EXTRA_ONLINE >= 1
-    assert options.quality_events is True

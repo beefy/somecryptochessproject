@@ -20,7 +20,6 @@ export function Games(): ReactNode {
   const games = useResource((signal) => fetchGames(signal), [], { pollMs: 8000 });
   const all = games.data?.games ?? [];
   const pending = all.filter((game) => game.in_mempool).length;
-  const challenged = all.filter((game) => game.challenge_status === "open").length;
 
   return (
     <Section
@@ -28,7 +27,7 @@ export function Games(): ReactNode {
       subtitle={
         games.data === undefined
           ? "settled proofs and the ones waiting for a block"
-          : `${formatInteger(all.length)} games · ${pending} pending · ${challenged} challenged`
+          : `${formatInteger(all.length)} games · ${pending} pending`
       }
     >
       {games.error !== undefined ? (

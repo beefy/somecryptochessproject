@@ -200,7 +200,6 @@ def test_build_win_proof_fills_every_field(signed_match) -> None:
     assert proof.pgn == signed_match.pgn
     assert proof.certificate == signed_match.certificate
     assert proof.result_signatures == signed_match.result.result_signatures
-    assert proof.quality_summary is None
 
 
 def test_build_win_proof_requires_both_signatures(signed_match) -> None:

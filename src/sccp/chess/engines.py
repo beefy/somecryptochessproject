@@ -186,11 +186,12 @@ class UciEngine:
         *,
         multipv: int = 1,
     ) -> chess.engine.InfoDict | list[chess.engine.InfoDict]:
-        """Return scored principal variations for quality analysis.
+        """Return scored principal variations for off-chain inspection.
 
         ``multipv`` is passed through to python-chess, which configures the
-        engine's ``MultiPV`` option. The caller owns ``limit``; the quality
-        profile pins depth so a re-run is reproducible.
+        engine's ``MultiPV`` option. No consensus rule uses this: a block never
+        depends on an engine's opinion (`PROTOCOL.md` section 9.2), but an
+        operator or an indexer may want to replay a stored PGN.
         """
         if self._closed:
             raise EngineError(f"{self.name} is closed")

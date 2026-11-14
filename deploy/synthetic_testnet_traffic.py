@@ -51,15 +51,12 @@ sees well-behaved wallets never exercises them:
   (``synthetic_miner_creation``) and churns one per cycle, so registrations,
   availability commitments and roster changes happen on a chain nobody is
   watching. The host's CPU and memory decide how many may actually run; a small
-  VM simply gets none.
-* ``--quality-events`` audits a proof that carries a quality summary, signs a real
-  ``challenge`` for it when an independent re-run disagrees, and reports what the
-  chain's panel decides (``synthetic_quality_events``). The liar and the honest
-  summary in the extra-miner pool are what it has to work with.
+  VM simply gets none. One pool member plays at 16 nodes a move on purpose, so
+  the chain also sees a weak engine that loses and earns nothing.
 
-Both spend from the same faucet as the wallets, through the same gateway, so all
-of a cycle's nonces are numbered in one place. Both are one flag away from off:
-``--extra-miners 0 --no-quality-events`` leaves exactly the wallet traffic.
+Those miners spend from the same faucet as the wallets, through the same gateway,
+so all of a cycle's nonces are numbered in one place. They are one flag away from
+off: ``--extra-miners 0`` leaves exactly the wallet traffic.
 
 Usage::
 
@@ -92,10 +89,8 @@ from sccp.protocol.models import Transaction, TxType
 
 try:  # the tests import this module as ``deploy.synthetic_testnet_traffic``
     from deploy import synthetic_miner_creation as miners
-    from deploy import synthetic_quality_events as quality
 except ImportError:  # pragma: no cover - compose runs the file, not the package
     import synthetic_miner_creation as miners  # type: ignore[no-redef,import-not-found]
-    import synthetic_quality_events as quality  # type: ignore[no-redef,import-not-found]
 
 MIN_WALLETS: Final = 2
 MAX_WALLETS: Final = 10
@@ -128,12 +123,6 @@ MAX_EXTRA_ONLINE: Final = 1
 EXTRA_MINER_DIRECTORY: Final = Path("/data/synthetic-miners")
 """Where extra miners keep keyfiles. Inside the container on purpose: every
 identity comes from a published seed, so nothing here has to outlive a redeploy."""
-
-QUALITY_EVENTS: Final = True
-"""Audit a summarised proof per cycle and file the challenge it warrants."""
-
-FALSE_CHALLENGE_EVERY: Final = 0
-"""File a knowingly false accusation every Nth audited proof; 0 leaves it off."""
 
 
 class TrafficError(RuntimeError):
@@ -447,12 +436,8 @@ class CycleReport:
     confirmed: int
     unconfirmed: int = 0
     """Grants that never left the pool. Never a reason to skip the transfers."""
-    challenger_grants: int = 0
-    """Top-ups for the quality challenger, so its bond is on chain before it files."""
     miners: str = ""
     """The churn's line, when this deployment seats extra miners."""
-    quality: str = ""
-    """The audit's line, when this deployment re-runs quality profiles."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -472,8 +457,6 @@ class Options:
     relay: str = "http://relay:8646"
     extra_miners: int = EXTRA_MINERS
     max_extra_online: int = MAX_EXTRA_ONLINE
-    quality_events: bool = QUALITY_EVENTS
-    false_challenge_every: int = FALSE_CHALLENGE_EVERY
 
 
 DEFAULT_OPTIONS: Final = Options()
@@ -482,21 +465,18 @@ DEFAULT_OPTIONS: Final = Options()
 
 @dataclass(frozen=True, slots=True)
 class Extras:
-    """The churn and the audit, when this deployment asks for them.
+    """The churn, when this deployment asks for it.
 
-    Held apart from :class:`Options` because they are live objects with
-    subprocesses and an engine behind them, not values a caller can compare.
+    Held apart from :class:`Options` because it is a live object with
+    subprocesses behind it, not a value a caller can compare.
     """
 
     fleet: miners.ExtraMinerFleet | None = None
-    audit: quality.QualityAudit | None = None
 
     def close(self) -> None:
-        """Stop the miners and the engine this process started."""
+        """Stop the miners this process started."""
         if self.fleet is not None:
             self.fleet.close()
-        if self.audit is not None:
-            self.audit.close()
 
 
 NO_EXTRAS: Final = Extras()
@@ -510,42 +490,29 @@ def extras_for(
     params: NetworkParams = TESTNET,
     capacity: miners.HostCapacity | None = None,
 ) -> Extras:
-    """Build the churn and the audit ``options`` asks for.
+    """Build the churn ``options`` asks for.
 
     ``capacity`` is injectable so a test can decide the host's budget; when it is
-    omitted the host is measured, and the audit's engine claims its own share of a
-    core because it competes with the miners for one.
+    omitted the host is measured.
     """
-    fleet: miners.ExtraMinerFleet | None = None
-    if options.extra_miners > 0:
-        budget = capacity
-        if budget is None:
-            budget = miners.host_capacity(
-                audit_engines=int(options.quality_events),
-                max_extra=options.extra_miners,
-            )
-        fleet = miners.ExtraMinerFleet(
-            client,
-            EXTRA_MINER_DIRECTORY,
-            params=params,
-            relay=options.relay,
-            node=options.node,
-            pool_size=options.extra_miners,
-            max_online=options.max_extra_online,
-            wait_seconds=options.wait_seconds,
-            poll_seconds=options.poll_seconds,
-            capacity=budget,
-        )
-    audit = (
-        quality.QualityAudit(
-            client,
-            params=params,
-            false_challenge_every=options.false_challenge_every,
-        )
-        if options.quality_events
-        else None
+    if options.extra_miners <= 0:
+        return NO_EXTRAS
+    budget = capacity
+    if budget is None:
+        budget = miners.host_capacity(max_extra=options.extra_miners)
+    fleet = miners.ExtraMinerFleet(
+        client,
+        EXTRA_MINER_DIRECTORY,
+        params=params,
+        relay=options.relay,
+        node=options.node,
+        pool_size=options.extra_miners,
+        max_online=options.max_extra_online,
+        wait_seconds=options.wait_seconds,
+        poll_seconds=options.poll_seconds,
+        capacity=budget,
     )
-    return Extras(fleet=fleet, audit=audit)
+    return Extras(fleet=fleet)
 
 
 def _seat(pool: Sequence[Wallet], seats: int, rng: random.Random) -> list[Wallet]:
@@ -557,20 +524,17 @@ def _seat(pool: Sequence[Wallet], seats: int, rng: random.Random) -> list[Wallet
 
 @dataclass(frozen=True, slots=True)
 class Funding:
-    """What one cycle's top-up did, split between the pool and the challenger."""
+    """What one cycle's top-up did."""
 
     grants: tuple[str, ...] = ()
-    """Wallet grants."""
-    challenger: tuple[str, ...] = ()
-    """Grants to accounts the cycle spends from but does not own as wallets."""
+    """Grants this cycle issued, for the confirmation wait."""
     faucet: int = 0
     """How many of ``grants`` went through the HTTP faucet rather than the key."""
-    challenger_faucet: int = 0
 
     @property
     def all(self) -> tuple[str, ...]:
         """Every grant this cycle issued, for the confirmation wait."""
-        return (*self.grants, *self.challenger)
+        return self.grants
 
 
 def _fund(
@@ -579,39 +543,18 @@ def _fund(
     *,
     gateway: FaucetGateway,
     options: Options,
-    params: NetworkParams,
-    extra_addresses: Sequence[str] = (),
 ) -> Funding:
-    """Top up every account that is short.
-
-    ``extra_addresses`` covers accounts the cycle spends from but does not own as
-    wallets -- today the quality challenger, whose bond has to be on chain before
-    it can file a challenge. Those grants come back separately so the cycle line
-    keeps reporting wallets as wallets.
-    """
+    """Top up every wallet that is short."""
     minimum = coins_to_units(options.min_balance_coins)
-    owned = [item.address for item in wallets]
-    extras = list(extra_addresses)
-    wallet_grants: list[str] = []
-    challenger_grants: list[str] = []
+    grants: list[str] = []
     faucet = 0
-    challenger_faucet = 0
-    for address in [*owned, *extras]:
-        if balance(client, address) >= minimum:
+    for wallet in wallets:
+        if balance(client, wallet.address) >= minimum:
             continue
-        digest, endpoint = gateway.grant(address, options.grant_coins)
-        if address in extras:
-            challenger_grants.append(digest)
-            challenger_faucet += int(endpoint)
-        else:
-            wallet_grants.append(digest)
-            faucet += int(endpoint)
-    return Funding(
-        grants=tuple(wallet_grants),
-        challenger=tuple(challenger_grants),
-        faucet=faucet,
-        challenger_faucet=challenger_faucet,
-    )
+        digest, endpoint = gateway.grant(wallet.address, options.grant_coins)
+        grants.append(digest)
+        faucet += int(endpoint)
+    return Funding(grants=tuple(grants), faucet=faucet)
 
 
 def _send_transfers(
@@ -680,9 +623,8 @@ def run_cycle(
     them is the point of the generator. Aborting here is what once left a chain
     with five funded wallets and no circulation at all.
 
-    ``extras`` churns miners before the grants and audits quality after the
-    transfers, so a cycle's nonces are numbered in the order the faucet spends
-    them and the audit sees a block that is already settled.
+    ``extras`` churns miners before the grants, so a cycle's nonces are numbered
+    in the order the faucet spends them.
     """
     seats = wallet_count if wallet_count is not None else rng.randint(MIN_WALLETS, MAX_WALLETS)
     seats = max(MIN_WALLETS, min(seats, options.max_wallets, len(pool)))
@@ -700,16 +642,11 @@ def run_cycle(
     churn = ""
     if extras.fleet is not None:
         churn = extras.fleet.churn(rng, grant=gateway.grant).as_line()
-    audit_addresses: tuple[str, ...] = ()
-    if extras.audit is not None and extras.audit.submit and extras.audit.challenger:
-        audit_addresses = (extras.audit.challenger,)
     funding = _fund(
         client,
         targets,
         gateway=gateway,
         options=options,
-        params=params,
-        extra_addresses=audit_addresses,
     )
     waited = funding.all
     confirmed = (
@@ -751,12 +688,6 @@ def run_cycle(
         if transfer_txids
         else set()
     )
-    audited = ""
-    if extras.audit is not None:
-        try:
-            audited = extras.audit.audit().as_line()
-        except (quality.QualityEventError, httpx.HTTPError) as exc:
-            audited = f"quality: {exc}"
     grant_txids = set(funding.all)
     grants_confirmed = sum(1 for txid in confirmed if txid in grant_txids)
     return CycleReport(
@@ -768,9 +699,7 @@ def run_cycle(
         transfers=len(transfer_txids),
         confirmed=len(confirmed) + len(mined),
         unconfirmed=len(funding.all) - grants_confirmed,
-        challenger_grants=len(funding.challenger),
         miners=churn,
-        quality=audited,
     )
 
 
@@ -783,11 +712,8 @@ def _summary(report: CycleReport) -> str:
     )
     if report.unconfirmed:
         line += f", {report.unconfirmed} grant(s) unconfirmed"
-    if report.challenger_grants:
-        line += f", {report.challenger_grants} challenger top-up"
-    for extra in (report.miners, report.quality):
-        if extra:
-            line += f" | {extra}"
+    if report.miners:
+        line += f" | {report.miners}"
     return line
 
 
@@ -925,23 +851,6 @@ def _parser() -> argparse.ArgumentParser:
         help="how many extra miners may run at once (default: %(default)s)",
     )
     parser.add_argument(
-        "--no-quality-events",
-        dest="quality_events",
-        action="store_false",
-        help="skip the per-cycle quality audit and its bonded challenges",
-    )
-    parser.add_argument(
-        "--false-challenge-every",
-        type=int,
-        default=FALSE_CHALLENGE_EVERY,
-        metavar="N",
-        help=(
-            "also file a knowingly false accusation every Nth audited proof, to "
-            "exercise the panel's rebuttal; each one burns the challenger's bond "
-            "(default: %(default)s, never)"
-        ),
-    )
-    parser.add_argument(
         "--cycles",
         type=int,
         default=None,
@@ -972,8 +881,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--extra-miners cannot be negative")
     if args.max_extra_online < 1:
         parser.error("--max-extra-online must be at least 1")
-    if args.false_challenge_every < 0:
-        parser.error("--false-challenge-every cannot be negative")
     if args.cycles is not None and args.cycles < 1:
         parser.error("--cycles must be at least 1")
     options = Options(
@@ -990,8 +897,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         relay=args.relay,
         extra_miners=args.extra_miners,
         max_extra_online=args.max_extra_online,
-        quality_events=args.quality_events,
-        false_challenge_every=args.false_challenge_every,
     )
     try:
         with httpx.Client(base_url=args.node, timeout=30.0) as client:

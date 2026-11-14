@@ -76,14 +76,14 @@ def test_resignation_is_accepted_without_a_board_outcome(
     assert parsed.final_board.outcome(claim_draw=False) is None
 
 
-def test_resignation_quality_hook_can_reject(
+def test_resignation_hook_can_reject(
     make_pgn: Callable[[str, Mapping[str, str]], str],
     match_tags: dict[str, str],
 ) -> None:
     tags = {**match_tags, "Result": "0-1", "Termination": "resignation"}
     pgn = make_pgn("1. e4 e5 0-1", tags)
 
-    with pytest.raises(PgnValidationError, match="quality policy"):
+    with pytest.raises(PgnValidationError, match="resignation policy"):
         validate_pgn(pgn, params=TESTNET, resignation_check=lambda board: False)
 
     parsed = validate_pgn(pgn, params=TESTNET, resignation_check=lambda board: True)

@@ -537,9 +537,9 @@ usage.
 
 ## 9. Operational safety
 
-- **The bond is real.** Registration locks coins; slashing and challenge
-  settlement can take them. Read [`THREAT_MODEL.md`](THREAT_MODEL.md) before
-  running a miner with value at stake.
+- **The bond is real.** Registration locks coins; slashing can take them. Read
+  [`THREAT_MODEL.md`](THREAT_MODEL.md) before running a miner with value at
+  stake.
 - **Stack keys are public.** `deploy/init_testnet_stack.py` derives its keys from
   fixed seeds and publishes the passphrase. Never use them on mainnet.
 - **One process per keyfile.** Two miners signing with the same key race on
@@ -565,6 +565,5 @@ usage.
 - [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — play a relay match by hand.
 - [`deploy/README.md`](../deploy/README.md) — the docker-compose testnet stack
   and what it deliberately does not do yet.
-- [`THREAT_MODEL.md`](THREAT_MODEL.md) — adversaries, slashing and quality
-  challenges.
+- [`THREAT_MODEL.md`](THREAT_MODEL.md) — adversaries, slashing and self-play.
 - [`PROTOCOL.md`](PROTOCOL.md) — match, proof and clock formats.

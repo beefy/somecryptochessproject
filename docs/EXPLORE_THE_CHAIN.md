@@ -53,7 +53,7 @@ deploy that does exactly this is
 ## What the pages show
 
 - **Overview** — height, tip age, epoch, peer count, pool sizes and the newest
-  blocks, games and open challenges.
+  blocks and games.
 - **Blocks** — newest first, paged with the node's `before_height` cursor rather
   than an offset, so a reorg cannot make a page skip a block.
 - **A block** — every header field (parent, epoch, beacon, miner, difficulty,
@@ -112,9 +112,9 @@ miner (`node run --mine`) puts it in a block.
 
 What it cannot do is as important: a browser cannot open a trusted clock, so a
 flag settles through the winner's bonded `timeout_claim` and the relay's witness
-receipts, not from the page; and with no analysis engine, a network that samples
-quality gets `verdict: "unknown"`, which a validator may challenge. The reference
-implementation of the same flow in one process is
+receipts, not from the page. Nothing else is missing: a proof carries no quality
+claim, because the protocol does not arbitrate how well a game was played. The
+reference implementation of the same flow in one process is
 `python scripts/play_miner.py --on-chain`.
 
 The move count, the SAN list, every hash and every signature match the Python

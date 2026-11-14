@@ -19,11 +19,10 @@ reward.
 > game hashing; commit/reveal beacons, deterministic pairing, signed match
 > certificates and the timed relay; the account ledger, block validation, fork
 > choice, difficulty, SQLite storage and block builder; the node API, gossip and
-> pull-sync; the unattended engine miner; quality sampling and bonded
-> challenges; and a funded two-miner testnet with a public faucet, automated
-> deployment and operator runbooks. Normative formats are in
-> [`docs/PROTOCOL.md`](docs/PROTOCOL.md); next steps and improvement areas are
-> in [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md). Mainnet
+> pull-sync; the unattended engine miner; and a funded two-miner testnet with a
+> public faucet, automated deployment and operator runbooks. Normative formats
+> are in [`docs/PROTOCOL.md`](docs/PROTOCOL.md); next steps and improvement areas
+> are in [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md). Mainnet
 > parameters exist, but no mainnet has launched or been audited; testnet and
 > devnet coins have no value.
 
@@ -102,7 +101,7 @@ matchmaking protocol, the proof format, the anti-collusion rules and the chain.
 | **Engine miner** | Registers, commits availability, connects to a relay, plays assigned games with a UCI engine, submits win proofs | none for correctness; it only hurts itself by cheating |
 | **Matchmaker / relay** | Runs epoch rounds, derives pairings from the beacon, relays moves, collects co-signatures, stores match transcripts | **untrusted**: any node can recompute the pairing and verify the transcript |
 | **Full node** | Gossips blocks and transactions, validates the chain, serves the HTTP API | none |
-| **Verifier** | Part of every full node: checks signatures, pairing, PGN legality, uniqueness, claim rules - and samples game quality | none; quality checks are fraud-proof based, not consensus-critical |
+| **Verifier** | Part of every full node: checks signatures, pairing, PGN legality, uniqueness and claim rules | none; every check is decidable from the record |
 
 A matchmaker is *not* a trusted third party. It is a convenience service: it
 cannot invent a pairing, change an opening, forge a move or fabricate a result
@@ -177,21 +176,19 @@ it uses layered economic and structural defences:
 2. **Pairing constraints.** The pairing algorithm refuses (where possible) to
    match two identities that share an endpoint, /24 prefix, ASN or registration
    funder; it also forbids rematches inside a window.
-3. **Quality requirements.** Both sides' moves are checked against a pinned
-   reference engine. Playing a deliberately weak "loser" is detected as
-   centipawn loss, so a self-playing miner must run two strong engines - roughly
-   the same cost as playing honestly with one engine.
-4. **Co-signatures and bonds.** The loser must sign the finished transcript to
+3. **Co-signatures and bonds.** The loser must sign the finished transcript to
    complete a proof. Refusing to co-sign forfeits the match bond and
    availability slots.
-5. **Sampling and challenges.** Quality verification is expensive, so it is
-   sampled and backed by a bonded challenge window rather than run inline by
-   every node.
+4. **Win-only payment.** The subsidy is paid to the winner of a valid proof, so
+   a deliberately weak engine loses and earns nothing. The protocol does not try
+   to inspect move quality: "lost on purpose" and "lost badly" are the same
+   game record, and any quality threshold would tax honest weak engines while a
+   colluding pair still cleared it.
 
 The honest summary: chess PoW proves that *a strong engine played a legal,
 previously unseen game against another signing identity*. It does not
 cryptographically prove that the two identities are independent. The gap is
-closed by cost, bonding and detection, not by mathematics.
+closed by cost and bonding, not by mathematics.
 
 ### 3.4 A legal PGN is not proof of work
 
@@ -200,15 +197,11 @@ work. A valid proof therefore also requires:
 
 - a **match certificate** signed by both seats, binding the game to a pairing and
   opening that the beacon actually produced;
-- a **quality report**: every move is replayed against a pinned reference engine
-  and must stay within a centipawn-loss budget (with exemptions for already
-  decided positions);
-- a decisive result: checkmate, or a resignation where the reference engine
-  agrees the position is lost;
+- a **decisive result**: checkmate, or a resignation accepted as written;
 - registration, bond and claim-window checks.
 
-Quality checking costs roughly the same as playing the game, so it is sampled
-(plus challengeable) rather than repeated by every node on every proof.
+Nothing in that list asks how well the moves were played. That is deliberate:
+see [`docs/PROTOCOL.md` §9.2](docs/PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain).
 
 ### 3.5 Draws
 
@@ -251,7 +244,7 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 | Claim window | 64 blocks | 144 blocks |
 | Game length | 20-300 plies | 30-400 plies |
 | Engines allowed | any UCI engine, incl. mock | pinned Stockfish builds |
-| Quality checks | off (fast local iteration) | sampled + challengeable |
+| Move-quality arbitration | none | none (see [`PROTOCOL.md` §9.2](docs/PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain)) |
 | Beacon | commit-reveal | commit-reveal; optional drand mix-in (pinned verifier pending) |
 | Minimum fee | 1,000 base units | 1,000 base units |
 
@@ -311,13 +304,13 @@ responsibility rather than a construction phase.
 │   ├── config.py                 # network parameters, settings
 │   ├── serialization.py          # canonical JSON, domain-separated hashing
 │   ├── crypto/                   # keys, bech32 addresses, encrypted wallets
-│   ├── chess/                    # pgn, openings, engines, gameplay, quality
+│   ├── chess/                    # pgn, openings, engines, gameplay
 │   ├── protocol/                 # models, beacon, pairing, transcripts,
-│   │                             # verification, challenges and panels
+│   │                             # verification and commitments
 │   ├── chain/                    # tx, blocks, state, mempool, fork choice,
 │   │                             # storage, difficulty, timeouts, genesis
 │   ├── node/                     # FastAPI app, gossip, services, faucet,
-│   │                             # proof settler, quality sampler
+│   │                             # proof settler
 │   ├── miner/                    # matchmaker/relay, block builder, engine miner
 │   ├── wallet/                   # key files and wallet service
 │   ├── transport.py              # synchronous ASGI transport for httpx
@@ -523,16 +516,15 @@ stops after `N` relay polls, which is how the CLI tests drive it.
 Protocol v1 and the testnet release are complete. The reference implementation
 includes the wallet and keyfile tooling, the chess proof pipeline, the timed
 relay, the ledger and consensus rules, the node and gossip layer, the unattended
-miner, quality sampling and bonded challenges, the funded two-miner testnet with
-an automated deploy path, and a web explorer with a playable, protocol-signed
-table (`src/web`).
+miner, the funded two-miner testnet with an automated deploy path, and a web
+explorer with a playable, protocol-signed table (`src/web`).
 
 The work that remains is operational and economic rather than foundational:
 
 - run a persistent public testnet and publish a 72-hour soak report;
 - add metrics and alerting;
 - automate timeout-claim submission and pin the drand quicknet verifier;
-- move challenge-panel votes on chain;
+- populate the roster's funder/subnet fields so pairing diversity has real data;
 - harden storage, peer networking, faucet limits and miner/relay resilience;
 - complete the audit, economic review and mainnet go/no-go decision.
 
@@ -546,17 +538,13 @@ The prioritized list, acceptance criteria and improvement areas are in
 - **Chess is not a VDF.** Game outcomes depend on engine strength, opening
   randomness and hardware. The cost model is economic, not cryptographic.
 - **Legality is cheap.** A legal PGN can be fabricated in microseconds. The
-  security comes from co-signed match certificates, beacon-derived pairings,
-  quality checks and bonds - in that order.
-- **Quality checking is expensive and hardware-sensitive.** It is therefore
-  sampled and challengeable, not consensus-critical, so heterogeneous hardware
-  cannot fork the chain over a 3-centipawn disagreement.
-- **Challenge panels are derived, not yet voted on chain.** Panel selection and
-  verdict aggregation are deterministic and pure, but there is no `panel_vote`
-  transaction yet, so adjudication is operator-triggered and its honesty is a
-  documented assumption in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
-- **Sybil resistance is economic.** Bonds, diversity constraints and detection
-  raise the cost of self-play; they do not make it impossible.
+  security comes from co-signed match certificates, beacon-derived pairings and
+  bonds - in that order.
+- **Move quality is not checked at all.** A proof is valid if the game replays;
+  how well it was played never enters validation. A bad engine prices itself out
+  by losing, and no bond or panel is asked to judge intent.
+- **Sybil resistance is economic.** Bonds and diversity constraints raise the
+  cost of self-play; they do not make it impossible.
 - **Reward variance is high.** Draws earn nothing, so a miner wins maybe one
   game in five against a peer; individual miners may wait a long time between
   payouts, and pooling is an open question.

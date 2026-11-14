@@ -56,16 +56,16 @@ def test_status_describes_the_chain() -> None:
     service.close()
 
 
-def test_params_difficulty_and_challenges_routes() -> None:
+def test_params_and_difficulty_routes() -> None:
     service = _node()
     with _client(service) as client:
         params = client.get("/v1/params").json()
         difficulty = client.get("/v1/difficulty").json()
-        challenges = client.get("/v1/challenges").json()
+        challenges = client.get("/v1/challenges")
     assert params["network_id"] == "devnet"
     assert difficulty["wins_required"] == DEVNET.wins_required
     assert difficulty["history"][0]["height"] == 0
-    assert challenges == {"network": "devnet", "challenges": []}
+    assert challenges.status_code == 404
 
 
 def test_block_lookup_by_height_and_hash() -> None:
@@ -250,7 +250,6 @@ def test_game_list_shows_pending_then_settled_results(
     assert row["plies"] == match.proof.plies
     assert row["epoch"] == match.proof.epoch
     assert row["match_id"] == match.proof.match_id
-    assert row["challenge_status"] == "none"
     assert older == []
     service.close()
 

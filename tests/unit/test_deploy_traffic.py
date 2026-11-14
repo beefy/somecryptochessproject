@@ -5,12 +5,11 @@ from __future__ import annotations
 import json
 import random
 from collections.abc import Callable, Iterator, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 import pytest
 from deploy import synthetic_miner_creation as miners
-from deploy import synthetic_quality_events as quality
 from deploy import synthetic_testnet_traffic as traffic
 
 from sccp.chain.genesis import faucet_keypair
@@ -70,8 +69,7 @@ def _transport(
     node that mines each cycle before the next one starts.
     ``pending_recipients`` are the wallets whose transfer stays in the pool, which
     is how a node behaves when a block does not carry the grant this time round.
-    ``status_height`` is what ``GET /v1/status`` reports; the fake chain settles no
-    block, so the quality audit sees no new proof instead of opening an engine.
+    ``status_height`` is what ``GET /v1/status`` reports.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -80,10 +78,6 @@ def _transport(
             return httpx.Response(
                 200, json={"network": TESTNET.network_id, "height": status_height}
             )
-        if path == "/v1/challenges":
-            # The audit polls for the verdicts on the challenges it filed; this
-            # fake chain never decides one.
-            return httpx.Response(200, json={"network": TESTNET.network_id, "challenges": []})
         if path == "/v1/mempool":
             view = node.mempool_view().model_dump(mode="json")
             if settles_immediately:
@@ -214,9 +208,6 @@ def test_run_seats_and_funds_the_whole_pool_up_front(
     recipients = {tx.payload["to"] for tx in grants}
     pool_addresses = {traffic.wallet(index).address for index in range(4)}
     assert pool_addresses <= recipients
-    # ... and the quality challenger, whose bond has to be on chain before it files.
-    assert quality.challenger_address(TESTNET) in recipients
-    assert reports[0].challenger_grants == 1
     assert "4 wallets" in capsys.readouterr().out
 
 
@@ -507,7 +498,7 @@ def test_the_command_line_refuses_a_pool_it_cannot_seat() -> None:
         traffic.main(["--max-wallets", "1"])
 
 
-# -- the churn and the audit --------------------------------------------------
+# -- the churn ----------------------------------------------------------------
 
 
 def _offline_client() -> httpx.Client:
@@ -537,52 +528,17 @@ class _RecordingFleet:
         self.closed += 1
 
 
-@dataclass
-class _RecordingAudit:
-    """An audit that logs how much of the cycle had landed when it ran."""
-
-    seen: dict[str, object]
-    admitted: Callable[[], int]
-    report: quality.AuditReport = field(
-        default_factory=lambda: quality.AuditReport(blocked="no new block")
-    )
-    failure: Exception | None = None
-    closed: int = 0
-    submit: bool = True
-    challenger: str = quality.challenger_address(TESTNET)
-
-    def audit(self) -> quality.AuditReport:
-        self.seen["audit"] = self.admitted()
-        if self.failure is not None:
-            raise self.failure
-        return self.report
-
-    def close(self) -> None:
-        self.closed += 1
-
-
 def test_extras_are_off_unless_the_options_ask_for_them(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A plain traffic deployment must not measure the host or open an engine."""
+    """A plain traffic deployment must not measure the host or start a miner."""
 
     def measured(**kwargs: object) -> miners.HostCapacity:
         raise AssertionError("the host was measured although no churn was asked for")
 
     monkeypatch.setattr(miners, "host_capacity", measured)
     with _offline_client() as client:
-        quiet = traffic.extras_for(
-            client, options=traffic.Options(extra_miners=0, quality_events=False)
-        )
-        audited = traffic.extras_for(
-            client, options=traffic.Options(extra_miners=0, quality_events=True)
-        )
-    try:
-        assert quiet.fleet is None
-        assert quiet.audit is None
-        assert audited.fleet is None
-        assert isinstance(audited.audit, quality.QualityAudit)
-        quiet.close()  # nothing was started, so closing is a no-op rather than a crash
-    finally:
-        audited.close()
+        quiet = traffic.extras_for(client, options=traffic.Options(extra_miners=0))
+    assert quiet.fleet is None
+    quiet.close()  # nothing was started, so closing is a no-op rather than a crash
 
 
 def test_the_churn_seats_the_pool_the_options_ask_for() -> None:
@@ -595,7 +551,6 @@ def test_the_churn_seats_the_pool_the_options_ask_for() -> None:
         max_extra_online=1,
         relay="http://relay.example:8646",
         node="http://node.example:8645",
-        quality_events=False,
     )
     with _offline_client() as client:
         extras = traffic.extras_for(client, options=options, capacity=capacity)
@@ -611,13 +566,14 @@ def test_the_churn_seats_the_pool_the_options_ask_for() -> None:
         assert (fleet.pool_size, fleet.max_online) == (3, 1)
         assert len(fleet.pool) == 3
         assert fleet.online_limit == 1
-        assert extras.audit is None
     finally:
         extras.close()
 
 
-def test_the_audit_costs_the_churn_a_core(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The auditor's engine competes for cores, so the host keeps a share for it."""
+def test_the_churn_measures_the_host_for_the_pool_it_was_asked_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``extras_for`` measures only when the caller did not supply a budget."""
     measured: list[dict[str, int]] = []
 
     def host(**kwargs: int) -> miners.HostCapacity:
@@ -628,30 +584,17 @@ def test_the_audit_costs_the_churn_a_core(monkeypatch: pytest.MonkeyPatch) -> No
 
     monkeypatch.setattr(miners, "host_capacity", host)
     with _offline_client() as client:
-        both = traffic.extras_for(
-            client, options=traffic.Options(extra_miners=2, quality_events=True)
-        )
-        churn_only = traffic.extras_for(
-            client, options=traffic.Options(extra_miners=2, quality_events=False)
-        )
+        extras = traffic.extras_for(client, options=traffic.Options(extra_miners=2))
     try:
-        assert [call["audit_engines"] for call in measured] == [1, 0]
-        assert all(call["max_extra"] == 2 for call in measured)
-        assert isinstance(both.audit, quality.QualityAudit)
-        assert both.audit.bond == max(1, TESTNET.min_bond)
-        assert churn_only.audit is None
-        assert both.fleet is not None
-        assert churn_only.fleet is not None
-        assert both.fleet.capacity.allowed == 1
+        assert measured == [{"max_extra": 2}]
+        assert extras.fleet is not None
+        assert extras.fleet.capacity.allowed == 1
     finally:
-        both.close()
-        churn_only.close()
+        extras.close()
 
 
-def test_a_cycle_churns_before_the_grants_and_audits_after_the_sends(
-    node: NodeService,
-) -> None:
-    """Ordering is the contract: churn sees an empty pool, the audit sees a settled cycle."""
+def test_a_cycle_churns_before_the_grants(node: NodeService) -> None:
+    """Ordering is the contract: the churn sees an empty pool."""
     pool = [traffic.wallet(index) for index in range(3)]
     seen: dict[str, object] = {}
     with httpx.Client(transport=_transport(node), base_url="http://node") as client:
@@ -666,19 +609,14 @@ def test_a_cycle_churns_before_the_grants_and_audits_after_the_sends(
             options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
             extras=traffic.Extras(
                 fleet=_RecordingFleet(seen=seen, admitted=admitted),
-                audit=_RecordingAudit(seen=seen, admitted=admitted),
             ),
         )
 
     assert seen["churn"] == 0, "the churn ran after a grant was already in the pool"
     assert callable(seen["grant"]), "a churn that cannot fund a seat is refused by the node"
-    # three wallets plus the challenger top-up, then two transfers
-    assert seen["audit"] == 6, "the audit ran before the grants and sends were admitted"
     assert report.miners == "miners: started synthetic-miner-1; online: synthetic-miner-1"
-    assert report.quality == "quality: no new block"
     summary = traffic._summary(report)
     assert "| miners: started synthetic-miner-1; online: synthetic-miner-1" in summary
-    assert "| quality: no new block" in summary
 
 
 def _admitted_count(node: NodeService) -> Callable[[], int]:
@@ -686,42 +624,14 @@ def _admitted_count(node: NodeService) -> Callable[[], int]:
     return lambda: len(_admitted(node))
 
 
-def test_a_failing_audit_does_not_lose_the_cycle(node: NodeService) -> None:
-    """A missing engine is reported in the cycle's line; the wallet traffic already ran."""
-    seen: dict[str, object] = {}
-    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
-        report = traffic.run_cycle(
-            client,
-            cycle=1,
-            pool=[traffic.wallet(index) for index in range(2)],
-            rng=random.Random(12),
-            wallet_count=2,
-            transfer_count=2,
-            options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
-            extras=traffic.Extras(
-                audit=_RecordingAudit(
-                    seen=seen,
-                    admitted=lambda: 0,
-                    failure=quality.QualityEventError("no engine binary at /usr/games/stockfish"),
-                )
-            ),
-        )
-
-    assert report.quality == "quality: no engine binary at /usr/games/stockfish"
-    assert (report.funded, report.transfers) == (2, 2)
-    assert report.challenger_grants == 1  # its bond has to be on chain too
-
-
-def test_run_stops_the_miners_and_the_engine_it_was_given(node: NodeService) -> None:
+def test_run_stops_the_miners_it_was_given(node: NodeService) -> None:
     """A churn that outlived the generator would leave children nobody stops."""
     fleet = _RecordingFleet(seen={}, admitted=lambda: 0)
-    audit = _RecordingAudit(seen={}, admitted=lambda: 0)
     options = traffic.Options(
         max_wallets=4,
         wait_seconds=0.0,
         poll_seconds=0.0,
         extra_miners=0,
-        quality_events=False,
     )
     with httpx.Client(transport=_transport(node), base_url="http://node") as client:
         reports = traffic.run(
@@ -729,11 +639,11 @@ def test_run_stops_the_miners_and_the_engine_it_was_given(node: NodeService) -> 
             options=options,
             cycles=1,
             sleep=lambda seconds: None,
-            extras=traffic.Extras(fleet=fleet, audit=audit),
+            extras=traffic.Extras(fleet=fleet),
         )
 
     assert len(reports) == 1
-    assert (fleet.closed, audit.closed) == (1, 1)
+    assert fleet.closed == 1
 
 
 def test_run_builds_the_extras_from_its_options(
@@ -759,7 +669,6 @@ def test_run_builds_the_extras_from_its_options(
         wait_seconds=0.0,
         poll_seconds=0.0,
         extra_miners=1,
-        quality_events=False,
     )
     with httpx.Client(transport=_transport(node), base_url="http://node") as client:
         reports = traffic.run(client, options=options, cycles=1, sleep=lambda seconds: None)
@@ -782,10 +691,10 @@ def _fake_run(monkeypatch: pytest.MonkeyPatch, captured: dict[str, object]) -> N
     monkeypatch.setattr(traffic, "run", fake_run)
 
 
-def test_the_command_line_carries_the_churn_and_the_audit(
+def test_the_command_line_carries_the_churn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``--relay``, the pool sizes and the audit switch reach the generator's options."""
+    """``--relay`` and the pool sizes reach the generator's options."""
     captured: dict[str, object] = {}
     _fake_run(monkeypatch, captured)
     code = traffic.main(
@@ -796,7 +705,6 @@ def test_the_command_line_carries_the_churn_and_the_audit(
             "3",
             "--max-extra-online",
             "1",
-            "--no-quality-events",
             "--cycles",
             "2",
         ]
@@ -807,11 +715,10 @@ def test_the_command_line_carries_the_churn_and_the_audit(
     assert isinstance(options, traffic.Options)
     assert options.relay == "http://relay.example:8646"
     assert (options.extra_miners, options.max_extra_online) == (3, 1)
-    assert options.quality_events is False
     assert captured["cycles"] == 2
 
 
-def test_the_stack_defaults_keep_both_kinds_of_activity_on(
+def test_the_stack_defaults_keep_the_churn_on(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Compose passes no churn flags, so the parser's defaults are the deployment."""
@@ -825,7 +732,6 @@ def test_the_stack_defaults_keep_both_kinds_of_activity_on(
     assert options.node == "http://node:8645"
     assert options.extra_miners == traffic.EXTRA_MINERS >= 1
     assert options.max_extra_online == traffic.MAX_EXTRA_ONLINE >= 1
-    assert options.quality_events is True
 
 
 @pytest.mark.parametrize(

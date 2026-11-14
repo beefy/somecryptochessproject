@@ -178,16 +178,12 @@ services:
       #
       # Two more kinds of activity ride along at their defaults. First, a churn: one
       # extra `sccp miner run` child at a time, swapped every cycle, so registrations,
-      # availability and roster changes keep happening. The pool is cast for the
-      # quality path -- `synthetic-miner-1` plays at 16 nodes a move and claims a clean
-      # search, `synthetic-miner-2` posts its honest analysis. The churn measures the
-      # host first (half a core per miner, one core kept for the node and relay) and
-      # seats nothing rather than starving the fixed miners if nothing fits.
-      # Second, a quality audit: each cycle it re-runs the pinned profile over a proof
-      # that carries a summary and, when the summary is false, submits a real bonded
-      # `challenge`; the bonded miners vote with their own keys and the chain resolves
-      # it. Disable either explicitly with `--extra-miners 0` or
-      # `--no-quality-events`.
+      # availability and roster changes keep happening. `synthetic-miner-1` plays at
+      # 16 nodes a move on purpose: a deliberately weak engine that loses most games
+      # and earns nothing, because only a win pays. The
+      # churn measures the host first (half a core per miner, one core kept for the
+      # node and relay) and seats nothing rather than starving the fixed miners if
+      # nothing fits. Disable it with `--extra-miners 0`.
       #
       # It runs beside the miners rather than on its own VM because its lifetime is
       # the chain's: the deploy starts from empty volumes, so a generator that

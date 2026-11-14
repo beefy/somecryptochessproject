@@ -6,9 +6,10 @@ roster/pairing, signatures, PGN replay, hashes, duplicates -- and raises
 :class:`~sccp.errors.ProofVerificationError` with a stable
 :class:`ProofFailure` reason at the first failure.
 
-Quality sampling is deliberately absent: it must never be a consensus rule.
-A proof that passes here is structurally and cryptographically valid; whether
-the chess was played well is handled by the sampler and bonded challenges.
+Move quality is deliberately absent, and so is any engine: a proof that passes
+here is structurally and cryptographically valid. How well the chess was played
+is not a fact about the game record, and this protocol does not attempt to
+arbitrate it; see docs/PROTOCOL.md section 9.2.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from typing import NoReturn
 from sccp.chess.openings import OpeningBook, book_for
 from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import ParsedGame, validate_pgn
-from sccp.config import NetworkParams, QualityMode, get_network
+from sccp.config import NetworkParams, get_network
 from sccp.errors import (
     BeaconError,
     ClockError,
@@ -74,7 +75,6 @@ class ProofFailure(StrEnum):
     RESULT = "result"
     PROOF_ID = "proof-id"
     DUPLICATE = "duplicate"
-    QUALITY = "quality"
 
 
 def _fail(reason: ProofFailure, message: str) -> NoReturn:
@@ -137,16 +137,6 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         _fail(
             ProofFailure.BEACON,
             f"beacon is for epoch {beacon.epoch}, proof claims epoch {proof.epoch}",
-        )
-
-    # 1b. On a sampled network the compact quality summary is part of the proof's
-    # shape. Its contents are not consensus: a validator samples and re-runs, and a
-    # disagreement is a bonded challenge. Requiring the field stops a miner from
-    # opting out of that audit by leaving it out.
-    if params.quality_mode is QualityMode.SAMPLED and proof.quality_summary is None:
-        _fail(
-            ProofFailure.QUALITY,
-            f"network {params.network_id!r} requires a quality_summary on every proof",
         )
 
     # 2. Beacon: recompute from reveals, availability and (optionally) drand.

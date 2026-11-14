@@ -20,7 +20,6 @@ export const DOMAINS = {
   BEACON_COMMIT: "sccp/v1/beacon-commit",
   BLOCK: "sccp/v1/block",
   CERTIFICATE: "sccp/v1/certificate",
-  CHALLENGE: "sccp/v1/challenge",
   CLOCK: "sccp/v1/clock",
   COMMITMENT: "sccp/v1/commitment",
   GAME: "sccp/v1/game",
@@ -31,7 +30,6 @@ export const DOMAINS = {
   OPENING: "sccp/v1/opening",
   PAIR: "sccp/v1/pair",
   PROOF: "sccp/v1/proof",
-  QUALITY: "sccp/v1/quality",
   RESULT: "sccp/v1/result",
   TX: "sccp/v1/tx",
 } as const;
