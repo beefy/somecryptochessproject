@@ -1,6 +1,7 @@
-# The two-miner testnet deployment: one node, one relay, one bootstrap job and
-# two miners. `deploy/bootstrap_testnet_stack.py` builds the funded, registered,
-# matchable chain once; see deploy/README.md and docs/RUNBOOK.md.
+# The two-miner testnet deployment: one node, one relay, one bootstrap job, two
+# miners and the two traffic generators that keep the chain in use.
+# `deploy/bootstrap_testnet_stack.py` builds the funded, registered, matchable
+# chain once; see deploy/README.md and docs/RUNBOOK.md.
 #
 #   docker compose up --build
 #   curl http://127.0.0.1:8645/v1/status
@@ -14,6 +15,14 @@ name: sccp-testnet
 x-sccp-service: &sccp-service
   image: ${SCCP_IMAGE:-sccp-testnet:local}
   build: .
+  # Bounded logs. Every service here is `restart: unless-stopped` and can run for
+  # weeks between deploys; the traffic generator also prints a line per cycle, so
+  # an uncapped json-file driver grows until the 20 GB disk is full.
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 services:
   init:
@@ -148,6 +157,25 @@ services:
     # generates four availability/reveal transactions, so an epoch without a
     # decisive game would run one block short and stop the chain. See
     # deploy/README.md.
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  traffic:
+    <<: *sccp-service
+    entrypoint: ["python", "/app/deploy/synthetic_testnet_traffic.py"]
+    command:
+      - --node
+      - http://node:8645
+    # Ordinary wallet usage on top of the drip: each cycle seats 2-10 wallets,
+    # funds them from the faucet, sends 1-10 transfers between them and waits for
+    # both phases to be mined, then idles for 1-5 minutes. It holds no roster slot
+    # and builds no blocks; the node admits every transfer like any wallet's.
+    #
+    # It runs beside the miners rather than on its own VM because its lifetime is
+    # the chain's: the deploy starts from empty volumes, so a generator that
+    # outlived `docker compose down -v` would send with stale nonces and balances.
     depends_on:
       bootstrap:
         condition: service_completed_successfully

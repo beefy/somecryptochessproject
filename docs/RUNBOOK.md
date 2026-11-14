@@ -1,8 +1,9 @@
 # Testnet operations runbook
 
 This is the short, operational companion to the design docs. It covers the
-stack in `docker-compose.yml`: one node, one relay, the deterministic bootstrap
-and two Stockfish miners. For deployment setup and cost, see
+stack in `docker-compose.yml`: one node, one relay, the deterministic bootstrap,
+two Stockfish miners and the two traffic generators that keep the chain in use.
+For deployment setup and cost, see
 [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md). For the cloud-side resource
 checklist, see [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md).
 
@@ -15,7 +16,7 @@ curl -fsS http://127.0.0.1:8645/v1/status   # node height, tip, mempool
 curl -fsS http://127.0.0.1:8646/v1/status   # beacon epoch, matches, round
 curl -fsS http://127.0.0.1:8646/v1/matches  # per-game status and ply count
 docker compose ps
-docker compose logs --tail=100 node bootstrap relay miner-1 miner-2
+docker compose logs --tail=100 node bootstrap relay miner-1 miner-2 drip traffic
 ```
 
 From anywhere, check the public node endpoint:
@@ -32,11 +33,52 @@ Healthy after a deploy means:
   the bootstrap, 4 once the first post-bootstrap block settles);
 - `miner-1`/`miner-2` log an engine fingerprint (the Stockfish SHA-256), not an
   engine crash;
+- `drip` logs an occasional `dripped` line and `traffic` logs a `cycle N: ...`
+  line every few minutes;
 - when a game is decisive, the node log contains `mined height 20: 1 proof(s) ...`
   (draws produce no proof).
 
 `deploy/check_testnet_stack.py` automates the first two checks. The deploy
-workflow runs it inside the node container.
+workflow runs it inside the node container, then waits for the first `cycle 1:`
+line from `traffic`.
+
+## Synthetic traffic
+
+Two containers keep the chain busy, so a testnet nobody is watching still
+exercises the paths a user takes:
+
+- `drip` (`deploy/drip_testnet_traffic.py`) signs one faucet transfer whenever the
+  pool is empty. An epoch is five blocks and a two-miner roster only produces four
+  availability/reveal transactions, so without this the chain would run a block
+  short at an epoch boundary that has no decisive game.
+- `traffic` (`deploy/synthetic_testnet_traffic.py`) is ordinary usage on top of
+  that. Each cycle it seats a random 2-10 wallets, funds the ones that are short,
+  waits for the grants to be mined, sends a random 1-10 transfers between those
+  wallets, waits for those to be mined, then idles for 1-5 minutes.
+
+```bash
+docker compose logs -f traffic   # one "cycle N: ..." line per cycle
+docker compose logs --tail=20 drip
+```
+
+The `traffic` line reports how each grant was paid (`faucet` or `key`). The public
+faucet allows five grants per client per hour and one per address, and the
+generator is one container IP, so a wide cycle spends that budget and signs the
+rest with the published faucet key -- the bypass `sccp faucet send` already uses.
+That line is expected, not an error; the endpoint is retried on the next cycle.
+
+The loop cannot drain the faucet. Transfers run between the pool's own wallets, so
+the coins circulate; the faucet is tapped only for new wallets (at most
+`--max-wallets`, ten by default, at 10 coins each) and for fees (1,000 units per
+transfer). Against the genesis faucet's 1,000,000 coins that is a rounding error,
+and the generator reuses its wallets instead of minting new ones every cycle.
+Because of that reuse, its addresses are derived from fixed seeds: nothing has to
+be persisted, which is what makes it safe under `docker compose down -v`.
+
+Keep it in the same Compose project as the chain. Unlike the explorer deploy -- a
+separate workflow precisely because it must survive the chain being reset -- a
+traffic generator that outlived `down -v` would send with nonces and balances that
+no longer exist.
 
 ## Restart and redeploy
 
