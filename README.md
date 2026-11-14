@@ -456,6 +456,9 @@ chain, starting the node on the right data directory and troubleshooting a
 
 The wallet and miner guides are separate:
 
+- [`docs/RUN_A_DEVNET.md`](docs/RUN_A_DEVNET.md) — run a whole devnet from source:
+  `devnet up`, the faucet, wallets, transfers and a miner, with the devnet
+  parameters and troubleshooting.
 - [`docs/CREATE_A_TESTNET_WALLET.md`](docs/CREATE_A_TESTNET_WALLET.md) — create a
   testnet keyfile, fund it from the faucet and check the balance.
 - [`docs/OPEN_A_WALLET.md`](docs/OPEN_A_WALLET.md) — create a keyfile, back up the
