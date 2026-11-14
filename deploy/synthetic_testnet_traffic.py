@@ -29,7 +29,13 @@ Two properties keep the loop solvent and accepted by consensus:
 
 Only this cycle's own transactions are waited on, never an empty pool:
 ``drip_testnet_traffic`` refills a drained pool within a block, so a generator that
-waited for the pool to empty would wait forever.
+waited for the pool to empty would wait forever. That same drip spends the one
+faucet account, and its transfer is invisible in ``GET /v1/accounts`` until a block
+takes it, so a grant numbered from that read can collide with it. The collision is
+retried until the next block frees the nonce or ``--wait-seconds`` runs out. A grant
+that still does not confirm costs its wallet a cycle, not the whole cycle -- the
+wallets funded before it send to each other meanwhile, which is the traffic this
+script exists to make.
 
 The public faucet allows five grants per client per hour and one per address, and
 every request here leaves one container IP. A cycle that seats more wallets than
@@ -95,6 +101,21 @@ class TrafficError(RuntimeError):
 
 class FaucetRefused(TrafficError):
     """The public faucet refused one grant, usually its hourly rate limit."""
+
+
+NONCE_CONFLICT: Final = "already has a pending transaction with nonce"
+"""The node's refusal when the next nonce of an account is already in the pool."""
+
+
+class NonceConflict(TrafficError):
+    """The nonce a grant was built with is already pending, so the grant was not admitted.
+
+    The faucet is one account shared with ``drip_testnet_traffic``, which sends into
+    every empty pool. ``GET /v1/accounts`` reports the *committed* nonce, so a drip
+    transfer the last block has not taken yet is invisible there; a grant numbered
+    from that read collides with it. The generator retries instead of failing the
+    cycle, because the collision clears as soon as that block is settled.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,12 +190,17 @@ def pending_txids(client: httpx.Client) -> set[str]:
 
 
 def submit_transaction(client: httpx.Client, tx: Transaction) -> str:
-    """Submit one signed transaction; return its txid."""
+    """Submit one signed transaction; return its txid.
+
+    A nonce the pool already holds is reported as :class:`NonceConflict` rather
+    than a plain refusal: it is the one rejection a caller can wait out.
+    """
     response = client.post("/v1/tx", json=tx.model_dump(mode="json"))
     if response.status_code >= 300:
-        raise TrafficError(
-            f"the node refused the transfer: HTTP {response.status_code} {response.text}"
-        )
+        detail = response.text
+        if response.status_code == 400 and NONCE_CONFLICT in detail:
+            raise NonceConflict(f"nonce {tx.nonce} is already pending: {detail}")
+        raise TrafficError(f"the node refused the transfer: HTTP {response.status_code} {detail}")
     payload = response.json()
     digest = payload.get("txid") if isinstance(payload, Mapping) else None
     return digest if isinstance(digest, str) and digest else txid(tx)
@@ -289,7 +315,9 @@ class FaucetGateway:
         The faucet route numbers against the mempool projection while
         ``GET /v1/accounts`` reports the tip, so the two only agree once a block has
         mined those grants. Settling first is what keeps the key path from reusing
-        a nonce the endpoint already spent.
+        a nonce the endpoint already spent -- and the wait is bounded, so a grant
+        the block does not take is left behind rather than stalling the cycle:
+        :meth:`_grant_with_key` re-reads the nonce and retries anyway.
         """
         if not self._endpoint_grants:
             return
@@ -300,19 +328,40 @@ class FaucetGateway:
             poll_seconds=self._poll_seconds,
         )
         self._endpoint_grants.clear()
-        self._nonce = nonce(self._client, self._faucet.address)
+        self._nonce = max(self._nonce, nonce(self._client, self._faucet.address))
 
     def _grant_with_key(self, address: str, coins: int) -> str:
-        tx = transfer_transaction(
-            self._faucet,
-            to=address,
-            amount=coins_to_units(coins),
-            nonce=self._nonce,
-            params=self._params,
-        )
-        digest = submit_transaction(self._client, tx)
-        self._nonce += 1
-        return digest
+        """Sign one grant with the published faucet key, waiting out a busy nonce.
+
+        The drip pays ``1`` coin from this same account into every empty pool, and
+        the committed nonce ``GET /v1/accounts`` reports does not include a transfer
+        the next block has not taken yet. A collision therefore means "the pool is
+        one block behind", not "this grant is wrong": re-read the nonce, wait for
+        the block, and send again until ``wait_seconds`` runs out.
+        """
+        deadline = time.monotonic() + self._wait_seconds
+        while True:
+            tx = transfer_transaction(
+                self._faucet,
+                to=address,
+                amount=coins_to_units(coins),
+                nonce=self._nonce,
+                params=self._params,
+            )
+            try:
+                digest = submit_transaction(self._client, tx)
+            except NonceConflict as exc:
+                if time.monotonic() >= deadline:
+                    raise
+                print(
+                    f"traffic: {exc}; waiting for the block that frees the nonce",
+                    file=sys.stderr,
+                )
+                time.sleep(self._poll_seconds)
+                self._nonce = max(self._nonce, nonce(self._client, self._faucet.address))
+                continue
+            self._nonce += 1
+            return digest
 
 
 # -- pacing ------------------------------------------------------------------
@@ -355,6 +404,8 @@ class CycleReport:
     operator_grants: int
     transfers: int
     confirmed: int
+    unconfirmed: int = 0
+    """Grants that never left the pool. Never a reason to skip the transfers."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -463,6 +514,11 @@ def run_cycle(
 
     The whole pool is funded on the first cycle, so every wallet exists and holds
     coins from the start; later cycles only top up the ones this cycle spends.
+
+    A grant that does not confirm is reported and forgotten rather than ending the
+    cycle: the wallets funded before it hold coins right now, and sending between
+    them is the point of the generator. Aborting here is what once left a chain
+    with five funded wallets and no circulation at all.
     """
     seats = wallet_count if wallet_count is not None else rng.randint(MIN_WALLETS, MAX_WALLETS)
     seats = max(MIN_WALLETS, min(seats, options.max_wallets, len(pool)))
@@ -490,18 +546,9 @@ def run_cycle(
     )
     if len(confirmed) != len(grants):
         print(
-            f"cycle {cycle}: {len(grants) - len(confirmed)} grant(s) never confirmed, so this "
-            "cycle sends nothing",
+            f"cycle {cycle}: {len(grants) - len(confirmed)} grant(s) never confirmed; "
+            "sending with the coins the pool already holds",
             file=sys.stderr,
-        )
-        return CycleReport(
-            cycle=cycle,
-            wallet_count=len(active),
-            funded=len(grants),
-            faucet_grants=faucet_grants,
-            operator_grants=len(grants) - faucet_grants,
-            transfers=0,
-            confirmed=len(confirmed),
         )
 
     sends = (
@@ -534,16 +581,20 @@ def run_cycle(
         operator_grants=len(grants) - faucet_grants,
         transfers=len(transfer_txids),
         confirmed=len(confirmed) + len(mined),
+        unconfirmed=len(grants) - len(confirmed),
     )
 
 
 def _summary(report: CycleReport) -> str:
     """One greppable line per cycle."""
-    return (
+    line = (
         f"cycle {report.cycle}: {report.wallet_count} wallets, funded {report.funded} "
         f"({report.faucet_grants} faucet, {report.operator_grants} key), "
         f"{report.transfers} transfers, {report.confirmed} confirmed"
     )
+    if report.unconfirmed:
+        line += f", {report.unconfirmed} grant(s) unconfirmed"
+    return line
 
 
 def run(

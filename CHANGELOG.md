@@ -64,6 +64,32 @@ not itemised here.
   A chain already bootstrapped this way keeps its stamps -- they are inside the block
   hashes -- so the notebook reports that window on its own row and keeps it out of the
   time series.
+- **The notebook charted a deploy's first hour as the live chain.** `snapshot()`
+  cached `GET /v1/blocks` and `GET /v1/games` under a name that named the arguments
+  only, and `block_bodies()` cached bodies in one `cache/bodies.json` keyed by height
+  alone. Both keys are stable while the data behind them moves: `?limit=` counts back
+  from the tip, and a redeploy reuses the pinned genesis, so the same height is a
+  different block on the next chain. A run a day after the cache was written drew a
+  76-block window from the deploy -- five faucet grants, no transfers -- next to
+  balances read live from a chain that had since run hundreds of wallet-to-wallet
+  transfers, and the transfer graph looked like the bot had never sent anything. The
+  cache still lives under `cache/<genesis-hash>/`, but because the pinned genesis is
+  reused by every deploy that path does not distinguish two chains -- so a list snapshot
+  now records the tip height *and* tip hash it was taken at, and a cached block body
+  records the hash the block list reported for its height. Either is refetched when its
+  hash differs, and `block_bodies()` returns exactly the heights asked for instead of
+  every body it has ever seen. The transactions table also prints how many transfers had
+  a synthetic wallet at both ends, so "funding only" is visible without reading the graph.
+- **One slow grant cancelled the whole traffic cycle.** `synthetic_testnet_traffic`
+  returned early when any grant in the funding batch had not confirmed, so a cycle
+  that funded nine of ten wallets sent no transfers at all -- which is why a freshly
+  deployed chain showed five funded wallets and zero wallet-to-wallet traffic. It now
+  sends with the coins the pool already holds and reports the grant it lost. The
+  key path also retried nothing: the faucet is one account shared with `drip`, whose
+  transfer the committed nonce from `GET /v1/accounts` cannot see until a block takes
+  it, so numbering from that read collided and failed the cycle with HTTP 400. A
+  collision is now retried until the block that frees the nonce or `--wait-seconds`
+  runs out.
 
 ## [0.17.1] - 2026-11-13
 

@@ -72,7 +72,20 @@ few megabytes on a busy chain.
 
 ## Cache
 
-Every fetch is cached under `cache/` (git-ignored) so a re-run costs nothing. Delete the
-directory — or set `SCCP_ANALYSIS_REFRESH=1` — after a deploy that adds blocks.
+Every fetch is cached under `cache/` (git-ignored) so a re-run costs nothing — but only
+what cannot go stale:
+
+* `cache/<genesis-hash>/` groups the files by network. The genesis is pinned, so every
+  deploy writes to the same directory and the path alone does not prove a file came from
+  this chain: the same height is a different block after a redeploy.
+* A list endpoint (`/v1/blocks`, `/v1/games`) returns a window counted back from the tip,
+  so the cached page records the tip height and tip hash it was taken at and is refetched
+  as soon as the node reports another one. A redeploy can pass the same height, so the
+  hash is what tells two chains apart; this is what stops a window from a fresh deploy
+  being drawn as today's chain.
+* Block bodies record the block hash the list reported for their height and are refetched
+  when it differs; a re-run only fetches the bodies it is missing, and
+  `SCCP_ANALYSIS_MAX_BODIES` still decides the window. Set `SCCP_ANALYSIS_REFRESH=1` to
+  ignore all of it.
 
 The notebook is not executed by CI; it is a manual tool.
