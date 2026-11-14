@@ -14,8 +14,10 @@ Every merge to `main` runs
    match;
 5. request `/v1/status` from the public URL and fail if the node is not serving
    `testnet` through DNS;
-6. wait for the `traffic` container's first `cycle 1:` log line, so a deploy that
-   comes up but produces no usage fails here instead of passing quietly.
+6. print the `traffic` container's log so the deploy record shows the generator
+   starting up. It is informational: the pool never drains on a chain that also
+   runs `drip`, and the generator paces itself in minutes, so gating the deploy on
+   a cycle would fail on timing rather than on a broken stack.
 
 The traffic generators add no new port, host, firewall rule or DNS record: they
 talk to the node over the Compose network and run beside the miners on the same
