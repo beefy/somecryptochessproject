@@ -24,6 +24,7 @@ from sccp.crypto.wallet import (
     load_wallet,
     mnemonic_to_seed,
     read_header,
+    read_mnemonic_file,
     read_passphrase_file,
     seed_to_mnemonic,
 )
@@ -282,6 +283,36 @@ def test_passphrase_file(tmp_path: Path, passphrase: str) -> None:
 
     with pytest.raises(PassphraseError):
         read_passphrase_file(tmp_path / "absent.txt")
+
+
+def test_mnemonic_file(tmp_path: Path, fast_kdf: KdfParams, passphrase: str) -> None:
+    keyfile = tmp_path / "wallet.key"
+    wallet = create_wallet(keyfile, "testnet", passphrase, seed=OTHER_SEED, kdf=fast_kdf)
+    phrase = export_mnemonic(keyfile, passphrase)
+
+    backup = tmp_path / "wallet.mnemonic"
+    half = len(phrase) // 2
+    backup.write_text(f"{phrase[:half]}\n{phrase[half:]}\n", encoding="utf-8")
+    backup.chmod(0o600)
+    assert read_mnemonic_file(backup) == phrase
+
+    restored = tmp_path / "restored.key"
+    imported = import_mnemonic(
+        restored, read_mnemonic_file(backup), "testnet", passphrase, kdf=fast_kdf
+    )
+    assert imported.address == wallet.address
+
+    backup.chmod(0o644)
+    with pytest.raises(PassphraseError):
+        read_mnemonic_file(backup)
+
+    backup.chmod(0o600)
+    backup.write_text(" \n", encoding="utf-8")
+    with pytest.raises(PassphraseError):
+        read_mnemonic_file(backup)
+
+    with pytest.raises(PassphraseError):
+        read_mnemonic_file(tmp_path / "absent.mnemonic")
 
 
 def test_derive_key_is_salt_bound(fast_kdf: KdfParams) -> None:

@@ -431,18 +431,23 @@ sccp --json --network devnet wallet address --key alice.key
 Back up and restore with the 24-word BIP-39 phrase from the same seed:
 
 ```bash
-sccp --network devnet wallet export-mnemonic --key alice.key
-# reward pupil almost record park used mosquito crucial eagle transfer goddess
-# unfair pepper bracket talk faith switch matter base add autumn prosper close yard
+sccp --network devnet wallet export-mnemonic --key alice.key > alice.mnemonic
+chmod 600 alice.mnemonic    # import-mnemonic refuses a group/other-readable file
 
-sccp --network devnet wallet import-mnemonic --out alice-restored.key
+sccp --network devnet wallet import-mnemonic --out alice-restored.key \
+     --mnemonic-file alice.mnemonic
+# sccpt1q82apcjl8txcz7qkf2s966p6s4thg7kjf736cd37acxra828sa757r6geqr
 ```
 
 `export-mnemonic` takes the passphrase the usual way and prints the phrase on
 stdout (`--json` wraps it with the address, network and scheme).
-`import-mnemonic` prompts for the 24 words with hidden input and then for a new
-passphrase, so it needs a terminal — piping the phrase into stdin will not work.
-The restored keyfile holds the same seed, so it is the same address.
+`import-mnemonic` reads the phrase from `--mnemonic-file` — mode 0600, a trailing
+newline or wrapped lines are fine — and asks only for the new passphrase, which
+`--passphrase-file` or `SCCP_WALLET_PASSPHRASE` supplies too, so the whole
+recovery can run unattended. Without the flag it prompts for the words with
+hidden input, which needs a terminal: a piped phrase is not read, because the
+hidden prompt goes to the controlling terminal. The restored keyfile holds the
+same seed, so it is the same address.
 
 [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) is the long version of this section, and
 [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) the testnet-specific
@@ -716,10 +721,10 @@ sccp --network devnet miner run --key miner.key \
      --engine-profile stockfish-19 --engine-path ./bin/stockfish
 ```
 
-`relay.json` is the one piece no devnet script writes for you. It is a small
-document — `network`, a `beacon`, a `roster` of addresses with their public keys
-and engine fingerprints, and optional `timeout_seconds` / `round_seconds` /
-`open_round` — and a node can hand you all of it for the epoch you want:
+`relay.json` is a small document — `network`, a `beacon`, a `roster` of addresses
+with their public keys and engine fingerprints, and optional `timeout_seconds` /
+`round_seconds` / `open_round` — and a running node can hand you all of it for
+the epoch you want:
 
 ```bash
 curl -s http://127.0.0.1:8645/v1/epochs/4 | python -c '
@@ -744,12 +749,34 @@ id and the flag must agree or the relay refuses to start.
 
 What is still missing for a *two-process* devnet match is the roster: pairing
 needs two miners whose availability was committed and revealed for that epoch,
-and the keys that did it. `devnet up` and `play_miner` build exactly such a
-roster but keep the keyfiles in memory, and the scripts that write one out
-(`deploy/init_testnet_stack.py`, `deploy/bootstrap_testnet_stack.py`) are
-testnet-shaped. So on devnet today: use the in-process miner of 9.1 or 9.2, or
-register your own keys with the pipeline below and give the relay a roster that
-has them.
+and the keys that did it. `deploy/init_devnet_stack.py` and
+`deploy/bootstrap_devnet_stack.py` write exactly that — the devnet counterpart of
+the testnet pair — and they do not need a running node:
+
+```bash
+python deploy/init_devnet_stack.py --out .devnet-stack
+# stack for devnet in .devnet-stack
+#   miner-1: sccpt1q8exuw4cdf06c5d79ma9kcxv3l3ullgrlzgj77hw3lye3xcqr4ex5ulc77z
+#   miner-2: sccpt1q8f7qfeke79pnzyhe5g58jrry0dttzt2h5qkmzzvsddcdqjgjsmezkx6u32
+
+python deploy/bootstrap_devnet_stack.py --stack .devnet-stack
+# built 3 bootstrap blocks: height 3, tip 32c7b1b90f08...
+# relay config for epoch 3 written to .devnet-stack/relay.json
+```
+
+The second command prints the node, relay and miner commands for those files; it
+is the same three-block bootstrap `sccp devnet up` runs in process (fund,
+register, commit, reveal), written to `.devnet-stack/chain/chain.sqlite` and
+validated by the same `NodeService`. The chain stops at height 3, the last block
+of the bootstrap window: epoch 3 is matchable and epoch 4's commit and reveal are
+already on chain. Re-running the script leaves an existing chain alone; `--fresh`
+rebuilds it and never touches the keys. The keyfiles, the nonce secrets and the
+passphrase are fixed and published, so `docker compose`-style reproducibility
+applies here too — devnet coins have no value, and none of these keys may ever be
+reused on another network.
+
+With no bootstrap script, register your own keys with the pipeline below and
+give the relay a roster that has them.
 
 ### 9.4 The pipeline, step by step
 
@@ -774,6 +801,7 @@ sccp --network devnet --data-dir .devnet miner availability --key miner.key \
 # committed availability for epoch 14 (3 games)
 # txid: a9b8fe5d9c92...
 # nonce secret (needed for the reveal): 8cb2bea4c3c0...
+# reveal by tip 12 (block 13 is the last of epoch 13), or the commitment is void
 
 # 3. once that commit is in a block, reveal with the same secret.
 sccp --network devnet --data-dir .devnet miner reveal --key miner.key \
@@ -791,9 +819,11 @@ fingerprint the miner later claims in its match certificates.
 > `epoch(next block) + availability_lead` (2), while `miner reveal` targets
 > `epoch(next block) + 1`. With one-block epochs that means the reveal has to be
 > submitted after the commit's block and before the next one — there is exactly
-> one chance. Send the reveal immediately, or let a long-running `sccp miner run
-> --nonce-secret` do the pair of transactions for you every epoch. The failure
-> looks like this, and means the chain has moved past the epoch:
+> one chance. The commit prints that deadline (`reveal by tip 12` above, and
+> `reveal_by_tip` in `--json`), so send the reveal as soon as the commit is in a
+> block, or let a long-running `sccp miner run --nonce-secret` do the pair of
+> transactions for you every epoch. The failure looks like this, and means the
+> chain has moved past the epoch:
 > `transaction rejected (registration): <address> committed no availability for
 > epoch N`.
 
@@ -842,7 +872,10 @@ put them in.
 
 Neither bootstrap has to be reset by hand: `sccp devnet up` never writes a data
 directory, and `scripts/play_miner.py --on-chain --fresh` discards whatever chain
-is in `--chain-dir` and starts again from genesis.
+is in `--chain-dir` and starts again from genesis. The stack of 9.3 does the same
+with its own flag: `--fresh` on `deploy/bootstrap_devnet_stack.py` deletes
+`.devnet-stack/chain/chain.sqlite` (never the keyfiles) and rebuilds the same
+three blocks, so the relay config it rewrites matches.
 
 ### 10.2 When something looks wrong
 
@@ -861,6 +894,9 @@ is in `--chain-dir` and starts again from genesis.
 | the explorer loads but every panel errors | a node or relay from an older build is answering | `curl /v1/status`; rebuild the container image (`docker compose up --build`) |
 | `sccp miner run` fails parsing a relay reply (`string_pattern_mismatch`, missing `move_commitment`) | the relay predates hybrid signatures | point `--relay` at a current relay; rebuild the old one |
 | `No such option: --node` on `wallet history` | that command reads the local chain, not a node | pass `--data-dir <node data dir>` instead |
+| `import-mnemonic` waits forever with no prompt on screen | the hidden prompt reads the controlling terminal, so a piped phrase is never read | pass `--mnemonic-file <file>` (mode 0600), plus `--passphrase-file` for the new passphrase |
+| `committed no availability for epoch N` on a reveal | the reveal missed its window (`reveal by tip` in the commit output) | reveal in the next block, or let `sccp miner run --nonce-secret-file` commit and reveal both |
+| `the chain is at height N, below the bootstrap tip 3` from the devnet bootstrap | a chain directory holds a partial or foreign chain | `python deploy/bootstrap_devnet_stack.py --stack .devnet-stack --fresh` |
 
 Global options go **before** the subcommand: `sccp --json chain info`,
 `sccp --data-dir .devnet wallet balance ...`, `sccp --network devnet miner run

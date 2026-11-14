@@ -150,6 +150,54 @@ def test_export_and_import_hybrid_mnemonic(tmp_path: Path, env: dict[str, str]) 
     assert read_header(restored).scheme == "ed25519-mldsa65"
 
 
+def test_import_mnemonic_reads_the_phrase_from_a_file(tmp_path: Path, env: dict[str, str]) -> None:
+    created = _new(tmp_path, env)
+    assert created.exit_code == 0, created.output
+    exported = runner.invoke(
+        app, ["wallet", "export-mnemonic", "--key", str(tmp_path / "wallet.key")], env=env
+    )
+    assert exported.exit_code == 0, exported.output
+
+    backup = tmp_path / "wallet.mnemonic"
+    backup.write_text(exported.stdout, encoding="utf-8")
+    backup.chmod(0o600)
+    restored = tmp_path / "restored.key"
+    # No stdin at all: the file is the whole input, which is what makes this
+    # usable from a script and from a shell without a terminal.
+    imported = runner.invoke(
+        app,
+        [
+            "wallet",
+            "import-mnemonic",
+            "--out",
+            str(restored),
+            "--mnemonic-file",
+            str(backup),
+            *FAST,
+        ],
+        env=env,
+    )
+    assert imported.exit_code == 0, imported.output
+    assert imported.stdout.strip().splitlines()[-1] == created.stdout.strip()
+
+    backup.chmod(0o644)
+    exposed = runner.invoke(
+        app,
+        [
+            "wallet",
+            "import-mnemonic",
+            "--out",
+            str(tmp_path / "other.key"),
+            "--mnemonic-file",
+            str(backup),
+            *FAST,
+        ],
+        env=env,
+    )
+    assert exposed.exit_code == 1
+    assert "chmod 600" in exposed.output
+
+
 def test_network_override_and_mismatch(tmp_path: Path, env: dict[str, str]) -> None:
     mainnet = _new(tmp_path, env, "--network", "mainnet")
     assert mainnet.exit_code == 0, mainnet.output
@@ -1075,6 +1123,47 @@ def test_miner_run_refuses_a_bad_availability_secret(tmp_path: Path, env: dict[s
     )
     assert both.exit_code == 2
     assert "not both" in both.output
+
+
+def test_miner_availability_reports_the_reveal_deadline(
+    data_dir: Path,
+    faucet_key: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+) -> None:
+    """The commit names the tip by which the reveal has to be built.
+
+    On a genesis-only chain the next block is in epoch 1, so availability targets
+    ``epoch 1 + availability_lead`` = 3. A reveal for epoch 3 is only valid in a
+    block of epoch 2, which is block 2 here: build it on tip 1 at the latest.
+    """
+    base = [
+        "--data-dir",
+        str(data_dir),
+        "miner",
+        "availability",
+        "--network",
+        "devnet",
+        "--key",
+        str(faucet_key),
+        "--max-games",
+        "3",
+        "--node",
+        "http://127.0.0.1:8645",
+    ]
+    human = runner.invoke(app, base, env=env)
+    assert human.exit_code == 0, human.output
+    assert "committed availability for epoch 3 (3 games)" in human.stdout
+    assert "reveal by tip 1 (block 2 is the last of epoch 2)" in human.stdout
+    assert len(recorded_node) == 1
+
+    machine = runner.invoke(app, ["--json", *base], env=env)
+    assert machine.exit_code == 0, machine.output
+    payload = json.loads(machine.stdout)
+    assert payload["epoch"] == 3
+    assert payload["reveal_by_tip"] == 1
+    assert payload["max_games"] == 3
+    assert len(payload["nonce_secret"]) == 64
 
 
 def test_miner_run_warns_that_the_secret_needs_a_node(

@@ -29,6 +29,7 @@ import typer
 
 from sccp import version as version_module
 from sccp.chain.genesis import faucet_keypair
+from sccp.chain.state import reveal_deadline_tip
 from sccp.chain.storage import Storage
 from sccp.chain.tx import txid
 from sccp.chess.engines import open_engine
@@ -45,6 +46,7 @@ from sccp.crypto.wallet import (
     import_mnemonic,
     load_wallet,
     read_header,
+    read_mnemonic_file,
     read_passphrase_file,
 )
 from sccp.devnet import run_devnet
@@ -548,6 +550,16 @@ def wallet_import_mnemonic(
         str | None,
         typer.Option("--network", help="Network the address is derived for."),
     ] = None,
+    mnemonic_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--mnemonic-file",
+            help=(
+                "File holding the 24-word phrase (mode 0600, whitespace-insensitive); "
+                "skips the hidden prompt so the command works without a terminal."
+            ),
+        ),
+    ] = None,
     force: Annotated[
         bool,
         typer.Option("--force", help="Overwrite an existing keyfile."),
@@ -563,7 +575,10 @@ def wallet_import_mnemonic(
 ) -> None:
     """Recreate a keyfile from a 24-word backup phrase."""
     params = _resolve_network(ctx, network)
-    phrase = typer.prompt("Mnemonic (24 words)", hide_input=True)
+    if mnemonic_file is not None:
+        phrase = _run(lambda: read_mnemonic_file(mnemonic_file))
+    else:
+        phrase = typer.prompt("Mnemonic (24 words)", hide_input=True)
     passphrase = _passphrase(ctx, confirm=True)
     wallet = _run(
         lambda: import_mnemonic(
@@ -1457,7 +1472,7 @@ def miner_availability(
         typer.Option("--network", help="Require the keyfile to belong to this network."),
     ] = None,
 ) -> None:
-    """Commit availability for the epoch two ahead; keep the printed secret safe."""
+    """Commit availability for the epoch two ahead; print the secret and the reveal deadline."""
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
@@ -1473,22 +1488,31 @@ def miner_availability(
             )
         )
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    target = tx.payload.get("epoch")
+    if not isinstance(target, int):
+        _fail("the availability transaction carries no target epoch")
+    deadline = reveal_deadline_tip(target, params)
     payload = {
         "txid": txid(tx),
         "network": params.network_id,
         "miner": wallet.address,
-        "epoch": tx.payload.get("epoch"),
+        "epoch": target,
         "max_games": max_games,
         "commitment": tx.payload.get("commitment"),
         "nonce_secret": secret,
+        "reveal_by_tip": deadline,
         "accepted": receipt.get("accepted"),
     }
     if _options(ctx).json_output:
         _echo_json(payload)
         return
-    typer.echo(f"committed availability for epoch {payload['epoch']} ({max_games} games)")
+    typer.echo(f"committed availability for epoch {target} ({max_games} games)")
     typer.echo(f"txid: {payload['txid']}")
     typer.echo(f"nonce secret (needed for the reveal): {secret}")
+    typer.echo(
+        f"reveal by tip {deadline} (block {deadline + 1} is the last of "
+        f"epoch {target - 1}), or the commitment is void"
+    )
 
 
 @miner_app.command("reveal")

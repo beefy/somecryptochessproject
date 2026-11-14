@@ -296,7 +296,9 @@ responsibility rather than a construction phase.
 ├── deploy/
 │   ├── README.md                 # what the compose stack does and does not do
 │   ├── explorer/                 # Caddy + nginx + compose for the hosted page
-│   └── init_testnet_stack.py     # deterministic stack keys + relay config
+│   ├── init_testnet_stack.py     # deterministic testnet stack keys
+│   ├── init_devnet_stack.py      # the same two keys for a local devnet stack
+│   └── bootstrap_devnet_stack.py # devnet chain + relay config, no node needed
 ├── genesis/{devnet,testnet,mainnet}.json
 ├── scripts/
 │   ├── fetch_engine.py           # verified Stockfish download
@@ -457,8 +459,8 @@ chain, starting the node on the right data directory and troubleshooting a
 The wallet and miner guides are separate:
 
 - [`docs/RUN_A_DEVNET.md`](docs/RUN_A_DEVNET.md) — run a whole devnet from source:
-  `devnet up`, the faucet, wallets, transfers and a miner, with the devnet
-  parameters and troubleshooting.
+  `devnet up`, the faucet, wallets, transfers, a miner and the two-process relay
+  stack, with the devnet parameters and troubleshooting.
 - [`docs/CREATE_A_TESTNET_WALLET.md`](docs/CREATE_A_TESTNET_WALLET.md) — create a
   testnet keyfile, fund it from the faucet and check the balance.
 - [`docs/OPEN_A_WALLET.md`](docs/OPEN_A_WALLET.md) — create a keyfile, back up the

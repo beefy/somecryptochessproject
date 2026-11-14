@@ -67,6 +67,20 @@ def first_matchable_epoch(params: NetworkParams) -> int:
     return params.availability_lead
 
 
+def reveal_deadline_tip(epoch: int, params: NetworkParams) -> int:
+    """The last tip at which a reveal for ``epoch`` can still be built.
+
+    Consensus accepts a reveal only in a block of the epoch before the one it
+    targets (``epoch(block) + 1``), and a block built on tip ``t`` has height
+    ``t + 1``. The last usable tip is therefore one below the last height of
+    ``epoch - 1``. Missing it voids the commitment for that epoch: there is no
+    later window, because the following epoch is already outside the range.
+    """
+    if epoch < 1:
+        raise StateError(f"epoch must be at least 1, got {epoch}")
+    return epoch_end_height(epoch - 1, params) - 1
+
+
 @dataclass(slots=True)
 class Account:
     """One account's balances, bond, nonce and registration metadata."""
@@ -916,4 +930,5 @@ __all__ = [
     "epoch_of",
     "epoch_start_height",
     "first_matchable_epoch",
+    "reveal_deadline_tip",
 ]

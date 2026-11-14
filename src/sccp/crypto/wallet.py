@@ -480,6 +480,32 @@ def read_passphrase_file(path: str | Path) -> str:
     return passphrase
 
 
+def read_mnemonic_file(path: str | Path) -> str:
+    """Read a 24-word backup phrase from a mode-checked file.
+
+    The phrase is the master seed in plain text, so it gets the same
+    group/other permission check as :func:`read_passphrase_file`. Whitespace is
+    normalised: a trailing newline (what ``wallet export-mnemonic > file``
+    leaves) and line wrapping are both fine. Reading from a file is the
+    non-interactive path: the hidden prompt needs a terminal, which is exactly
+    what a recovery shell may not have.
+    """
+    target = Path(path)
+    try:
+        status = target.stat()
+        text = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PassphraseError(f"cannot read mnemonic file {target}: {exc}") from exc
+    if status.st_mode & 0o077:
+        raise PassphraseError(
+            f"mnemonic file {target} is accessible by group or others; chmod 600 it"
+        )
+    phrase = " ".join(text.split())
+    if not phrase:
+        raise PassphraseError(f"mnemonic file {target} is empty")
+    return phrase
+
+
 def _read_document(path: Path) -> dict[str, object]:
     try:
         text = path.read_text(encoding="utf-8")

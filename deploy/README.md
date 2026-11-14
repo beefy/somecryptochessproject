@@ -127,3 +127,23 @@ keyfile to the relay (`--witness-key /stack/relay.key`) and pass the matching
 public key hex to the miners (`sccp miner run --relay-witness-key <hex>`) to run
 the full signed path. Both are one flag each because a witness identity is an
 operator decision, not a network parameter.
+
+## The devnet stack, without Compose
+
+`init_devnet_stack.py` and `bootstrap_devnet_stack.py` are the devnet counterpart
+of the two testnet scripts above. They need no running node and no container: the
+bootstrap writes `chain.sqlite` itself, then the relay config derived from the
+epoch the chain opened.
+
+```bash
+python deploy/init_devnet_stack.py --out .devnet-stack
+python deploy/bootstrap_devnet_stack.py --stack .devnet-stack
+# built 3 bootstrap blocks: height 3, tip ...
+# relay config for epoch 3 written to .devnet-stack/relay.json
+```
+
+The second command prints the node, relay and miner commands for those files.
+Both stacks publish their seeds and passphrase on purpose; devnet has no value to
+protect and a reproducible stack is what makes the files work without a
+coordination step. `--fresh` rebuilds the devnet chain and never touches the keys.
+[`docs/RUN_A_DEVNET.md`](../docs/RUN_A_DEVNET.md) section 9.3 walks through it.

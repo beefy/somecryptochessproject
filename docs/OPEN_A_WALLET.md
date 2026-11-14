@@ -156,6 +156,18 @@ sccp wallet export-mnemonic --key alice.key
 sccp wallet import-mnemonic --network testnet --out alice-restored.key
 ```
 
+`import-mnemonic` prompts for the phrase with hidden input. To restore without a
+terminal, write the phrase to a file first and pass `--mnemonic-file`:
+
+```bash
+sccp wallet export-mnemonic --key alice.key > alice.mnemonic
+chmod 600 alice.mnemonic
+sccp --passphrase-file pass.txt wallet import-mnemonic --network testnet \
+     --out alice-restored.key --mnemonic-file alice.mnemonic
+```
+
+A group/other-readable phrase file is refused, exactly like a passphrase file.
+
 What that means in practice:
 
 - **Longer passphrase.** At least 12 characters, because the same passphrase now
@@ -224,8 +236,13 @@ Both commands must print the same `sccpt1...` address. If they differ, the
 phrase was transcribed incorrectly. The restored keyfile has a new salt and
 nonce, so the two files are not byte-identical, but they control the same key.
 
-`wallet import-mnemonic` also accepts `--force`, `--network` and
-`--passphrase-file`, exactly like `wallet new`.
+In a script, or from a shell without a terminal, pass the phrase as a file
+instead of typing it: `--mnemonic-file alice.mnemonic` (mode 0600) skips the
+hidden prompt, which would otherwise read the controlling terminal and never see
+a piped phrase.
+
+`wallet import-mnemonic` also accepts `--force`, `--network`, `--mnemonic-file`
+and `--passphrase-file`, exactly like `wallet new`.
 
 ---
 
