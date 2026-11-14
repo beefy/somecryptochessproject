@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sccp.config import DEVNET
-from sccp.crypto.keys import sign_domain
+from sccp.crypto.pq import hybrid_sign_domain
 from sccp.errors import RelayError
 from sccp.miner.matchmaker import Matchmaker, SessionStatus, create_app
 from sccp.node.routes import create_app as create_node_app
@@ -53,7 +53,7 @@ def _join_seat(client: TestClient, signed_match, view: dict, seat: str) -> dict:
     address = view["certificate"][seat]
     account = _account_for(signed_match, address)
     certificate = signed_match.certificate.__class__.model_validate(view["certificate"])
-    signature = sign_domain(
+    signature = hybrid_sign_domain(
         account.keypair,
         Domain.CERTIFICATE,
         certificate_payload(certificate),
@@ -103,7 +103,7 @@ def _sign_result(client: TestClient, signed_match, view: dict) -> dict:
     for seat in ("white", "black"):
         address = view["certificate"][seat]
         account = _account_for(signed_match, address)
-        signature = sign_domain(account.keypair, Domain.RESULT, result_payload(result)).hex()
+        signature = hybrid_sign_domain(account.keypair, Domain.RESULT, result_payload(result)).hex()
         response = client.post(
             f"/v1/matches/{view['matchup']['match_id']}/result",
             json={"seat": address, "signature": signature},
@@ -162,8 +162,8 @@ def test_relay_rejects_bad_requests(signed_match) -> None:
             "/v1/matches/" + "00" * 32 + "/join",
             json={
                 "seat": view.matchup.white,
-                "public_key": "00" * 32,
-                "signature": "00" * 64,
+                "public_key": "00" * 1985,
+                "signature": "00" * 3374,
             },
         ).status_code
         == 400
@@ -353,7 +353,7 @@ def test_rounds_endpoint_and_join_validation(signed_match) -> None:
         json={
             "seat": certificate["white"],
             "public_key": carol.keypair.public_key_hex,
-            "signature": "00" * 64,
+            "signature": "00" * 3374,
         },
     )
     assert response.status_code == 400
@@ -364,7 +364,7 @@ def test_rounds_endpoint_and_join_validation(signed_match) -> None:
         json={
             "seat": carol.address,
             "public_key": carol.keypair.public_key_hex,
-            "signature": "00" * 64,
+            "signature": "00" * 3374,
         },
     )
     assert response.status_code == 400

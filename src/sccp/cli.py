@@ -20,6 +20,7 @@ import time
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from threading import Event, Thread
 from typing import Annotated, NoReturn, TypeVar
@@ -28,6 +29,7 @@ import typer
 
 from sccp import version as version_module
 from sccp.chain.genesis import faucet_keypair
+from sccp.chain.state import reveal_deadline_tip
 from sccp.chain.storage import Storage
 from sccp.chain.tx import txid
 from sccp.chess.engines import open_engine
@@ -35,8 +37,8 @@ from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
 from sccp.config import NetworkParams, coins_to_units, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
+from sccp.crypto.pq import hybrid_sign
 from sccp.crypto.wallet import (
-    DEFAULT_KDF,
     KdfParams,
     Wallet,
     create_wallet,
@@ -44,6 +46,7 @@ from sccp.crypto.wallet import (
     import_mnemonic,
     load_wallet,
     read_header,
+    read_mnemonic_file,
     read_passphrase_file,
 )
 from sccp.devnet import run_devnet
@@ -62,6 +65,7 @@ from sccp.protocol.verification import (
     context_from_document,
     verify_win_proof,
 )
+from sccp.serialization import Domain
 from sccp.wallet.service import WalletService
 
 DEFAULT_NETWORK = "testnet"
@@ -271,11 +275,21 @@ def _emit_wallet(ctx: typer.Context, wallet: Wallet) -> None:
                 "address": wallet.address,
                 "network": wallet.network,
                 "public_key": wallet.public_key_hex,
+                "scheme": wallet.scheme,
                 "keyfile": str(wallet.path) if wallet.path is not None else None,
             }
         )
         return
     typer.echo(wallet.address)
+
+
+def _keyfile_kdf(kdf_n: int | None) -> KdfParams | None:
+    """The scrypt parameters for a new keyfile.
+
+    The default (:data:`~sccp.crypto.wallet.DEFAULT_KDF`, N=2**17) is the only
+    production cost; ``--kdf-n`` exists so tests can stay fast.
+    """
+    return None if kdf_n is None else KdfParams(n=kdf_n)
 
 
 def _coins(units: int) -> str:
@@ -454,11 +468,11 @@ def wallet_new(
         typer.Option("--created-at", hidden=True, help="Fix created_at (tests)."),
     ] = None,
     kdf_n: Annotated[
-        int,
-        typer.Option("--kdf-n", hidden=True, help="scrypt N (tests only; default 2**15)."),
-    ] = DEFAULT_KDF.n,
+        int | None,
+        typer.Option("--kdf-n", hidden=True, help="scrypt N (tests only; default 2**17)."),
+    ] = None,
 ) -> None:
-    """Create an encrypted keyfile and print its address."""
+    """Create an encrypted hybrid keyfile and print its address."""
     params = _resolve_network(ctx, network)
     passphrase = _passphrase(ctx, confirm=True)
     wallet = _run(
@@ -466,7 +480,7 @@ def wallet_new(
             out,
             params,
             passphrase,
-            kdf=KdfParams(n=kdf_n),
+            kdf=_keyfile_kdf(kdf_n),
             created_at=created_at,
             force=force,
         )
@@ -492,6 +506,7 @@ def wallet_address(
                 "address": header.address,
                 "network": header.network,
                 "public_key": header.public_key,
+                "scheme": header.scheme,
                 "keyfile": str(key),
             }
         )
@@ -514,7 +529,15 @@ def wallet_export_mnemonic(
     passphrase = _passphrase(ctx, confirm=False)
     phrase = _run(lambda: export_mnemonic(key, passphrase))
     if _options(ctx).json_output:
-        _echo_json({"mnemonic": phrase, "address": header.address, "network": header.network})
+        _echo_json(
+            {
+                "mnemonic": phrase,
+                "address": header.address,
+                "network": header.network,
+                # A phrase is scheme-neutral; the keyfile says how to re-expand it.
+                "scheme": header.scheme,
+            }
+        )
         return
     typer.echo(phrase)
 
@@ -527,6 +550,16 @@ def wallet_import_mnemonic(
         str | None,
         typer.Option("--network", help="Network the address is derived for."),
     ] = None,
+    mnemonic_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--mnemonic-file",
+            help=(
+                "File holding the 24-word phrase (mode 0600, whitespace-insensitive); "
+                "skips the hidden prompt so the command works without a terminal."
+            ),
+        ),
+    ] = None,
     force: Annotated[
         bool,
         typer.Option("--force", help="Overwrite an existing keyfile."),
@@ -536,13 +569,16 @@ def wallet_import_mnemonic(
         typer.Option("--created-at", hidden=True, help="Fix created_at (tests)."),
     ] = None,
     kdf_n: Annotated[
-        int,
-        typer.Option("--kdf-n", hidden=True, help="scrypt N (tests only; default 2**15)."),
-    ] = DEFAULT_KDF.n,
+        int | None,
+        typer.Option("--kdf-n", hidden=True, help="scrypt N (tests only; default 2**17)."),
+    ] = None,
 ) -> None:
     """Recreate a keyfile from a 24-word backup phrase."""
     params = _resolve_network(ctx, network)
-    phrase = typer.prompt("Mnemonic (24 words)", hide_input=True)
+    if mnemonic_file is not None:
+        phrase = _run(lambda: read_mnemonic_file(mnemonic_file))
+    else:
+        phrase = typer.prompt("Mnemonic (24 words)", hide_input=True)
     passphrase = _passphrase(ctx, confirm=True)
     wallet = _run(
         lambda: import_mnemonic(
@@ -550,12 +586,49 @@ def wallet_import_mnemonic(
             phrase,
             params,
             passphrase,
-            kdf=KdfParams(n=kdf_n),
+            kdf=_keyfile_kdf(kdf_n),
             created_at=created_at,
             force=force,
         )
     )
     _emit_wallet(ctx, wallet)
+
+
+@wallet_app.command("sign-result")
+def wallet_sign_result(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile with the seat's hybrid key.")],
+    payload: Annotated[
+        str,
+        typer.Option(
+            "--payload",
+            help="Hex of the canonical result payload the browser tab printed.",
+        ),
+    ],
+) -> None:
+    """Hybrid-sign a result payload produced in the browser.
+
+    The web tab plays moves with the Ed25519 half of the seat's key but cannot
+    produce an ML-DSA-65 signature, so it prints the canonical payload and this
+    command signs it with the same keyfile. The output is the 6748-hex signature
+    ``POST /v1/matches/{id}/result`` expects.
+    """
+    passphrase = _passphrase(ctx, confirm=False)
+    wallet = _run(lambda: load_wallet(key, passphrase))
+
+    def sign() -> str:
+        try:
+            raw = bytes.fromhex(payload.strip())
+        except ValueError:
+            _fail("--payload must be lowercase hex of the canonical JSON payload", code=2)
+        digest = sha256(Domain.RESULT.encode("utf-8") + b"\x00" + raw).digest()
+        return hybrid_sign(wallet.signer, digest).hex()
+
+    signature = _run(sign)
+    if _options(ctx).json_output:
+        _echo_json({"address": wallet.address, "payload": payload.strip(), "signature": signature})
+        return
+    typer.echo(signature)
 
 
 @wallet_app.command("balance")
@@ -629,9 +702,7 @@ def wallet_send(
     wallet = _run(lambda: load_wallet(key, passphrase))
     with _account_source(ctx, params, header.address, node) as accounts:
         try:
-            tx = accounts.service.build_transfer(
-                wallet.keypair, to, coins_to_units(amount), fee=fee
-            )
+            tx = accounts.service.build_transfer(wallet.signer, to, coins_to_units(amount), fee=fee)
         except WalletServiceError as exc:
             if accounts.chain_height == 0:
                 _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
@@ -894,7 +965,7 @@ def matchmaker_run(
         passphrase = _passphrase(ctx, confirm=False)
         wallet = _run(lambda: load_wallet(witness_key, passphrase))
         _check_network(ctx, network, wallet.network)
-        witness = wallet.keypair
+        witness = wallet.signer
     state = _run(
         lambda: Matchmaker.from_document(
             document,
@@ -1258,7 +1329,7 @@ def miner_run(
     witness_keys = _witness_keys(params, relay_witness_key or [])
     config = MinerConfig.for_network(
         params,
-        wallet.keypair,
+        wallet.signer,
         relay_url=relay,
         node_url=node,
         nodes_per_move=nodes_per_move or params.nodes_per_move,
@@ -1358,7 +1429,7 @@ def miner_register(
     with _local_node(ctx, params.network_id) as service:
         tx = _run(
             lambda: WalletService(params, service.chain.state, chain=service.chain).build_register(
-                wallet.keypair,
+                wallet.signer,
                 endpoint=endpoint,
                 engine=engine,
                 bond=coins_to_units(bond),
@@ -1401,7 +1472,7 @@ def miner_availability(
         typer.Option("--network", help="Require the keyfile to belong to this network."),
     ] = None,
 ) -> None:
-    """Commit availability for the epoch two ahead; keep the printed secret safe."""
+    """Commit availability for the epoch two ahead; print the secret and the reveal deadline."""
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
@@ -1411,28 +1482,37 @@ def miner_availability(
         wallet_service = WalletService(params, service.chain.state, chain=service.chain)
         tx = _run(
             lambda: wallet_service.build_availability(
-                wallet.keypair,
+                wallet.signer,
                 nonce_secret=secret,
                 max_games=max_games,
             )
         )
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    target = tx.payload.get("epoch")
+    if not isinstance(target, int):
+        _fail("the availability transaction carries no target epoch")
+    deadline = reveal_deadline_tip(target, params)
     payload = {
         "txid": txid(tx),
         "network": params.network_id,
         "miner": wallet.address,
-        "epoch": tx.payload.get("epoch"),
+        "epoch": target,
         "max_games": max_games,
         "commitment": tx.payload.get("commitment"),
         "nonce_secret": secret,
+        "reveal_by_tip": deadline,
         "accepted": receipt.get("accepted"),
     }
     if _options(ctx).json_output:
         _echo_json(payload)
         return
-    typer.echo(f"committed availability for epoch {payload['epoch']} ({max_games} games)")
+    typer.echo(f"committed availability for epoch {target} ({max_games} games)")
     typer.echo(f"txid: {payload['txid']}")
     typer.echo(f"nonce secret (needed for the reveal): {secret}")
+    typer.echo(
+        f"reveal by tip {deadline} (block {deadline + 1} is the last of "
+        f"epoch {target - 1}), or the commitment is void"
+    )
 
 
 @miner_app.command("reveal")
@@ -1460,7 +1540,7 @@ def miner_reveal(
     with _local_node(ctx, params.network_id) as service:
         tx = _run(
             lambda: WalletService(params, service.chain.state, chain=service.chain).build_reveal(
-                wallet.keypair,
+                wallet.signer,
                 nonce_secret,
             )
         )

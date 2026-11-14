@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 
 import type { GameResult, MatchCertificate, WinProof } from "../types";
 import { fromHex } from "./canonical";
-import { certificatePayload, openingHash, signCertificate } from "./certificate";
-import { keypairFromSeedHex } from "./keys";
+import { certificatePayload, openingHash, signCertificate, verifyCertificate } from "./certificate";
+import { hybridKeypairFromSeedHex, hybridPublicKeyHex, hybridVerifyDomain } from "./keys";
 import { ProofBuildError, buildWinProof, proofId, webQualitySummary } from "./proof";
 import { whiteSeat } from "./protocol";
 import { type VerifyContext, verifyProof } from "./verify";
@@ -26,10 +26,40 @@ describe("match certificates", () => {
     expect(certificatePayload(certificate)).toStrictEqual(match.certificate_payload);
   });
 
-  it("reproduces each seat's start signature", () => {
+  it("carries a well-formed hybrid start signature per seat", () => {
+    // ML-DSA-65 is hedged, so the bytes are pinned by the Python generator
+    // rather than reproduced here; the shape (6748 hex, scheme byte 0x01) and
+    // the fact that they *verify* are what a browser can check.
     for (const seat of ["white", "black"] as const) {
-      const keypair = keypairFromSeedHex(match.seats[seat].seed_hex);
-      expect(signCertificate(keypair, certificate)).toBe(certificate.start_signatures[seat]);
+      const signature = certificate.start_signatures[seat];
+      expect(signature).toHaveLength(6748);
+      expect(signature?.startsWith("01")).toBe(true);
+    }
+  });
+
+  it("signs a start signature the relay's hybrid verifier accepts", () => {
+    const seat = match.seats.white;
+    const keypair = hybridKeypairFromSeedHex(seat.seed_hex);
+    expect(hybridPublicKeyHex(keypair)).toBe(seat.public_key_hex);
+    const signature = signCertificate(keypair, certificate);
+    expect(verifyCertificate(seat.public_key_hex, certificate, signature)).toBe(true);
+    // The certificate is what is signed: another round is another payload.
+    expect(
+      verifyCertificate(seat.public_key_hex, { ...certificate, round: certificate.round + 1 }, signature),
+    ).toBe(false);
+  });
+
+  it("verifies the start signatures Python produced", () => {
+    const publicKeys = match.public_keys as unknown as Record<string, string>;
+    for (const seat of ["white", "black"] as const) {
+      const address = seat === "white" ? certificate.white : certificate.black;
+      expect(
+        verifyCertificate(
+          publicKeys[address] as string,
+          certificate,
+          certificate.start_signatures[seat] as string,
+        ),
+      ).toBe(true);
     }
   });
 
@@ -124,19 +154,54 @@ describe("the browser verifier", () => {
     expect(failed).toContain("proof id");
   });
 
-  it("catches a forged start signature", () => {
+  it("reports the hybrid signature rules as skipped without a verifier", () => {
+    const verdict = verifyProof(proof, context);
+    for (const rule of ["start signatures", "result signatures"]) {
+      const check = verdict.checks.find((item) => item.rule === rule);
+      expect(check?.skipped).toBe(true);
+      expect(check?.ok).toBe(true);
+    }
+    expect(verdict.ok).toBe(true);
+  });
+
+  it("passes both hybrid signature rules with the real verifier", () => {
+    const verdict = verifyProof(proof, { ...context, verifyLedgerSignature: hybridVerifyDomain });
+    expect(verdict.checks.filter((check) => !check.ok)).toStrictEqual([]);
+    expect(verdict.ok).toBe(true);
+    for (const rule of ["start signatures", "result signatures"]) {
+      const check = verdict.checks.find((item) => item.rule === rule);
+      expect(check?.skipped).toBeFalsy();
+      expect(check?.ok).toBe(true);
+    }
+  });
+
+  it("catches a forged start signature once a verifier is supplied", () => {
     const tampered: WinProof = {
       ...proof,
       certificate: {
         ...certificate,
         start_signatures: {
           ...certificate.start_signatures,
-          white: "00".repeat(64),
+          white: "00".repeat(6748),
         },
       },
     };
-    const verdict = verifyProof(tampered, context);
-    expect(verdict.checks.find((check) => check.rule === "start signatures")?.ok).toBe(false);
+    const strict = verifyProof(tampered, { ...context, verifyLedgerSignature: hybridVerifyDomain });
+    expect(strict.checks.find((check) => check.rule === "start signatures")?.ok).toBe(false);
+    expect(strict.ok).toBe(false);
+  });
+
+  it("catches a result signed by the other seat's key", () => {
+    const swapped: WinProof = {
+      ...proof,
+      result_signatures: {
+        white: proof.result_signatures.black as string,
+        black: proof.result_signatures.white as string,
+      },
+    };
+    const verdict = verifyProof(swapped, { ...context, verifyLedgerSignature: hybridVerifyDomain });
+    expect(verdict.checks.find((check) => check.rule === "result signatures")?.ok).toBe(false);
+    expect(verdict.ok).toBe(false);
   });
 
   it("catches a proof checked against the wrong beacon", () => {

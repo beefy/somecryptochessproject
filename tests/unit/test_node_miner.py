@@ -78,6 +78,6 @@ def test_a_paced_miner_waits_for_the_tip_to_age(live_chain: Any, chain_match: An
 
 def _address() -> str:
     from sccp.crypto.address import encode_address
-    from sccp.crypto.keys import keypair_from_seed
+    from sccp.crypto.pq import hybrid_keypair_from_seed
 
-    return encode_address(keypair_from_seed(bytes([5]) * 32).public_key_bytes, DEVNET)
+    return encode_address(hybrid_keypair_from_seed(bytes([5]) * 32).public_key_bytes, DEVNET)

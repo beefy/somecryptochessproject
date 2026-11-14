@@ -32,7 +32,7 @@ from sccp.chain.state import MAX_RECENT_TIMESTAMPS, ZERO_HASH, EpochRecord
 from sccp.chain.tx import make_coinbase
 from sccp.config import NetworkParams
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import Keypair
+from sccp.crypto.pq import HybridKeypair
 from sccp.errors import ChainError
 from sccp.protocol.models import Block, BlockHeader
 
@@ -53,7 +53,7 @@ class BlockBuilder:
     params: NetworkParams
     chain: Chain
     mempool: Mempool
-    keypair: Keypair | None = None
+    keypair: HybridKeypair | None = None
     miner_address: str | None = None
 
     @property

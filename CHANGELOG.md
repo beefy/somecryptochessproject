@@ -5,7 +5,197 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
-## [Unreleased]
+## [0.17.0] - 2026-11-13
+
+### Added
+
+- **Non-interactive restore**: `sccp wallet import-mnemonic --mnemonic-file
+  <path>` reads the 24 words from a `0600` file instead of the hidden prompt,
+  which reads the controlling terminal and so cannot be fed from a pipe, a
+  container entrypoint or a provisioning script. The file's permission bits are
+  checked exactly like `--passphrase-file` (group or other bits are refused with
+  the `chmod 600` fix), whitespace is normalised so a wrapped phrase or a file
+  written by `wallet export-mnemonic` reads the same, and an empty or missing
+  file is an error rather than a fallback to the prompt. The prompt is still the
+  default when the flag is absent.
+- **`sccp miner availability` prints the reveal deadline.** The commit ends with
+  `reveal by tip N (block N+1 is the last of epoch N-1), or the commitment is
+  void`, and `--json` carries `reveal_by_tip`. A missed window already burned the
+  nonce and left the epoch unmatchable for that miner; the rule
+  (`reveal_deadline_tip` in `sccp/chain/state.py`, derived from the validator's
+  `epoch(block) + 1`) is now visible where the commitment is made instead of
+  only in the consensus source and the troubleshooting table.
+- **A devnet stack beside the testnet one.** `deploy/init_devnet_stack.py` writes
+  two deterministic devnet keyfiles, one availability secret each, a passphrase
+  file and `stack.json`. `deploy/bootstrap_devnet_stack.py` then builds the three
+  bootstrap blocks (fund, register, commit, reveal) with the same
+  `BlockBuilder` a miner uses, writes `chain.sqlite` **without a running node**,
+  and derives the relay config — beacon and roster — from the epoch the chain
+  implies. Availability is committed two epochs ahead and only a reveal makes an
+  epoch matchable, so a host with no chain cannot bootstrap a relay roster at
+  all; this does it once, offline, and `--fresh` rebuilds the chain without
+  touching the keys. The devnet bootstrap window is consensus-defined, so the
+  chain stops at height 3 and epoch 3 is matchable as soon as a node opens it.
+
+### Changed
+
+**One signature scheme.** The protocol, the ledger, the relay, the CLI and the
+web bundle now have exactly one identity: hybrid Ed25519 + ML-DSA-65. The
+optional dual-path feature is gone rather than deprecated, because every
+`if scheme == ...` branch is a seam an attacker can aim at. This is a wire-format
+break: addresses, keyfiles, transactions, certificates, results, evidence and
+every fixture are regenerated. Nodes from before this change cannot interoperate
+with nodes after it, and there is no migration path other than recreating
+keyfiles from their 24-word phrase. Nothing had been deployed beyond a private
+testnet, so the rewrite is cheaper than carrying two schemes forever.
+
+- **Addresses** are version-1 programs over the full 32-byte digest of the
+  hybrid key blob (`H("sccp/v1/address", {algorithm, network, public_key})`).
+  Version 0 and its truncated hash are removed; a 21-byte program no longer
+  parses.
+- **Keyfiles** are `version: 2` with `"scheme": "ed25519-mldsa65"`, always, at
+  scrypt `N = 2**17`. Version-1 documents and classical schemes are refused.
+  `--scheme` no longer exists (`wallet new --scheme …` exits 2).
+- **Transactions** are always signed by the hybrid blob (6748 hex). The
+  `TxSignatureHex` / `HybridSignatureHex` unions, the key-length scheme dispatch
+  and the classical `resolve_public_key` path are removed.
+- **Certificates and results** are hybrid-signed, so a quantum attacker cannot
+  impersonate a seat or forge a settled result. `GameResult` and `WinProof` carry
+  `move_commitment`.
+- **New: stream commitments** (`sccp/protocol/commitments.py`, section 8.5). The
+  move stream folds into a 32-byte root, hybrid-signed once inside the result;
+  refused-checkmate evidence is a compact `MoveEvidence` (plies + witness
+  checkpoint) instead of a tuple of signed moves.
+- **New: clock checkpoints and a bounded evidence window.**
+  `ClockEvidence.receipts` is now at most `CLOCK_EVIDENCE_PLIES = 64`
+  consecutive receipts ending at the flag, anchored by the first receipt's
+  absolute clocks, plus a witness-quorum hybrid `StreamCheckpoint` over the
+  window and the flag. The chain-level `timeout_claim` validator verifies the
+  root and the quorum, so a forged Ed25519 receipt cannot open a claim.
+- **Caps**: `max_tx_bytes` rises from 65 536 to 131 072. A 400-ply
+  `timeout_claim` overflowed the old cap with Ed25519 signatures alone; the
+  window fixes the size, and 128 KiB leaves room for a larger quorum. See
+  section 12.5 for the budget table.
+- **Fail-closed startup**: `require_pq()` is called by the node, miner, relay and
+  devnet, so a build without an ML-DSA provider refuses to run instead of
+  rejecting every transaction it sees.
+- **CLI**: `wallet sign-result --payload <hex>` signs a canonical result payload
+  produced by the web tab, and miner/witness commands accept the same keyfile as
+  everything else (the "a hybrid keyfile cannot mine" guard is gone).
+- **Web**: `bech32.ts` encodes version-1 programs; `keys.ts` derives addresses
+  from the hybrid blob, adds ML-DSA-65 through `@noble/post-quantum`, and signs
+  the hybrid blob (`hybridSign`/`hybridSignDomain`, verified against Python's
+  signatures and key generation); `commitment.ts` reproduces the fold;
+  `tx.ts` signs transactions with both halves; `certificate.ts` hybrid-signs
+  start signatures; `verify.ts` runs the certificate and result signature rules
+  with that verifier instead of reporting them as *skipped*. `vectors.json`
+  regenerated with the new addresses, the hybrid public key and commitment
+  vectors (hybrid signatures are hedged, so they are verified rather than
+  compared). `App.tsx` wraps the route in an error boundary, so a view that
+  throws while rendering shows its error where the view would be instead of
+  unmounting the shell and leaving a blank page.
+- **Genesis** documents and the pinned hashes are regenerated for all three
+  networks (hybrid faucet keys).
+- **Tests**: 1004 Python tests, the adversarial suite and 74 vitest cases updated
+  to the one-scheme invariants; `tests/unit/test_pq.py` is rewritten as the
+  acceptance suite (`ADDRESS_VERSION == 1`, hybrid-only transactions and
+  keyfiles, no `SCHEMES`/`SigningKey`/`ADDRESS_PQ`, `--scheme` gone),
+  `tests/unit/test_commitments.py` pins the fold, and
+  `tests/unit/test_tx_budget.py` measures the largest transaction and the
+  unwindowed overflow it replaces.
+
+### Fixed
+
+- **The hand-play tab's black screen.** `#/play` derived its address from a
+  32-byte Ed25519 key, which the version-1 `addressFor` correctly refuses; the
+  throw happened during the first render, and with no error boundary React
+  unmounted the whole tree, so the page went blank instead of reporting it. The
+  tab now derives the full hybrid account, and `App.tsx` catches a throwing view
+  so this class of bug shows a message inside the shell.
+- A mempool selection bug: a transaction whose funding transfer had not yet been
+  applied was dropped instead of deferred, so which transactions made it into a
+  block depended on address sort order. The pool now defers a sender and retries
+  it after other senders make progress.
+- The latent `clock_evidence` overflow described above.
+
+## [0.16.0] - 2026-11-13
+
+Hybrid post-quantum signing for wallets, addresses and transactions. A wallet may
+now hold an Ed25519 + ML-DSA-65 keypair whose spend needs both signatures. Ed25519
+addresses, version-1 keyfiles, Ed25519 transactions, genesis and the web vectors
+are unchanged byte for byte, and a node that never sees a hybrid signature stores
+exactly the state it stored before.
+
+*Superseded by the one-scheme rewrite above: that release kept both schemes side
+by side, and this one removes the classical path entirely.*
+
+### Added
+
+- `sccp/crypto/pq.py`: hybrid Ed25519 + ML-DSA-65 keys (`generate_hybrid_keypair`,
+  `hybrid_keypair_from_seed`, `hybrid_sign`, `hybrid_verify`) using the `cryptography`
+  50 ML-DSA implementation behind its backend gate. Key and signature layouts are
+  self-describing: `0x01 || ed25519 || mldsa65` for a 1985-byte public key and a
+  3374-byte signature. One 32-byte master seed derives both halves through
+  HMAC-SHA-256 labels, so a mnemonic backs up both. Key generation raises
+  `PQUnavailableError` when the OpenSSL build exposes no ML-DSA provider, and
+  verification fails closed.
+- Version-1 bech32 addresses (`HYBRID_ADDRESS_VERSION`): a 33-byte program over
+  the *full* 32-byte digest of `{"network", "algorithm", "public_key"}` under the
+  `sccp/v1/address-pq` domain. Truncating to 20 bytes would lose to Grover's
+  quadratic speedup, so hybrid addresses keep every bit. `decode_address` reports
+  the version and `validate_address` accepts both.
+- Scheme-aware transactions: `signature` is either 128 hex (Ed25519) or 6748 hex
+  (`0x01 || ed25519_sig || mldsa65_sig`), and the sender's stored public key is
+  either 64 or 3970 hex. The address version pins the scheme, so a hybrid
+  signature for a version-0 address (or a classical one for version 1) fails the
+  same check as a forged signature, and a `signature` string of any other
+  length is a `schema` error. Both halves sign
+  `sha256("sccp/v1/pq-hybrid" || 0x00 || txid)` with the FIPS 204 context
+  `sccp/v1/hybrid-ed25519-mldsa65`.
+- Version-2 keyfiles (`sccp/crypto/wallet.py`): `--scheme ed25519-mldsa65` writes
+  a file with a `scheme` field, the hybrid public key and a password-derived key
+  at scrypt `N = 2**17`, and requires a 12-character passphrase. Version-1 files
+  keep their stored parameters and load unchanged; old readers reject version 2
+  instead of misreading it. `wallet new`, `wallet import-mnemonic` and
+  `miner`/witness signing share the same keyfile plumbing (`wallet/service.py`),
+  and `wallet address --json` now reports `scheme`.
+- CLI: `--scheme {ed25519,ed25519-mldsa65}` and `--kdf-n` on `wallet new` and
+  `wallet import-mnemonic`; an unknown scheme exits `2`. Miner and witness
+  commands refuse a hybrid keyfile with a message naming the Ed25519-only
+  messages rather than signing a transcript that consensus cannot verify.
+  `wallet export-mnemonic --json` now carries `scheme`, since the phrase itself
+  is only the 32-byte seed.
+- `src/web/src/lib`: the browser bundle stays Ed25519-only. `bech32.ts` exports
+  `HYBRID_ADDRESS_VERSION` and refuses to encode a version-1 program with a
+  message pointing at the CLI wallet, and `tx.ts` exports
+  `isHybridSignatureHex` plus `HYBRID_SIGNATURE_HEX_LENGTH` so a viewer can label
+  a 6748-hex signature instead of treating it as malformed. `vectors.json` is
+  regenerated byte for byte.
+- `tests/unit/test_pq.py`: signature and keypair round trips, version-1 address
+  round trip and classical-key rejection, a hybrid spend moving funds, first-use
+  key reveal, cross-scheme spend rejection, scheme-tagged signature sizes,
+  keyfile and mnemonic round trips, unchanged version-1 keyfile, the long-passphrase
+  rule and the header/address mismatch guard.
+- `docs/PROTOCOL.md` section 10.5 and `docs/WHITEPAPER.md` section 6.5 document
+  the layouts, the address version and the deliberately narrow scope;
+  `docs/THREAT_MODEL.md` gains a quantum adversary, an attack row and a residual
+  risk, and `docs/OPEN_A_WALLET.md` a post-quantum wallet walkthrough.
+
+### Changed
+
+- `sign`/`verify` on a transaction dispatch on the address version and signature
+  length instead of assuming Ed25519, and the ledger stores the classical half of
+  a hybrid key in the paths that only need Ed25519 (transcripts, clock receipts,
+  roster) while keeping the full blob for the balance check.
+- `docs/WHITEPAPER.md` component and residual-risk tables now name hybrid keys.
+
+### Security
+
+- A node built against an OpenSSL without ML-DSA rejects hybrid spends (fail
+  closed) rather than accepting the Ed25519 half alone.
+- The scope stays narrow on purpose: match certificates, signed moves, clock
+  receipts, win proofs and the relay roster are Ed25519-only, so a hybrid keyfile
+  protects funds and bonds but cannot be a miner or witness identity yet.
 
 ## [0.15.0] - 2026-11-13
 

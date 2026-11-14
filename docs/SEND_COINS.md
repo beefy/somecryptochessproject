@@ -185,7 +185,7 @@ reversed. There is no memo field and no refund path.
 3. Checks the recipient address, `amount > 0`, `recipient != sender`, the fee
    floor, and `spendable >= amount + fee`.
 4. Uses the nonce the node reported (or the local chain's, when building offline).
-5. Signs the transaction locally with Ed25519.
+5. Signs the transaction locally with the hybrid Ed25519 + ML-DSA-65 key.
 6. POSTs it to `<node>/v1/tx` and prints the txid and whether the node accepted
    it.
 

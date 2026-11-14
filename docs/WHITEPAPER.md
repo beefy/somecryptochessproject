@@ -2,7 +2,7 @@
 
 ## Chess as proof of work
 
-**Whitepaper for protocol v1 · reference implementation 0.16.0 · November 2026**
+**Whitepaper for protocol v1 · reference implementation 0.17.0 · November 2026**
 
 > **Scope.** This document explains how the current reference implementation
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,
@@ -204,7 +204,7 @@ requirement to run two strong engines; it does not claim to eliminate it.
 
 | Component | Responsibility | Trust boundary |
 | --- | --- | --- |
-| Wallet | Holds an encrypted Ed25519 key, derives an address, builds and signs transactions | The user trusts their own keyfile and passphrase |
+| Wallet | Holds an encrypted Ed25519 or hybrid Ed25519 + ML-DSA-65 key, derives an address, builds and signs transactions | The user trusts their own keyfile and passphrase |
 | Miner | Registers, commits availability, plays engine moves, co-signs results, builds proofs and blocks | Other nodes verify every claim; an invalid miner only wastes its own work |
 | Matchmaker / relay | Derives matchup sessions, relays signed moves, runs the clock, stores transcripts and witness receipts | Not trusted for pairings, results or time; its output is recomputable or signed |
 | Clock witness | Signs move and flag receipts with a bonded key | Consensus checks a quorum and slashes equivocation; testnet uses one witness |
@@ -384,8 +384,10 @@ Every node that receives the block repeats steps 1, 3, 4 and 5 and checks step
 
 ### 6.1 One key, one identity
 
-Every participant is an Ed25519 keypair. The public key is 32 bytes; private
-operations use the 32-byte seed. There is no account registry keyed by email,
+Every participant is a keypair. The public key is 32 bytes and private
+operations use the 32-byte seed. A participant may instead hold a *hybrid*
+Ed25519 + ML-DSA-65 key (1985 bytes, scheme byte `0x01` prepended) whose address
+is a version-1 program (6.5). There is no account registry keyed by email,
 username or validator slot. An address is derived from the public key and a
 network id:
 
@@ -399,8 +401,8 @@ address = bech32(<hrp>, address_program)
 
 Version byte `0` means Ed25519. The hash covers the network, so the same key has
 different addresses on mainnet and testnet. The human-readable prefixes are
-`sccp1...` and `sccpt1...` respectively. Addresses are 21-byte bech32 programs,
-not SegWit witness programs.
+`sccp1...` and `sccpt1...` respectively. Addresses are 21-byte (Ed25519) or
+33-byte (hybrid) bech32 programs, not SegWit witness programs.
 
 The first transaction from an address reveals its full public key. Subsequent
 transactions may omit it; `resolve_public_key` accepts the key from state or
@@ -409,18 +411,25 @@ addresses short without losing self-authentication.
 
 ### 6.2 Keyfiles
 
-`sccp wallet new` writes a JSON keyfile containing the network, address,
-public key, KDF parameters, cipher parameters, nonce and ciphertext. The seed is
-encrypted with AES-256-GCM under a key derived by scrypt (default `N = 2^15`,
-`r = 8`, `p = 1`). The header is authenticated as associated data, so editing
-the address, network or KDF fields breaks decryption. The file stores no
+`sccp wallet new` writes a JSON keyfile containing the version, scheme, network,
+address, public key, KDF parameters, cipher parameters, nonce and ciphertext. The
+master seed is encrypted with AES-256-GCM under a key derived by scrypt (default
+`N = 2^17`, `r = 8`, `p = 1`). The header is authenticated as associated data, so
+editing the address, network or KDF fields breaks decryption. The file stores no
 plaintext seed and the CLI never prints it.
+
+There is one keyfile version: `version: 2` with `"scheme": "ed25519-mldsa65"`.
+It holds the hybrid public key blob and one 32-byte master seed that derives both
+halves through HMAC-SHA-256 labels, so a mnemonic restores both. The passphrase
+minimum is 12 characters because one passphrase protects two schemes. A version-1
+(Ed25519-only) document, or a different `scheme`, is refused rather than upgraded
+in place.
 
 A 24-word English BIP-39 mnemonic is a lossless backup of the 32-byte seed:
 
 ```text
 sccp wallet export-mnemonic --key alice.key
-sccp wallet import-mnemonic --out alice.key
+sccp wallet import-mnemonic --out alice-restored.key
 ```
 
 The mnemonic is not an HD wallet. It restores exactly one keypair, not a tree of
@@ -458,7 +467,64 @@ the txid. Canonical serialization is what makes this safe: object key order,
 integer encoding and byte escapes are fixed by the serializer, not by the JSON
 producer.
 
+A transaction signs the same `digest` with both halves (6.5). Its `signature` is
+the 6748-hex blob `0x01 || ed25519_sig(64) || mldsa65_sig(3309)`, and the
+transaction is valid only if both halves verify over the scheme-tagged digest.
+There is no other signature shape on the ledger.
+
+### 6.5 One post-quantum identity
+
+Every account has a version-1 address over the complete 32-byte digest:
+
+```text
+address_program = 0x01 || H("sccp/v1/address", {
+    "network": <network_id>,
+    "algorithm": "ed25519-mldsa65",
+    "public_key": <1985-byte blob as lowercase hex>
+})
+address = bech32(<hrp>, address_program)
+```
+
+The full digest (not the earlier 20-byte truncation) keeps 128-bit preimage
+security under Grover's quadratic speedup, and the algorithm name inside the hash
+means a future scheme is a new version rather than a guess. A transaction is
+always signed by both halves, so a quantum attacker who forges the Ed25519 half
+alone still has to break ML-DSA-65.
+
+The high-volume streams stay on the cheap half. Moves, clock receipts and gossip
+envelopes are Ed25519-signed, and every claim about them is anchored by a hybrid
+signature over a commitment to the stream (6.6): `move_commitment` inside the
+cross-signed result, and witness checkpoints inside refused-result evidence. That
+is what makes a quantum attacker unable to forge a game result, not just a spend.
+
 ---
+
+### 6.6 Stream commitments
+
+A chess game is 300–400 plies. A 3374-byte signature per ply would make a game a
+megabyte, and evidence out of that would not fit in a transaction. The protocol
+signs the *stream* instead of every leaf:
+
+```text
+root_0     = 00 * 32
+root_{i+1} = SHA-256("sccp/v1/commitment" || 0x00 || root_i || canonical_json(leaf_i))
+leaf       = {network, match_id, seat, ply, san}
+```
+
+The fold is a single SHA-256 chain over canonical JSON, so any implementation with
+`sha256` and a canonical encoder reproduces it — the web bundle ships it. Both
+seats put the resulting `move_commitment` inside the result payload they hybrid
+sign, so one signature covers every ply. When a seat refuses to sign, a registered
+clock witness hybrid-signs a `StreamCheckpoint` over the same root, and that
+checkpoint is the evidence; a per-ply Ed25519 signature is never presented as a
+claim on its own.
+
+Clock evidence uses the same construction over receipt leaves: a bundle carries at
+most 64 consecutive receipts (a suffix ending at the flag, anchored by the first
+receipt's absolute clock values) plus one witness checkpoint over the window and
+the flag. That is what keeps the largest transaction near 55 KiB inside the
+128 KiB cap, and it closes the old overflow that a 400-ply claim hit even with
+Ed25519-only signatures.
 
 ## 7. Canonical encoding and hashing
 
@@ -1568,6 +1634,7 @@ claim otherwise.
 | Eclipse a node | Multiple peers, manual configuration | No DHT or automatic diversity in v1 |
 | DoS the HTTP API | Validation before storage, size caps, peer bans | No auth, rate limiting or TLS |
 | Stolen wallet key | Passphrase-encrypted keyfile | Key compromise is identity compromise |
+| Quantum key recovery | One scheme: hybrid Ed25519 + ML-DSA-65 (6.5). Every account is a version-1 address over the full 32-byte digest, every spend carries both signatures, and certificates, results and evidence checkpoints are hybrid-signed | Breaking ML-DSA-65 is the only path; the scheme is younger than Ed25519 and its implementation surface is larger |
 | Weak engine / thrown game | Structural checks, deterministic sampling and bonded challenges | Sampling is probabilistic; panel votes still have an operator-trusted transport |
 
 ### 16.5 Finality
@@ -1622,6 +1689,7 @@ honest play".
 | --- | --- |
 | Canonical JSON, domain hashing, Merkle roots | Implemented |
 | Ed25519 keys, bech32 addresses, encrypted keyfiles, mnemonic backup | Implemented |
+| Hybrid Ed25519 + ML-DSA-65 keys, version-1 addresses, version-2 keyfiles | Implemented for transactions and bonds |
 | Account ledger, transfers, fees, coinbase, maturity, supply cap | Implemented |
 | Transactions: register, update, unregister, withdraw, availability, reveal | Implemented |
 | Genesis loading and pinned genesis hash | Implemented |
@@ -1649,6 +1717,7 @@ honest play".
 | Continuous public testnet and 72-hour soak | Not yet run |
 | Metrics, alerting and block explorer | Not implemented |
 | On-chain challenge-panel votes | Votes use an operator-trusted transport |
+| Browser ledger signing (ML-DSA in JS) | The web wallet signs and verifies both halves; `@noble/post-quantum` keygen is byte-identical to the reference implementation |
 | Automatic timeout-claim submission in CLI/demo | Incomplete integration |
 | drand quicknet verifier wiring | Hook exists; pinned verifier not bundled |
 | Faucet limit persistence | Limits are in memory |
@@ -1941,6 +2010,7 @@ the engine-marked tests.
 | **Epoch** | Fixed number of heights used for availability, beacons and pairing |
 | **Game hash** | Hash of network, start position, SAN moves and result |
 | **Genesis** | Pinned height-0 block and initial state |
+| **Hybrid key** | Ed25519 and ML-DSA-65 keypair sharing one seed; scheme byte `0x01` prefixes both key and signature |
 | **k / wins_required** | Number of valid proofs a block must carry |
 | **Low ply** | A game shorter than the network's `min_plies` |
 | **MTP** | Median time past of the previous 11 block timestamps |
@@ -1978,8 +2048,11 @@ the engine-marked tests.
 ### 20.2 Standards and libraries
 
 - **Ed25519** — RFC 8032.
+- **ML-DSA-65** — FIPS 204 module-lattice signature (NIST category 3), the
+  post-quantum half of a hybrid key.
 - **BIP-39** — mnemonic code for generating deterministic keys.
-- **Bech32** — BIP-173, used for address text with a 21-byte program.
+- **Bech32** — BIP-173, used for address text with a 21-byte (Ed25519) or
+  33-byte (hybrid) program.
 - **AES-256-GCM** — NIST SP 800-38D, used for keyfile encryption.
 - **scrypt** — RFC 7914, used for keyfile key derivation.
 - **UCI** — Universal Chess Interface, the engine protocol.

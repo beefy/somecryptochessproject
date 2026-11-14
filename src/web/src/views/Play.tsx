@@ -8,10 +8,14 @@
  * the opponent across the board is whatever engine the other seat registered.
  *
  * What the page signs is exactly what a Stockfish miner signs: the certificate
- * at match start, every move with its ply, and the result at the end. What it
- * announces is the same `WinProof` a miner builds from the same transcript, and
- * the checks listed here are the ones `sccp/protocol/verification.py` applies
- * that need nothing but the proof and the epoch beacon.
+ * at match start, every move with its ply, and the result at the end. The key is
+ * the hybrid Ed25519 + ML-DSA-65 account derived from one 32-byte master seed in
+ * this tab, so the transactions it posts are accepted by the chain and its
+ * starts and results verify at the relay. What it announces is the same
+ * `WinProof` a miner builds from the same transcript, and the checks listed here
+ * are the ones `sccp/protocol/verification.py` applies that need nothing but the
+ * proof and the epoch beacon — including both hybrid signature rules, verified
+ * against the roster's keys.
  *
  * Two honest limits are shown, not hidden:
  *
@@ -48,12 +52,14 @@ import { DOMAINS } from "../lib/canonical";
 import { formatAmount, formatClock, formatInteger, shortAddress } from "../lib/format";
 import {
   addressFor,
-  generateKeypair,
-  keypairFromSeedHex,
-  publicKeyHex,
+  generateHybridKeypair,
+  hybridKeypairFromSeedHex,
+  hybridPublicKeyHex,
+  hybridSignDomain,
+  hybridVerifyDomain,
   seedHex,
   signDomain,
-  type Keypair,
+  type HybridKeypair,
 } from "../lib/keys";
 import { movePayload, resultPayload } from "../lib/protocol";
 import { buildWinProof, webQualitySummary } from "../lib/proof";
@@ -205,9 +211,9 @@ function dropCommitment(address: string): void {
   }
 }
 
-function safeKeypair(seed: string): Keypair | null {
+function safeHybridKeypair(seed: string): HybridKeypair | null {
   try {
-    return keypairFromSeedHex(seed);
+    return hybridKeypairFromSeedHex(seed);
   } catch {
     return null;
   }
@@ -234,7 +240,7 @@ export function Play(): ReactNode {
   const network = status.data?.network ?? null;
   const [seed, setSeed] = useState<string | null>(null);
   const [seedText, setSeedText] = useState("");
-  const keypair = useMemo(() => (seed === null ? null : safeKeypair(seed)), [seed]);
+  const keypair = useMemo(() => (seed === null ? null : safeHybridKeypair(seed)), [seed]);
 
   if (network === null) {
     if (status.error !== undefined) return <FailureNotice error={status.error} />;
@@ -276,9 +282,9 @@ function KeyPanel({
   onSeedText: (value: string) => void;
   onUse: (seed: string) => void;
 }): ReactNode {
-  const [fresh, setFresh] = useState(() => seedHex(generateKeypair()));
+  const [fresh, setFresh] = useState(() => seedHex(generateHybridKeypair()));
   const candidate = seedText.trim() === "" ? fresh : seedText.trim();
-  const keypair = safeKeypair(candidate);
+  const keypair = safeHybridKeypair(candidate);
   const address = keypair === null ? null : addressFor(keypair.publicKey, network);
 
   return (
@@ -308,7 +314,7 @@ function KeyPanel({
           <Button
             mode="outlined"
             onPress={() => {
-              setFresh(seedHex(generateKeypair()));
+              setFresh(seedHex(generateHybridKeypair()));
               onSeedText("");
             }}
           >
@@ -317,7 +323,8 @@ function KeyPanel({
         </View>
         {address === null ? (
           <HelperText type="error" visible>
-            A seed is 32 bytes of hex.
+            A seed is 32 bytes of hex (64 characters): the master seed both halves of the hybrid key
+            derive from.
           </HelperText>
         ) : (
           <KeyValue label="Address">
@@ -336,8 +343,9 @@ function KeyPanel({
           </Button>
         </View>
         <HelperText type="info" visible>
-          The seed is the private key. This page keeps it in memory, so a refresh forgets it — that is
-          the point. Do not fund a key you would be sad to lose.
+          The master seed is the private key: it derives the Ed25519 half and the ML-DSA-65 half, and
+          this page keeps it in memory, so a refresh forgets it — that is the point. Do not fund a
+          key you would be sad to lose.
         </HelperText>
       </Section>
     </>
@@ -350,7 +358,7 @@ function Table({
   onForget,
 }: {
   network: string;
-  keypair: Keypair;
+  keypair: HybridKeypair;
   onForget: () => void;
 }): ReactNode {
   const { status, params: paramsResource } = useNode();
@@ -477,7 +485,7 @@ function Table({
           bond: params.min_bond,
           endpoint: window.location.origin,
           engine: ENGINE,
-          publicKeyHex: publicKeyHex(keypair),
+          publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
       const accepted = await submitTransaction(toWireTransaction(tx));
@@ -502,7 +510,7 @@ function Table({
           epoch: stored.epoch,
           maxGames: MAX_GAMES,
           commitment: availabilityCommitment(address, stored.epoch, stored.nonce),
-          publicKeyHex: publicKeyHex(keypair),
+          publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
       const accepted = await submitTransaction(toWireTransaction(tx));
@@ -530,7 +538,7 @@ function Table({
           fee: params.min_fee,
           epoch: stored.epoch,
           nonceSecret: stored.nonce,
-          publicKeyHex: publicKeyHex(keypair),
+          publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
       const accepted = await submitTransaction(toWireTransaction(tx));
@@ -544,7 +552,7 @@ function Table({
       const signature = signCertificate(keypair, match.certificate);
       await relayJoin(match.matchup.match_id, {
         seat: address,
-        publicKey: publicKeyHex(keypair),
+        publicKey: hybridPublicKeyHex(keypair),
         signature,
       });
       relay.reload();
@@ -571,8 +579,12 @@ function Table({
       return;
     }
     const ply = match.san_moves.length;
+    // Moves are Ed25519: `docs/PROTOCOL.md` section 8.5 keeps the high-volume
+    // streams classical and anchors them with a hybrid signature over the move
+    // root inside the result. The relay verifies this with the registered key's
+    // Ed25519 half.
     const signature = signDomain(
-      keypair,
+      keypair.ed25519,
       DOMAINS.MOVE,
       movePayload({ network, match_id: match.matchup.match_id, seat: address, ply, san }),
     );
@@ -603,15 +615,16 @@ function Table({
         result: result.result,
         termination: result.termination,
         plies: result.plies,
+        move_commitment: result.move_commitment,
       });
-      await relaySignResult(view.matchup.match_id, {
-        seat: address,
-        signature: signDomain(keypair, DOMAINS.RESULT, payload),
-      });
-      relay.reload();
-      return `${seat} result signature delivered`;
+      // A result signature is hybrid: the seat commits to the game hash, the
+      // termination and the move root with both halves, which is what makes a
+      // forged settled result impossible for a quantum attacker holding only the
+      // Ed25519 half. `sccp wallet sign-result` produces the same bytes from the
+      // same key, so the page and the CLI are interchangeable.
+      return hybridSignDomain(keypair, DOMAINS.RESULT, payload);
     },
-    [address, keypair, relay],
+    [address, keypair],
   );
 
   const announce = (): void => {
@@ -655,6 +668,10 @@ function Table({
             member.public_key,
           ]),
         ),
+        // The page holds ML-DSA-65, so the two hybrid signature rules are real
+        // checks here rather than reported skips: a wrong key, a signature over
+        // another payload, or a half-signed result fails before submission.
+        verifyLedgerSignature: hybridVerifyDomain,
       });
       setChecks(verdict.checks);
       if (!verdict.ok) return "the proof is built but fails local verification";

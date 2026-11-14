@@ -21,6 +21,17 @@ UNITS_PER_COIN: Final = 100_000_000
 MAX_PLIES_LIMIT: Final = 1000
 """Hard upper bound for ``max_plies``; longer games are never consensus-valid."""
 
+CLOCK_EVIDENCE_PLIES: Final = 64
+"""Most move receipts a clock-evidence bundle may carry (PROTOCOL.md section 8.4).
+
+A flag claim proves the tail of the game, not the whole game: the window starts at
+a witness-signed receipt whose absolute clock values anchor the arithmetic, and
+every later receipt is checked as a delta from it. Bounding the window is what
+keeps the largest transaction the protocol can produce well inside
+``max_tx_bytes``; before it existed a 400-ply broadcast flag bundle overflowed the
+transaction cap with classical signatures alone.
+"""
+
 
 def coins_to_units(coins: int) -> int:
     """Convert whole coins to base units."""
@@ -197,8 +208,8 @@ TESTNET: Final = NetworkParams(
     beacon_grace_blocks=2,
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
-    max_tx_bytes=65_536,
-    genesis_hash="491b3938f6099b4ae8a787a8e8d9c79bc00139fb04992facc0b50fe9aa266101",
+    max_tx_bytes=131_072,
+    genesis_hash="f90293abcf8dded21516bea747659098191599d7facd22ee625619b0c446db16",
 )
 
 MAINNET: Final = NetworkParams(
@@ -241,8 +252,8 @@ MAINNET: Final = NetworkParams(
     drand_round_offset=1,
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
-    max_tx_bytes=65_536,
-    genesis_hash="2e53fce3d03bbba749511129839f1138aaf391f4c8f80f3819f1980a6acfc008",
+    max_tx_bytes=131_072,
+    genesis_hash="22ab56fb013c1c46452e735a7d2aa5b1cbbee2ca9a26af406ae38fc04445a631",
 )
 
 DEVNET: Final = NetworkParams.model_validate(
@@ -256,7 +267,7 @@ DEVNET: Final = NetworkParams.model_validate(
         "wins_required": 1,
         "min_bond": 0,
         "genesis_timestamp": 1_700_000_000,
-        "genesis_hash": "20a9487445db5639b3711b7a8714ebcd1b07c00564222f1153c85d789a448d6d",
+        "genesis_hash": "5e3465524fbf12874f77384baae18eec299068d96aa85ef8a34a3932b0b5f8a4",
     }
 )
 """In-process network for tests and CI: mock engines, zero seal difficulty."""

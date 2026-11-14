@@ -67,6 +67,20 @@ def first_matchable_epoch(params: NetworkParams) -> int:
     return params.availability_lead
 
 
+def reveal_deadline_tip(epoch: int, params: NetworkParams) -> int:
+    """The last tip at which a reveal for ``epoch`` can still be built.
+
+    Consensus accepts a reveal only in a block of the epoch before the one it
+    targets (``epoch(block) + 1``), and a block built on tip ``t`` has height
+    ``t + 1``. The last usable tip is therefore one below the last height of
+    ``epoch - 1``. Missing it voids the commitment for that epoch: there is no
+    later window, because the following epoch is already outside the range.
+    """
+    if epoch < 1:
+        raise StateError(f"epoch must be at least 1, got {epoch}")
+    return epoch_end_height(epoch - 1, params) - 1
+
+
 @dataclass(slots=True)
 class Account:
     """One account's balances, bond, nonce and registration metadata."""
@@ -535,7 +549,13 @@ class State:
         return dict(record.roster)
 
     def public_keys(self) -> dict[str, str]:
-        """``address -> public key hex`` for every address the chain trusts."""
+        """``address -> hybrid public key hex`` for every address the chain trusts.
+
+        The map holds the full 1985-byte blob exactly as it was registered; the
+        per-stream verifiers project the Ed25519 half when they check a move or a
+        clock receipt. Keeping one authoritative representation is what removes
+        the "which scheme is this key?" question from the ledger.
+        """
         keys: dict[str, str] = {}
         for address, account in self.accounts.items():
             if account.public_key:
@@ -910,4 +930,5 @@ __all__ = [
     "epoch_of",
     "epoch_start_height",
     "first_matchable_epoch",
+    "reveal_deadline_tip",
 ]

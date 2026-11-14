@@ -523,9 +523,32 @@
         ],
         "type": "object"
       },
+      "CheckpointSignature": {
+        "additionalProperties": false,
+        "properties": {
+          "signature": {
+            "pattern": "^[0-9a-f]{6748}$",
+            "type": "string"
+          },
+          "witness": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "witness",
+          "signature"
+        ],
+        "type": "object"
+      },
       "ClockEvidence": {
         "additionalProperties": false,
         "properties": {
+          "checkpoint": {
+            "$ref": "#/components/schemas/StreamCheckpoint"
+          },
           "final": {
             "$ref": "#/components/schemas/FlagReceipt"
           },
@@ -542,7 +565,8 @@
         },
         "required": [
           "time_control",
-          "final"
+          "final",
+          "checkpoint"
         ],
         "type": "object"
       },
@@ -563,6 +587,32 @@
         "required": [
           "witness",
           "signature"
+        ],
+        "type": "object"
+      },
+      "CommittedMove": {
+        "additionalProperties": false,
+        "properties": {
+          "ply": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "san": {
+            "maxLength": 16,
+            "minLength": 1,
+            "type": "string"
+          },
+          "seat": {
+            "maxLength": 90,
+            "minLength": 8,
+            "pattern": "^[a-z0-9]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ply",
+          "seat",
+          "san"
         ],
         "type": "object"
       },
@@ -859,6 +909,10 @@
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
+          "move_commitment": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
           "network": {
             "maxLength": 32,
             "minLength": 1,
@@ -878,7 +932,7 @@
           },
           "result_signatures": {
             "additionalProperties": {
-              "pattern": "^[0-9a-f]{128}$",
+              "pattern": "^[0-9a-f]{6748}$",
               "type": "string"
             },
             "propertyNames": {
@@ -905,7 +959,8 @@
           "game_hash",
           "result",
           "termination",
-          "plies"
+          "plies",
+          "move_commitment"
         ],
         "type": "object"
       },
@@ -1303,7 +1358,7 @@
           },
           "start_signatures": {
             "additionalProperties": {
-              "pattern": "^[0-9a-f]{128}$",
+              "pattern": "^[0-9a-f]{6748}$",
               "type": "string"
             },
             "propertyNames": {
@@ -1604,6 +1659,27 @@
           "provisional",
           "last_epoch",
           "last_height"
+        ],
+        "type": "object"
+      },
+      "MoveEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "checkpoint": {
+            "$ref": "#/components/schemas/StreamCheckpoint"
+          },
+          "moves": {
+            "items": {
+              "$ref": "#/components/schemas/CommittedMove"
+            },
+            "maxItems": 1000,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "moves",
+          "checkpoint"
         ],
         "type": "object"
       },
@@ -2087,7 +2163,7 @@
             "type": "integer"
           },
           "public_key": {
-            "pattern": "^[0-9a-f]{64}$",
+            "pattern": "^[0-9a-f]{3970}$",
             "type": "string"
           },
           "recent_opponents": {
@@ -2116,9 +2192,16 @@
         ],
         "type": "object"
       },
-      "SignedMove": {
+      "StreamCheckpoint": {
         "additionalProperties": false,
         "properties": {
+          "kind": {
+            "enum": [
+              "moves",
+              "clock"
+            ],
+            "type": "string"
+          },
           "match_id": {
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
@@ -2132,29 +2215,24 @@
             "minimum": 0.0,
             "type": "integer"
           },
-          "san": {
-            "maxLength": 16,
-            "minLength": 1,
+          "root": {
+            "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
-          "seat": {
-            "maxLength": 90,
-            "minLength": 8,
-            "pattern": "^[a-z0-9]+$",
-            "type": "string"
-          },
-          "signature": {
-            "pattern": "^[0-9a-f]{128}$",
-            "type": "string"
+          "witnesses": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CheckpointSignature"
+            },
+            "type": "array"
           }
         },
         "required": [
           "network",
+          "kind",
           "match_id",
-          "seat",
           "ply",
-          "san",
-          "signature"
+          "root"
         ],
         "type": "object"
       },
@@ -2207,7 +2285,7 @@
           "signature": {
             "anyOf": [
               {
-                "pattern": "^[0-9a-f]{128}$",
+                "pattern": "^[0-9a-f]{6748}$",
                 "type": "string"
               },
               {
@@ -2405,13 +2483,14 @@
             "pattern": "^[0-9a-f]{64}$",
             "type": "string"
           },
+          "move_commitment": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
           "move_evidence": {
             "anyOf": [
               {
-                "items": {
-                  "$ref": "#/components/schemas/SignedMove"
-                },
-                "type": "array"
+                "$ref": "#/components/schemas/MoveEvidence"
               },
               {
                 "type": "null"
@@ -2459,7 +2538,7 @@
           },
           "result_signatures": {
             "additionalProperties": {
-              "pattern": "^[0-9a-f]{128}$",
+              "pattern": "^[0-9a-f]{6748}$",
               "type": "string"
             },
             "propertyNames": {
@@ -2521,6 +2600,7 @@
           "result",
           "termination",
           "plies",
+          "move_commitment",
           "opening",
           "pgn",
           "certificate"

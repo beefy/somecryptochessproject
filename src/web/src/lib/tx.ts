@@ -3,18 +3,27 @@
  * `sccp/wallet/service.py`.
  *
  * The envelope is one canonical body — `{network, type, from, nonce, fee,
- * payload}` — and the signature is Ed25519 over `H("sccp/v1/tx", body)`. The
- * payload's shape depends on `type` and is validated by the chain, so these
- * builders only fill in the fields a seat needs to join a roster:
- * `register`, `availability` and `reveal`.
+ * payload}` — and the signature is the hybrid Ed25519 + ML-DSA-65 blob over
+ * `H("sccp/v1/tx", body)`. The payload's shape depends on `type` and is
+ * validated by the chain, so these builders only fill in the fields a seat needs
+ * to join a roster: `register`, `availability` and `reveal`.
  *
  * Nothing here is specific to a browser: the same bytes `sccp miner register`
- * produces come out of {@link buildRegister}, which is what lets a seat created
- * in this tab be paired by the relay like any other.
+ * produces come out of {@link buildRegister}, and {@link signTransaction} signs
+ * them with the same wire format `sccp wallet` does, which is what lets a seat
+ * created in this tab be paired by the relay like any other.
+ *
+ * Every transaction carries a hybrid Ed25519 + ML-DSA-65 signature: there is one
+ * scheme and no classical fallback on the ledger (`PROTOCOL.md` section 2).
  */
 
 import { DOMAINS, domainHex, fromHex } from "./canonical";
-import { type Keypair, signDigest } from "./keys";
+import {
+  HYBRID_SIGNATURE_HEX_LENGTH,
+  HYBRID_SIGNATURE_SIZE,
+  type HybridKeypair,
+  hybridSign,
+} from "./keys";
 
 /** Wire spellings from `sccp.protocol.models.TxType`. */
 export type TxType = "transfer" | "register" | "register_witness" | "availability" | "reveal";
@@ -27,11 +36,33 @@ export interface Transaction {
   nonce: number;
   fee: number;
   payload: Record<string, unknown>;
+  /** 6748 hex characters (3374 bytes: scheme || ed25519 || mldsa65), or absent. */
   signature?: string;
 }
 
 export class TxError extends Error {
   override name = "TxError";
+}
+
+/** Hex length of a hybrid Ed25519 + ML-DSA-65 signature (3374 bytes). */
+export const LEDGER_SIGNATURE_HEX_LENGTH = HYBRID_SIGNATURE_HEX_LENGTH;
+
+/** Bytes in the same signature: `scheme || ed25519(64) || mldsa65(3309)`. */
+export const LEDGER_SIGNATURE_SIZE = HYBRID_SIGNATURE_SIZE;
+
+/**
+ * Whether `signature` is a well-formed ledger signature.
+ *
+ * The scheme byte is `0x01`, so a hybrid signature starts with `"01"`. There is
+ * no second shape to tell it apart from: an Ed25519-only 128-hex string is not a
+ * ledger signature at all any more (`sccp.protocol.models.LedgerSignatureHex`).
+ */
+export function isLedgerSignatureHex(signature: string | null | undefined): boolean {
+  return (
+    typeof signature === "string" &&
+    signature.length === LEDGER_SIGNATURE_HEX_LENGTH &&
+    /^01[0-9a-f]*$/.test(signature)
+  );
 }
 
 /** The canonical signed body: everything but the signature. */
@@ -51,11 +82,15 @@ export function txId(tx: Transaction): string {
   return domainHex(DOMAINS.TX, txBody(tx));
 }
 
-/** Sign `tx` and return the wire form (`signature` present, never `undefined`). */
-export function signTransaction(keypair: Keypair, tx: Transaction): Transaction {
-  const unsigned: Transaction = { ...tx };
-  delete unsigned.signature;
-  return { ...unsigned, signature: signDigest(keypair, fromHex(txId(unsigned))) };
+/**
+ * Sign a transaction with the account's hybrid key.
+ *
+ * `sccp.chain.tx.sign_transaction` signs the hex *txid*, not the JSON and not a
+ * domain hash — the domain was already folded in when the body was hashed — so
+ * this signs the same 32 bytes and returns the 6748-hex hybrid blob.
+ */
+export function signTransaction(keypair: HybridKeypair, tx: Transaction): Transaction {
+  return { ...tx, signature: hybridSign(keypair, fromHex(txId(tx))) };
 }
 
 /** The exact JSON body a node's `POST /v1/tx` expects. */

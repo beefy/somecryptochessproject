@@ -26,7 +26,7 @@ from sccp.chain.genesis import faucet_keypair
 from sccp.chain.state import State
 from sccp.config import NetworkParams, coins_to_units
 from sccp.crypto.address import validate_address
-from sccp.crypto.keys import Keypair
+from sccp.crypto.pq import HybridKeypair
 from sccp.errors import FaucetError, RateLimitError
 from sccp.protocol.models import Transaction
 from sccp.wallet.service import WalletService
@@ -71,7 +71,7 @@ class Faucet:
     state: Callable[[], State]
     admit: Callable[[Transaction], str]
     policy: FaucetPolicy = field(default_factory=FaucetPolicy)
-    keypair: Keypair | None = None
+    keypair: HybridKeypair | None = None
     clock: Callable[[], int] = unix_now
     _address_last: dict[str, int] = field(default_factory=dict)
     _client_history: dict[str, deque[int]] = field(default_factory=dict)

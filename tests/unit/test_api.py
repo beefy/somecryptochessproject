@@ -19,7 +19,7 @@ from sccp.chain.mempool import Mempool
 from sccp.chain.tx import txid
 from sccp.config import DEVNET, TESTNET
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import MempoolError, ProtocolError
 from sccp.node.app import create_app, openapi_contract
 from sccp.node.service import NodeService
@@ -29,7 +29,7 @@ from sccp.wallet.service import WalletService
 
 FAUCET = faucet_keypair("devnet")
 FAUCET_ADDRESS = encode_address(FAUCET.public_key_bytes, DEVNET)
-MINER = keypair_from_seed(bytes([9]) * 32)
+MINER = hybrid_keypair_from_seed(bytes([9]) * 32)
 MINER_ADDRESS = encode_address(MINER.public_key_bytes, DEVNET)
 OPENAPI_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "openapi.json"
 
@@ -302,7 +302,7 @@ def test_ratings_routes_are_derived_from_settled_proofs(
         chain=chain,
         mempool=Mempool(params=chain.params, tip_state=chain.state, book=chain.book),
     )
-    unrated = encode_address(keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
+    unrated = encode_address(hybrid_keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
     with _client(service) as client:
         board = client.get("/v1/ratings").json()
         capped = client.get("/v1/ratings?limit=1").json()

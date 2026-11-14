@@ -14,8 +14,9 @@ from typer.testing import CliRunner
 from sccp.chess.pgn import validate_pgn
 from sccp.cli import PASSPHRASE_ENV, app
 from sccp.config import DEVNET, UNITS_PER_COIN
-from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.address import address_version, encode_address
+from sccp.crypto.pq import generate_hybrid_keypair, hybrid_keypair_from_seed
+from sccp.crypto.wallet import read_header
 from sccp.errors import RelayError
 from sccp.protocol.transcript import (
     build_win_proof,
@@ -80,9 +81,121 @@ def test_new_json_output(tmp_path: Path, env: dict[str, str]) -> None:
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
-    assert set(payload) == {"address", "network", "public_key", "keyfile"}
+    assert set(payload) == {"address", "network", "public_key", "scheme", "keyfile"}
+    assert payload["scheme"] == "ed25519-mldsa65"
     assert payload["network"] == "testnet"
     assert payload["address"].startswith("sccpt1")
+    # 1-byte tag + 32-byte Ed25519 key + 1952-byte ML-DSA-65 key.
+    assert len(bytes.fromhex(payload["public_key"])) == 1985
+    assert address_version(payload["address"]) == 1
+
+    header = read_header(tmp_path / "w.key")
+    assert header.version == 2
+    assert header.scheme == "ed25519-mldsa65"
+    assert header.address == payload["address"]
+
+    addressed = runner.invoke(
+        app, ["--json", "wallet", "address", "--key", str(tmp_path / "w.key")]
+    )
+    assert addressed.exit_code == 0, addressed.output
+    assert json.loads(addressed.stdout)["scheme"] == "ed25519-mldsa65"
+
+
+def test_the_scheme_flag_is_gone(tmp_path: Path, env: dict[str, str]) -> None:
+    """There is one scheme, so ``--scheme`` must not exist at all."""
+    result = runner.invoke(
+        app,
+        ["wallet", "new", "--out", str(tmp_path / "w.key"), "--scheme", "ed25519", *FAST],
+        env=env,
+    )
+    assert result.exit_code == 2
+    assert "No such option" in result.stderr
+
+
+def test_miner_commands_do_not_refuse_a_hybrid_key() -> None:
+    """Every keyfile is hybrid, so the old classical-only guard is gone."""
+    import sccp.cli as cli
+
+    assert not hasattr(cli, "_classical_keypair")
+
+
+def test_export_and_import_hybrid_mnemonic(tmp_path: Path, env: dict[str, str]) -> None:
+    created = _new(tmp_path, env)
+    assert created.exit_code == 0, created.output
+    source = str(tmp_path / "wallet.key")
+
+    exported = runner.invoke(app, ["wallet", "export-mnemonic", "--key", source], env=env)
+    assert exported.exit_code == 0, exported.output
+    phrase = exported.stdout.strip()
+    assert len(phrase.split()) == 24
+
+    exported_json = runner.invoke(
+        app, ["--json", "wallet", "export-mnemonic", "--key", source], env=env
+    )
+    assert exported_json.exit_code == 0, exported_json.output
+    document = json.loads(exported_json.stdout)
+    assert document["scheme"] == "ed25519-mldsa65"
+    assert document["address"] == created.stdout.strip()
+    assert document["mnemonic"] == phrase
+
+    restored = tmp_path / "restored.key"
+    imported = runner.invoke(
+        app,
+        ["wallet", "import-mnemonic", "--out", str(restored), *FAST],
+        input=phrase + "\n",
+        env=env,
+    )
+    assert imported.exit_code == 0, imported.output
+    assert imported.stdout.strip().splitlines()[-1] == created.stdout.strip()
+    assert read_header(restored).scheme == "ed25519-mldsa65"
+
+
+def test_import_mnemonic_reads_the_phrase_from_a_file(tmp_path: Path, env: dict[str, str]) -> None:
+    created = _new(tmp_path, env)
+    assert created.exit_code == 0, created.output
+    exported = runner.invoke(
+        app, ["wallet", "export-mnemonic", "--key", str(tmp_path / "wallet.key")], env=env
+    )
+    assert exported.exit_code == 0, exported.output
+
+    backup = tmp_path / "wallet.mnemonic"
+    backup.write_text(exported.stdout, encoding="utf-8")
+    backup.chmod(0o600)
+    restored = tmp_path / "restored.key"
+    # No stdin at all: the file is the whole input, which is what makes this
+    # usable from a script and from a shell without a terminal.
+    imported = runner.invoke(
+        app,
+        [
+            "wallet",
+            "import-mnemonic",
+            "--out",
+            str(restored),
+            "--mnemonic-file",
+            str(backup),
+            *FAST,
+        ],
+        env=env,
+    )
+    assert imported.exit_code == 0, imported.output
+    assert imported.stdout.strip().splitlines()[-1] == created.stdout.strip()
+
+    backup.chmod(0o644)
+    exposed = runner.invoke(
+        app,
+        [
+            "wallet",
+            "import-mnemonic",
+            "--out",
+            str(tmp_path / "other.key"),
+            "--mnemonic-file",
+            str(backup),
+            *FAST,
+        ],
+        env=env,
+    )
+    assert exposed.exit_code == 1
+    assert "chmod 600" in exposed.output
 
 
 def test_network_override_and_mismatch(tmp_path: Path, env: dict[str, str]) -> None:
@@ -527,7 +640,7 @@ def account_document(address: str, *, spendable: int, nonce: int) -> dict[str, o
     }
 
 
-MINER_ADDRESS = encode_address(keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
+MINER_ADDRESS = encode_address(hybrid_keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
 NONCE_SECRET = "11" * 32
 
 
@@ -733,7 +846,7 @@ def test_node_run_can_hide_the_faucet(data_dir: Path, monkeypatch: pytest.Monkey
 
 
 def _devnet_address() -> str:
-    return encode_address(keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
+    return encode_address(hybrid_keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
 
 
 def test_node_run_warns_about_a_peer_that_is_down(
@@ -816,11 +929,10 @@ def test_matchmaker_run_refuses_bad_sweep_settings(tmp_path: Path) -> None:
 def test_miner_run_passes_the_relay_witness_keys_through(
     tmp_path: Path, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from sccp.crypto.keys import generate_keypair
     from sccp.miner.engine_miner import EngineMiner, MinerTick
 
     assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
-    witness = generate_keypair()
+    witness = generate_hybrid_keypair()
     seen: list[dict[str, str]] = []
 
     def capture(self: EngineMiner) -> MinerTick:
@@ -1011,6 +1123,47 @@ def test_miner_run_refuses_a_bad_availability_secret(tmp_path: Path, env: dict[s
     )
     assert both.exit_code == 2
     assert "not both" in both.output
+
+
+def test_miner_availability_reports_the_reveal_deadline(
+    data_dir: Path,
+    faucet_key: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+) -> None:
+    """The commit names the tip by which the reveal has to be built.
+
+    On a genesis-only chain the next block is in epoch 1, so availability targets
+    ``epoch 1 + availability_lead`` = 3. A reveal for epoch 3 is only valid in a
+    block of epoch 2, which is block 2 here: build it on tip 1 at the latest.
+    """
+    base = [
+        "--data-dir",
+        str(data_dir),
+        "miner",
+        "availability",
+        "--network",
+        "devnet",
+        "--key",
+        str(faucet_key),
+        "--max-games",
+        "3",
+        "--node",
+        "http://127.0.0.1:8645",
+    ]
+    human = runner.invoke(app, base, env=env)
+    assert human.exit_code == 0, human.output
+    assert "committed availability for epoch 3 (3 games)" in human.stdout
+    assert "reveal by tip 1 (block 2 is the last of epoch 2)" in human.stdout
+    assert len(recorded_node) == 1
+
+    machine = runner.invoke(app, ["--json", *base], env=env)
+    assert machine.exit_code == 0, machine.output
+    payload = json.loads(machine.stdout)
+    assert payload["epoch"] == 3
+    assert payload["reveal_by_tip"] == 1
+    assert payload["max_games"] == 3
+    assert len(payload["nonce_secret"]) == 64
 
 
 def test_miner_run_warns_that_the_secret_needs_a_node(
@@ -1416,7 +1569,7 @@ def test_wallet_send_transfers_between_two_new_wallets(
 
     # New wallets start empty, so mine a faucet transfer that funds Alice.
     faucet = faucet_keypair("devnet")
-    miner = keypair_from_seed(bytes([9]) * 32)
+    miner = hybrid_keypair_from_seed(bytes([9]) * 32)
     service = NodeService.open(DEVNET, storage=Storage(data_dir / "chain.sqlite"))
     try:
         pool = Mempool(params=DEVNET, tip_state=service.chain.state, book=service.chain.book)

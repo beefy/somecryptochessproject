@@ -6,7 +6,7 @@
  * owns its own request, its loading state and its empty state.
  */
 
-import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 import { Banner, Button, IconButton, PaperProvider, Surface, Text, useTheme } from "react-native-paper";
 
@@ -136,10 +136,69 @@ function Shell(): ReactNode {
       )}
 
       <Page>
-        <RouteView route={route} />
+        <RouteBoundary key={routeKey(route)}>
+          <RouteView route={route} />
+        </RouteBoundary>
       </Page>
     </View>
   );
+}
+
+/**
+ * Catch a view that throws while rendering.
+ *
+ * Without this, one bad render unmounts the whole tree and the page goes blank —
+ * on a dark theme, a black screen with no error, no header and no navigation, and
+ * nothing in the UI to say what happened. A view that throws is a bug in that
+ * view, not a reason to take the explorer down: show the message where the view
+ * would have been and keep the shell (and the console's stack trace) intact.
+ *
+ * Keyed by route so navigating away from a broken view clears the error.
+ */
+class RouteBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  override state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error): { error: Error } {
+    return { error };
+  }
+
+  override render(): ReactNode {
+    const { error } = this.state;
+    if (error === null) return this.props.children;
+    return (
+      <View style={styles.crash}>
+        <Text variant="titleMedium">This page failed to render</Text>
+        <Text variant="bodyMedium" style={styles.crashMessage}>
+          {error.message}
+        </Text>
+        <Text variant="bodySmall" style={styles.muted}>
+          The rest of the explorer still works — pick another section, or retry this page. The
+          browser console has the stack trace.
+        </Text>
+        <Button mode="outlined" onPress={() => this.setState({ error: null })}>
+          Retry
+        </Button>
+      </View>
+    );
+  }
+}
+
+/** A stable identity per route, so a boundary reset does not leak between pages. */
+function routeKey(route: Route): string {
+  switch (route.name) {
+    case "block":
+      return `block:${route.reference}`;
+    case "game":
+      return `game:${route.gameHash}`;
+    case "miner":
+      return `miner:${route.address}`;
+    case "account":
+      return `account:${route.address}`;
+    case "notFound":
+      return `notFound:${route.path}`;
+    default:
+      return route.name;
+  }
 }
 
 function RouteView({ route }: { route: Route }): ReactNode {
@@ -208,5 +267,14 @@ const styles = StyleSheet.create({
   },
   muted: { opacity: 0.66 },
   banner: { width: "100%" },
+  crash: {
+    gap: 12,
+    padding: 24,
+    maxWidth: 720,
+    width: "100%",
+    alignSelf: "center",
+    alignItems: "flex-start",
+  },
+  crashMessage: { fontFamily: "monospace" },
 });
 

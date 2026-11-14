@@ -23,7 +23,13 @@ from typing import NoReturn
 from sccp.chain.state import State, epoch_of, first_matchable_epoch
 from sccp.config import NetworkParams
 from sccp.crypto.address import encode_address, validate_address
-from sccp.crypto.keys import Keypair, public_key_from_hex, sign, verify
+from sccp.crypto.pq import (
+    HYBRID_PUBLIC_KEY_SIZE,
+    HybridKeypair,
+    hybrid_sign,
+    hybrid_verify,
+    is_hybrid_public_key_hex,
+)
 from sccp.errors import AddressError, KeyEncodingError, TxValidationError
 from sccp.protocol.beacon import commitment
 from sccp.protocol.models import Availability, Transaction, TxType
@@ -76,13 +82,20 @@ def tx_size(tx: Transaction) -> int:
     return len(canonical_json(tx.model_dump(mode="json", by_alias=True)))
 
 
-def sign_transaction(keypair: Keypair, tx: Transaction) -> Transaction:
-    """Return ``tx`` with ``keypair``'s signature over its txid."""
-    if not isinstance(keypair, Keypair):
-        raise TxValidationError(TxFailure.SIGNATURE, "signing needs a Keypair")
+def sign_transaction(keypair: HybridKeypair, tx: Transaction) -> Transaction:
+    """Return ``tx`` with ``keypair``'s hybrid signature over its txid.
+
+    There is exactly one signing scheme. A transaction signature is always the
+    3374-byte ``scheme || ed25519 || mldsa65`` blob, so a validator never has to
+    infer a scheme from a length or a key it has not authenticated yet.
+    """
+    if not isinstance(keypair, HybridKeypair):
+        raise TxValidationError(
+            TxFailure.SIGNATURE, "signing needs a HybridKeypair (the only scheme)"
+        )
     unsigned = tx if tx.signature is None else tx.model_copy(update={"signature": None})
-    digest = bytes.fromhex(txid(unsigned))
-    return unsigned.model_copy(update={"signature": sign(keypair, digest).hex()})
+    signature = hybrid_sign(keypair, bytes.fromhex(txid(unsigned)))
+    return unsigned.model_copy(update={"signature": signature.hex()})
 
 
 def make_coinbase(miner: str, amount: int, network: str) -> Transaction:
@@ -111,12 +124,12 @@ def coinbase_id(miner: str, amount: int, network: str) -> str:
 
 
 def resolve_public_key(state: State, tx: Transaction) -> str:
-    """The sender's Ed25519 public key, from state or a first-use reveal."""
+    """The sender's public key hex, from state or a first-use reveal."""
     account = state.accounts.get(tx.sender)
     if account is not None and account.public_key:
         return account.public_key
     candidate = tx.payload.get("public_key")
-    if isinstance(candidate, str) and len(candidate) == 64:
+    if isinstance(candidate, str) and is_hybrid_public_key_hex(candidate):
         return candidate
     _fail(
         TxFailure.SIGNATURE,
@@ -125,19 +138,37 @@ def resolve_public_key(state: State, tx: Transaction) -> str:
 
 
 def check_sender_key(state: State, params: NetworkParams, tx: Transaction) -> str:
-    """Verify the sender's signature and return the public key hex it used."""
+    """Verify the sender's hybrid signature and return the public key hex it used.
+
+    The key must be the 1985-byte hybrid blob that re-encodes to ``tx.sender``;
+    a key of any other length is a schema violation rather than a second scheme,
+    and a signature is always the hybrid blob. Nothing here dispatches on a
+    scheme: there is only one (docs/PROTOCOL.md section 2).
+    """
     key_hex = resolve_public_key(state, tx)
     try:
-        public_key = public_key_from_hex(key_hex)
-        derived = encode_address(bytes.fromhex(key_hex), params)
-    except (KeyEncodingError, AddressError, ValueError) as exc:
-        _fail(TxFailure.SIGNATURE, f"invalid public key: {exc}")
+        raw_key = bytes.fromhex(key_hex)
+    except ValueError:
+        _fail(TxFailure.SIGNATURE, "public key is not valid hex")
+    if len(raw_key) != HYBRID_PUBLIC_KEY_SIZE or not is_hybrid_public_key_hex(key_hex):
+        _fail(
+            TxFailure.SIGNATURE,
+            f"public key must be a {HYBRID_PUBLIC_KEY_SIZE}-byte hybrid blob, got {len(raw_key)}",
+        )
+    try:
+        derived = encode_address(raw_key, params)
+    except (KeyEncodingError, AddressError) as exc:
+        _fail(TxFailure.SIGNATURE, f"invalid hybrid public key: {exc}")
     if derived != tx.sender:
         _fail(TxFailure.SIGNATURE, f"public key derives {derived}, not the sender {tx.sender}")
     if tx.signature is None:
         _fail(TxFailure.SIGNATURE, "transaction is not signed")
-    if not verify(public_key, bytes.fromhex(txid(tx)), bytes.fromhex(tx.signature)):
-        _fail(TxFailure.SIGNATURE, "signature does not cover the txid")
+    try:
+        signature = bytes.fromhex(tx.signature)
+    except ValueError:
+        _fail(TxFailure.SIGNATURE, "signature is not valid hex")
+    if not hybrid_verify(raw_key, bytes.fromhex(txid(tx)), signature):
+        _fail(TxFailure.SIGNATURE, "hybrid signature does not cover the txid")
     return key_hex
 
 

@@ -9,7 +9,7 @@
 
 import type { MatchCertificate, OpeningRef, TimeControl } from "../types";
 import { DOMAINS, domainHex } from "./canonical";
-import { type Keypair, signDomain } from "./keys";
+import { type HybridKeypair, hybridSignDomain, hybridVerifyDomain } from "./keys";
 import { sortedSeats } from "./protocol";
 
 /** The exact payload a seat signs to join a match (PROTOCOL.md section 8.1). */
@@ -43,7 +43,26 @@ export function openingHash(opening: OpeningRef): string {
   });
 }
 
-/** Sign a certificate as one seat; hex signature, ready for `POST .../join`. */
-export function signCertificate(keypair: Keypair, certificate: MatchCertificate): string {
-  return signDomain(keypair, DOMAINS.CERTIFICATE, certificatePayload(certificate));
+/**
+ * Sign a certificate as one seat; hex signature, ready for `POST .../join`.
+ *
+ * A start signature is hybrid (`hybrid_verify_domain` in the relay), so the
+ * account key signs it — the Ed25519 half alone would be rejected.
+ */
+export function signCertificate(keypair: HybridKeypair, certificate: MatchCertificate): string {
+  return hybridSignDomain(keypair, DOMAINS.CERTIFICATE, certificatePayload(certificate));
+}
+
+/** Whether `signatureHex` is `seat`'s hybrid start signature. Never throws. */
+export function verifyCertificate(
+  publicKeyHex: string,
+  certificate: MatchCertificate,
+  signatureHex: string,
+): boolean {
+  return hybridVerifyDomain(
+    publicKeyHex,
+    DOMAINS.CERTIFICATE,
+    certificatePayload(certificate),
+    signatureHex,
+  );
 }

@@ -39,12 +39,14 @@ from sccp.chess.quality import (
 )
 from sccp.config import NetworkParams, QualityMode, get_network
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import Keypair, sign_domain
+from sccp.crypto.pq import HybridKeypair, hybrid_sign_domain, require_pq
 from sccp.errors import ClockError, EpochPipelineError, MinerError, QualityError, RelayError
 from sccp.miner.epoch_pipeline import EpochPipeline, PipelineAction
 from sccp.miner.matchmaker import ClockBundle, MatchView
 from sccp.protocol.clocks import (
     MatchClock,
+    build_clock_evidence,
+    clock_window,
     flag_result,
     sign_move,
     sign_receipt,
@@ -96,7 +98,7 @@ class MinerConfig:
     """Everything a miner needs that is not the engine or the transports."""
 
     params: NetworkParams
-    keypair: Keypair
+    keypair: HybridKeypair
     relay_url: str = "http://127.0.0.1:8646"
     node_url: str | None = None
     nodes_per_move: int = 200_000
@@ -135,7 +137,7 @@ class MinerConfig:
     def for_network(
         cls,
         network: str | NetworkParams,
-        keypair: Keypair,
+        keypair: HybridKeypair,
         *,
         relay_url: str = "http://127.0.0.1:8646",
         node_url: str | None = None,
@@ -493,6 +495,7 @@ class EngineMiner:
         quality_engine: AnalysisEngine | None = None,
         pipeline: EpochPipeline | None = None,
     ) -> None:
+        require_pq()
         self.config = config
         self.engine = engine
         if quality_engine is not None:
@@ -778,7 +781,7 @@ class EngineMiner:
             state.relay_flag = bundle.flag
 
     def _join(self, state: MatchState) -> None:
-        signature = sign_domain(
+        signature = hybrid_sign_domain(
             self.config.keypair,
             Domain.CERTIFICATE,
             certificate_payload(state.certificate),
@@ -889,7 +892,7 @@ class EngineMiner:
                 clock_ms=remaining,
                 signature=EMPTY_SIGNATURE,
             ),
-            self.config.keypair,
+            self.config.keypair.ed25519,
         )
         self.relay.move(
             state.match_id,
@@ -1074,7 +1077,7 @@ class EngineMiner:
         self,
         view: MatchView,
         *,
-        witnesses: Sequence[tuple[str, Keypair]] = (),
+        witnesses: Sequence[tuple[str, HybridKeypair]] = (),
         bundle: ClockBundle | None = None,
     ) -> TimeoutClaim | None:
         """Assemble a bonded claim, or refuse when the evidence is incomplete.
@@ -1135,18 +1138,32 @@ class EngineMiner:
                 black_ms=0 if flagged == "black" else snapshot["black"],
             )
             for _, keypair in witnesses:
-                signed = sign_receipt(final, keypair, network=self.config.network)
+                signed = sign_receipt(final, keypair.ed25519, network=self.config.network)
                 if not isinstance(signed, FlagReceipt):  # pragma: no cover - inputs are flags
                     raise MinerError("sign_receipt returned the wrong receipt kind")
                 final = signed
         if [receipt.ply for receipt in receipts] != expected:
             self._refuse(f"{state.match_id}: witness receipts do not cover every post-opening move")
             return None
-        evidence = ClockEvidence(
-            time_control=state.certificate.time_control,
-            final=final,
-            receipts=tuple(receipts),
-        )
+        try:
+            if bundle is not None and bundle.checkpoint is not None:
+                evidence = ClockEvidence(
+                    time_control=state.certificate.time_control,
+                    final=final,
+                    receipts=clock_window(receipts),
+                    checkpoint=bundle.checkpoint,
+                )
+            else:
+                evidence = build_clock_evidence(
+                    network=self.config.network,
+                    time_control=state.certificate.time_control,
+                    receipts=receipts,
+                    final=final,
+                    signers=witnesses,
+                )
+        except (ClockError, ValueError) as exc:
+            self._refuse(f"{state.match_id}: cannot build clock evidence: {exc}")
+            return None
         result = flag_result(state.board, flagged=flagged)
         if result == "1/2-1/2":
             self._refuse(f"{state.match_id}: a flag with insufficient material is a draw")

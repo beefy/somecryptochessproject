@@ -63,6 +63,14 @@ class PassphraseError(KeyfileError):
     """The supplied passphrase cannot decrypt the keyfile."""
 
 
+class PostQuantumError(SccpError, RuntimeError):
+    """A post-quantum primitive is unavailable or produced unusable output."""
+
+
+class PQUnavailableError(PostQuantumError):
+    """The installed ``cryptography`` backend has no ML-DSA provider."""
+
+
 # --- chess -------------------------------------------------------------------
 
 

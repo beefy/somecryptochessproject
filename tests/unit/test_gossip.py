@@ -12,7 +12,7 @@ from sccp.chain.genesis import faucet_keypair
 from sccp.chain.tx import txid
 from sccp.config import DEVNET, TESTNET
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import GossipError
 from sccp.node.app import create_app
 from sccp.node.p2p import (
@@ -32,10 +32,10 @@ from sccp.node.service import NodeService
 from sccp.transport import client_for
 from sccp.wallet.service import WalletService
 
-BOB = keypair_from_seed(bytes([7]) * 32)
+BOB = hybrid_keypair_from_seed(bytes([7]) * 32)
 BOB_ADDRESS = encode_address(BOB.public_key_bytes, DEVNET)
 FAUCET = faucet_keypair("devnet")
-MINER = keypair_from_seed(bytes([9]) * 32)
+MINER = hybrid_keypair_from_seed(bytes([9]) * 32)
 MINER_ADDRESS = encode_address(MINER.public_key_bytes, DEVNET)
 
 
@@ -97,7 +97,7 @@ def test_block_and_proof_ids_are_recomputed(
     proof = signed_match.proof
     document = {"proof": proof.model_dump(mode="json")}
     assert object_id_of(GossipKind.PROOF, document) == proof.proof_id
-    miner = keypair_from_seed(bytes([3]) * 32)
+    miner = hybrid_keypair_from_seed(bytes([3]) * 32)
     block = mine_block(devnet_chain, miner)
     payload = {"block": block.model_dump(mode="json")}
     assert object_id_of(GossipKind.BLOCK, payload) == block_hash(block.header)

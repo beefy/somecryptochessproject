@@ -1,14 +1,17 @@
 # Open a wallet
 
 A wallet in this project is a single encrypted **keyfile** on your machine. There
-is no sign-up and no server: the keyfile holds your Ed25519 keypair, and the
-address printed when you create it is your public identity on the network.
+is no sign-up and no server: the keyfile holds a **hybrid** Ed25519 + ML-DSA-65
+keypair, and the address printed when you create it is your public identity on
+the network. Every account is post-quantum — there is no classical-only keyfile
+to choose (section 2.1) — and a spend needs both halves of the signature, so a
+quantum attacker has to break ML-DSA-65 as well as Ed25519.
 
 There are three commands in this workflow:
 
 | Step | Command | What it does |
 | --- | --- | --- |
-| 1 | `sccp wallet new --network testnet --out alice.key` | Generates a keypair and writes an encrypted keyfile. |
+| 1 | `sccp wallet new --network testnet --out alice.key` | Generates a hybrid keypair and writes an encrypted keyfile. |
 | 2 | `sccp wallet export-mnemonic --key alice.key` | Prints the 24-word recovery phrase. Do this immediately. |
 | 3 | `sccp wallet address --key alice.key` | Prints the address without needing the passphrase. |
 
@@ -32,7 +35,7 @@ sccp --version
 You should see the package and protocol version, for example:
 
 ```text
-sccp 0.16.0 (protocol v1)
+sccp 0.17.0 (protocol v1)
 ```
 
 ---
@@ -65,10 +68,12 @@ you fund the wallet.
 -rw-------  1 you  staff  ...  alice.key
 ```
 
-The public fields are `version`, `network`, `address`, `public_key`, `kdf`,
-`cipher` and `created_at`; the private seed is present only as an AES-256-GCM
-`ciphertext`. The key is derived from your passphrase with scrypt
-(`N=2**15, r=8, p=1`) and a random 16-byte salt. The header is authenticated as
+The public fields are `version`, `scheme`, `network`, `address`, `public_key`,
+`kdf`, `cipher` and `created_at`; the private master seed is present only as an
+AES-256-GCM `ciphertext`. The keyfile is always version `2` with
+`"scheme": "ed25519-mldsa65"`, and `public_key` is the 1985-byte hybrid blob
+(section 2.1). The key is derived from your passphrase with scrypt
+(`N=2**17, r=8, p=1`) and a random 16-byte salt. The header is authenticated as
 associated data, so editing `address`, `network` or the KDF parameters makes
 decryption fail instead of silently producing another key.
 
@@ -130,13 +135,70 @@ error: passphrase file secrets/alice.pass is accessible by group or others; chmo
 
 Never put the passphrase in the keyfile, in shell history, or in a repository.
 
+### 2.1 Post-quantum wallets
+
+Ed25519 signatures fall to Shor's algorithm on a large quantum computer, so the
+keyfile holds a hybrid **Ed25519 + ML-DSA-65** key (NIST FIPS 204). There is no
+flag to add and no classical variant: `wallet new` always creates one.
+
+```bash
+sccp wallet new --network testnet --out alice.key
+```
+
+The address is a version-1 bech32 program over the full 32-byte digest, so it is
+65 characters on testnet, and a spend needs *both* signatures, so an attacker has
+to break ML-DSA-65 as well. The keyfile stores the 1985-byte hybrid public key;
+the private side is one 32-byte master seed from which both halves are derived, so
+the 24-word phrase restores both:
+
+```bash
+sccp wallet export-mnemonic --key alice.key
+sccp wallet import-mnemonic --network testnet --out alice-restored.key
+```
+
+`import-mnemonic` prompts for the phrase with hidden input. To restore without a
+terminal, write the phrase to a file first and pass `--mnemonic-file`:
+
+```bash
+sccp wallet export-mnemonic --key alice.key > alice.mnemonic
+chmod 600 alice.mnemonic
+sccp --passphrase-file pass.txt wallet import-mnemonic --network testnet \
+     --out alice-restored.key --mnemonic-file alice.mnemonic
+```
+
+A group/other-readable phrase file is refused, exactly like a passphrase file.
+
+What that means in practice:
+
+- **Longer passphrase.** At least 12 characters, because the same passphrase now
+  protects both schemes.
+- **Harder KDF.** scrypt runs at `N=2**17`; `--kdf-n` exists only so tests can be
+  fast.
+- **The same key plays, witnesses and spends.** Match certificates, results,
+  moves and clock receipts use the Ed25519 half of this key and are anchored by
+  hybrid commitments, so there is one keyfile per participant and no second
+  identity for chess.
+- **The browser can play with it.** The web hand-play tab derives both halves from
+  the same master seed (`@noble/post-quantum` for ML-DSA-65), so a seat can
+  register, join, move, co-sign the result and announce the proof from the tab.
+  `sccp wallet sign-result --key alice.key --payload <hex>` still signs a
+  canonical result payload when the key is not in a browser.
+
+Hybrid support needs a `cryptography` build whose OpenSSL exposes ML-DSA (50.0 or
+later on a current OpenSSL). Without it, `wallet new` fails with a clear error
+instead of writing a half-working key, and `node run`, `miner run`, the relay and
+`devnet up` refuse to start — a node that cannot check the only signature scheme
+cannot tell a real transaction from a forged one.
+
 ---
 
 ## 3. Back up the recovery phrase
 
 The keyfile is encrypted with your passphrase, so losing either the file or the
 passphrase loses the funds. The recovery phrase is the backup that survives a
-lost keyfile: it encodes the 32-byte Ed25519 seed as 24 BIP-39 words.
+lost keyfile: it encodes the 32-byte seed as 24 BIP-39 words. For a hybrid
+keyfile that one seed controls both halves, so the same phrase restores an
+Ed25519 *and* an ML-DSA-65 key.
 
 ```bash
 sccp wallet export-mnemonic --key alice.key
@@ -174,8 +236,13 @@ Both commands must print the same `sccpt1...` address. If they differ, the
 phrase was transcribed incorrectly. The restored keyfile has a new salt and
 nonce, so the two files are not byte-identical, but they control the same key.
 
-`wallet import-mnemonic` also accepts `--force`, `--network` and
-`--passphrase-file`, exactly like `wallet new`.
+In a script, or from a shell without a terminal, pass the phrase as a file
+instead of typing it: `--mnemonic-file alice.mnemonic` (mode 0600) skips the
+hidden prompt, which would otherwise read the controlling terminal and never see
+a piped phrase.
+
+`wallet import-mnemonic` also accepts `--force`, `--network`, `--mnemonic-file`
+and `--passphrase-file`, exactly like `wallet new`.
 
 ---
 
@@ -192,11 +259,22 @@ sccp --json wallet address --key alice.key
 ```
 
 ```json
-{"address": "sccpt1...", "keyfile": "alice.key", "network": "testnet", "public_key": "..."}
+{"address": "sccpt1...", "keyfile": "alice.key", "network": "testnet", "public_key": "...", "scheme": "ed25519-mldsa65"}
 ```
 
 `wallet new`, `wallet import-mnemonic` and `wallet address` all print only the
-address by default; each supports `--json` with the fields above.
+address by default; each supports `--json` with the fields above. `scheme` is
+always `ed25519-mldsa65` and `public_key` is the 3970-hex
+`0x01 || ed25519 || mldsa65` blob. `wallet export-mnemonic --json` returns
+`{"mnemonic", "address", "network", "scheme"}`.
+
+`wallet sign-result` signs a canonical result payload (hex, as printed by the web
+hand-play tab when a key lives outside the browser) with the hybrid key and prints
+the 6748-hex signature the relay's `POST /v1/matches/{id}/result` expects:
+
+```bash
+sccp wallet sign-result --key alice.key --payload 7b226e6574...
+```
 
 ---
 
@@ -240,6 +318,11 @@ and next nonce from `--node` (see [`SEND_COINS.md`](SEND_COINS.md)).
 | `passphrase file ... is empty` | The file has no first line. | Write the passphrase and a newline. |
 | `expected 24 words, got N` | The imported phrase is incomplete. | Re-enter all 24 words in order. |
 | `unknown network '...'; known networks: ...` | A command named a network this build does not know. | Use `mainnet`, `testnet` or `devnet`. |
+| `No such option: --scheme` | There is one key scheme; the flag is gone. | Drop `--scheme`; `wallet new` always writes a hybrid keyfile. |
+| `a keyfile passphrase must be at least 12 characters` | A short passphrase was given. | Use 12+ characters. |
+| `unsupported keyfile version 1` | The file predates the one-scheme rewrite. | Recreate it from its 24-word phrase with `wallet import-mnemonic`. |
+| `unsupported keyfile scheme 'ed25519' (only 'ed25519-mldsa65')` | The header was hand-edited, or the file is classical. | Do not edit the header; recreate the keyfile. |
+| `this build has no ML-DSA-65 support ...` | The `cryptography` wheel has no post-quantum provider. | Install `cryptography>=50` built against an OpenSSL with ML-DSA. |
 | `keyfile names unknown network '...' (known: ...)` | The keyfile header names a network this build does not know. | Use a current build; do not edit the header. |
 | `no chain database at ...` | A chain command ran without `--data-dir` pointing at a node's data. | Start a node or pass the directory that holds `chain.sqlite`. |
 
@@ -258,6 +341,9 @@ unknown network.
 - [ ] You have restored the phrase once and seen the same address.
 - [ ] You are using the keyfile for the network you think you are: check the
       address prefix (`sccp1` mainnet, `sccpt1` testnet/devnet).
+- [ ] The passphrase is at least 12 characters, the address is a version-1
+      program (65 characters on testnet), and the file says `"version": 2` with
+      `"scheme": "ed25519-mldsa65"`.
 
 ---
 

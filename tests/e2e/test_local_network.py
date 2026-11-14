@@ -22,14 +22,14 @@ from sccp.chain.genesis import faucet_keypair
 from sccp.chain.tx import txid
 from sccp.config import DEVNET
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.node.app import create_app
 from sccp.node.p2p import GossipKind, sign_envelope
 from sccp.node.service import HttpPeerClient, NodeService
 from sccp.wallet.service import WalletService
 
 FAUCET = faucet_keypair("devnet")
-MINER = keypair_from_seed(bytes([9]) * 32)
+MINER = hybrid_keypair_from_seed(bytes([9]) * 32)
 MINER_ADDRESS = encode_address(MINER.public_key_bytes, DEVNET)
 
 START_TIMEOUT_SECONDS = 10.0

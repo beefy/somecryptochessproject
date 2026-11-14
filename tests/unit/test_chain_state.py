@@ -118,7 +118,7 @@ def test_matchable_requires_registration_bond_and_key() -> None:
     state = _state()
     assert state.matchable(ALICE, 3) is False
     account = state.ensure(ALICE)
-    account.public_key = "11" * 32
+    account.public_key = "11" * 1985
     assert state.matchable(ALICE, 3) is False, "no registration yet"
     account.registered_until_epoch = 5
     assert state.matchable(ALICE, 3) is True
@@ -133,9 +133,9 @@ def test_roster_root_commits_key_and_quota() -> None:
             {ALICE: RosterMember(public_key=key, engine="mock-v1", max_games=games)}
         )
 
-    assert root("11" * 32, 3) != root("11" * 32, 4)
-    assert root("11" * 32, 3) != root("22" * 32, 3)
-    assert root("11" * 32, 3) == root("11" * 32, 3)
+    assert root("11" * 1985, 3) != root("11" * 1985, 4)
+    assert root("11" * 1985, 3) != root("22" * 1985, 3)
+    assert root("11" * 1985, 3) == root("11" * 1985, 3)
 
 
 def test_snapshot_round_trip_preserves_the_ledger() -> None:

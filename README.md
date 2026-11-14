@@ -98,7 +98,7 @@ matchmaking protocol, the proof format, the anti-collusion rules and the chain.
 
 | Role | What it does | Trust required |
 | --- | --- | --- |
-| **Wallet** | Ed25519 keys, bech32 addresses, signs transactions and match transcripts | none |
+| **Wallet** | Hybrid Ed25519 + ML-DSA-65 keys (the only scheme), version-1 bech32 addresses, signs transactions, certificates and results | none |
 | **Engine miner** | Registers, commits availability, connects to a relay, plays assigned games with a UCI engine, submits win proofs | none for correctness; it only hurts itself by cheating |
 | **Matchmaker / relay** | Runs epoch rounds, derives pairings from the beacon, relays moves, collects co-signatures, stores match transcripts | **untrusted**: any node can recompute the pairing and verify the transcript |
 | **Full node** | Gossips blocks and transactions, validates the chain, serves the HTTP API | none |
@@ -296,7 +296,9 @@ responsibility rather than a construction phase.
 ├── deploy/
 │   ├── README.md                 # what the compose stack does and does not do
 │   ├── explorer/                 # Caddy + nginx + compose for the hosted page
-│   └── init_testnet_stack.py     # deterministic stack keys + relay config
+│   ├── init_testnet_stack.py     # deterministic testnet stack keys
+│   ├── init_devnet_stack.py      # the same two keys for a local devnet stack
+│   └── bootstrap_devnet_stack.py # devnet chain + relay config, no node needed
 ├── genesis/{devnet,testnet,mainnet}.json
 ├── scripts/
 │   ├── fetch_engine.py           # verified Stockfish download
@@ -456,6 +458,9 @@ chain, starting the node on the right data directory and troubleshooting a
 
 The wallet and miner guides are separate:
 
+- [`docs/RUN_A_DEVNET.md`](docs/RUN_A_DEVNET.md) — run a whole devnet from source:
+  `devnet up`, the faucet, wallets, transfers, a miner and the two-process relay
+  stack, with the devnet parameters and troubleshooting.
 - [`docs/CREATE_A_TESTNET_WALLET.md`](docs/CREATE_A_TESTNET_WALLET.md) — create a
   testnet keyfile, fund it from the faucet and check the balance.
 - [`docs/OPEN_A_WALLET.md`](docs/OPEN_A_WALLET.md) — create a keyfile, back up the

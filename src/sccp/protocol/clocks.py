@@ -16,33 +16,46 @@ every platform.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final
+from typing import Final, Literal
 
 import chess
 
+from sccp.config import CLOCK_EVIDENCE_PLIES
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import (
-    Keypair,
-    PublicKeyLike,
-    public_key_from_hex,
-    sign_domain,
-    verify_domain,
+from sccp.crypto.keys import Keypair, PublicKeyLike, sign_domain, verify_domain
+from sccp.crypto.pq import (
+    HybridKeypair,
+    HybridPublicKey,
+    ed25519_public_key,
+    hybrid_public_key,
+    hybrid_sign_domain,
+    hybrid_verify_domain,
 )
-from sccp.errors import ClockError
+from sccp.errors import ClockError, KeyEncodingError
+from sccp.protocol.commitments import (
+    checkpoint_payload,
+    clock_root,
+    evidence_root,
+    receipt_leaf,
+)
 from sccp.protocol.models import (
     MAX_CLOCK_MS,
     MAX_PLIES_LIMIT,
+    CheckpointSignature,
     ClockEvidence,
     ClockWitnessSignature,
     Color,
+    CommittedMove,
     FlagReceipt,
     MatchCertificate,
+    MoveEvidence,
     MoveMessage,
     MoveReceipt,
     ResultValue,
     SignedMove,
+    StreamCheckpoint,
     TimeControl,
     TimeoutClaim,
 )
@@ -118,13 +131,31 @@ def _check_grace(lag_grace_ms: int) -> int:
     return lag_grace_ms
 
 
-def _check_registered_key(
-    public_keys: Mapping[str, PublicKeyLike | str], address: str
-) -> PublicKeyLike:
+def _check_registered_key(public_keys: Mapping[str, str], address: str) -> PublicKeyLike:
+    """The Ed25519 half of ``address``'s registered hybrid key.
+
+    Registries hold full hybrid blobs; the move and receipt streams verify
+    against the classical half and are anchored by a hybrid checkpoint, so the
+    projection happens here, once, and never by guessing a key's length.
+    """
     key = public_keys.get(address)
     if key is None:
         raise ClockError(f"no registered public key for {address}")
-    return public_key_from_hex(key) if isinstance(key, str) else key
+    try:
+        return ed25519_public_key(key)
+    except KeyEncodingError as exc:
+        raise ClockError(f"registered key for {address} is malformed: {exc}") from None
+
+
+def _check_registered_hybrid_key(public_keys: Mapping[str, str], address: str) -> HybridPublicKey:
+    """The full hybrid key behind ``address``, used for checkpoint signatures."""
+    key = public_keys.get(address)
+    if key is None:
+        raise ClockError(f"no registered public key for {address}")
+    try:
+        return hybrid_public_key(key)
+    except KeyEncodingError as exc:
+        raise ClockError(f"registered key for {address} is malformed: {exc}") from None
 
 
 @dataclass(slots=True)
@@ -259,7 +290,20 @@ def move_payload(move: SignedMove | MoveMessage) -> dict[str, object]:
     }
 
 
-def sign_move(move: SignedMove | MoveMessage, keypair: Keypair) -> MoveMessage:
+def _stream_key(keypair: Keypair | HybridKeypair) -> Keypair:
+    """The Ed25519 half that signs a move or receipt.
+
+    Callers hold an account key (hybrid) while moves and receipts are the cheap
+    inner-half stream, so the projection happens here once instead of at every
+    call site. This is not a scheme choice: both branches are the same identity,
+    and the hybrid checkpoint anchors whatever this half signed.
+    """
+    if isinstance(keypair, HybridKeypair):
+        return keypair.ed25519
+    return keypair
+
+
+def sign_move(move: SignedMove | MoveMessage, keypair: Keypair | HybridKeypair) -> MoveMessage:
     """Sign ``move`` and return the same object with its signature filled in.
 
     ``clock_ms`` on a :class:`MoveMessage` is display data and is not covered by
@@ -270,7 +314,7 @@ def sign_move(move: SignedMove | MoveMessage, keypair: Keypair) -> MoveMessage:
         updated = move
     else:
         updated = MoveMessage(**move.model_dump(), clock_ms=0)
-    signature = sign_domain(keypair, Domain.MOVE, move_payload(updated)).hex()
+    signature = sign_domain(_stream_key(keypair), Domain.MOVE, move_payload(updated)).hex()
     return updated.model_copy(update={"signature": signature})
 
 
@@ -278,7 +322,7 @@ def verify_move_signature(
     move: SignedMove | MoveMessage,
     *,
     certificate: MatchCertificate,
-    public_keys: Mapping[str, PublicKeyLike | str],
+    public_keys: Mapping[str, str],
 ) -> None:
     """Verify a move's seat, network, match id and Ed25519 signature."""
     if move.network != certificate.network:
@@ -305,63 +349,217 @@ def verify_move_signature(
         raise ClockError(f"invalid {move.seat} move signature at ply {move.ply}")
 
 
+def sign_checkpoint(
+    checkpoint: StreamCheckpoint,
+    keypair: HybridKeypair,
+    *,
+    witness: str | None = None,
+) -> StreamCheckpoint:
+    """Add this witness's hybrid signature to ``checkpoint``."""
+    address = witness or encode_address(keypair.public_key_bytes, checkpoint.network)
+    if any(item.witness == address for item in checkpoint.witnesses):
+        raise ClockError(f"witness {address} already signed this checkpoint")
+    signature = hybrid_sign_domain(keypair, Domain.COMMITMENT, checkpoint_payload(checkpoint)).hex()
+    updated = (*checkpoint.witnesses, CheckpointSignature(witness=address, signature=signature))
+    return checkpoint.model_copy(update={"witnesses": updated})
+
+
+def verify_checkpoint_signatures(
+    checkpoint: StreamCheckpoint,
+    *,
+    public_keys: Mapping[str, str],
+    quorum: int,
+) -> frozenset[str]:
+    """Verify a checkpoint's witness quorum and return the unique witnesses.
+
+    Checkpoint signatures are hybrid, unlike the per-ply receipt signatures they
+    anchor: this is the one place a quantum attacker has to break ML-DSA-65 to
+    fabricate evidence (PROTOCOL.md section 8.5).
+    """
+    if quorum < 1:
+        raise ClockError("clock_witness_quorum must be at least one")
+    payload = checkpoint_payload(checkpoint)
+    seen: set[str] = set()
+    for entry in checkpoint.witnesses:
+        if entry.witness in seen:
+            raise ClockError(f"witness {entry.witness} signed one checkpoint more than once")
+        seen.add(entry.witness)
+        key = _check_registered_hybrid_key(public_keys, entry.witness)
+        try:
+            signature = bytes.fromhex(entry.signature)
+        except ValueError:
+            raise ClockError("checkpoint signature is not valid hex") from None
+        if not hybrid_verify_domain(key, Domain.COMMITMENT, payload, signature):
+            raise ClockError(f"invalid checkpoint signature from {entry.witness}")
+    if len(seen) < quorum:
+        raise ClockError(f"checkpoint has {len(seen)} witness signature(s), quorum is {quorum}")
+    return frozenset(seen)
+
+
+def build_checkpoint(
+    *,
+    network: str,
+    kind: Literal["moves", "clock"],
+    match_id: str,
+    ply: int,
+    root: str,
+    signers: Iterable[tuple[str, HybridKeypair]],
+) -> StreamCheckpoint:
+    """Build and co-sign a stream checkpoint from ``(address, keypair)`` signers."""
+    checkpoint = StreamCheckpoint(network=network, kind=kind, match_id=match_id, ply=ply, root=root)
+    for address, keypair in signers:
+        checkpoint = sign_checkpoint(checkpoint, keypair, witness=address)
+    return checkpoint
+
+
+def build_move_evidence(
+    certificate: MatchCertificate,
+    san_moves: Sequence[str],
+    signers: Iterable[tuple[str, HybridKeypair]],
+) -> MoveEvidence:
+    """Assemble a refused-checkmate bundle: plies plus a hybrid checkpoint.
+
+    Every ply is committed as ``{ply, seat, san}``; the checkpoint's root is
+    folded from exactly those leaves, so a verifier recomputes it without any
+    per-ply signature (PROTOCOL.md sections 8.5 and 9.3).
+    """
+    opening_plies = len(certificate.opening.moves)
+    moves = tuple(
+        CommittedMove(
+            ply=ply,
+            seat=certificate.white if ply % 2 == 0 else certificate.black,
+            san=san_moves[ply],
+        )
+        for ply in range(opening_plies, len(san_moves))
+    )
+    if not moves:
+        raise ClockError("a refused checkmate needs at least one post-opening move")
+    checkpoint = build_checkpoint(
+        network=certificate.network,
+        kind="moves",
+        match_id=certificate.match_id,
+        ply=len(san_moves),
+        root=evidence_root(certificate.network, certificate.match_id, moves),
+        signers=signers,
+    )
+    return MoveEvidence(moves=moves, checkpoint=checkpoint)
+
+
+def clock_window(receipts: Sequence[MoveReceipt]) -> tuple[MoveReceipt, ...]:
+    """The suffix of ``receipts`` that fits the evidence window.
+
+    Claim builders and the verifier agree through this one helper, so a bundle
+    can never be assembled with more receipts than the verifier accepts.
+    """
+    return tuple(receipts[-CLOCK_EVIDENCE_PLIES:])
+
+
+def build_clock_evidence(
+    *,
+    time_control: TimeControl,
+    receipts: Sequence[MoveReceipt],
+    final: FlagReceipt,
+    signers: Iterable[tuple[str, HybridKeypair]],
+    network: str,
+) -> ClockEvidence:
+    """Assemble flag evidence: the receipt window plus a hybrid checkpoint.
+
+    The window is the last :data:`sccp.config.CLOCK_EVIDENCE_PLIES` receipts,
+    which is what keeps a 400-ply flag bundle inside ``max_tx_bytes``: the
+    arithmetic only ever needs a suffix, and the first receipt in the window
+    anchors it.
+    """
+    window = tuple(receipts[-CLOCK_EVIDENCE_PLIES:])
+    checkpoint = build_checkpoint(
+        network=network,
+        kind="clock",
+        match_id=final.match_id,
+        ply=final.ply,
+        root=clock_root(network, window, final),
+        signers=signers,
+    )
+    return ClockEvidence(
+        time_control=time_control, final=final, receipts=window, checkpoint=checkpoint
+    )
+
+
 def verify_move_evidence(
-    evidence: Sequence[SignedMove] | None,
+    evidence: MoveEvidence | None,
     *,
     certificate: MatchCertificate,
-    public_keys: Mapping[str, PublicKeyLike | str],
+    public_keys: Mapping[str, str],
     san_moves: Sequence[str],
+    quorum: int,
 ) -> None:
     """Verify a refused-checkmate move stream against the replayed SAN list.
 
-    Every post-opening move must be present, in order, signed by the seat whose
-    turn it was. ``ply`` is the zero-based index into ``san_moves`` (PROTOCOL.md
-    section 9).
+    Every post-opening move must be present, in order and authored by the seat
+    whose turn it was; then the bundle's root must be the fold of exactly those
+    leaves and the checkpoint must carry a witness quorum's hybrid signature.
+    ``ply`` is the zero-based index into ``san_moves`` (PROTOCOL.md section 9).
     """
-    if not evidence:
+    if evidence is None or not evidence.moves:
         raise ClockError("move_evidence is empty")
     opening_plies = len(certificate.opening.moves)
     expected_plies = list(range(opening_plies, len(san_moves)))
-    if [move.ply for move in evidence] != expected_plies:
+    if [move.ply for move in evidence.moves] != expected_plies:
         raise ClockError("move_evidence does not cover every post-opening move exactly once")
-    for move in evidence:
+    for move in evidence.moves:
         if move.san != san_moves[move.ply]:
             raise ClockError(
                 f"move_evidence SAN at ply {move.ply} is {move.san!r}, "
                 f"the PGN says {san_moves[move.ply]!r}"
             )
-        verify_move_signature(move, certificate=certificate, public_keys=public_keys)
+        expected_seat = certificate.white if move.ply % 2 == 0 else certificate.black
+        if move.seat != expected_seat:
+            raise ClockError(
+                f"ply {move.ply} was played by {expected_seat}, "
+                f"but the evidence attributes it to {move.seat}"
+            )
+    checkpoint = evidence.checkpoint
+    if checkpoint.kind != "moves":
+        raise ClockError(f"checkpoint kind is {checkpoint.kind!r}, expected 'moves'")
+    if checkpoint.network != certificate.network:
+        raise ClockError("move checkpoint is for another network")
+    if checkpoint.match_id != certificate.match_id:
+        raise ClockError("move checkpoint does not belong to this certificate")
+    if checkpoint.ply != len(san_moves):
+        raise ClockError(
+            f"move checkpoint commits to {checkpoint.ply} plies, the game has {len(san_moves)}"
+        )
+    if checkpoint.root != evidence_root(certificate.network, certificate.match_id, evidence.moves):
+        raise ClockError("move checkpoint root does not cover the evidence")
+    verify_checkpoint_signatures(checkpoint, public_keys=public_keys, quorum=quorum)
 
 
 def clock_receipt_payload(network: str, receipt: MoveReceipt | FlagReceipt) -> dict[str, object]:
-    """The exact payload a witness signs for a move or flag receipt."""
-    payload: dict[str, object] = {
-        "network": network,
-        "kind": receipt.kind,
-        "match_id": receipt.match_id,
-        "ply": receipt.ply,
-        "seat": receipt.seat,
-        "received_at_ms": receipt.received_at_ms,
-        "white_ms": receipt.white_ms,
-        "black_ms": receipt.black_ms,
-    }
-    if isinstance(receipt, MoveReceipt):
-        payload["san"] = receipt.san
-    return payload
+    """The exact payload a witness signs for a move or flag receipt.
+
+    This is also the commitment leaf (PROTOCOL.md section 8.5), so the signed
+    bytes and the folded bytes are the same dict rather than two definitions
+    that can drift apart.
+    """
+    return receipt_leaf(network, receipt)
 
 
 def sign_receipt(
     receipt: MoveReceipt | FlagReceipt,
-    keypair: Keypair,
+    keypair: Keypair | HybridKeypair,
     *,
     network: str,
     witness: str | None = None,
 ) -> MoveReceipt | FlagReceipt:
-    """Add this witness's signature to ``receipt``."""
+    """Add this witness's Ed25519 receipt signature to ``receipt``.
+
+    The witness's hybrid key anchors the window through
+    :func:`build_clock_evidence`; this per-ply signature is the cheap half.
+    """
     address = witness or encode_address(keypair.public_key_bytes, network)
     if any(item.witness == address for item in receipt.witnesses):
         raise ClockError(f"witness {address} already signed this receipt")
-    signature = sign_domain(keypair, Domain.CLOCK, clock_receipt_payload(network, receipt)).hex()
+    signature = sign_domain(
+        _stream_key(keypair), Domain.CLOCK, clock_receipt_payload(network, receipt)
+    ).hex()
     updated = (*receipt.witnesses, ClockWitnessSignature(witness=address, signature=signature))
     return receipt.model_copy(update={"witnesses": updated})
 
@@ -370,7 +568,7 @@ def verify_receipt_signatures(
     receipt: MoveReceipt | FlagReceipt,
     *,
     network: str,
-    public_keys: Mapping[str, PublicKeyLike | str],
+    public_keys: Mapping[str, str],
     quorum: int,
 ) -> frozenset[str]:
     """Verify the witnesses on one receipt and return their unique addresses."""
@@ -403,7 +601,7 @@ def verify_clock_evidence(
     san_moves: Sequence[str],
     result: ResultValue,
     winner_seat: Color,
-    public_keys: Mapping[str, PublicKeyLike | str],
+    public_keys: Mapping[str, str],
     quorum: int,
     max_plies: int,
     lag_grace_ms: int = DEFAULT_LAG_GRACE_MS,
@@ -434,6 +632,21 @@ def verify_clock_evidence(
         raise ClockError("a flag at ply 0 is a no-show, not a win")
     if final.ply != plies:
         raise ClockError(f"flag receipt is for ply {final.ply}, but the game has {plies} plies")
+
+    checkpoint = evidence.checkpoint
+    if checkpoint.kind != "clock":
+        raise ClockError(f"checkpoint kind is {checkpoint.kind!r}, expected 'clock'")
+    if checkpoint.network != certificate.network:
+        raise ClockError("clock checkpoint is for another network")
+    if checkpoint.match_id != certificate.match_id:
+        raise ClockError("clock checkpoint does not belong to this certificate")
+    if checkpoint.ply != plies:
+        raise ClockError(
+            f"clock checkpoint commits to {checkpoint.ply} plies, the game has {plies}"
+        )
+    if checkpoint.root != clock_root(certificate.network, evidence.receipts, final):
+        raise ClockError("clock checkpoint root does not cover the evidence")
+    verify_checkpoint_signatures(checkpoint, public_keys=public_keys, quorum=quorum)
     flagged = opposite(winner_seat)
     to_move: Color = "white" if plies % 2 == 0 else "black"
     to_move_address = certificate.white if to_move == "white" else certificate.black
@@ -461,9 +674,22 @@ def verify_clock_evidence(
     )
 
     opening_plies = len(certificate.opening.moves)
-    expected_indexes = list(range(opening_plies, plies))
+    if len(evidence.receipts) > CLOCK_EVIDENCE_PLIES:
+        raise ClockError(
+            f"clock evidence carries {len(evidence.receipts)} receipts, the window is "
+            f"{CLOCK_EVIDENCE_PLIES}"
+        )
+    if plies > opening_plies and not evidence.receipts:
+        raise ClockError("clock evidence carries no move receipts")
+    window_start = evidence.receipts[0].ply if evidence.receipts else plies
+    if window_start < opening_plies:
+        raise ClockError("clock evidence predates the certified opening")
+    # The window is a suffix of the post-opening stream: it need not start at
+    # the first move, but inside the window every ply must be present exactly
+    # once and in order, and its first receipt is the arithmetic anchor.
+    expected_indexes = list(range(window_start, plies))
     if [receipt.ply for receipt in evidence.receipts] != expected_indexes:
-        raise ClockError("clock receipts do not cover every post-opening move exactly once")
+        raise ClockError("clock receipts are not a consecutive window ending at the flag")
 
     control = evidence.time_control
     running: dict[Color, int] = {
@@ -555,7 +781,7 @@ def verify_timeout_claim(
     *,
     certificate: MatchCertificate,
     san_moves: Sequence[str],
-    public_keys: Mapping[str, PublicKeyLike | str],
+    public_keys: Mapping[str, str],
     quorum: int,
     max_plies: int,
     lag_grace_ms: int = DEFAULT_LAG_GRACE_MS,

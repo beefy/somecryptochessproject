@@ -95,6 +95,7 @@ class _StubRelay:
         result = GameResult(
             network=self.view.matchup.network,
             match_id=self.view.matchup.match_id,
+            move_commitment="00" * 32,
             game_hash="ef" * 32,
             result=winner,
             termination="resignation",
@@ -292,6 +293,7 @@ def test_unreproducible_results_are_refused(protocol_accounts: Any) -> None:
     result = GameResult(
         network=DEVNET.network_id,
         match_id=MATCH_ID,
+        move_commitment="00" * 32,
         game_hash="cd" * 32,
         result="0-1",
         termination="checkmate",
@@ -426,6 +428,7 @@ def test_a_flagged_loss_is_recorded_without_signing_anything(protocol_accounts: 
     result = GameResult(
         network=DEVNET.network_id,
         match_id=MATCH_ID,
+        move_commitment="00" * 32,
         game_hash="ef" * 32,
         result="0-1",
         termination="time_forfeit",

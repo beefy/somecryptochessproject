@@ -32,7 +32,12 @@ from sccp.chain.difficulty import initial_difficulty
 from sccp.chain.state import ZERO_HASH, Account, State
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address, validate_address
-from sccp.crypto.keys import Keypair, keypair_from_seed
+from sccp.crypto.pq import (
+    HYBRID_PUBLIC_KEY_SIZE,
+    HYBRID_SCHEME_ID,
+    HybridKeypair,
+    hybrid_keypair_from_seed,
+)
 from sccp.errors import GenesisError, KeyEncodingError
 from sccp.protocol.models import Block, BlockHeader
 from sccp.serialization import merkle_root_hex
@@ -55,13 +60,13 @@ FAUCET_BALANCE: Final = 1_000_000 * 100_000_000
 """One million coins, in base units, allocated to each test-network faucet."""
 
 
-def faucet_keypair(network: str) -> Keypair:
+def faucet_keypair(network: str) -> HybridKeypair:
     """The deterministic, public faucet keypair of a test network."""
     try:
         seed = FAUCET_SEEDS[network]
     except KeyError:
         raise GenesisError(f"{network} has no faucet; only test networks do") from None
-    return keypair_from_seed(sha256(seed).digest())
+    return hybrid_keypair_from_seed(sha256(seed).digest())
 
 
 def faucet_allocation(network: str, params: NetworkParams) -> GenesisAllocation:
@@ -93,7 +98,10 @@ class GenesisAllocation:
 
 def zero_address(params: NetworkParams) -> str:
     """A valid, unspendable address used when genesis has no allocation."""
-    return encode_address(b"\x00" * 32, params)
+    # A well-formed hybrid blob nobody holds a private key for.
+    return encode_address(
+        bytes([HYBRID_SCHEME_ID]) + b"\x00" * (HYBRID_PUBLIC_KEY_SIZE - 1), params
+    )
 
 
 def _parse_allocations(params: NetworkParams, raw: object) -> tuple[GenesisAllocation, ...]:

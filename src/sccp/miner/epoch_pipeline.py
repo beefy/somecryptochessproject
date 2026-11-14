@@ -27,7 +27,7 @@ from sccp.chain.state import State, epoch_of
 from sccp.chain.tx import txid
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import Keypair
+from sccp.crypto.pq import HybridKeypair
 from sccp.errors import EpochPipelineError, RelayError
 from sccp.protocol.models import Transaction, TxType
 from sccp.wallet.service import WalletService
@@ -65,7 +65,7 @@ class EpochPipeline:
     """Submit the availability commitment and reveal that keep a miner matchable."""
 
     params: NetworkParams
-    keypair: Keypair
+    keypair: HybridKeypair
     node: PipelineNode
     nonce_secret: str
     max_games: int = 1

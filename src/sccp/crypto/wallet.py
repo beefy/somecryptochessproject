@@ -1,13 +1,14 @@
 """Wallet keyfiles: scrypt + AES-256-GCM, plus BIP-39 mnemonic backup.
 
-Keyfile layout (docs/PROTOCOL.md)::
+Keyfile layout (docs/PROTOCOL.md section 4)::
 
     {
-        "version": 1,
+        "version": 2,
+        "scheme": "ed25519-mldsa65",
         "network": "testnet",
         "address": "sccpt1...",
-        "public_key": "<64 hex>",
-        "kdf": {"name": "scrypt", "n": 32768, "r": 8, "p": 1, "salt": "<32 hex>"},
+        "public_key": "<3970 hex>",
+        "kdf": {"name": "scrypt", "n": 131072, "r": 8, "p": 1, "salt": "<32 hex>"},
         "cipher": {"name": "aes-256-gcm", "nonce": "<24 hex>"},
         "created_at": 1760000000,
         "ciphertext": "<96 hex>",
@@ -17,9 +18,16 @@ The associated data for AES-GCM is the canonical JSON of every field except
 ``ciphertext``, so tampering with the network, address or KDF parameters fails
 authentication rather than silently decrypting to a different wallet.
 
-The 24-word mnemonic is a *lossless backup encoding of the 32-byte Ed25519
-seed*, not a BIP-32 derivation path: restoring a phrase restores exactly one
-key, and there is no child-key tree.
+There is exactly one keyfile version and one scheme: ``version 2`` holding a
+*hybrid* Ed25519 + ML-DSA-65 key (:mod:`sccp.crypto.pq`). The stored
+secret is a 32-byte master seed from which both halves are derived. Version 1
+(Ed25519-only) keyfiles are rejected: an account that a quantum computer can
+impersonate is not a valid account, and silently upgrading one would be a
+downgrade attack waiting to happen.
+
+The 24-word mnemonic is a *lossless backup encoding of the 32-byte master seed*,
+not a BIP-32 derivation path: restoring a phrase restores exactly one key (both
+halves), and there is no child-key tree.
 """
 
 from __future__ import annotations
@@ -41,12 +49,29 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 from mnemonic import Mnemonic
 
 from sccp.config import NETWORKS, NetworkParams, get_network
-from sccp.crypto.address import encode_address, validate_address
-from sccp.crypto.keys import SEED_SIZE, Keypair, generate_keypair, keypair_from_seed
-from sccp.errors import KeyEncodingError, KeyfileError, PassphraseError
+from sccp.crypto.address import decode_address, encode_address, validate_address
+from sccp.crypto.keys import SEED_SIZE, Keypair
+from sccp.crypto.pq import (
+    HYBRID_ALGORITHM,
+    HYBRID_PUBLIC_KEY_SIZE,
+    HybridKeypair,
+    generate_hybrid_keypair,
+    hybrid_keypair_from_seed,
+)
+from sccp.errors import (
+    AddressError,
+    KeyEncodingError,
+    KeyfileError,
+    PassphraseError,
+)
 from sccp.serialization import canonical_json
 
-KEYFILE_VERSION: Final = 1
+KEYFILE_VERSION: Final = 2
+"""The only keyfile version; version 1 (Ed25519-only) is retired."""
+
+SCHEME: Final = HYBRID_ALGORITHM
+"""The only keyfile scheme: hybrid Ed25519 + ML-DSA-65."""
+
 KDF_NAME: Final = "scrypt"
 CIPHER_NAME: Final = "aes-256-gcm"
 KEY_SIZE: Final = 32
@@ -77,9 +102,23 @@ class KdfParams:
         return {"name": KDF_NAME, "n": self.n, "r": self.r, "p": self.p}
 
 
-DEFAULT_KDF: Final = KdfParams()
+DEFAULT_KDF: Final = KdfParams(n=2**17)
+"""Default scrypt cost: 128 MiB of memory per guess.
+
+A key that survives a quantum computer is a long-lived target of a
+harvest-now-decrypt-later attack, so the one profile is the expensive one.
+"""
+
 FAST_KDF: Final = KdfParams(n=2**10)
 """Cheap parameters for unit tests only; never write production keyfiles with it."""
+
+MIN_PASSPHRASE_CHARS: Final = 12
+"""Minimum passphrase length for a new keyfile.
+
+Grover's algorithm halves the effective search space of an offline guessing
+attack, so the profile asks for more margin than a classical keyfile would. The
+check is a usability floor, not an entropy proof: prefer a long random phrase.
+"""
 
 
 def normalize_passphrase(passphrase: str) -> bytes:
@@ -156,13 +195,19 @@ class KeyfileHeader:
     salt: bytes
     nonce: bytes
     created_at: int
+    scheme: str = SCHEME
 
     def as_dict(self) -> dict[str, object]:
-        """The canonical header mapping (names and ordering fixed by the spec)."""
+        """The canonical header mapping (names and ordering fixed by the spec).
+
+        ``scheme`` is always written: a keyfile states its algorithm rather than
+        leaving a reader to infer one from a key length.
+        """
         kdf_dict = self.kdf.to_dict()
         kdf_dict["salt"] = self.salt.hex()
         return {
             "version": self.version,
+            "scheme": self.scheme,
             "network": self.network,
             "address": self.address,
             "public_key": self.public_key,
@@ -182,6 +227,10 @@ class KeyfileHeader:
         version = _require_int(document, "version")
         if version != KEYFILE_VERSION:
             raise KeyfileError(f"unsupported keyfile version {version}")
+        scheme_value = _require_str(document, "scheme")
+        if scheme_value != SCHEME:
+            raise KeyfileError(f"unsupported keyfile scheme {scheme_value!r} (only {SCHEME!r})")
+        scheme = scheme_value
         network = _require_str(document, "network")
         if network not in NETWORKS:
             known = ", ".join(sorted(NETWORKS))
@@ -189,13 +238,24 @@ class KeyfileHeader:
         address = _require_str(document, "address")
         if not validate_address(address, network):
             raise KeyfileError(f"keyfile address {address!r} is not valid on {network}")
+        try:
+            decoded = decode_address(address)
+        except AddressError as exc:  # pragma: no cover - validate_address already parsed it
+            raise KeyfileError(f"keyfile address {address!r} is malformed: {exc}") from exc
+        if decoded.version != 1:  # pragma: no cover - decode_address rejects others
+            raise KeyfileError(
+                f"keyfile scheme {scheme!r} needs a version-1 address, not {decoded.version}"
+            )
         public_key = _require_str(document, "public_key")
         try:
             public_key_bytes = bytes.fromhex(public_key)
         except ValueError:
             raise KeyfileError("keyfile field 'public_key' is not valid hex") from None
-        if len(public_key_bytes) != 32:
-            raise KeyfileError("keyfile field 'public_key' must be 32 bytes")
+        if len(public_key_bytes) != HYBRID_PUBLIC_KEY_SIZE:
+            raise KeyfileError(
+                f"keyfile field 'public_key' must be {HYBRID_PUBLIC_KEY_SIZE} bytes "
+                f"for scheme {scheme!r}"
+            )
 
         kdf_document = _require_mapping(document, "kdf")
         kdf_name = _require_str(kdf_document, "name")
@@ -223,16 +283,40 @@ class KeyfileHeader:
             salt=salt,
             nonce=nonce,
             created_at=_require_int(document, "created_at"),
+            scheme=scheme,
         )
 
 
 @dataclass(frozen=True, slots=True)
 class Wallet:
-    """A decrypted keypair together with the keyfile header it came from."""
+    """A decrypted hybrid keypair together with the keyfile header it came from."""
 
     header: KeyfileHeader
-    keypair: Keypair
+    pq_keypair: HybridKeypair
     path: Path | None = None
+
+    @property
+    def keypair(self) -> Keypair:
+        """The Ed25519 half: what the move, receipt and gossip streams sign with.
+
+        Naming it separately keeps every call site honest about which key it is
+        holding. Ledger and identity signatures take :attr:`signer` instead.
+        """
+        return self.pq_keypair.ed25519
+
+    @property
+    def signer(self) -> HybridKeypair:
+        """The hybrid keypair: what transactions, certificates and results sign with."""
+        return self.pq_keypair
+
+    @property
+    def seed(self) -> bytes:
+        """The 32-byte master seed a mnemonic backs up."""
+        return self.pq_keypair.seed
+
+    @property
+    def scheme(self) -> str:
+        return self.header.scheme
 
     @property
     def address(self) -> str:
@@ -257,35 +341,42 @@ def create_wallet(
     passphrase: str,
     *,
     seed: bytes | None = None,
-    kdf: KdfParams = DEFAULT_KDF,
+    kdf: KdfParams | None = None,
     created_at: int | None = None,
     force: bool = False,
 ) -> Wallet:
-    """Create and persist an encrypted keyfile, returning the unlocked wallet.
+    """Write a new hybrid keyfile and return the decrypted wallet.
 
     ``seed`` exists for deterministic tests and for restoring from a mnemonic;
-    when omitted a fresh key is generated from the OS CSPRNG.
+    when omitted a fresh 32-byte master seed is generated from the OS CSPRNG and
+    both key halves are derived from it. There is no scheme argument: the
+    protocol has one.
     """
     params = get_network(network)
-    keypair = generate_keypair() if seed is None else keypair_from_seed(seed)
+    if len(passphrase) < MIN_PASSPHRASE_CHARS:
+        raise PassphraseError(
+            f"a keyfile passphrase must be at least {MIN_PASSPHRASE_CHARS} characters"
+        )
+    pq_keypair = hybrid_keypair_from_seed(seed) if seed is not None else generate_hybrid_keypair()
     header = KeyfileHeader(
         version=KEYFILE_VERSION,
+        scheme=SCHEME,
         network=params.network_id,
-        address=encode_address(keypair.public_key_bytes, params),
-        public_key=keypair.public_key_hex,
-        kdf=kdf,
+        address=encode_address(pq_keypair.public_key_bytes, params),
+        public_key=pq_keypair.public_key_hex,
+        kdf=DEFAULT_KDF if kdf is None else kdf,
         salt=secrets.token_bytes(SCRYPT_SALT_SIZE),
         nonce=secrets.token_bytes(AES_NONCE_SIZE),
         created_at=int(time.time()) if created_at is None else created_at,
     )
     key = derive_key(passphrase, header.salt, header.kdf)
-    ciphertext = AESGCM(key).encrypt(header.nonce, keypair.seed, header.associated_data)
+    ciphertext = AESGCM(key).encrypt(header.nonce, pq_keypair.seed, header.associated_data)
 
     document = header.as_dict()
     document["ciphertext"] = ciphertext.hex()
     target = Path(path)
     _write_document(target, document, force=force)
-    return Wallet(header=header, keypair=keypair, path=target)
+    return Wallet(header=header, pq_keypair=pq_keypair, path=target)
 
 
 def read_header(path: str | Path) -> KeyfileHeader:
@@ -310,7 +401,7 @@ def _english_mnemonic() -> Mnemonic:
 
 
 def seed_to_mnemonic(seed: bytes | bytearray) -> str:
-    """Encode a 32-byte Ed25519 seed as 24 BIP-39 words (backup, not derivation)."""
+    """Encode a 32-byte master seed as 24 BIP-39 words (backup, not derivation)."""
     raw = bytes(seed)
     if len(raw) != SEED_SIZE:
         raise KeyEncodingError(f"seed must be {SEED_SIZE} bytes, got {len(raw)}")
@@ -318,7 +409,7 @@ def seed_to_mnemonic(seed: bytes | bytearray) -> str:
 
 
 def mnemonic_to_seed(phrase: str) -> bytes:
-    """Decode a 24-word BIP-39 phrase back into the 32-byte Ed25519 seed."""
+    """Decode a 24-word BIP-39 phrase back into the 32-byte master seed."""
     words = phrase.split()
     if len(words) != MNEMONIC_WORD_COUNT:
         raise KeyEncodingError(f"expected {MNEMONIC_WORD_COUNT} words, got {len(words)}")
@@ -332,9 +423,13 @@ def mnemonic_to_seed(phrase: str) -> bytes:
 
 
 def export_mnemonic(path: str | Path, passphrase: str) -> str:
-    """Decrypt a keyfile and return its 24-word backup phrase."""
+    """Decrypt a keyfile and return its 24-word backup phrase.
+
+    For a hybrid keyfile the phrase encodes the master seed, so restoring it
+    reproduces both the Ed25519 and the ML-DSA-65 halves.
+    """
     wallet = load_wallet(path, passphrase)
-    return seed_to_mnemonic(wallet.keypair.seed)
+    return seed_to_mnemonic(wallet.seed)
 
 
 def import_mnemonic(
@@ -343,11 +438,15 @@ def import_mnemonic(
     network: str | NetworkParams,
     passphrase: str,
     *,
-    kdf: KdfParams = DEFAULT_KDF,
+    kdf: KdfParams | None = None,
     created_at: int | None = None,
     force: bool = False,
 ) -> Wallet:
-    """Recreate a keyfile from a 24-word phrase."""
+    """Recreate a keyfile from a 24-word phrase.
+
+    The phrase encodes the master seed, so both halves of the hybrid key come
+    back byte for byte.
+    """
     return create_wallet(
         path,
         network,
@@ -379,6 +478,32 @@ def read_passphrase_file(path: str | Path) -> str:
     if not passphrase:
         raise PassphraseError(f"passphrase file {target} is empty")
     return passphrase
+
+
+def read_mnemonic_file(path: str | Path) -> str:
+    """Read a 24-word backup phrase from a mode-checked file.
+
+    The phrase is the master seed in plain text, so it gets the same
+    group/other permission check as :func:`read_passphrase_file`. Whitespace is
+    normalised: a trailing newline (what ``wallet export-mnemonic > file``
+    leaves) and line wrapping are both fine. Reading from a file is the
+    non-interactive path: the hidden prompt needs a terminal, which is exactly
+    what a recovery shell may not have.
+    """
+    target = Path(path)
+    try:
+        status = target.stat()
+        text = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PassphraseError(f"cannot read mnemonic file {target}: {exc}") from exc
+    if status.st_mode & 0o077:
+        raise PassphraseError(
+            f"mnemonic file {target} is accessible by group or others; chmod 600 it"
+        )
+    phrase = " ".join(text.split())
+    if not phrase:
+        raise PassphraseError(f"mnemonic file {target} is empty")
+    return phrase
 
 
 def _read_document(path: Path) -> dict[str, object]:
@@ -439,9 +564,10 @@ def load_wallet(path: str | Path, passphrase: str) -> Wallet:
     document = _read_document(target)
     header = KeyfileHeader.from_dict(document)
     ciphertext = _require_hex(document, "ciphertext", SEED_SIZE + AES_TAG_SIZE)
-    keypair = keypair_from_seed(decrypt_seed(header, ciphertext, passphrase))
-    if keypair.public_key_hex != header.public_key:
+    seed = decrypt_seed(header, ciphertext, passphrase)
+    pq_keypair = hybrid_keypair_from_seed(seed)
+    if pq_keypair.public_key_hex != header.public_key:
         raise KeyfileError("decrypted seed does not match the keyfile public key")
-    if encode_address(keypair.public_key_bytes, header.network) != header.address:
+    if encode_address(pq_keypair.public_key_bytes, header.network) != header.address:
         raise KeyfileError("decrypted seed does not match the keyfile address")
-    return Wallet(header=header, keypair=keypair, path=target)
+    return Wallet(header=header, pq_keypair=pq_keypair, path=target)

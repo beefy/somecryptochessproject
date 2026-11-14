@@ -10,7 +10,8 @@ from sccp.chain.state import State
 from sccp.chain.tx import apply_transaction, txid, validate_transaction
 from sccp.config import TESTNET
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import Keypair, keypair_from_seed
+from sccp.crypto.keys import Keypair
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import EpochPipelineError, RelayError
 from sccp.miner.epoch_pipeline import EpochPipeline, PipelineAction
 from sccp.protocol.beacon import commitment
@@ -53,7 +54,7 @@ class _StubNode:
 
 @pytest.fixture
 def keypair() -> Keypair:
-    return keypair_from_seed(bytes(range(32)))
+    return hybrid_keypair_from_seed(bytes(range(32)))
 
 
 @pytest.fixture

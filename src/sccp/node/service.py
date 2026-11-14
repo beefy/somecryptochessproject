@@ -34,6 +34,7 @@ from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import validate_address
+from sccp.crypto.pq import require_pq
 from sccp.errors import (
     AddressError,
     FaucetError,
@@ -300,6 +301,7 @@ class NodeService:
         clock: Callable[[], int] = unix_now,
     ) -> NodeService:
         """Open a node, replaying ``storage`` when one is supplied."""
+        require_pq()
         params = get_network(network)
         path = (
             Path(genesis_path)

@@ -221,15 +221,25 @@ class Mempool:
         work = self.tip_state.copy()
         chosen: list[Transaction] = []
         used = 0
+        deferred: set[str] = set()
+        progressed = True
         while True:
             if limit is not None and len(chosen) >= limit:
                 break
             ready = [
                 (entries[0].tx.fee, entries[0].tx.sender, entries)
                 for entries in queues.values()
-                if entries
+                if entries and entries[0].tx.sender not in deferred
             ]
             if not ready:
+                if deferred and progressed:
+                    # A sender we deferred may be payable now that somebody else
+                    # applied. Retry once per round of progress, then stop: the
+                    # pool never drops a still-valid transaction just because it
+                    # was ready out of order.
+                    deferred.clear()
+                    progressed = False
+                    continue
                 break
             ready.sort(key=lambda item: (-item[0], item[1]))
             entries = ready[0][2]
@@ -240,12 +250,13 @@ class Mempool:
             try:
                 validate_transaction(entry.tx, self.params, work, height=height)
             except TxValidationError:
-                queues.pop(entry.tx.sender, None)
+                deferred.add(entry.tx.sender)
                 continue
             apply_transaction(work, entry.tx, height=height)
             chosen.append(entry.tx)
             used += entry.size
             entries.pop(0)
+            progressed = True
         return chosen
 
     def select_proofs(self, miner: str, count: int, *, height: int) -> list[WinProof]:

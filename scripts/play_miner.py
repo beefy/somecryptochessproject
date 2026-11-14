@@ -100,7 +100,7 @@ from sccp.chess.engines import MOCK_VERSION, Engine, open_engine
 from sccp.chess.openings import book_for
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import Keypair, keypair_from_seed, sign_domain
+from sccp.crypto.pq import HybridKeypair, hybrid_keypair_from_seed, hybrid_sign_domain
 from sccp.crypto.wallet import load_wallet, read_passphrase_file
 from sccp.devnet import (
     DevnetMiner,
@@ -308,7 +308,7 @@ class HumanSeat:
 
     client: RelayClient
     address: str
-    keypair: Keypair
+    keypair: HybridKeypair
     matchup: Matchup
 
     @property
@@ -338,7 +338,7 @@ class HumanSeat:
     def join(self, view: MatchView | None = None) -> MatchView:
         """Join the seat by signing the match certificate."""
         current = self.view() if view is None else view
-        signature = sign_domain(
+        signature = hybrid_sign_domain(
             self.keypair, Domain.CERTIFICATE, certificate_payload(current.certificate)
         ).hex()
         return self.client.join(
@@ -431,7 +431,7 @@ class SoloTable:
     chain: NodeService | None = None
     chain_dir: Path | None = None
     participants: tuple[DevnetMiner, ...] = ()
-    keypairs: dict[str, Keypair] = field(default_factory=dict)
+    keypairs: dict[str, HybridKeypair] = field(default_factory=dict)
     mined: list[str] = field(default_factory=list)
     prepared: bool = False
     settlement: ChainSettlement | None = None
@@ -845,9 +845,9 @@ def solo_nonces(seed: str) -> tuple[str, str]:
     return human, opponent
 
 
-def chain_opponents() -> tuple[Keypair, ...]:
+def chain_opponents() -> tuple[HybridKeypair, ...]:
     """The deterministic opponent keys a chain bootstraps."""
-    return tuple(keypair_from_seed(bytes.fromhex(seed)) for seed in CHAIN_OPPONENT_SEEDS)
+    return tuple(hybrid_keypair_from_seed(bytes.fromhex(seed)) for seed in CHAIN_OPPONENT_SEEDS)
 
 
 def chain_opponent_nonces(seed: str) -> tuple[str, ...]:
@@ -865,7 +865,7 @@ def _solo(options: Options) -> SoloTable:
     base = bytes.fromhex(options.seed)
     for attempt in range(COLOUR_ATTEMPTS):
         seed = base if attempt == 0 else hashlib.sha256(base + attempt.to_bytes(4, "big")).digest()
-        table = _solo_table(params, keypair_from_seed(seed), options)
+        table = _solo_table(params, hybrid_keypair_from_seed(seed), options)
         if options.color in ("auto", table.seat.color):
             return table
         table.close()
@@ -877,7 +877,7 @@ def _solo(options: Options) -> SoloTable:
 
 def _solo_table(
     params: NetworkParams,
-    human: Keypair,
+    human: HybridKeypair,
     options: Options,
     *,
     clock_ms: Callable[[], int] = monotonic_ms,
@@ -895,8 +895,8 @@ def _solo_table(
         if engine is not None
         else open_engine(options.engine, binary=options.engine_path, seed=options.engine_seed)
     )
-    opponent = keypair_from_seed(bytes.fromhex(OPPONENT_SEED))
-    witness = keypair_from_seed(bytes.fromhex(WITNESS_SEED))
+    opponent = hybrid_keypair_from_seed(bytes.fromhex(OPPONENT_SEED))
+    witness = hybrid_keypair_from_seed(bytes.fromhex(WITNESS_SEED))
     human_address = encode_address(human.public_key_bytes, params)
     opponent_address = encode_address(opponent.public_key_bytes, params)
     witness_address = encode_address(witness.public_key_bytes, params)
@@ -1050,7 +1050,7 @@ def _chain(options: Options) -> SoloTable:
         if attempt:
             _remove_chain(database)
         seed = base if attempt == 0 else hashlib.sha256(base + attempt.to_bytes(4, "big")).digest()
-        table = _chain_table(params, keypair_from_seed(seed), options)
+        table = _chain_table(params, hybrid_keypair_from_seed(seed), options)
         if options.color in ("auto", table.seat.color):
             _write_chain_meta(data_dir, seed, params.network_id)
             return table
@@ -1200,7 +1200,7 @@ def _candidate_seeds(options: Options, meta: dict[str, object] | None) -> list[b
 
 def _human_keypair_for_chain(
     service: NodeService, options: Options, meta: dict[str, object] | None
-) -> tuple[bytes, Keypair] | None:
+) -> tuple[bytes, HybridKeypair] | None:
     """Find the human key already registered on a resumed chain."""
     state = service.chain.state
     human_addresses = {
@@ -1209,7 +1209,7 @@ def _human_keypair_for_chain(
         if account.engine == HUMAN_ENGINE and account.public_key is not None
     }
     for seed in _candidate_seeds(options, meta):
-        keypair = keypair_from_seed(seed)
+        keypair = hybrid_keypair_from_seed(seed)
         if encode_address(keypair.public_key_bytes, service.params) in human_addresses:
             return seed, keypair
     return None
@@ -1258,7 +1258,7 @@ def _remove_chain_meta(data_dir: Path) -> None:
 
 def _chain_table(
     params: NetworkParams,
-    human: Keypair,
+    human: HybridKeypair,
     options: Options,
     *,
     clock_ms: Callable[[], int] = monotonic_ms,
@@ -1286,7 +1286,7 @@ def _chain_table(
     if params.network_id != CHAIN_NETWORK:
         opponents = opponents[:TESTNET_OPPONENTS]
     opponent_nonces = chain_opponent_nonces(options.seed)[: len(opponents)]
-    witness = keypair_from_seed(bytes.fromhex(WITNESS_SEED))
+    witness = hybrid_keypair_from_seed(bytes.fromhex(WITNESS_SEED))
     human_address = encode_address(human.public_key_bytes, params)
     witness_address = encode_address(witness.public_key_bytes, params)
     human_nonce, _ = solo_nonces(options.seed)
@@ -1426,7 +1426,7 @@ def _attached(options: Options) -> HumanSeat:
     return HumanSeat(
         client=client,
         address=wallet.address,
-        keypair=wallet.keypair,
+        keypair=wallet.signer,
         matchup=view.matchup,
     )
 

@@ -15,7 +15,7 @@ import pytest
 
 from sccp.chain.mempool import Mempool
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import AddressError
 from sccp.node.service import NodeService
 from sccp.ratings import (
@@ -46,7 +46,7 @@ def _service(chain: Any) -> NodeService:
 
 def _unrated_address(chain: Any) -> str:
     """A valid address for this network that has never settled a game."""
-    keypair = keypair_from_seed(bytes([9]) * 32)
+    keypair = hybrid_keypair_from_seed(bytes([9]) * 32)
     return encode_address(keypair.public_key_bytes, chain.params)
 
 

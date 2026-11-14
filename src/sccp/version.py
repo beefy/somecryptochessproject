@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Final
 
-__version__: Final = "0.16.0"
+__version__: Final = "0.17.0"
 """Package version (kept in sync with ``pyproject.toml``)."""
 
 PROTOCOL_VERSION: Final = 1

@@ -40,7 +40,7 @@ from sccp.chain.genesis import faucet_keypair
 from sccp.chain.tx import sign_transaction, txid
 from sccp.config import TESTNET, NetworkParams, coins_to_units
 from sccp.crypto.address import encode_address, validate_address
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.protocol.models import Transaction, TxType
 
 DRIP_AMOUNT: Final = coins_to_units(1)
@@ -59,7 +59,7 @@ class DripError(RuntimeError):
 
 def sink_address(params: NetworkParams = TESTNET) -> str:
     """The deterministic recipient of a drip transfer."""
-    return encode_address(keypair_from_seed(SINK_SEED).public_key_bytes, params)
+    return encode_address(hybrid_keypair_from_seed(SINK_SEED).public_key_bytes, params)
 
 
 def drip_transaction(

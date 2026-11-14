@@ -69,6 +69,7 @@ describe("game hash and result payload", () => {
       result: "0-1",
       termination: "checkmate",
       plies: vectors.game.san_moves.length,
+      move_commitment: vectors.result.payload.move_commitment,
     });
     expect(payload).toStrictEqual(vectors.result.payload);
   });

@@ -1,6 +1,8 @@
 block-games/
 data/*.sqlite*
 games/
+.devnet
+*.mnemonic
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

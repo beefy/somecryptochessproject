@@ -13,14 +13,14 @@ import pytest
 
 from sccp.config import DEVNET, TESTNET
 from sccp.crypto.address import encode_address
-from sccp.crypto.keys import keypair_from_seed
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import GossipError
 from sccp.node.app import create_app
 from sccp.node.p2p import fetch_blocks, plan_sync
 from sccp.node.service import HttpPeerClient, NodeService, sync_peers
 from sccp.transport import client_for
 
-MINER = keypair_from_seed(bytes([9]) * 32)
+MINER = hybrid_keypair_from_seed(bytes([9]) * 32)
 MINER_ADDRESS = encode_address(MINER.public_key_bytes, DEVNET)
 
 
@@ -65,7 +65,7 @@ def test_plan_sync_covers_caught_up_and_clamped_ranges() -> None:
 def test_fetch_blocks_accepts_wrapped_and_bare_documents(
     devnet_chain: Any, mine_block: Any
 ) -> None:
-    miner = keypair_from_seed(bytes([3]) * 32)
+    miner = hybrid_keypair_from_seed(bytes([3]) * 32)
     first = mine_block(devnet_chain, miner)
     second = mine_block(devnet_chain, miner)
     peer = _StubPeer(
@@ -78,7 +78,7 @@ def test_fetch_blocks_accepts_wrapped_and_bare_documents(
 def test_fetch_blocks_rejects_wrong_heights_and_malformed_documents(
     devnet_chain: Any, mine_block: Any
 ) -> None:
-    miner = keypair_from_seed(bytes([3]) * 32)
+    miner = hybrid_keypair_from_seed(bytes([3]) * 32)
     block = mine_block(devnet_chain, miner)
     wrong = _StubPeer({"2": {"block": block.model_dump(mode="json")}})
     with pytest.raises(GossipError, match="returned height 1"):

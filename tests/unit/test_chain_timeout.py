@@ -14,6 +14,7 @@ from sccp.config import DEVNET, NetworkParams
 from sccp.errors import TimeoutClaimError
 from sccp.protocol.clocks import (
     FIXED_TIME_CONTROL,
+    build_clock_evidence,
     move_payload,
     sign_move,
     sign_receipt,
@@ -53,6 +54,14 @@ def timeout_state(protocol_params: NetworkParams, protocol_accounts: Mapping[str
     return state
 
 
+def _owner(match: Any, address: str) -> str:
+    """The account name behind a seat address (the pairing decides who is white)."""
+    for name, account in match.accounts.items():
+        if account.address == address:
+            return name
+    raise AssertionError(f"{address} is not one of the fixture's accounts")
+
+
 def _last_move(match: Any) -> SignedMove:
     """The claimant's (white's) final move, signed by the seat that played it."""
     certificate = match.certificate
@@ -65,7 +74,7 @@ def _last_move(match: Any) -> SignedMove:
             san="Qh5",
             signature="00" * 64,
         ),
-        match.accounts["alice"].keypair,
+        match.accounts[_owner(match, certificate.white)].keypair,
     )
     return SignedMove.model_validate(move_payload(message) | {"signature": message.signature})
 
@@ -87,7 +96,14 @@ def _flag_evidence(
         match.accounts[signer].keypair,
         network=certificate.network,
     )
-    return ClockEvidence(time_control=FIXED_TIME_CONTROL, final=receipt)
+    carol = match.accounts[signer]
+    return build_clock_evidence(
+        network=certificate.network,
+        time_control=FIXED_TIME_CONTROL,
+        receipts=(),
+        final=receipt,
+        signers=((carol.address, carol.keypair),),
+    )
 
 
 def _claim_tx(
@@ -95,12 +111,12 @@ def _claim_tx(
     *,
     evidence: ClockEvidence,
     bond: int = BOND,
-    claimant: str = "alice",
+    claimant: str | None = None,
     last_move: SignedMove | None = None,
     nonce: int = 0,
 ) -> Transaction:
     certificate = match.certificate
-    account = match.accounts[claimant]
+    account = match.accounts[claimant or _owner(match, certificate.white)]
     move = last_move or _last_move(match)
     tx = Transaction(
         network=certificate.network,
@@ -195,14 +211,14 @@ def _dispute_tx(
     claim_id: str,
     *,
     evidence: ClockEvidence,
-    signer: str = "bob",
+    signer: str | None = None,
     ply: int | None = None,
     nonce: int = 0,
     signature: str | None = None,
 ) -> Transaction:
     """The accused's answer: a later move of its own."""
     certificate = match.certificate
-    account = match.accounts[signer]
+    account = match.accounts[signer or _owner(match, certificate.black)]
     message = sign_move(
         SignedMove(
             network=certificate.network,
@@ -304,7 +320,7 @@ def test_the_accused_dispute_returns_the_bond(open_claim: tuple[State, Any, str]
 
 def test_only_the_accused_may_dispute(open_claim: tuple[State, Any, str]) -> None:
     state, match, claim_id = open_claim
-    tx = _dispute_tx(match, claim_id, evidence=_flag_evidence(match), signer="alice")
+    tx = _dispute_tx(match, claim_id, evidence=_flag_evidence(match), signer="carol")
     with pytest.raises(TimeoutClaimError, match="only the accused seat"):
         timeout.validate_dispute(state, tx, HEIGHT + 1)
 

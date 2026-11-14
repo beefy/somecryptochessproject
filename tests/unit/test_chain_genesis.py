@@ -21,6 +21,7 @@ from sccp.chain.genesis import (
 )
 from sccp.config import DEVNET, MAINNET, TESTNET, NetworkParams
 from sccp.crypto.address import encode_address, validate_address
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import GenesisError
 
 GENESIS_DIR = Path(__file__).resolve().parents[2] / "genesis"
@@ -67,7 +68,7 @@ def test_an_allocation_needs_a_valid_public_key() -> None:
             ),
         )
     stranger = faucet_keypair("testnet")
-    other = encode_address(b"\x07" * 32, TESTNET)
+    other = encode_address(hybrid_keypair_from_seed(bytes([7]) * 32).public_key_bytes, TESTNET)
     with pytest.raises(GenesisError, match="derives"):
         build_genesis(
             TESTNET,

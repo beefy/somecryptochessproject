@@ -1,22 +1,29 @@
 /**
  * BIP-173 bech32, the only encoding SCCP addresses use.
  *
- * `sccp/crypto/address.py` encodes a 21-byte program (version byte + 20-byte
+ * `sccp/crypto/address.py` encodes a 33-byte program (version byte + 32-byte
  * hash) with the *primitives*, not the segwit helpers, because those hard-code
  * witness lengths. This is the same subset: polymod, hrp expansion, convertbits
  * and the checksum, written out so a browser can derive an address from a
  * public key without shipping a bech32 dependency.
+ *
+ * There is one program version: version 1 over the complete SHA-256 digest of a
+ * hybrid Ed25519 + ML-DSA-65 public key. A 21-byte version-0 program (the
+ * retired truncated-Ed25519 address) is rejected rather than decoded.
  */
 
 const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
 const GENERATOR = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
 
-/** Program version byte for Ed25519 keys (`ADDRESS_VERSION` in Python). */
-export const ADDRESS_VERSION = 0;
+/** The only program version byte (`ADDRESS_VERSION` in Python). */
+export const ADDRESS_VERSION = 1;
 
-/** Address hash length in bytes. */
-export const HASH_SIZE = 20;
+/** Address hash length in bytes: the complete SHA-256 digest, not a prefix. */
+export const HASH_SIZE = 32;
+
+/** `version || hash`, the exact 33 bytes the bech32 string commits to. */
+export const PROGRAM_SIZE = 1 + HASH_SIZE;
 
 export class Bech32Error extends Error {
   override name = "Bech32Error";
@@ -95,10 +102,10 @@ export function bech32Encode(hrp: string, words: readonly number[]): string {
   return out;
 }
 
-/** Encode a raw 21-byte address program as a lowercase bech32 address. */
+/** Encode a raw 33-byte address program as a lowercase bech32 address. */
 export function encodeProgram(hrp: string, program: Uint8Array): string {
-  if (program.length !== 1 + HASH_SIZE) {
-    throw new Bech32Error(`address program must be ${1 + HASH_SIZE} bytes`);
+  if (program.length !== PROGRAM_SIZE) {
+    throw new Bech32Error(`address program must be ${PROGRAM_SIZE} bytes`);
   }
   if (program[0] !== ADDRESS_VERSION) {
     throw new Bech32Error(`unsupported address version ${program[0] as number}`);

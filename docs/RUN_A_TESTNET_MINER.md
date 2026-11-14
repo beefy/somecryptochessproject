@@ -407,6 +407,7 @@ sccp --data-dir ./data miner availability \
 committed availability for epoch 3 (3 games)
 txid: 7b20...
 nonce secret (needed for the reveal): 5f3c...
+reveal by tip 13 (block 14 is the last of epoch 2), or the commitment is void
 ```
 
 - The target is always **two epochs ahead** (`availability_lead = 2` on testnet
@@ -414,6 +415,9 @@ nonce secret (needed for the reveal): 5f3c...
 - `--max-games` cannot exceed the epoch's round quota (3 on testnet).
 - Keep the printed `nonce secret`: it is the only value that reveals the
   commitment. Losing it means the commitment cannot be opened.
+- The last line is the deadline: a reveal for epoch 3 is only valid in a block of
+  epoch 2, so it has to be built on tip 13 at the latest (block 14). `--json`
+  reports the same number as `reveal_by_tip`.
 
 ### 5.3 Reveal
 
