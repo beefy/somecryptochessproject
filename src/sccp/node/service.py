@@ -753,6 +753,14 @@ class NodeService:
 
     def _challenge_view(self, record: ChallengeRecord) -> ChallengeView:
         """Map a :class:`ChallengeRecord` to its wire form."""
+        from sccp.protocol.challenges import adjudication_panel
+
+        proof_record = self.chain.state.proofs.get(record.game_hash)
+        proof = (
+            None
+            if proof_record is None
+            else self._proof_for_record(proof_record.height, record.game_hash)
+        )
         return ChallengeView(
             challenge_id=record.challenge_id,
             network=self.params.network_id,
@@ -768,6 +776,9 @@ class NodeService:
             status=record.status,  # type: ignore[arg-type]
             resolved_height=record.resolved_height,
             panel=record.panel,
+            adjudicators=adjudication_panel(self.chain.state, record),
+            votes=dict(record.votes),
+            summary=None if proof is None else proof.quality_summary,
         )
 
     def match(self, match_id: str) -> MatchInfo:

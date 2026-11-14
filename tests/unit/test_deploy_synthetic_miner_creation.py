@@ -212,17 +212,25 @@ def test_the_pool_is_derived_from_published_seeds(tmp_path: Path) -> None:
         miners.miner_seed(-1)
 
 
-def test_the_host_budget_reserves_room_for_the_fixed_miners() -> None:
-    roomy = miners.host_capacity(fixed_miners=3, max_extra=2, cpu_count=8, memory_mb=8192)
+def test_the_host_budget_shares_cores_between_the_miners_and_the_audit() -> None:
+    roomy = miners.host_capacity(max_extra=2, cpu_count=8, memory_mb=8192)
     assert (roomy.cpu_count, roomy.available_memory_mb) == (8, 8192)
-    assert roomy.allowed == 2  # (8 - 3 - 1) // 1; memory is not the limit here
+    assert roomy.allowed == 2  # (8 - 1) / 0.5 caps at the pool; memory is not the limit
     assert "8 CPU(s)" in roomy.reason
 
-    starved = miners.host_capacity(fixed_miners=3, max_extra=2, cpu_count=3, memory_mb=8192)
-    assert starved.allowed == 0  # three fixed miners plus the reserve leave nothing
+    # The deployment's e2-standard-2: one core stays with node and relay, half with
+    # the audit, and one extra miner still fits on the remaining half core.
+    small = miners.host_capacity(audit_engines=1, max_extra=2, cpu_count=2, memory_mb=7600)
+    assert small.allowed == 1
+    assert "quality audit 0.5" in small.reason
+
+    # Without the audit the same host seats both miners of the pool.
+    assert miners.host_capacity(max_extra=2, cpu_count=2, memory_mb=7600).allowed == 2
+
+    starved = miners.host_capacity(audit_engines=1, max_extra=2, cpu_count=1, memory_mb=8192)
+    assert starved.allowed == 0  # the reserve and the audit already fill one core
 
     tight = miners.host_capacity(
-        fixed_miners=1,
         max_extra=2,
         cpu_count=8,
         memory_mb=miners.RESERVED_MEMORY_MB + 300,
@@ -233,7 +241,7 @@ def test_the_host_budget_reserves_room_for_the_fixed_miners() -> None:
 def test_an_unmeasurable_host_does_not_cap_the_pool(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(miners.os, "cpu_count", lambda: None)
     monkeypatch.setattr(miners, "available_memory_mb", lambda: None)
-    capacity = miners.host_capacity(fixed_miners=2, max_extra=2)
+    capacity = miners.host_capacity(audit_engines=1, max_extra=2)
     assert capacity.allowed == 2
     assert "unknown" in capacity.reason
 
@@ -307,6 +315,7 @@ def test_the_miner_command_matches_the_compose_miners(tmp_path: Path) -> None:
     assert "--engine-path /usr/games/stockfish" in tail
     assert "--nodes-per-move 1234" in tail
     assert f"--resign-after-plies {miners.RESIGN_AFTER_PLIES}" in tail
+    assert "--quality-summary auto" in tail
     assert "--relay http://relay:8646" in tail
     assert f"--node {NODE}" in tail
     assert "--poll-seconds 0.25" in tail
@@ -374,6 +383,45 @@ def test_a_grant_funds_the_registration(fleet: _FleetFactory) -> None:
     assert granted == [(miner.address, miners.GRANT_COINS)]
     assert [tx.sender for tx in node.submitted] == [miner.address]
     assert extra.online == (miner,)
+
+
+def test_the_pool_carries_a_liar_and_an_honest_summary() -> None:
+    """The quality audit needs bad data and something to be wrong about."""
+    liar = miners.miner_line_up(miners.LIAR_INDEX)
+    assert (liar.quality_summary, liar.nodes_per_move) == ("forged", miners.LIAR_NODES_PER_MOVE)
+    assert liar.label == "liar"
+    assert liar.nodes_per_move < miners.NODES_PER_MOVE
+
+    honest = miners.miner_line_up(miners.HONEST_SUMMARY_INDEX)
+    assert (honest.quality_summary, honest.nodes_per_move) == ("honest", miners.NODES_PER_MOVE)
+    assert honest.label == "honest-summary"
+
+    plain = miners.miner_line_up(7)
+    assert plain.quality_summary == "auto"
+    assert plain.label == "honest"
+
+
+def test_the_liar_is_told_to_lie_on_the_command_line(tmp_path: Path) -> None:
+    miner = miners.extra_miner(miners.LIAR_INDEX, tmp_path)
+    line_up = miners.miner_line_up(miner.index)
+    command = miners.miner_command(
+        miner,
+        passphrase_file=tmp_path / "passphrase",
+        relay="http://relay:8646",
+        node=NODE,
+        engine_path=Path("/usr/games/stockfish"),
+        nodes_per_move=line_up.nodes_per_move,
+        quality_summary=line_up.quality_summary,
+    )
+    tail = " ".join(command)
+    assert "--quality-summary forged" in tail
+    assert f"--nodes-per-move {miners.LIAR_NODES_PER_MOVE}" in tail
+
+
+def test_a_weak_search_budget_is_not_a_whole_core(fleet: _FleetFactory) -> None:
+    """The liar's 16-node budget is why one extra miner fits a two-core host."""
+    assert miners.LIAR_NODES_PER_MOVE < miners.NODES_PER_MOVE
+    assert miners.MAX_ONLINE_AT_ONCE == 1
 
 
 def test_a_grant_that_never_confirms_stops_the_start(fleet: _FleetFactory) -> None:

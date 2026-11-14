@@ -1301,6 +1301,17 @@ def miner_run(
             ),
         ),
     ] = None,
+    quality_summary: Annotated[
+        str,
+        typer.Option(
+            "--quality-summary",
+            help=(
+                "Attach a quality summary to won proofs: auto (follow the network), "
+                "honest (always, from this miner's own analysis) or forged (claim a "
+                "clean search: a deliberate testnet-only lie for the challenge path)."
+            ),
+        ),
+    ] = "auto",
     poll_seconds: Annotated[
         float,
         typer.Option("--poll-seconds", help="Seconds to wait between relay polls."),
@@ -1320,6 +1331,8 @@ def miner_run(
         _fail("--iterations cannot be negative", code=2)
     if resign_after_plies is not None and resign_after_plies < 1:
         _fail("--resign-after-plies must be at least 1 ply", code=2)
+    if quality_summary not in {"auto", "honest", "forged"}:
+        _fail("--quality-summary must be auto, honest or forged", code=2)
     secret = _nonce_secret(nonce_secret, nonce_secret_file)
     params = _resolve_network(ctx, network)
     passphrase = _passphrase(ctx, confirm=False)
@@ -1338,6 +1351,7 @@ def miner_run(
         nonce_secret=secret,
         witness_keys=witness_keys,
         resign_after_plies=resign_after_plies,
+        summary_policy=quality_summary,  # type: ignore[arg-type]
     )
     miner = EngineMiner(config, engine=engine)
     if not _options(ctx).json_output:
@@ -1354,6 +1368,7 @@ def miner_run(
     proofs: list[str] = []
     claims: list[str] = []
     resignations: list[str] = []
+    votes: list[str] = []
     refusals: list[str] = []
     started = time.monotonic()
     try:
@@ -1366,6 +1381,7 @@ def miner_run(
             proofs.extend(tick.proofs)
             claims.extend(tick.claims)
             resignations.extend(tick.resignations)
+            votes.extend(tick.votes)
             refusals.extend(tick.refusals)
             if iterations and polls >= iterations:
                 break
@@ -1387,6 +1403,7 @@ def miner_run(
         "proofs": proofs,
         "claims": claims,
         "resignations": resignations,
+        "votes": votes,
         "refusals": refusals,
     }
     if _options(ctx).json_output:
@@ -1396,7 +1413,7 @@ def miner_run(
         f"stopped after {polls} polls ({payload['seconds']}s): "
         f"{len(joined)} joins, {len(moves)} moves, {len(results)} results, "
         f"{len(proofs)} proofs, {len(claims)} timeout claims, "
-        f"{len(resignations)} resignations"
+        f"{len(resignations)} resignations, {len(votes)} panel votes"
     )
     for reason in dict.fromkeys(refusals):
         typer.echo(f"  refused: {reason}")

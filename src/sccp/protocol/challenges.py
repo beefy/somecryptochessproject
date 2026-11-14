@@ -11,12 +11,14 @@ pinned quality profile and resolves it:
   height is burned.
 * **rejected** - the proof was good. The challenger's bond is burned.
 
-The module never runs an engine. Adjudication receives the panel's verdict, and
-the panel itself is selected from the beacon by :func:`select_panel` (or by an
-operator key on testnet while panel selection is not yet deployed). That keeps
-this file a deterministic state transition, which is what lets it live inside
-the ledger: every node derives the same panel from the same beacon, replays the
-same pinned profile, and resolves the challenge with :func:`adjudicate_with_panel`.
+The module never runs an engine. Each panel member re-runs the pinned profile off
+chain and commits its verdict in a ``panel_vote`` transaction; the block that
+completes the ballot resolves the challenge through :func:`apply_panel_vote`, so
+the verdict, the returned or burned bond and the miner's slash are replayable
+from the chain alone. The panel itself is selected from the beacon by
+:func:`select_panel`, restricted to bonded accounts and excluding the parties.
+That keeps this file a deterministic state transition: every node derives the
+same panel from the same beacon and applies the same votes in the same order.
 """
 
 from __future__ import annotations
@@ -25,13 +27,16 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import NoReturn
 
-from sccp.chain.state import ZERO_HASH, ChallengeRecord, State
+from sccp.chain.state import ZERO_HASH, ChallengeRecord, State, epoch_of
 from sccp.errors import ChallengeError
 from sccp.protocol.models import Transaction
 from sccp.serialization import Domain, domain_hex
 
 CHALLENGE_KEYS = frozenset({"proof_id", "reason", "evidence", "bond", "public_key"})
 """Exactly the payload keys a ``challenge`` transaction may carry."""
+
+PANEL_VOTE_KEYS = frozenset({"challenge_id", "upheld", "public_key"})
+"""Exactly the payload keys a ``panel_vote`` transaction may carry."""
 
 MAX_REASON_LENGTH: int = 120
 MAX_EVIDENCE_LENGTH: int = 4_096
@@ -88,6 +93,26 @@ def parse_challenge(tx: Transaction) -> ChallengeRequest:
     if bond < 1:
         _fail("a challenge needs a positive bond")
     return ChallengeRequest(proof_id=proof_id, reason=reason, evidence=evidence, bond=bond)
+
+
+@dataclass(frozen=True, slots=True)
+class VoteRequest:
+    """The decoded, schema-checked contents of a ``panel_vote`` transaction."""
+
+    challenge_id: str
+    upheld: bool
+
+
+def parse_panel_vote(tx: Transaction) -> VoteRequest:
+    """Decode a ``panel_vote`` payload, rejecting unknown fields."""
+    unknown = sorted(set(tx.payload) - PANEL_VOTE_KEYS)
+    if unknown:
+        _fail(f"unknown panel_vote payload fields: {unknown}")
+    challenge = _payload_text(tx.payload, "challenge_id")
+    upheld = tx.payload.get("upheld")
+    if not isinstance(upheld, bool):
+        _fail("panel_vote field 'upheld' must be a boolean")
+    return VoteRequest(challenge_id=challenge, upheld=upheld)
 
 
 def challenge_id(
@@ -336,6 +361,89 @@ adjudicate_challenge = resolve_challenge
 """Alias used by panel tooling and tests."""
 
 
+def adjudication_panel(
+    state: State,
+    record: ChallengeRecord,
+    *,
+    size: int = PANEL_SIZE,
+) -> tuple[str, ...]:
+    """The panel that adjudicates ``record``: bonded, odd, parties excluded.
+
+    The beacon is the one recorded for the epoch the challenge *opened* in, so a
+    later epoch cannot silently swap the judges; only a change in who is bonded
+    can. The panel is the largest odd subset up to ``size``: a two-miner testnet
+    roster adjudicates with one member instead of refusing to resolve at all.
+    Returns ``()`` when nobody bonded is eligible, which means the challenge
+    cannot be decided and stays open -- a caller that would lock a bond should
+    check this first.
+    """
+    parties = {record.challenger, record.miner}
+    eligible = [
+        address
+        for address, account in state.accounts.items()
+        if account.bonded > 0 and address not in parties
+    ]
+    wanted = min(size, len(eligible))
+    if wanted % 2 == 0:
+        wanted -= 1
+    if wanted < 1:
+        return ()
+    epoch = state.epochs.get(epoch_of(record.opened_height, state.params))
+    beacon_hash = epoch.beacon.hash if epoch is not None and epoch.beacon else ZERO_HASH
+    return select_panel(beacon_hash, record.proof_id, eligible, size=wanted, exclude=parties)
+
+
+def validate_panel_vote(
+    state: State,
+    tx: Transaction,
+    *,
+    request: VoteRequest | None = None,
+) -> tuple[ChallengeRecord, bool]:
+    """Check that ``tx`` is a well-formed vote from a member of the panel.
+
+    Returns the challenge and the verdict the member attests to. A member votes
+    once: a second ballot from the same account is refused rather than counted
+    twice, so a challenge cannot be decided by a single member re-voting.
+    """
+    decoded = request or parse_panel_vote(tx)
+    record = state.challenges.get(decoded.challenge_id)
+    if record is None:
+        _fail(f"no challenge {decoded.challenge_id!r}")
+    if not record.open:
+        _fail(f"challenge {decoded.challenge_id} is already {record.status}")
+    panel = adjudication_panel(state, record)
+    if not panel:
+        _fail(f"no bonded adjudicator is eligible for challenge {decoded.challenge_id}")
+    if tx.sender not in panel:
+        _fail(f"{tx.sender} is not on the panel for challenge {decoded.challenge_id}")
+    if tx.sender in record.votes:
+        _fail(f"{tx.sender} already voted on challenge {decoded.challenge_id}")
+    return record, decoded.upheld
+
+
+def apply_panel_vote(state: State, tx: Transaction, height: int) -> ChallengeRecord:
+    """Record one member's vote and resolve the challenge once the ballot is full.
+
+    Resolution happens inside block application, so the verdict, the returned or
+    burned bond and the miner's slash are all replayable from the chain alone. A
+    member who is no longer bonded when the last vote lands is not on the panel
+    any more; their ballot stays recorded for audit but does not count.
+    """
+    record, upheld = validate_panel_vote(state, tx)
+    record.votes[tx.sender] = upheld
+    panel = adjudication_panel(state, record)
+    if not panel or any(member not in record.votes for member in panel):
+        return record
+    verdict = panel_verdict(panel, {member: record.votes[member] for member in panel})
+    return resolve_challenge(
+        state,
+        record.challenge_id,
+        upheld=verdict,
+        height=height,
+        panel=panel,
+    )
+
+
 def _panel_rank(beacon_hash: str, proof_id: str, member: str) -> str:
     """``H("sccp/v1/challenge", {kind: "panel", ...})`` for one candidate."""
     return domain_hex(
@@ -497,10 +605,14 @@ __all__ = [
     "MAX_EVIDENCE_LENGTH",
     "MAX_REASON_LENGTH",
     "PANEL_SIZE",
+    "PANEL_VOTE_KEYS",
     "ChallengeRequest",
+    "VoteRequest",
     "adjudicate_challenge",
     "adjudicate_with_panel",
+    "adjudication_panel",
     "apply_challenge",
+    "apply_panel_vote",
     "challenge_for_proof",
     "challenge_id",
     "challenge_panel",
@@ -508,7 +620,9 @@ __all__ = [
     "open_challenge",
     "panel_verdict",
     "parse_challenge",
+    "parse_panel_vote",
     "resolve_challenge",
     "select_panel",
     "validate_challenge",
+    "validate_panel_vote",
 ]

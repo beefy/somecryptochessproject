@@ -51,7 +51,7 @@ preparing a mainnet decision. It is not a continuation of the protocol build.
 | --- | --- | --- |
 | **Automate timeout-claim submission** | The ledger, clock evidence and local claim verification exist, but the CLI/demo does not yet submit a `timeout_claim` automatically. | A flagged timed game produces, submits and settles a claim end to end without operator intervention; an end-to-end test covers dispute and finalisation. |
 | **Pin a drand quicknet verifier** | `drand_used = 1` can only be verified when a caller injects a verifier. Without the pinned BLS12-381 check, production beacons cannot rely on drand. | A bundled verifier checks quicknet signatures against the pinned chain key; offline `sccp verify proof` accepts drand beacons and rejects bad ones. |
-| **Move panel adjudication on chain** | Challenge panels and verdicts are deterministic, but votes still arrive through an operator-trusted path. | A signed `panel_vote` or `adjudicate` transaction commits ballots; a challenge resolves from chain data alone, with no privileged operator action. |
+| **Punish a lying adjudicator** | Ballots are signed `panel_vote` transactions now and the completing block resolves a challenge, but the chain still trusts the attested verdict rather than re-running the engine. | A dissent or proof of a false ballot costs the member's bond, so a panel cannot be bought silently. |
 | **Persist faucet limits** | Faucet cooldowns and client quotas are in memory and reset with the node. | Limits survive restarts and are shared by all node workers; abuse tests cover concurrent requests and restart behaviour. |
 
 ### 2.3 Priority 1 — harden the system
@@ -90,8 +90,9 @@ preparing a mainnet decision. It is not a continuation of the protocol build.
   SPV or light-client verifier.
 - **Block and fee policy.** Block capacity, fee market and proof-count limits
   have not been stress-tested.
-- **Challenge lifecycle.** Panel selection is deterministic, but on-chain votes
-  and a clear appeal/finalisation rule remain open.
+- **Challenge lifecycle.** Panel selection and signed `panel_vote` ballots are
+  on chain, and the ballot that completes the panel resolves the case. An appeal
+  rule and a penalty for a provably false ballot remain open.
 
 
 ### 3.2 Quality and game integrity
@@ -104,8 +105,9 @@ preparing a mainnet decision. It is not a continuation of the protocol build.
   engines.
 - **Sample coverage.** A 50/1000 sample rate is a policy choice, not a security
   proof. The cost of missing bad proofs should be modelled.
-- **Operator trust.** Until panel votes are on chain, challenge adjudication has
-  an explicit operator trust assumption.
+- **Panel honesty.** Votes are attributable and on chain, but the chain cannot
+  re-run the engine, so a member that lies is not yet punished. A provable-false
+  ballot needs its own evidence type.
 - **Engine provenance.** Binary hashes help, but a repacked cheating engine and
   unpinned networks remain outside the current guarantee.
 

@@ -443,6 +443,13 @@
       "ChallengeView": {
         "additionalProperties": false,
         "properties": {
+          "adjudicators": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "bond": {
             "minimum": 1.0,
             "type": "integer"
@@ -505,6 +512,12 @@
               "rejected"
             ],
             "type": "string"
+          },
+          "votes": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "type": "object"
           }
         },
         "required": [
@@ -2408,6 +2421,7 @@
           "timeout_claim",
           "timeout_dispute",
           "challenge",
+          "panel_vote",
           "slash_evidence"
         ],
         "type": "string"

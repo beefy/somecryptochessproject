@@ -250,6 +250,7 @@ ALLOWED: dict[TxType, frozenset[str]] = {
         {"claim_id", "move", "move_signature", "clock_evidence", "public_key"}
     ),
     TxType.CHALLENGE: frozenset({"proof_id", "reason", "evidence", "bond", "public_key"}),
+    TxType.PANEL_VOTE: frozenset({"challenge_id", "upheld", "public_key"}),
     TxType.SLASH_EVIDENCE: frozenset({"proof_id", "evidence", "public_key"}),
 }
 """Exactly which payload keys each type may carry."""
@@ -399,6 +400,16 @@ def _validate_challenge(params: NetworkParams, state: State, tx: Transaction, he
         _fail(TxFailure.TYPE, str(exc))
 
 
+def _validate_panel_vote(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
+    from sccp.errors import ChallengeError
+    from sccp.protocol import challenges
+
+    try:
+        challenges.validate_panel_vote(state, tx)
+    except ChallengeError as exc:
+        _fail(TxFailure.TYPE, str(exc))
+
+
 VALIDATORS = {
     TxType.TRANSFER: _validate_transfer,
     TxType.REGISTER: _validate_register,
@@ -409,6 +420,7 @@ VALIDATORS = {
     TxType.AVAILABILITY: _validate_availability,
     TxType.REVEAL: _validate_reveal,
     TxType.CHALLENGE: _validate_challenge,
+    TxType.PANEL_VOTE: _validate_panel_vote,
 }
 """Handlers for every type that :func:`validate_transaction` owns outright."""
 
@@ -535,6 +547,16 @@ def _apply_challenge(state: State, tx: Transaction, height: int) -> None:
         _fail(TxFailure.TYPE, str(exc))
 
 
+def _apply_panel_vote(state: State, tx: Transaction, height: int) -> None:
+    from sccp.errors import ChallengeError
+    from sccp.protocol import challenges
+
+    try:
+        challenges.apply_panel_vote(state, tx, height)
+    except ChallengeError as exc:
+        _fail(TxFailure.TYPE, str(exc))
+
+
 APPLIERS = {
     TxType.TRANSFER: _apply_transfer,
     TxType.REGISTER: _apply_register,
@@ -547,6 +569,7 @@ APPLIERS = {
     TxType.TIMEOUT_CLAIM: _apply_timeout_claim,
     TxType.TIMEOUT_DISPUTE: _apply_timeout_dispute,
     TxType.CHALLENGE: _apply_challenge,
+    TxType.PANEL_VOTE: _apply_panel_vote,
     TxType.SLASH_EVIDENCE: _apply_slash_evidence,
 }
 """State transitions for every accepted transaction type."""

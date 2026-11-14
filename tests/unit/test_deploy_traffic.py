@@ -80,6 +80,10 @@ def _transport(
             return httpx.Response(
                 200, json={"network": TESTNET.network_id, "height": status_height}
             )
+        if path == "/v1/challenges":
+            # The audit polls for the verdicts on the challenges it filed; this
+            # fake chain never decides one.
+            return httpx.Response(200, json={"network": TESTNET.network_id, "challenges": []})
         if path == "/v1/mempool":
             view = node.mempool_view().model_dump(mode="json")
             if settles_immediately:
@@ -207,7 +211,12 @@ def test_run_seats_and_funds_the_whole_pool_up_front(
 
     assert [(report.wallet_count, report.funded) for report in reports] == [(4, 4)]
     grants = [tx for tx in _admitted(node) if tx.sender == _faucet_address()]
-    assert len({tx.payload["to"] for tx in grants}) == 4
+    recipients = {tx.payload["to"] for tx in grants}
+    pool_addresses = {traffic.wallet(index).address for index in range(4)}
+    assert pool_addresses <= recipients
+    # ... and the quality challenger, whose bond has to be on chain before it files.
+    assert quality.challenger_address(TESTNET) in recipients
+    assert reports[0].challenger_grants == 1
     assert "4 wallets" in capsys.readouterr().out
 
 
@@ -539,6 +548,8 @@ class _RecordingAudit:
     )
     failure: Exception | None = None
     closed: int = 0
+    submit: bool = True
+    challenger: str = quality.challenger_address(TESTNET)
 
     def audit(self) -> quality.AuditReport:
         self.seen["audit"] = self.admitted()
@@ -606,7 +617,7 @@ def test_the_churn_seats_the_pool_the_options_ask_for() -> None:
 
 
 def test_the_audit_costs_the_churn_a_core(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The auditor's engine competes for cores, so the host is asked for one fewer miner."""
+    """The auditor's engine competes for cores, so the host keeps a share for it."""
     measured: list[dict[str, int]] = []
 
     def host(**kwargs: int) -> miners.HostCapacity:
@@ -624,10 +635,8 @@ def test_the_audit_costs_the_churn_a_core(monkeypatch: pytest.MonkeyPatch) -> No
             client, options=traffic.Options(extra_miners=2, quality_events=False)
         )
     try:
-        assert [call["fixed_miners"] for call in measured] == [
-            miners.FIXED_MINERS + 1,
-            miners.FIXED_MINERS,
-        ]
+        assert [call["audit_engines"] for call in measured] == [1, 0]
+        assert all(call["max_extra"] == 2 for call in measured)
         assert isinstance(both.audit, quality.QualityAudit)
         assert both.audit.bond == max(1, TESTNET.min_bond)
         assert churn_only.audit is None
@@ -663,7 +672,8 @@ def test_a_cycle_churns_before_the_grants_and_audits_after_the_sends(
 
     assert seen["churn"] == 0, "the churn ran after a grant was already in the pool"
     assert callable(seen["grant"]), "a churn that cannot fund a seat is refused by the node"
-    assert seen["audit"] == 5, "the audit ran before the grants and sends were admitted"
+    # three wallets plus the challenger top-up, then two transfers
+    assert seen["audit"] == 6, "the audit ran before the grants and sends were admitted"
     assert report.miners == "miners: started synthetic-miner-1; online: synthetic-miner-1"
     assert report.quality == "quality: no new block"
     summary = traffic._summary(report)
@@ -699,6 +709,7 @@ def test_a_failing_audit_does_not_lose_the_cycle(node: NodeService) -> None:
 
     assert report.quality == "quality: no engine binary at /usr/games/stockfish"
     assert (report.funded, report.transfers) == (2, 2)
+    assert report.challenger_grants == 1  # its bond has to be on chain too
 
 
 def test_run_stops_the_miners_and_the_engine_it_was_given(node: NodeService) -> None:

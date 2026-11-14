@@ -23,11 +23,14 @@ invisible to the relay:
   a pause is re-registered with another ``register`` (the same transaction the
   bootstrap uses) before it is started, so it can commit availability again.
 
-Churn has a budget: every miner is a full Stockfish process next to the node, the
+Churn has a budget: every miner is a Stockfish process next to the node, the
 relay, the two fixed miners and the traffic generator itself. :func:`host_capacity`
-derives how many fit from the host's cores and free memory, minus a reserve, and
-the fleet never exceeds it. On a two-core VM that number is zero and the fleet
-logs why instead of starting a miner that would starve the fixed roster.
+derives how many fit from the host's cores and free memory, and the fleet never
+exceeds it. A miner here searches 5 000 nodes per move, which is milliseconds of
+one thread with the process idle in between, so the budget is a *share* of a core
+rather than a whole one: the deployment's two-core VM seats one extra miner while
+the node, relay and quality audit keep their own shares. A host that cannot be
+measured is not capped; one that cannot fit a miner logs why and seats none.
 """
 
 from __future__ import annotations
@@ -60,10 +63,10 @@ FIXED_MINERS: Final = 2
 """The miners ``docker-compose.yml`` runs itself; churn happens beside them."""
 
 MAX_EXTRA_MINERS: Final = 2
-"""How many extra miners the pool defines, and the largest online cap."""
+"""How many extra miners the pool defines."""
 
-MAX_ONLINE_AT_ONCE: Final = 2
-"""A churn seats at most two extra miners, however large the pool is."""
+MAX_ONLINE_AT_ONCE: Final = 1
+"""A churn seats one extra miner at a time, so the pool can keep swapping them."""
 
 CHURN_PROBABILITY: Final = 0.5
 """Chance that a partial churn seats another miner instead of stopping one."""
@@ -81,8 +84,21 @@ GRANT_COINS: Final = 100
 MIN_BALANCE_COINS: Final = 20
 """Top an account up when it holds less than this, so it can always register."""
 
-CORES_PER_MINER: Final = 1
+CORES_PER_MINER: Final = 0.5
+"""Share of a core one extra miner budgets.
+
+The stack plays at 5 000 nodes per move, so a move is a few milliseconds of one
+thread and the process sleeps between polls. Charging a whole core per miner
+would keep the churn inert on every host smaller than six vCPUs; half a core
+still bounds two miners' overlapping searches to one core.
+"""
+
 RESERVED_CORES: Final = 1
+"""Cores kept for the node and the relay, which must answer while a miner searches."""
+
+AUDIT_CORES: Final = 0.5
+"""Extra core share the quality audit's depth-14 re-run needs while it analyses."""
+
 PER_MINER_MEMORY_MB: Final = 256
 RESERVED_MEMORY_MB: Final = 512
 
@@ -96,8 +112,60 @@ NODES_PER_MOVE: Final = 5_000
 RESIGN_AFTER_PLIES: Final = 60
 """Resign on our own turn after this many plies, as the fixed miners do."""
 
+LIAR_INDEX: Final = 0
+"""The pool member that plays weakly and lies about its search.
+
+It searches 16 nodes a move, which produces a genuinely poor game, and attaches a
+summary claiming a clean one. The quality audit re-runs the game, sees the lie and
+files the challenge the panel upholds.
+"""
+
+HONEST_SUMMARY_INDEX: Final = 1
+"""The pool member that attaches its honest analysis.
+
+Its proofs give the audit something to be *wrong* about: a deliberately false
+accusation against this miner is rejected by the panel and burns the challenger's
+bond, which is the other half of the challenge incentive.
+"""
+
+LIAR_NODES_PER_MOVE: Final = 16
+"""The liar's search budget: weak enough that an honest re-run disagrees."""
+
 NONCE_CONFLICT: Final = "already has a pending transaction with nonce"
 """The node's refusal when the next nonce of an account is already in the pool."""
+
+
+@dataclass(frozen=True, slots=True)
+class MinerLineUp:
+    """How one pool member is told to play and to describe its games."""
+
+    quality_summary: str
+    """``auto``, ``honest`` or ``forged``; see ``sccp miner run --quality-summary``."""
+    nodes_per_move: int
+
+    @property
+    def label(self) -> str:
+        """A short name for the log line."""
+        if self.quality_summary == "forged":
+            return "liar"
+        if self.quality_summary == "honest":
+            return "honest-summary"
+        return "honest"
+
+
+def miner_line_up(index: int) -> MinerLineUp:
+    """The role of pool member ``index``.
+
+    The first two members carry the quality story: one liar whose summary is false
+    and one honest summary that a false accusation can be filed against. Everyone
+    else plays and reports like the fixed miners, which is what makes the liar's
+    proofs stand out rather than the whole pool being suspicious.
+    """
+    if index == LIAR_INDEX:
+        return MinerLineUp(quality_summary="forged", nodes_per_move=LIAR_NODES_PER_MOVE)
+    if index == HONEST_SUMMARY_INDEX:
+        return MinerLineUp(quality_summary="honest", nodes_per_move=NODES_PER_MOVE)
+    return MinerLineUp(quality_summary="auto", nodes_per_move=NODES_PER_MOVE)
 
 
 class ExtraMinerError(RuntimeError):
@@ -233,7 +301,7 @@ def available_memory_mb() -> int | None:
 
 def host_capacity(
     *,
-    fixed_miners: int = FIXED_MINERS,
+    audit_engines: int = 0,
     max_extra: int = MAX_EXTRA_MINERS,
     cpu_count: int | None = None,
     memory_mb: int | None = None,
@@ -241,17 +309,20 @@ def host_capacity(
     """How many extra miners this host can take before the fixed ones starve.
 
     ``cpu_count`` and ``memory_mb`` are injectable so the arithmetic is testable;
-    when they are omitted the host is measured. An unmeasurable dimension does not
-    cap the result: refusing to start on an unknown platform would be worse than
-    trying, and the caller can always pass ``--max-extra-miners 0``.
+    when they are omitted the host is measured. ``audit_engines`` is the number of
+    quality re-runs the caller runs beside the miners (0 or 1 today), each taking
+    its own share of a core.
+
+    An unmeasurable dimension does not cap the result: refusing to start on an
+    unknown platform would be worse than trying, and the caller can always pass
+    ``--max-extra-miners 0``.
     """
+    if audit_engines < 0:
+        raise ValueError("audit_engines cannot be negative")
     cpus = os.cpu_count() if cpu_count is None else cpu_count
     memory = available_memory_mb() if memory_mb is None else memory_mb
-    by_cpu = (
-        max_extra
-        if cpus is None
-        else max(0, (cpus - fixed_miners - RESERVED_CORES) // CORES_PER_MINER)
-    )
+    reserved = RESERVED_CORES + AUDIT_CORES * audit_engines
+    by_cpu = max_extra if cpus is None else max(0, int((cpus - reserved) / CORES_PER_MINER + 1e-9))
     by_memory = (
         max_extra
         if memory is None
@@ -260,9 +331,11 @@ def host_capacity(
     allowed = max(0, min(max_extra, by_cpu, by_memory))
     cores = "unknown" if cpus is None else str(cpus)
     free = "unknown" if memory is None else f"{memory} MiB"
+    audit = "" if audit_engines == 0 else f" and the quality audit {AUDIT_CORES * audit_engines:g}"
     reason = (
-        f"the host has {cores} CPU(s) and {free} free; {fixed_miners} fixed miner(s) "
-        f"plus reserves leave room for {allowed}"
+        f"the host has {cores} CPU(s) and {free} free; {RESERVED_CORES:g} core(s) "
+        f"stay with the node and relay{audit}, a miner budgets {CORES_PER_MINER:g}, "
+        f"leaving room for {allowed}"
     )
     return HostCapacity(cpu_count=cpus, available_memory_mb=memory, allowed=allowed, reason=reason)
 
@@ -347,13 +420,16 @@ def miner_command(
     poll_seconds: float = 0.1,
     nodes_per_move: int = NODES_PER_MOVE,
     resign_after_plies: int = RESIGN_AFTER_PLIES,
+    quality_summary: str = "auto",
     params: NetworkParams = TESTNET,
 ) -> list[str]:
     """The ``sccp miner run`` command line for ``miner``.
 
-    The arguments mirror the compose file's miners: same engine profile and search
-    budget, same resign policy, plus this module's keyfile and availability secret
-    so the miner commits and reveals on its own every epoch.
+    The arguments mirror the compose file's miners: same engine profile, same
+    resign policy, plus this module's keyfile and availability secret so the miner
+    commits and reveals on its own every epoch. The search budget and the quality
+    summary come from :func:`miner_line_up`, which gives one pool member the liar's
+    configuration and another an honest summary to accuse.
     """
     return [
         *sccp_command(),
@@ -375,6 +451,8 @@ def miner_command(
         str(nodes_per_move),
         "--resign-after-plies",
         str(resign_after_plies),
+        "--quality-summary",
+        quality_summary,
         "--relay",
         relay,
         "--node",
@@ -614,6 +692,8 @@ class ExtraMinerFleet:
             engine_path=self.engine_path,
             engine_profile=self.engine_profile,
             poll_seconds=self.poll_seconds,
+            nodes_per_move=miner_line_up(miner.index).nodes_per_move,
+            quality_summary=miner_line_up(miner.index).quality_summary,
             params=self.params,
         )
         log_path = self.directory / "logs" / f"{miner.name}.log"

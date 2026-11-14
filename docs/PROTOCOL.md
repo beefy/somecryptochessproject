@@ -679,15 +679,18 @@ a bonded `challenge` transaction (section 10.2).
 
 A challenge is valid only inside `challenge_window`, must name an accepted
 proof, and cannot be opened by the proof's miner. The challenger's bond is
-locked. The adjudication panel is derived from the ledger and beacon: eligible
-bonded members are ranked by the challenge domain hash, the parties are excluded,
-and the panel size is odd. In the current implementation panel votes are
-delivered to the node/operator rather than committed as a transaction, so
-`adjudicate_with_panel` is called with a complete ballot. An upheld challenge
-returns the challenger's bond, slashes the proof miner's bond and burns the
-still-unvested coinbase credit from the proof's block; a rejected challenge burns
-the challenger's bond. On-chain panel voting is tracked in the implementation
-plan.
+locked. The adjudication panel is derived from the ledger and the beacon of the
+epoch the challenge opened in: eligible bonded members are ranked by the
+challenge domain hash, the parties are excluded, and the panel is the largest odd
+subset up to `PANEL_SIZE` (a two-miner testnet roster adjudicates with one
+member rather than refusing to resolve). Each member re-runs the pinned profile
+off chain and commits its verdict in a `panel_vote` transaction; the block that
+completes the ballot resolves the challenge through `apply_panel_vote`. An upheld
+challenge returns the challenger's bond, slashes the proof miner's bond and burns
+the still-unvested coinbase credit from the proof's block; a rejected challenge
+burns the challenger's bond. A challenge nobody bonded is eligible to judge stays
+open, and its bond stays locked, which is why a challenger checks the panel
+first.
 
 ## 10. Transactions
 
@@ -766,6 +769,7 @@ the one scheme, not a second way to spend.
 | `timeout_dispute` | `claim_id`, `move`, `move_signature`, `clock_evidence`, `public_key`\* | the accused answers with a later signed move (10.4) |
 | `slash_evidence` | `evidence`, `proof_id`, `public_key`\* | burns an equivocating clock witness (10.4); `proof_id` is refused here and is handled by the challenge layer |
 | `challenge` | `proof_id`, `reason`, `evidence`, `bond`, `public_key`\* | locks a bond and opens a quality challenge; an upheld challenge slashes the proof miner and burns unvested coinbase, a rejected challenge burns the challenger's bond (9.2) |
+| `panel_vote` | `challenge_id`, `upheld`, `public_key`\* | one adjudicator's ballot; the sender must be on the challenge's panel and may vote once; the vote that completes the ballot resolves the challenge (9.2) |
 
 \* optional: only needed for an account whose public key the chain does not
 already know (10.1).
@@ -1151,6 +1155,11 @@ invalid object never reaches the mempool; a duplicate `(sender, nonce)` or proof
 id is rejected instead of replacing the pending one. `POST /v1/blocks` is
 idempotent for a block the node already has and returns 202 for an unknown
 parent so a peer can retry once it receives the ancestor.
+
+A `ChallengeView` carries what a panel member needs to do its job: the
+`adjudicators` the node would seat right now, the `votes` already cast, and the
+proof's quality `summary` (the claim to re-run and compare). A member that is not
+in `adjudicators` has no ballot to cast.
 
 The generated OpenAPI schema is part of the contract: prose and the package
 version are stripped and the rest is snapshotted in

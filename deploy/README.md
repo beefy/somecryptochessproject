@@ -62,23 +62,28 @@ show:
   `--extra-miners` (2) extra miners from published seeds, materialises a keyfile
   and an availability secret for each, funds and re-registers a miner when it
   starts through the same faucet gateway the wallets use, and runs it as a real
-  `sccp miner run` child. Each cycle starts one or stops one, so registrations,
-  availability commitments and roster changes keep happening. Before seating
-  anything it calls `host_capacity`: one core, one miner's worth of memory, and a
-  reserve for the runtime, the relay, the fixed miners and the quality engine. On
-  a two-core VM the answer is zero and it logs that instead of starting a miner
-  that would starve the roster.
+  `sccp miner run` child. One is online at a time and each cycle starts or stops
+  it, so registrations, availability commitments and roster changes keep
+  happening. The pool is cast for the quality story: `synthetic-miner-1` is the
+  **liar** (16 nodes a move, `--quality-summary forged`) and `synthetic-miner-2`
+  posts its **honest** analysis. Before seating anything it calls
+  `host_capacity`: half a core and 256 MiB per miner, one core for the node and
+  relay, half for the quality engine -- so the two-core VM seats one extra miner.
+  When the host cannot fit one it logs why instead of starving the roster.
 * **Quality events** (`deploy/synthetic_quality_events.py`). Testnet runs with
-  `quality_sample_rate = 0`, so nothing is ever challenged and the whole bond path
-  stays cold. The auditor reads proofs out of `GET /v1/blocks/{height}`, runs the
-  node's own `QualitySampler` over them -- at most one proof per cycle, because a
-  depth-14 re-run costs about what a match does -- and makes every second event a
-  copy carrying a fabricated `QualitySummary`, the "miner lied about its search"
-  case. The sampler then reports the disagreement it would report on a mainnet
-  node, and the auditor replays the resulting challenge against a local `State`
-  mirror (proof, bond, roster from `GET /v1/epochs/{n}`), reporting `upheld` or
-  `rejected`. Nothing is submitted: a synthetic challenge can never invalidate a
-  real proof.
+  `quality_mode` off, so an honest miner attaches no summary and nothing is
+  challenged. The auditor reads proofs out of `GET /v1/blocks/{height}` and keeps
+  the ones that *do* carry a `QualitySummary` (the liar's), runs the node's own
+  `QualitySampler` over one per cycle, and when the re-run disagrees it signs a
+  real bonded `challenge` transaction from a published, faucet-funded account and
+  submits it to `POST /v1/tx`. The chain locks the bond, the bonded miners re-run
+  the proof and commit `panel_vote` ballots with their own keys, and the vote that
+  completes the panel resolves the case: `upheld` slashes the liar and repays the
+  challenger, `rejected` restores the proof and burns the challenger's bond.
+  Every cycle also reports the verdicts the chain reached on the challenges this
+  account filed. `--false-challenge-every N` files a knowingly wrong accusation
+  against an honest summary now and then, so the `rejected` branch is exercised
+  too.
 
 Both print on the cycle line (`| miners: ...`, `| quality: ...`) and both are off
 with `--extra-miners 0 --no-quality-events`, which leaves exactly the wallet

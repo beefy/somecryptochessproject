@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,6 +16,8 @@ from sccp.chain.tx import (
     validate_transaction,
 )
 from sccp.config import DEVNET, NetworkParams
+from sccp.crypto.address import encode_address
+from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import ChallengeError, TxValidationError
 from sccp.protocol import challenges
 from sccp.protocol.models import Transaction, TxType
@@ -688,3 +691,216 @@ def test_transaction_validation_is_disabled_with_a_zero_window(
 
     with pytest.raises(TxValidationError, match="disabled on this network"):
         validate_transaction(tx, ledger.params, ledger, height=OPEN_HEIGHT)
+
+
+# -- adjudication: the panel, its votes, and the resolution they trigger ---------
+
+
+def _voters(params: NetworkParams) -> dict[str, Any]:
+    """Two extra keyed, funded accounts: a three-member panel needs more than three."""
+    voters: dict[str, Any] = {}
+    for index, name in enumerate(("dave", "erin"), start=7):
+        keypair = hybrid_keypair_from_seed(bytes([index]) * 32)
+        voters[name] = SimpleNamespace(
+            keypair=keypair,
+            address=encode_address(keypair.public_key_bytes, params),
+        )
+    return voters
+
+
+@pytest.fixture()
+def wide_accounts(params: NetworkParams, protocol_accounts: Mapping[str, Any]) -> dict[str, Any]:
+    return {**protocol_accounts, **_voters(params)}
+
+
+@pytest.fixture()
+def wide_ledger(params: NetworkParams, wide_accounts: Mapping[str, Any]) -> State:
+    return _state(params, wide_accounts)
+
+
+def _bond_named(
+    ledger: State, accounts: Mapping[str, Any], *names: str, amount: int = BOND
+) -> None:
+    for name in names:
+        ledger.ensure(accounts[name].address).bonded = amount
+
+
+def _vote_tx(
+    ledger: State,
+    account: Any,
+    challenge_id: str,
+    *,
+    upheld: bool,
+    nonce: int = 0,
+) -> Transaction:
+    tx = Transaction(
+        network=ledger.network,
+        type=TxType.PANEL_VOTE,
+        sender=account.address,
+        nonce=nonce,
+        fee=ledger.params.min_fee,
+        payload={
+            "challenge_id": challenge_id,
+            "upheld": upheld,
+            "public_key": account.keypair.public_key_hex,
+        },
+    )
+    return sign_transaction(account.keypair, tx)
+
+
+def _cast(ledger: State, account: Any, challenge_id: str, *, upheld: bool, height: int) -> None:
+    """Validate and apply one vote through the transaction path, as a block does."""
+    tx = _vote_tx(ledger, account, challenge_id, upheld=upheld)
+    validate_transaction(tx, ledger.params, ledger, height=height)
+    apply_transaction(ledger, tx, height=height)
+
+
+def test_the_panel_is_bonded_odd_and_excludes_the_parties(
+    wide_ledger: State, wide_accounts: Mapping[str, Any]
+) -> None:
+    record = _open(wide_ledger, wide_accounts)
+    assert challenges.adjudication_panel(wide_ledger, record) == ()  # nobody is bonded
+
+    _bond_named(wide_ledger, wide_accounts, "carol")
+    assert challenges.adjudication_panel(wide_ledger, record) == (wide_accounts["carol"].address,)
+
+    # An even candidate set still yields an odd panel: the largest odd subset.
+    _bond_named(wide_ledger, wide_accounts, "dave")
+    pair = challenges.adjudication_panel(wide_ledger, record)
+    assert len(pair) == 1
+    assert pair[0] in (wide_accounts["carol"].address, wide_accounts["dave"].address)
+
+    _bond_named(wide_ledger, wide_accounts, "erin")
+    panel = challenges.adjudication_panel(wide_ledger, record)
+    assert len(panel) == challenges.PANEL_SIZE
+    parties = {record.challenger, record.miner}
+    assert not parties & set(panel)
+
+
+def test_a_vote_only_counts_from_a_member_of_the_panel(
+    wide_ledger: State, wide_accounts: Mapping[str, Any]
+) -> None:
+    record = _open(wide_ledger, wide_accounts)
+    _bond_named(wide_ledger, wide_accounts, "carol")
+
+    stranger = _vote_tx(wide_ledger, wide_accounts["dave"], record.challenge_id, upheld=True)
+    with pytest.raises(TxValidationError, match="is not on the panel"):
+        validate_transaction(stranger, wide_ledger.params, wide_ledger, height=OPEN_HEIGHT + 1)
+
+    challenger = _vote_tx(wide_ledger, wide_accounts["bob"], record.challenge_id, upheld=True)
+    with pytest.raises(TxValidationError, match="is not on the panel"):
+        validate_transaction(challenger, wide_ledger.params, wide_ledger, height=OPEN_HEIGHT + 1)
+
+
+def test_a_vote_needs_a_boolean_verdict_and_a_known_challenge(
+    wide_ledger: State, wide_accounts: Mapping[str, Any]
+) -> None:
+    record = _open(wide_ledger, wide_accounts)
+    _bond_named(wide_ledger, wide_accounts, "carol")
+
+    unknown = _vote_tx(wide_ledger, wide_accounts["carol"], "00" * 32, upheld=True)
+    with pytest.raises(TxValidationError, match="no challenge"):
+        validate_transaction(unknown, wide_ledger.params, wide_ledger, height=OPEN_HEIGHT + 1)
+
+    text = _vote_tx(wide_ledger, wide_accounts["carol"], record.challenge_id, upheld=True)
+    stringly = sign_transaction(
+        wide_accounts["carol"].keypair,
+        text.model_copy(update={"payload": {**text.payload, "upheld": "true"}}),
+    )
+    with pytest.raises(TxValidationError, match="must be a boolean"):
+        validate_transaction(stringly, wide_ledger.params, wide_ledger, height=OPEN_HEIGHT + 1)
+
+
+def test_the_ballot_resolves_the_challenge_when_it_is_complete(
+    wide_ledger: State, wide_accounts: Mapping[str, Any]
+) -> None:
+    before = wide_ledger.ensure(wide_accounts["bob"].address).balance
+    record = _open(wide_ledger, wide_accounts)
+    miner = wide_ledger.ensure(record.miner)
+    miner.bonded = 3 * BOND
+    miner.coinbase_queue = [(PROOF_HEIGHT, 700), (1, 300)]
+    miner.immature = 1_000
+
+    _bond_named(wide_ledger, wide_accounts, "carol", "dave", "erin")
+    panel = challenges.adjudication_panel(wide_ledger, record)
+    assert len(panel) == challenges.PANEL_SIZE
+    by_address = {account.address: account for account in wide_accounts.values()}
+
+    _cast(wide_ledger, by_address[panel[0]], record.challenge_id, upheld=True, height=6)
+    assert wide_ledger.challenges[record.challenge_id].status == "open"
+    _cast(wide_ledger, by_address[panel[1]], record.challenge_id, upheld=True, height=7)
+    assert wide_ledger.challenges[record.challenge_id].status == "open"
+    _cast(wide_ledger, by_address[panel[2]], record.challenge_id, upheld=False, height=8)
+
+    resolved = wide_ledger.challenges[record.challenge_id]
+    assert resolved.status == "upheld"
+    assert resolved.panel == panel
+    assert resolved.resolved_height == 8
+    assert resolved.votes == {panel[0]: True, panel[1]: True, panel[2]: False}
+    # Upheld: the challenger is made whole, the miner is slashed, and the immature
+    # coinbase credited at the proof's height is burned.
+    assert wide_ledger.ensure(record.challenger).balance == before
+    assert wide_ledger.ensure(record.miner).bonded == 0
+    assert wide_ledger.ensure(record.miner).coinbase_queue == [(1, 300)]
+    assert wide_ledger.ensure(record.miner).immature == 300
+
+
+def test_a_rejected_ballot_burns_the_challengers_bond(
+    wide_ledger: State, wide_accounts: Mapping[str, Any]
+) -> None:
+    record = _open(wide_ledger, wide_accounts)
+    wide_ledger.ensure(record.miner).bonded = 3 * BOND
+    _bond_named(wide_ledger, wide_accounts, "carol")
+
+    _cast(wide_ledger, wide_accounts["carol"], record.challenge_id, upheld=False, height=6)
+
+    resolved = wide_ledger.challenges[record.challenge_id]
+    assert resolved.status == "rejected"
+    assert resolved.panel == (wide_accounts["carol"].address,)
+    # The bond was subtracted when the challenge opened; not returning it is the burn.
+    assert wide_ledger.ensure(record.challenger).balance == 1_000_000 - BOND
+    assert wide_ledger.ensure(record.miner).bonded == 3 * BOND
+
+
+def test_a_member_votes_once_and_a_resolved_challenge_takes_no_more(
+    wide_ledger: State, wide_accounts: Mapping[str, Any]
+) -> None:
+    record = _open(wide_ledger, wide_accounts)
+    _bond_named(wide_ledger, wide_accounts, "carol")
+    _cast(wide_ledger, wide_accounts["carol"], record.challenge_id, upheld=False, height=6)
+
+    again = _vote_tx(
+        wide_ledger,
+        wide_accounts["carol"],
+        record.challenge_id,
+        upheld=True,
+        nonce=wide_ledger.ensure(wide_accounts["carol"].address).nonce,
+    )
+    with pytest.raises(TxValidationError, match="already rejected"):
+        validate_transaction(again, wide_ledger.params, wide_ledger, height=7)
+
+
+def test_a_vote_finds_no_panel_without_a_bonded_adjudicator(
+    wide_ledger: State, wide_accounts: Mapping[str, Any]
+) -> None:
+    record = _open(wide_ledger, wide_accounts)
+    _bond_named(wide_ledger, wide_accounts, "carol")
+    _cast(wide_ledger, wide_accounts["carol"], record.challenge_id, upheld=True, height=6)
+
+    # The challenge is already resolved by the only member; bonding somebody else
+    # cannot reopen it.
+    _bond_named(wide_ledger, wide_accounts, "dave")
+    _bond_named(wide_ledger, wide_accounts, "erin")
+    assert wide_ledger.challenges[record.challenge_id].status == "upheld"
+
+
+def test_votes_survive_a_snapshot_round_trip(
+    wide_ledger: State, wide_accounts: Mapping[str, Any]
+) -> None:
+    record = _open(wide_ledger, wide_accounts)
+    _bond_named(wide_ledger, wide_accounts, "carol")
+    _cast(wide_ledger, wide_accounts["carol"], record.challenge_id, upheld=False, height=6)
+
+    restored = State.from_snapshot(wide_ledger.params, wide_ledger.snapshot())
+    assert restored.challenges[record.challenge_id] == wide_ledger.challenges[record.challenge_id]
+    assert restored.challenges[record.challenge_id].votes == {wide_accounts["carol"].address: False}

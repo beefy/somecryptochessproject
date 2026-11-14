@@ -405,6 +405,8 @@ class ChallengeRecord:
     status: str = "open"
     resolved_height: int | None = None
     panel: tuple[str, ...] = ()
+    votes: dict[str, bool] = field(default_factory=dict)
+    """``member address -> upheld?`` for every ballot cast so far."""
 
     @property
     def open(self) -> bool:
@@ -432,6 +434,7 @@ class ChallengeRecord:
             "status": self.status,
             "resolved_height": self.resolved_height,
             "panel": list(self.panel),
+            "votes": {member: self.votes[member] for member in sorted(self.votes)},
         }
 
     @classmethod
@@ -440,6 +443,14 @@ class ChallengeRecord:
         panel_raw = document.get("panel") or []
         if not isinstance(panel_raw, list):
             raise StateError("challenge panel must be a list")
+        votes_raw = document.get("votes") or {}
+        if not isinstance(votes_raw, Mapping):
+            raise StateError("challenge votes must be an object")
+        votes: dict[str, bool] = {}
+        for member, ballot in votes_raw.items():
+            if not isinstance(ballot, bool):
+                raise StateError(f"challenge vote from {member!r} must be a boolean")
+            votes[str(member)] = ballot
         status = str(document.get("status") or "open")
         if status not in {"open", "upheld", "rejected"}:
             raise StateError(f"unknown challenge status: {status!r}")
@@ -461,6 +472,7 @@ class ChallengeRecord:
                 else _as_int(document.get("resolved_height"), "resolved_height")
             ),
             panel=tuple(str(member) for member in panel_raw),
+            votes=votes,
         )
 
 

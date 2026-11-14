@@ -1,34 +1,38 @@
-"""Deterministic quality events: re-run the pinned profile, then replay the challenge.
+"""Deterministic quality events: audit a proof, accuse it, watch the chain decide.
 
-The node re-runs ``quality-v1`` over sampled proofs and opens a bonded challenge
-when the re-run disagrees with the summary the proof carried
-(``sccp.node.quality_sampler``). Testnet leaves ``quality_mode`` off, so no proof
-carries a summary and no challenge is ever opened: the whole path from "a proof
-was accepted" to "a bond moved" is dead code in a hosted deployment.
+The bonded challenge path needs three things a quiet testnet never produces on its
+own: a proof that carries a quality summary, a party willing to spend a bond
+accusing it, and a panel that re-runs the pinned profile. This module supplies the
+second and drives the rest:
 
-This module exercises that path from outside the node, at a pace an operator can
-watch:
+* it reads the newest blocks from ``GET /v1/blocks/{height}`` and keeps the proofs
+  that carry a ``quality_summary`` -- a miner running with ``--quality-summary
+  honest`` or ``forged`` (the liar in ``synthetic_miner_creation``);
+* it runs the node's own :class:`~sccp.node.quality_sampler.QualitySampler` over
+  them, so the sampling bucket, the PGN re-validation and the summary comparison
+  are the node's code rather than a copy of it;
+* when the re-run disagrees with the summary a proof claims, it signs a real
+  ``challenge`` transaction from a published, faucet-funded account and submits it
+  to ``POST /v1/tx``. The chain locks the bond, the bonded panel re-runs the proof
+  itself and votes in ``panel_vote`` transactions, and every node replays the same
+  verdict;
+* every cycle it polls ``GET /v1/challenges?include_resolved=true`` and reports the
+  challenges this account filed that the chain has since decided -- ``upheld`` (the
+  lie was caught, the miner's bond is slashed and the challenger is repaid) or
+  ``rejected`` (the proof was honest and the challenger's bond is burned).
 
-* it reads the newest blocks from ``GET /v1/blocks/{height}`` and runs the node's
-  own :class:`~sccp.node.quality_sampler.QualitySampler` over their proofs, so the
-  sampling bucket, the PGN re-validation and the summary comparison are the
-  node's code rather than a copy of it;
-* every second event offers the sampler the *same* proof with a fabricated
-  summary -- a clean game with a trace hash that is not the one the re-run
-  produces -- which is the shape of a miner lying about its evidence;
-* it replays ``open_challenge``, ``challenge_panel`` and ``adjudicate_with_panel``
-  in a local :class:`~sccp.chain.state.State` seeded from the node's roster, so
-  the bond accounting, the beacon-ranked panel and the slash are the chain's rules.
+``false_challenge_every`` files a knowingly wrong accusation against an honest
+summary so the ``rejected`` branch is exercised too: an accuser who is wrong pays
+for it, which is the half of the incentive that keeps challenges honest.
 
-Nothing is submitted: the mirror lives in this process, so a synthetic challenge
-can never invalidate a real proof. The report says what *would* have happened --
-``upheld`` (the miner's bond would be slashed) or ``rejected`` (the challenger's
-bond would be burned).
+Nothing here is simulated. ``submit=False`` gives a read-only audit for tests and
+dry runs: it reports what it would accuse and never spends a coin.
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,13 +40,19 @@ from typing import Final
 
 import httpx
 
-from sccp.chain.state import EpochRecord, ProofRecord, State
+from sccp.chain.tx import sign_transaction
 from sccp.chess.engines import open_engine
-from sccp.chess.quality import QUALITY_V1, AnalysisCache, AnalysisEngine, QualityProfile
+from sccp.chess.quality import (
+    QUALITY_V1,
+    AnalysisCache,
+    AnalysisEngine,
+    QualityProfile,
+    summary_matches,
+)
 from sccp.config import TESTNET, NetworkParams
 from sccp.crypto.address import encode_address
-from sccp.crypto.pq import hybrid_keypair_from_seed
-from sccp.errors import ChallengeError, EngineError, QualityError
+from sccp.crypto.pq import HybridKeypair, hybrid_keypair_from_seed
+from sccp.errors import EngineError, QualityError
 from sccp.node.quality_sampler import (
     SAMPLE_BUCKETS,
     QualitySampler,
@@ -51,15 +61,14 @@ from sccp.node.quality_sampler import (
     sampling_decision,
 )
 from sccp.protocol import challenges
-from sccp.protocol.models import Beacon, QualitySummary, RosterMember, WinProof
+from sccp.protocol.models import Transaction, TxType, WinProof
 
 QUALITY_SAMPLE_RATE: Final = SAMPLE_BUCKETS
-"""How often the auditor looks at a proof.
+"""How often the auditor looks at a summarised proof.
 
 The node samples at ``quality_sample_rate``, which is ``0`` on testnet because
-quality enforcement is off there. The auditor enforces nothing on the chain, and
-a block carries one or two proofs a minute, so it accepts every candidate and
-lets ``max_events`` do the rate limiting.
+quality enforcement is off there. The auditor is not a validator: it looks at
+every proof that carries a summary and lets ``max_events`` do the rate limiting.
 """
 
 MAX_AUDIT_EVENTS: Final = 1
@@ -69,11 +78,8 @@ A depth-14 multi-PV re-run of a 60-ply game costs about what a match costs, so
 one per cycle keeps the generator background load rather than the main load.
 """
 
-INJECT_EVERY: Final = 2
-"""Every second event offers the sampler a proof with a fabricated summary."""
-
 CHALLENGER_NAMESPACE: Final = b"sccp/testnet/quality-challenger/"
-"""The published seed of the account whose challenges are replayed."""
+"""The published seed of the account that files the challenges."""
 
 ENGINE_PROFILE: Final = "stockfish-19"
 """The engine profile the miners register, so the re-run fingerprints match."""
@@ -81,46 +87,22 @@ ENGINE_PROFILE: Final = "stockfish-19"
 ENGINE_PATH: Final = Path("/usr/games/stockfish")
 """The binary the stack installs; the miners play with this same file."""
 
-_PANEL_SIZES: Final = (challenges.PANEL_SIZE, 1)
-"""Panel sizes to try, largest first. A testnet roster may bond fewer than three."""
+FALSE_CHALLENGE_REASON: Final = "deliberate false accusation: exercising the rebuttal path"
+"""What a knowingly false challenge says about itself."""
 
 
 class QualityEventError(RuntimeError):
-    """An audit could not read the node or seat a challenge."""
+    """An audit could not read the node, fund itself or submit a challenge."""
 
 
-Challenger = str
+def challenger_keypair() -> HybridKeypair:
+    """The published key of the challenger account, derived from a fixed seed."""
+    return hybrid_keypair_from_seed(hashlib.sha256(CHALLENGER_NAMESPACE).digest())
 
 
 def challenger_address(params: NetworkParams = TESTNET) -> str:
-    """The deterministic account that would open the synthetic challenges.
-
-    Its seed is published, like the traffic wallets', so an operator can sign the
-    same challenge for real if they want the node to admit it.
-    """
-    keypair = hybrid_keypair_from_seed(hashlib.sha256(CHALLENGER_NAMESPACE).digest())
-    return encode_address(keypair.public_key_bytes, params)
-
-
-def fabricate_summary(profile: QualityProfile = QUALITY_V1) -> QualitySummary:
-    """A summary that claims a clean game and commits to no trace.
-
-    Only the policy id has to be real: the node's comparison reports the trace
-    hash mismatch, which is exactly the finding a lying miner produces.
-    """
-    return QualitySummary(
-        policy=profile.policy,
-        verdict="pass",
-        trace_hash="00" * 32,
-        white_blunders=0,
-        black_blunders=0,
-        worst_cpl=0,
-    )
-
-
-def lying_proof(proof: WinProof, profile: QualityProfile = QUALITY_V1) -> WinProof:
-    """``proof`` with a fabricated summary attached; the proof id is unchanged."""
-    return proof.model_copy(update={"quality_summary": fabricate_summary(profile)})
+    """The deterministic account that files the challenges."""
+    return encode_address(challenger_keypair().public_key_bytes, params)
 
 
 def open_analysis_engine(
@@ -131,22 +113,46 @@ def open_analysis_engine(
     return open_engine(profile, binary=Path(path))
 
 
+def challenge_transaction(
+    *,
+    keypair: HybridKeypair,
+    challenger: str,
+    params: NetworkParams,
+    proof_id: str,
+    reason: str,
+    evidence: str,
+    bond: int,
+    nonce: int,
+) -> Transaction:
+    """The signed ``challenge`` transaction an audit files.
+
+    Kept apart from the HTTP call so the envelope can be checked against the real
+    consensus rules in a test without a node: the payload keys, the bond and the
+    first-use public key are exactly what ``sccp.chain.tx`` validates.
+    """
+    tx = Transaction(
+        network=params.network_id,
+        type=TxType.CHALLENGE,
+        sender=challenger,
+        nonce=nonce,
+        fee=params.min_fee,
+        payload={
+            "proof_id": proof_id,
+            "reason": reason,
+            "evidence": evidence,
+            "bond": bond,
+            "public_key": keypair.public_key_hex,
+        },
+    )
+    return sign_transaction(keypair, tx)
+
+
 # -- talking to the node ------------------------------------------------------
 
 
 def _get_object(client: httpx.Client, path: str) -> Mapping[str, object]:
     """GET ``path`` and return a JSON object, or raise :class:`QualityEventError`."""
     response = client.get(path)
-    if response.status_code >= 300:
-        raise QualityEventError(f"GET {path} failed: {response.status_code}")
-    return _as_object(response, path)
-
-
-def _get_optional(client: httpx.Client, path: str) -> Mapping[str, object] | None:
-    """GET ``path``, treating a 404 as "the chain has not opened it yet"."""
-    response = client.get(path)
-    if response.status_code == 404:
-        return None
     if response.status_code >= 300:
         raise QualityEventError(f"GET {path} failed: {response.status_code}")
     return _as_object(response, path)
@@ -207,16 +213,55 @@ def block_miner(view: Mapping[str, object], height: int) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class Resolution:
-    """What the replayed challenge would have done to the two bonds."""
+class QualityEvent:
+    """One audited proof and the challenge it did or did not justify."""
+
+    height: int
+    proof_id: str
+    game_hash: str
+    miner: str
+    bucket: int
+    verdict: str | None = None
+    """The re-run's verdict, whether or not it matched the summary."""
+    reasons: tuple[str, ...] = ()
+    """Why the re-run disagreed with the summary, empty when it agreed."""
+    error: str | None = None
+    challenge_id: str | None = None
+    """The challenge this audit filed, once the chain has it."""
+    submitted: bool = False
+    note: str = ""
+
+    @property
+    def challenged(self) -> bool:
+        """Whether this event filed a challenge."""
+        return self.submitted or self.challenge_id is not None
+
+    def as_line(self) -> str:
+        """One greppable line describing the event."""
+        head = f"block {self.height} proof {self.proof_id[:10]} (bucket {self.bucket}): "
+        if self.error is not None:
+            return head + f"analysis failed: {self.error}"
+        text = head + f"verdict {self.verdict}"
+        if self.reasons:
+            text += " (" + "; ".join(self.reasons) + ")"
+        if self.submitted:
+            text += "; challenge submitted, wait for the panel"
+        elif self.challenge_id is not None:
+            text += f"; challenge {self.challenge_id[:10]}"
+        if self.note:
+            text += f"; {self.note}"
+        return text
+
+
+@dataclass(frozen=True, slots=True)
+class Settlement:
+    """A challenge this audit filed that the chain has since decided."""
 
     challenge_id: str
+    proof_id: str
     status: str
-    """``upheld`` or ``rejected``."""
-    panel: tuple[str, ...]
+    """``upheld`` (the summary was false) or ``rejected`` (it was honest)."""
     bond: int
-    returned: int
-    burned: int
     slashed: bool
 
     @property
@@ -224,55 +269,15 @@ class Resolution:
         """Whether the proof the challenge named is still valid."""
         return self.status != "upheld"
 
-
-@dataclass(frozen=True, slots=True)
-class QualityEvent:
-    """One analysed proof and the challenge it did or did not warrant."""
-
-    height: int
-    proof_id: str
-    game_hash: str
-    miner: str
-    origin: str
-    """``sampled`` (the proof as the chain accepted it) or ``injected`` (carrying
-    a fabricated summary)."""
-    bucket: int
-    verdict: str | None = None
-    reasons: tuple[str, ...] = ()
-    error: str | None = None
-    resolution: Resolution | None = None
-    note: str = ""
-
-    @property
-    def challenged(self) -> bool:
-        """Whether the event produced a challenge."""
-        return self.resolution is not None
-
-    @property
-    def status(self) -> str:
-        """The challenge status, or ``none``."""
-        return "none" if self.resolution is None else self.resolution.status
-
     def as_line(self) -> str:
-        """One greppable line describing the event."""
-        head = (
-            f"block {self.height} proof {self.proof_id[:10]} "
-            f"({self.origin}, bucket {self.bucket}): "
+        """One greppable line describing the verdict."""
+        outcome = (
+            f"upheld on proof {self.proof_id[:10]}: miner slashed, {self.bond}-unit bond returned"
+            if self.slashed
+            else f"rejected on proof {self.proof_id[:10]}: proof restored and "
+            f"{self.bond}-unit bond burned"
         )
-        if self.error is not None:
-            return head + f"analysis failed: {self.error}"
-        text = head + f"verdict {self.verdict}"
-        if self.reasons:
-            text += " (" + "; ".join(self.reasons) + ")"
-        if self.resolution is not None:
-            bond = "returned" if self.resolution.returned else "burned"
-            text += (
-                f"; challenge {self.resolution.status} on {len(self.resolution.panel)} "
-                f"vote(s), {self.resolution.bond}-unit bond {bond}"
-            )
-        if self.note:
-            text += f"; {self.note}"
-        return text
+        return f"challenge {self.challenge_id[:10]} {outcome}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,9 +285,9 @@ class AuditReport:
     """What one audit saw, for the log line and for tests."""
 
     events: tuple[QualityEvent, ...] = ()
-    challenged: int = 0
-    upheld: int = 0
-    rejected: int = 0
+    settlements: tuple[Settlement, ...] = ()
+    stranded: tuple[str, ...] = ()
+    """Filed challenges with no bonded adjudicator: their bond stays locked."""
     blocked: str = ""
     """Why nothing was audited, when nothing was."""
 
@@ -291,11 +296,32 @@ class AuditReport:
         """How many proofs were re-run."""
         return len(self.events)
 
+    @property
+    def challenged(self) -> int:
+        """How many challenges this audit filed."""
+        return sum(1 for event in self.events if event.challenged)
+
+    @property
+    def upheld(self) -> int:
+        """How many of the filed challenges the chain upheld."""
+        return sum(1 for settlement in self.settlements if settlement.status == "upheld")
+
+    @property
+    def rejected(self) -> int:
+        """How many of the filed challenges the chain rejected."""
+        return sum(1 for settlement in self.settlements if settlement.status == "rejected")
+
     def as_line(self) -> str:
         """One greppable line per audit."""
-        if not self.events:
+        parts = [event.as_line() for event in self.events]
+        parts.extend(settlement.as_line() for settlement in self.settlements)
+        parts.extend(
+            f"challenge {challenge_id[:10]} has no bonded adjudicator yet; its bond stays locked"
+            for challenge_id in self.stranded
+        )
+        if not parts:
             return f"quality: {self.blocked or 'nothing sampled'}"
-        return "quality: " + "; ".join(event.as_line() for event in self.events)
+        return "quality: " + "; ".join(parts)
 
 
 # -- the auditor --------------------------------------------------------------
@@ -307,12 +333,16 @@ EngineFactory = Callable[[], AnalysisEngine]
 
 @dataclass
 class QualityAudit:
-    """Re-run the pinned profile over new proofs and replay one challenge.
+    """Re-run the pinned profile over new proofs and file bonded challenges.
 
     One instance follows the chain forward: every call to :meth:`audit` looks at
     blocks it has not seen, so a cycle with no new block costs one
     ``GET /v1/status``. Proofs older than ``challenge_window`` are skipped when a
     cycle falls behind, because a challenge against them would be refused.
+
+    ``submit`` is on by default: an audit that finds a lying summary files a real
+    ``challenge`` transaction and the chain's panel decides it. ``submit=False``
+    is the read-only audit: the finding is reported and no bond is spent.
     """
 
     client: httpx.Client
@@ -320,36 +350,50 @@ class QualityAudit:
     profile: QualityProfile = QUALITY_V1
     sample_rate: int = QUALITY_SAMPLE_RATE
     max_events: int = MAX_AUDIT_EVENTS
-    inject_every: int = INJECT_EVERY
     bond: int | None = None
-    challenger: Challenger | None = None
+    challenger: str | None = None
+    submit: bool = True
+    false_challenge_every: int = 0
+    """File a knowing false accusation every Nth analysed proof; ``0`` is never."""
     engine_factory: EngineFactory | None = None
     engine_path: Path = ENGINE_PATH
     engine_profile: str = ENGINE_PROFILE
+    _keypair: HybridKeypair | None = field(default=None, init=False, repr=False)
     _engine: AnalysisEngine | None = field(default=None, init=False, repr=False)
     _owned: bool = field(default=False, init=False, repr=False)
     _cache: AnalysisCache = field(default_factory=AnalysisCache, init=False, repr=False)
     _next_height: int = field(default=1, init=False, repr=False)
-    _events: int = field(default=0, init=False, repr=False)
-    _epochs: dict[int, EpochRecord] = field(default_factory=dict, init=False, repr=False)
+    _analysed: int = field(default=0, init=False, repr=False)
+    _nonce: int | None = field(default=None, init=False, repr=False)
+    _settled: set[str] = field(default_factory=set, init=False, repr=False)
     _closed: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.max_events < 1:
             raise QualityEventError("max_events must be at least one")
-        if self.inject_every < 1:
-            raise QualityEventError("inject_every must be at least one")
+        if self.false_challenge_every < 0:
+            raise QualityEventError("false_challenge_every cannot be negative")
         if not 0 < self.sample_rate <= SAMPLE_BUCKETS:
             raise QualityEventError("sample_rate must be between 1 and 1000")
         if self.bond is None:
             self.bond = max(1, self.params.min_bond)
         if self.bond < 1:
             raise QualityEventError("the challenge bond must be positive")
-        if self.challenger is None:
+        if self.submit:
+            self._keypair = challenger_keypair()
+            derived = encode_address(self._keypair.public_key_bytes, self.params)
+            if self.challenger is None:
+                self.challenger = derived
+            elif self.challenger != derived:
+                raise QualityEventError(
+                    f"the challenger must be {derived}; its key is derived from the "
+                    "published seed and no other account can sign for it"
+                )
+        elif self.challenger is None:
             self.challenger = challenger_address(self.params)
 
     def audit(self) -> AuditReport:
-        """Re-run the newest proofs and adjudicate the challenges they warrant.
+        """Audit the newest summarised proofs and file the challenges they warrant.
 
         Raises :class:`QualityEventError` when the node cannot be read; the caller
         logs that per cycle, like any other traffic failure.
@@ -359,9 +403,14 @@ class QualityAudit:
         window = self.params.challenge_window
         if window <= 0:
             return AuditReport(blocked="this network disables quality challenges")
+        settlements, stranded = self._poll_settlements()
         height = tip_height(self.client)
         if height < self._next_height:
-            return AuditReport(blocked=f"no block after {height}")
+            return AuditReport(
+                settlements=settlements,
+                stranded=stranded,
+                blocked=f"no block after {height}",
+            )
         start = max(1, self._next_height, height - window + 1)
         sampler = QualitySampler(
             self.params,
@@ -375,12 +424,16 @@ class QualityAudit:
                 break
             events.extend(self._audit_block(sampler, block_height))
         self._next_height = height + 1
+        blocked = (
+            ""
+            if events or settlements or stranded
+            else f"no proof carrying a summary between blocks {start} and {height}"
+        )
         return AuditReport(
             events=tuple(events),
-            challenged=sum(1 for event in events if event.challenged),
-            upheld=sum(1 for event in events if event.status == "upheld"),
-            rejected=sum(1 for event in events if event.status == "rejected"),
-            blocked="" if events else f"no new proof between blocks {start} and {height}",
+            settlements=settlements,
+            stranded=stranded,
+            blocked=blocked,
         )
 
     def close(self) -> None:
@@ -397,7 +450,7 @@ class QualityAudit:
     # -- one block ----------------------------------------------------------
 
     def _audit_block(self, sampler: QualitySampler, height: int) -> list[QualityEvent]:
-        """Analyse the sampled proofs of ``height``, up to the event budget."""
+        """Analyse the summarised proofs of ``height``, up to the event budget."""
         view = _get_object(self.client, f"/v1/blocks/{height}")
         block_hash = _digest(view.get("hash"), "hash", f"block {height}")
         miner = block_miner(view, height)
@@ -405,24 +458,26 @@ class QualityAudit:
         for proof in block_proofs(view, height):
             if len(events) >= self.max_events:
                 break
+            if proof.quality_summary is None:
+                # Only a summary can be wrong. A proof without one is what every
+                # honest miner submits while testnet's quality mode is off, and
+                # accusing it would slash a miner who claimed nothing.
+                continue
             decision = sampling_decision(block_hash, proof.proof_id, sample_rate=self.sample_rate)
             if not decision.sampled:
                 continue
-            origin = self._origin()
-            candidate = lying_proof(proof, self.profile) if origin == "injected" else proof
-            if sampler.enqueue(block_hash, candidate) is None:
+            if sampler.enqueue(block_hash, proof) is None:  # pragma: no cover - dup
                 continue
+            self._analysed += 1
             events.append(
                 self._analyse(
                     sampler,
                     proof=proof,
-                    origin=origin,
                     decision=decision,
                     height=height,
                     miner=miner,
                 )
             )
-            self._events += 1
         return events
 
     def _run(self, sampler: QualitySampler) -> tuple[SamplerResult, ...]:
@@ -440,17 +495,11 @@ class QualityAudit:
                 return results
         return ()
 
-    def _origin(self) -> str:
-        """``injected`` on every ``inject_every``-th event, ``sampled`` otherwise."""
-        last = self.inject_every - 1
-        return "injected" if self._events % self.inject_every == last else "sampled"
-
     def _analyse(
         self,
         sampler: QualitySampler,
         *,
         proof: WinProof,
-        origin: str,
         decision: SamplingDecision,
         height: int,
         miner: str,
@@ -461,7 +510,6 @@ class QualityAudit:
         except (EngineError, QualityError) as exc:
             return self._event(
                 proof=proof,
-                origin=origin,
                 decision=decision,
                 height=height,
                 miner=miner,
@@ -471,7 +519,6 @@ class QualityAudit:
         if result is None:
             return self._event(
                 proof=proof,
-                origin=origin,
                 decision=decision,
                 height=height,
                 miner=miner,
@@ -479,7 +526,6 @@ class QualityAudit:
             )
         return self._event(
             proof=proof,
-            origin=origin,
             decision=decision,
             height=height,
             miner=miner,
@@ -490,149 +536,183 @@ class QualityAudit:
         self,
         *,
         proof: WinProof,
-        origin: str,
         decision: SamplingDecision,
         height: int,
         miner: str,
         result: SamplerResult | None = None,
         error: str | None = None,
     ) -> QualityEvent:
-        """Build one event, replaying the challenge when the re-run disagrees."""
-        resolution: Resolution | None = None
+        """Build one event, filing a challenge when the summary is false."""
         note = ""
+        submitted = False
         if error is None and result is not None and result.error is not None:
             # An engine that failed to analyse is not a disagreement: surface the
             # failure instead of a bare "verdict None" on the cycle line.
             error = result.error
-        if result is not None and result.needs_challenge:
-            try:
-                resolution = self._simulate(proof, result=result, height=height, miner=miner)
-            except (ChallengeError, QualityError, QualityEventError) as exc:
-                note = str(exc)
+        reasons = () if result is None else result.reasons
+        if error is None and result is not None and result.report is not None:
+            agrees, finding = summary_matches(result.summary, result.report)
+            deliberate = (
+                self.false_challenge_every > 0 and self._analysed % self.false_challenge_every == 0
+            )
+            if agrees and not deliberate:
+                note = f"summary agrees ({finding}); no challenge"
+            elif not self.submit:
+                note = "read-only audit: a challenge would be filed here"
+            else:
+                try:
+                    self._file(proof, result, agrees=agrees, finding=finding)
+                except (QualityError, QualityEventError, httpx.HTTPError) as exc:
+                    note = str(exc)
+                else:
+                    submitted = True
         return QualityEvent(
             height=height,
             proof_id=proof.proof_id,
             game_hash=proof.game_hash,
             miner=miner,
-            origin=origin,
             bucket=decision.bucket,
             verdict=None if result is None else result.verdict,
-            reasons=() if result is None else result.reasons,
+            reasons=reasons,
             error=error,
-            resolution=resolution,
+            submitted=submitted,
             note=note,
         )
 
-    # -- the challenge mirror -----------------------------------------------
+    # -- filing the challenge -----------------------------------------------
 
-    def _simulate(
+    def _file(
         self,
         proof: WinProof,
-        *,
         result: SamplerResult,
-        height: int,
-        miner: str,
-    ) -> Resolution:
-        """Open, seat and adjudicate the challenge in a local state.
-
-        The mirror holds exactly what the rules need: the proof, the challenger's
-        bond and the bonded accounts the panel is drawn from. Every panel member
-        votes the re-run's own verdict, which is what an honest panel finds.
-        """
-        request = result.challenge()
-        if request is None:  # pragma: no cover - the caller checks needs_challenge
-            raise QualityEventError("the sampler produced no challenge request")
-        assert self.bond is not None
-        assert self.challenger is not None
-        state = self._mirror(height=height)
-        state.proofs[proof.game_hash] = ProofRecord(
-            proof_id=proof.proof_id,
-            game_hash=proof.game_hash,
-            height=height,
-            winner=proof.winner,
-            miner=miner,
+        *,
+        agrees: bool,
+        finding: str,
+    ) -> None:
+        """Sign and submit a ``challenge`` transaction for ``proof``."""
+        evidence = json.dumps(
+            {
+                "kind": "quality-audit",
+                "policy": self.profile.policy,
+                "claimed": (
+                    None if result.summary is None else result.summary.model_dump(mode="json")
+                ),
+                "observed_verdict": result.verdict,
+                "observed_trace": None if result.report is None else result.report.trace_hash,
+                "finding": finding,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
         )
-        state.proof_ids[proof.proof_id] = proof.game_hash
-        state.ensure(self.challenger).balance = self.bond
-        record = challenges.open_challenge(
-            state,
+        reason = (
+            f"quality summary does not match an independent re-run: {finding}"
+            if not agrees
+            else FALSE_CHALLENGE_REASON
+        )
+        self._submit(
+            proof,
+            reason=reason[: challenges.MAX_REASON_LENGTH],
+            evidence=evidence[: challenges.MAX_EVIDENCE_LENGTH],
+        )
+
+    def _submit(self, proof: WinProof, *, reason: str, evidence: str) -> None:
+        """Announce the signed challenge, or explain why it cannot be afforded."""
+        if self.bond is None or self._keypair is None or self.challenger is None:
+            raise QualityEventError("this auditor does not submit challenges")
+        balance = self._balance()
+        cost = self.bond + self.params.min_fee
+        if balance < cost:
+            raise QualityEventError(
+                f"{self.challenger} holds {balance} units; a challenge costs {cost} "
+                "(bond plus fee), so the cycle's top-up has not landed yet"
+            )
+        nonce = self._next_nonce()
+        tx = challenge_transaction(
+            keypair=self._keypair,
             challenger=self.challenger,
-            proof_id=request.proof_id,
-            reason=request.reason,
-            evidence=request.evidence,
+            params=self.params,
+            proof_id=proof.proof_id,
+            reason=reason,
+            evidence=evidence,
             bond=self.bond,
-            height=height,
+            nonce=nonce,
         )
-        bad = result.verdict == "fail"
-        refusals: list[str] = []
-        for size in _PANEL_SIZES:
-            try:
-                panel = challenges.challenge_panel(state, record.challenge_id, size=size)
-            except ChallengeError as exc:
-                refusals.append(str(exc))
+        response = self.client.post(
+            "/v1/tx",
+            json=tx.model_dump(mode="json", by_alias=True),
+        )
+        if response.status_code >= 300:
+            # The nonce may have clashed with something that landed between our
+            # read and our submission; re-read it next cycle instead of drifting.
+            self._nonce = None
+            raise QualityEventError(
+                f"POST /v1/tx refused the challenge: {response.status_code} {response.text[:200]}"
+            )
+        self._nonce = nonce + 1
+
+    def _account(self) -> Mapping[str, object]:
+        """The challenger's account view."""
+        if self.challenger is None:  # pragma: no cover - guarded by __post_init__
+            raise QualityEventError("this auditor has no challenger account")
+        return _get_object(self.client, f"/v1/accounts/{self.challenger}")
+
+    def _balance(self) -> int:
+        """The challenger's spendable balance, in base units."""
+        balance = self._account().get("balance")
+        if not isinstance(balance, int) or isinstance(balance, bool):
+            raise QualityEventError(f"/v1/accounts/{self.challenger} carries no balance")
+        return balance
+
+    def _next_nonce(self) -> int:
+        """The nonce to sign the next challenge with."""
+        committed = self._account().get("nonce")
+        if not isinstance(committed, int) or isinstance(committed, bool):
+            raise QualityEventError(f"/v1/accounts/{self.challenger} carries no nonce")
+        self._nonce = committed if self._nonce is None else max(committed, self._nonce)
+        return self._nonce
+
+    # -- what the chain did with them ---------------------------------------
+
+    def _poll_settlements(self) -> tuple[tuple[Settlement, ...], tuple[str, ...]]:
+        """Challenges this account filed that the chain has, or cannot, decide."""
+        if not self.submit:
+            return (), ()
+        try:
+            document = _get_object(self.client, "/v1/challenges?include_resolved=true")
+        except (QualityEventError, httpx.HTTPError):
+            return (), ()  # a chain with no challenges yet is not an audit failure
+        listed = document.get("challenges")
+        settlements: list[Settlement] = []
+        stranded: list[str] = []
+        for entry in listed if isinstance(listed, list) else ():
+            if not isinstance(entry, Mapping):
                 continue
-            resolved = challenges.adjudicate_with_panel(
-                state,
-                record.challenge_id,
-                dict.fromkeys(panel, bad),
-                height=height + 1,
-                size=size,
+            if entry.get("challenger") != self.challenger:
+                continue
+            challenge_id = str(entry.get("challenge_id") or "")
+            if not challenge_id or challenge_id in self._settled:
+                continue
+            status = entry.get("status")
+            if status == "open":
+                if not entry.get("adjudicators"):
+                    # Nobody bonded is eligible, so no ballot can ever complete:
+                    # say so instead of reporting a case that looks in progress.
+                    stranded.append(challenge_id)
+                continue
+            if status not in {"upheld", "rejected"}:
+                continue
+            self._settled.add(challenge_id)
+            bond = entry.get("bond")
+            settlements.append(
+                Settlement(
+                    challenge_id=challenge_id,
+                    proof_id=str(entry.get("proof_id") or ""),
+                    status=str(status),
+                    bond=bond if isinstance(bond, int) and not isinstance(bond, bool) else 0,
+                    slashed=status == "upheld",
+                )
             )
-            return Resolution(
-                challenge_id=resolved.challenge_id,
-                status=resolved.status,
-                panel=resolved.panel,
-                bond=self.bond,
-                returned=self.bond if resolved.upheld else 0,
-                burned=0 if resolved.upheld else self.bond,
-                slashed=resolved.upheld,
-            )
-        raise QualityEventError(
-            "no bonded miner could be seated on a panel; the challenge would stay open "
-            f"({' / '.join(refusals)})"
-        )
-
-    def _mirror(self, *, height: int) -> State:
-        """A state carrying the tip epoch's beacon and the bonded roster."""
-        state = State(self.params, height=height)
-        epoch = self._epoch(state.current_epoch())
-        if epoch is None:
-            return state
-        state.epochs[epoch.epoch] = epoch
-        for address in epoch.roster:
-            account = state.ensure(address)
-            # A panel is drawn from accounts with a positive bond, and a devnet's
-            # ``min_bond`` is zero, so the floor is one unit either way.
-            account.bonded = max(account.bonded, self.params.min_bond, 1)
-        return state
-
-    def _epoch(self, epoch: int) -> EpochRecord | None:
-        """The node's epoch record, cached; ``None`` when the chain has none yet."""
-        cached = self._epochs.get(epoch)
-        if cached is not None:
-            return cached
-        document = _get_optional(self.client, f"/v1/epochs/{epoch}")
-        if document is None:
-            return None
-        roster: dict[str, RosterMember] = {}
-        raw_roster = document.get("roster")
-        if isinstance(raw_roster, Mapping):
-            for address, member in raw_roster.items():
-                if not isinstance(address, str) or not isinstance(member, Mapping):
-                    continue
-                try:
-                    roster[address] = RosterMember.model_validate(member)
-                except ValueError:
-                    continue
-        beacon_raw = document.get("beacon")
-        record = EpochRecord(
-            epoch=epoch,
-            beacon=Beacon.model_validate(beacon_raw) if isinstance(beacon_raw, Mapping) else None,
-            roster=roster,
-            roster_root=str(document.get("roster_root") or ""),
-        )
-        self._epochs[epoch] = record
-        return record
+        return tuple(settlements), tuple(stranded)
 
     # -- the engine ---------------------------------------------------------
 

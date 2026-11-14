@@ -87,6 +87,7 @@ class TxType(StrEnum):
     TIMEOUT_CLAIM = "timeout_claim"
     TIMEOUT_DISPUTE = "timeout_dispute"
     CHALLENGE = "challenge"
+    PANEL_VOTE = "panel_vote"
     SLASH_EVIDENCE = "slash_evidence"
 
 

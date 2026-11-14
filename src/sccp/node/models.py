@@ -20,6 +20,7 @@ from sccp.protocol.models import (
     Color,
     MatchCertificate,
     ProtocolModel,
+    QualitySummary,
     ResultValue,
     RosterMember,
     TerminationValue,
@@ -124,6 +125,13 @@ class ChallengeView(ProtocolModel):
     status: Literal["open", "upheld", "rejected"]
     resolved_height: int | None = Field(default=None, ge=0)
     panel: tuple[str, ...] = ()
+    """The panel that decided it; empty while the challenge is open."""
+    adjudicators: tuple[str, ...] = ()
+    """The bonded accounts that would decide it now, so members know to vote."""
+    votes: dict[str, bool] = Field(default_factory=dict)
+    """Ballots cast so far, ``member address -> upheld?``."""
+    summary: QualitySummary | None = None
+    """The proof's quality summary: the claim the panel re-runs and compares."""
 
 
 class ChallengeList(ProtocolModel):

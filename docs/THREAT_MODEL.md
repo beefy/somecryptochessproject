@@ -228,7 +228,7 @@ Goal: appear stronger than the games support
 | Every node sees the same bonded set and beacon when it derives a panel | True for nodes at the same height; a reorg can change a not-yet-resolved panel | `challenges.challenge_panel` |
 | Sample rate 50/1000 catches enough bad proofs | Policy choice, tunable per network; not a security proof | `config.py: quality_sample_rate` |
 | Bonds exceed the expected value of one bad proof | Parameter choice; mainnet sizing is an open question in the implementation plan | `config.py: challenge_window`, `bond` fields |
-| Panel votes are delivered honestly | Not yet enforced on chain: there is no `panel_vote` transaction, so the node/operator transport is trusted | open item |
+| Panel votes are delivered honestly | Improved, not solved: each member commits a signed `panel_vote` and the completing block resolves the challenge, so the operator can no longer decide a case; the chain still trusts the attested verdicts rather than re-running the engine itself | `challenges.apply_panel_vote`, `miner/engine_miner.py` |
 | Witnesses for timeouts are available and honest enough | Mainnet requires a 3-witness quorum (`PROTOCOL.md` section 10.4) | `chain/timeout.py` |
 | A proofless block cannot claim chess work | Implemented: `earned_block_work` credits the `k * WIN_UNIT` term only when the block carries its `k` proofs, and a proofless block must carry exactly one transaction | `chain/difficulty.py`, `chain/block.py` |
 | A miner cannot set its own displayed rating | Implemented: the rating is a pure function of settled proofs, with no wire field and no submit route; the node recomputes it from the adopted chain | `ratings.build_ledger`, `node/service.py: ratings` |
@@ -237,8 +237,9 @@ Goal: appear stronger than the games support
 
 Open items that affect this model:
 
-1. A consensus-scheduled `panel_vote`/`adjudicate` transaction so votes do not
-   depend on operator honesty.
+1. A consensus rule that punishes a panel member whose ballot an honest re-run
+   contradicts. Votes are attributable now, but the chain does not re-execute the
+   engine, so a lying adjudicator costs nothing yet.
 2. Bond sizing that makes grieving an honest miner unprofitable relative to the
    CPU it burns.
 3. A `drand` BLS verifier, so `drand_used = 1` is verifiable offline.

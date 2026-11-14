@@ -50,6 +50,32 @@ not itemised here.
   stamp, so the first twenty blocks of a chain deployed today read as 2023. Charting them
   stretched every time axis by three years, turned the first interval into a multi-year
   "confirmation" and divided throughput by the chain's whole age.
+- **Miner churn and real quality challenges on the hosted testnet.**
+  `deploy/synthetic_miner_creation.py` derives two extra miners from published
+  seeds, funds and re-registers them through the same faucet gateway, and runs one
+  at a time as a real `sccp miner run` child, starting or stopping it every cycle
+  so registrations, availability and roster changes keep happening. The pool is
+  cast for the quality path: `synthetic-miner-1` plays at 16 nodes a move and
+  reports a summary claiming a clean search (`--quality-summary forged`), and
+  `synthetic-miner-2` posts its honest analysis. Capacity is a share of a core
+  (0.5 per miner, 1 reserved for node and relay, 0.5 for the quality engine), so
+  an `e2-standard-2` seats one extra miner instead of none.
+  `deploy/synthetic_quality_events.py` reads proofs that carry a summary, re-runs
+  the node's own sampler over one per cycle and, when the summary is false, signs
+  a real bonded `challenge` transaction from a published faucet-funded account;
+  every cycle it also reports the verdicts the chain reached on its own cases.
+  `--false-challenge-every N` files a knowingly wrong accusation against an
+  honest summary so the rebuttal path runs too.
+- **`panel_vote`: adjudication on chain.** `ChallengeView` gained `adjudicators`,
+  `votes` and the proof's `summary`, and miners now re-run a challenged proof and
+  commit a signed `panel_vote` from their own key. The vote that completes the
+  panel resolves the challenge inside block application (`apply_panel_vote`), so
+  the verdict, the returned or burned bond and the miner's slash are replayable
+  from the chain alone -- no operator decides a case any more. The panel is the
+  largest odd subset of the bonded set, excluding the parties, ranked by the
+  beacon of the epoch the challenge opened in; a two-miner testnet roster
+  adjudicates with one member. A challenge with no bonded adjudicator stays open
+  and the audit says so rather than leaving a locked bond looking like progress.
 
 ### Fixed
 

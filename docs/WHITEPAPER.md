@@ -1668,8 +1668,10 @@ The quality layer is implemented as an economic control:
 
 What remains is hardening, not a missing subsystem:
 
-- panel votes are delivered to the node/operator rather than committed by a
-  `panel_vote` transaction;
+- a miner whose proof claims a clean game can be caught: the sampler re-runs the
+  profile, a bonded `challenge` names the lie, and the panel's signed
+  `panel_vote` ballots resolve it on chain (the sampler still has to submit that
+  challenge itself, which the reference node does not do yet);
 - sample rate, bond size and panel size need calibration across hardware;
 - the sampler should submit qualifying challenges automatically;
 - NNUE networks are not pinned by hash;
