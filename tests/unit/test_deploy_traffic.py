@@ -54,6 +54,7 @@ def _transport(
     mined_height: int = 20,
     settles_immediately: bool = False,
     pool_noise: Sequence[str] = (),
+    pending_recipients: Sequence[str] = (),
 ) -> httpx.MockTransport:
     """Route the generator's requests into the real node.
 
@@ -63,6 +64,8 @@ def _transport(
     transactions. Every admission still goes through ``NodeService``.
     ``settles_immediately`` additionally reports an empty pool, standing in for a
     node that mines each cycle before the next one starts.
+    ``pending_recipients`` are the wallets whose transfer stays in the pool, which
+    is how a node behaves when a block does not carry the grant this time round.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -90,13 +93,16 @@ def _transport(
             digest = path.removeprefix("/v1/transactions/")
             if digest not in node.mempool.transactions:
                 return httpx.Response(404, json={"error": f"unknown transaction {digest!r}"})
+            entry = node.mempool.transactions[digest]
+            recipient = (entry.tx.payload or {}).get("to")
+            stuck = entry.tx.sender == _faucet_address() and recipient in pending_recipients
             return httpx.Response(
                 200,
                 json={
                     "txid": digest,
                     "network": TESTNET.network_id,
                     "type": TxType.TRANSFER.value,
-                    "height": mined_height,
+                    "height": None if stuck else mined_height,
                 },
             )
         raise AssertionError(f"unexpected request {request.url}")
@@ -235,6 +241,119 @@ def test_a_busy_mempool_does_not_stall_a_cycle(node: NodeService) -> None:
         )
 
     assert (report.funded, report.transfers, report.confirmed) == (2, 2, 4)
+
+
+def test_a_cycle_with_an_unconfirmed_grant_still_sends(node: NodeService) -> None:
+    """Funded wallets are spent even when one grant is still in the pool.
+
+    This is the fresh-deploy case: the faucet's five-grant budget funds half the
+    pool, the key path funds the rest, one of those grants misses the block, and
+    the cycle used to return before sending anything -- five funded wallets and a
+    transfer graph with nothing but faucet edges.
+    """
+    pool = [traffic.wallet(index) for index in range(4)]
+    with httpx.Client(
+        transport=_transport(node, pending_recipients=[pool[-1].address]),
+        base_url="http://node",
+    ) as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=1,
+            pool=pool,
+            rng=random.Random(4),
+            wallet_count=4,
+            transfer_count=3,
+            options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
+        )
+
+    assert (report.funded, report.unconfirmed, report.transfers) == (4, 1, 3)
+    assert report.confirmed == 6  # three grants and three sends mined
+    wallets = {item.address for item in pool}
+    assert [tx for tx in _admitted(node) if tx.sender in wallets], "no wallet paid another"
+
+
+def test_the_operator_key_path_retries_a_nonce_the_pool_already_holds(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The drip spends the same faucet account, so a grant can collide with it.
+
+    ``GET /v1/accounts`` reports the committed nonce, and the drip's pending
+    transfer is not in it until a block takes it. The grant is refused, the block
+    lands, and the retry renumbers instead of failing the cycle.
+    """
+    attempts: list[int] = []
+    state = {"conflicts": 1, "committed": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path.startswith("/v1/accounts/"):
+            unsigned = {"network": TESTNET.network_id, "address": _faucet_address()}
+            return httpx.Response(
+                200,
+                json={
+                    **unsigned,
+                    "balance": coins_to_units(1000),
+                    "immature": 0,
+                    "bonded": 0,
+                    "total": coins_to_units(1000),
+                    "nonce": state["committed"],
+                },
+            )
+        if path == "/v1/tx":
+            tx = Transaction.model_validate(json.loads(request.content))
+            attempts.append(tx.nonce)
+            if state["conflicts"]:
+                state["conflicts"] -= 1
+                state["committed"] = tx.nonce + 1  # the block that took the drip's transfer
+                return httpx.Response(
+                    400,
+                    json={
+                        "detail": f"{tx.sender} already has a pending transaction "
+                        f"with nonce {tx.nonce}"
+                    },
+                )
+            return httpx.Response(200, json={"network": TESTNET.network_id, "txid": "ab" * 32})
+        raise AssertionError(f"unexpected request {request.url}")
+
+    with httpx.Client(transport=httpx.MockTransport(handler), base_url="http://node") as client:
+        gateway = traffic.FaucetGateway(client, use_faucet_endpoint=False, poll_seconds=0.0)
+        gateway.start_cycle()
+        digest, via_endpoint = gateway.grant(traffic.wallet(0).address, traffic.GRANT_COINS)
+
+    assert attempts == [0, 1]
+    assert (digest, via_endpoint) == ("ab" * 32, False)
+    assert "waiting for the block that frees the nonce" in capsys.readouterr().err
+
+
+def test_a_nonce_conflict_that_never_clears_is_reported() -> None:
+    """Waiting is bounded: a nonce the chain never frees raises instead of hanging."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v1/accounts/"):
+            return httpx.Response(
+                200,
+                json={
+                    "network": TESTNET.network_id,
+                    "address": _faucet_address(),
+                    "balance": coins_to_units(1000),
+                    "immature": 0,
+                    "bonded": 0,
+                    "total": coins_to_units(1000),
+                    "nonce": 0,
+                },
+            )
+        return httpx.Response(
+            400,
+            json={"detail": f"{_faucet_address()} already has a pending transaction with nonce 0"},
+        )
+
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler), base_url="http://node") as client,
+        pytest.raises(traffic.NonceConflict),
+    ):
+        gateway = traffic.FaucetGateway(client, use_faucet_endpoint=False, wait_seconds=0.0)
+        gateway.start_cycle()
+        gateway.grant(traffic.wallet(0).address, traffic.GRANT_COINS)
 
 
 def test_run_waits_between_cycles_and_stops_on_request(
