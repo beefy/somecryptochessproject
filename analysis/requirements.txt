@@ -5,7 +5,7 @@
 # package and its runtime dependencies (including httpx). These are what the charts
 # need on top of that.
 jupyterlab>=4,<5
-matplotlib>=3.8,<4
+matplotlib>=3.11.2,<4
 networkx>=3.2,<4
 nbclient>=0.10,<1
 nbformat>=5.10,<6
