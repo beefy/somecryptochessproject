@@ -43,7 +43,11 @@ not itemised here.
   chain. Its balance history is reconstructed from transfers and anchored to
   `GET /v1/accounts`, and the notebook prints the drift, which is zero when the
   reconstruction captured every movement. Fetches are cached under `analysis/cache/`
-  (git-ignored); the notebook is a manual tool and is not run by CI.
+  (git-ignored); the notebook is a manual tool and is not run by CI. Block 0 is reported
+  as its own row instead of a data point: its timestamp comes from `genesis/testnet.json`,
+  a pinned constant (2023-11-14), while every later block is wall-clock, so charting it
+  stretched every time axis by three years and turned the first interval into a
+  multi-year "confirmation".
 
 ## [0.17.1] - 2026-11-13
 
