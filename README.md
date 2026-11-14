@@ -273,6 +273,7 @@ responsibility rather than a construction phase.
 ├── .github/workflows/deploy-explorer.yml        # hosted explorer (explorer.*)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
+│   ├── BIG_PICTURE.md            # wallet, bridge, DEX and variant tokens (plan)
 │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
 │   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
 │   ├── EXPLORER_DEPLOYMENT.md    # publish the explorer: proxy, DNS, rollback
@@ -466,6 +467,10 @@ The wallet and miner guides are separate:
   an engine miner, register on chain and commit/reveal availability.
 - [`docs/EXPLORE_THE_CHAIN.md`](docs/EXPLORE_THE_CHAIN.md) — build the web
   explorer, serve it from `sccp node run --web`, and play a signed table.
+
+The roadmap for the browser wallet, the ETH↔SCCP bridge, the native DEX and the
+variant tokens is [`docs/BIG_PICTURE.md`](docs/BIG_PICTURE.md); it is a plan, not
+a description of what the chain does today.
 
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
 [`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current

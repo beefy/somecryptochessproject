@@ -5,6 +5,37 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [0.19.0] - 2026-11-14
+
+### Added
+
+- **`docs/BIG_PICTURE.md`, the plan for a browser wallet, an ETH<->SCCP bridge
+  and a native DEX.** The chain settles games and mints SCCP, but there is still
+  no way to sign from a browser beyond the playable table, nowhere to trade one
+  asset for another, and no path between mined coins and ETH. The document plans
+  four releases in dependency order. A browser wallet (section 4) ports the
+  existing keyfile -- scrypt `n = 2**15`, AES-256-GCM, 24-word BIP-39 backup --
+  so the CLI and the tab open each other's files, and adds `buildTransfer` plus
+  the transaction builders the later work needs. Protocol v2 (section 5) adds
+  multi-asset accounts and per-variant issuance, so each chess variant's token is
+  minted only by that variant's settled proofs, with the variant inside the game
+  hash domain, per-variant ratings and no `create_asset` transaction at all. The
+  native DEX (section 6) is a constant-product pool that clears each block as a
+  batch, which keeps the invariant while removing in-block sandwiching. The
+  bridge (section 7) is a pair of HTLCs -- `htlc_lock`/`htlc_claim`/`htlc_refund`
+  on SCCP, one minimal `EthHtlc.sol` on Ethereum -- plus a signed,
+  off-consensus order book, so an ETH holder can buy SCCP and a miner can sell
+  rewards without a custodian, a peg or a wrapped asset. Every SCCP-side key,
+  signature and HTLC claim stays hybrid Ed25519 + ML-DSA-65; the single Solidity
+  file runs on the counterparty chain, so the node still has no EVM and no
+  `eth_*` endpoint. The document also records the non-goals (no EVM
+  compatibility, no permissionless asset issuance, no premine or sale), a
+  security checklist per leg, a release train to 1.0.0, and ten open decisions
+  with recommendations. `README.md` links to it from the docs tree and the
+  operator guides, and the version is bumped to 0.19.0 in `pyproject.toml`,
+  `src/sccp/version.py`, `src/web/package.json`, `src/web/package-lock.json`,
+  the whitepaper header and the three guides that print a version banner.
+
 ## [0.18.0] - 2026-11-14
 
 ### Added
