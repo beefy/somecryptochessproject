@@ -7,42 +7,19 @@ every cell is a `GET`, nothing is signed, no key is involved, and no node state 
 
 ```bash
 python -m venv .venv-analysis
-.venv-analysis/bin/python -m pip install -e .                    # sccp + the bot's wallets
-.venv-analysis/bin/python -m pip install -r analysis/requirements.txt
-.venv-analysis/bin/python -m jupyter lab analysis/testnet_stats.ipynb
+pip install -e .                    # sccp + the bot's wallets
+pip install -r analysis/requirements.txt
+jupyter lab analysis/testnet_stats.ipynb
 ```
 
 Run the notebook from this directory (`cd analysis`) so `cache/` lands here and the
 repository root is found for the synthetic-wallet import.
 
-Launch it with `python -m jupyter` from the environment you installed into, not with a
-bare `jupyter`. The `jupyter` on `PATH` is often another install — Homebrew ships
-`jupyter_core` without JupyterLab — and it fails with:
-
 ```
 Jupyter command `jupyter-lab` not found.
 ```
 
-That means "no JupyterLab in the `jupyter` you just ran", not "no JupyterLab in the
-notebook's environment". Both spellings below name the environment's own interpreter, so a
-`jupyter` earlier on `PATH` cannot shadow either:
-
-```bash
-.venv-analysis/bin/python -m jupyter lab analysis/testnet_stats.ipynb   # activated or not
-python -m jupyter lab analysis/testnet_stats.ipynb                      # after `activate`
-```
-
-Check the interpreter before blaming the notebook:
-
-```bash
-python -c "import sys, jupyterlab; print(sys.executable, jupyterlab.__version__)"
-```
-
-If that raises `ModuleNotFoundError`, the active environment is not the one that ran
-`pip install -r analysis/requirements.txt`; install there, or re-run the setup with the
-interpreter you actually use. VS Code can also open `testnet_stats.ipynb` directly: pick
-`.venv-analysis` as the kernel and run all, which skips the `jupyter lab` launcher
-entirely.
+Make sure you are using python3 with your venv.
 
 ## What it shows
 
