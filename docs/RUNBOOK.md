@@ -77,6 +77,50 @@ generator is one container IP, so a wide cycle spends that budget and signs the
 rest with the published faucet key -- the bypass `sccp faucet send` already uses.
 That line is expected, not an error; the endpoint is retried on the next cycle.
 
+Two more segments can appear on that same line, and both are on by default in
+`docker-compose.yml`:
+
+```
+cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | miners: started extra-miner-1; online: extra-miner-1 | quality: block 41 proof a1b2c3d4e5 (injected, bucket 742): verdict pass (trace hash does not match the re-run trace); challenge upheld on 3 vote(s), 10-unit bond returned
+```
+
+- `| miners: ...` comes from `deploy/synthetic_miner_creation.py`. The generator
+  keeps up to `--extra-miners` (2) extra miners derived from published seeds under
+  `/data/synthetic-miners`, and starts or stops one per cycle so the roster keeps
+  changing. They are real `sccp miner run` children: they register, commit
+  availability, play what the relay assigns and announce their proofs, and the
+  generator funds them through the same faucet gateway as the wallets. Capacity is
+  measured, not assumed: one core and 256 MiB per miner with a reserve for the
+  node, relay, fixed miners and the quality engine, so a two-core VM logs
+  `miners: no change; online: none (the host has 2 CPU(s) ... leave room for 0)`
+  and runs wallet traffic only. `--max-extra-online` caps how many run at once;
+  `--extra-miners 0` removes the churn entirely.
+- `| quality: ...` comes from `deploy/synthetic_quality_events.py`. Testnet sets
+  `quality_sample_rate = 0`, so a node never samples a proof and the challenge and
+  bond path never runs. The auditor reads the newest block's proofs, runs the
+  node's own `QualitySampler` over one of them per cycle, and every second event is
+  a copy whose `QualitySummary` claims a clean search it did not perform. The
+  sampler reports the disagreement it would report on a mainnet node, and the
+  auditor replays that challenge against a local `State` mirror -- proof, bond and
+  the epoch's roster from `GET /v1/epochs/{n}` -- so the line ends in `upheld` or
+  `rejected`. Nothing is submitted: the real proof is never touched.
+  `--no-quality-events` removes it. The re-run opens `/usr/games/stockfish` on first
+  use, so the first line of a deploy takes a few seconds longer than later ones.
+
+Working a quality event by hand, if a line reads `rejected` or carries a note:
+
+```bash
+curl -s http://127.0.0.1:8645/v1/blocks/<height> | jq '.proofs[].proof_id'
+curl -s "http://127.0.0.1:8645/v1/challenges?include_resolved=true"   # what the node holds
+docker compose logs --tail=50 traffic                                # the event line, with its reason
+```
+
+A `rejected` replay is expected when the panel it drew is empty -- the local
+mirror only bonds the roster the node reports, so a freshly reopened epoch may
+have none yet; the next cycle draws a full panel. The synthetic challenges
+themselves are never submitted, so `/v1/challenges` shows only the real ones (on
+testnet, normally none).
+
 The loop cannot drain the faucet. Transfers run between the pool's own wallets, so
 the coins circulate; the faucet is tapped only for new wallets (at most
 `--max-wallets`, ten by default, at 10 coins each) and for fees (1,000 units per

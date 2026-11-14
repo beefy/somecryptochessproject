@@ -16,6 +16,9 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import httpx
+import pytest
+from deploy import synthetic_testnet_traffic as traffic
 from deploy.init_testnet_stack import DEFAULT_PASSPHRASE, write_stack
 
 from sccp.config import TESTNET
@@ -25,6 +28,9 @@ COMPOSE = Path(__file__).resolve().parents[2] / "docker-compose.yml"
 """The stack file the deploy workflow uploads to the VM."""
 
 ADDRESS = re.compile(r"sccpt1[0-9a-z]+")
+
+TRAFFIC = "/app/deploy/synthetic_testnet_traffic.py"
+"""The generator's script inside the container, as the traffic service runs it."""
 
 
 def _option_arguments(text: str, option: str) -> list[str]:
@@ -61,3 +67,49 @@ def test_every_address_literal_in_the_compose_file_is_a_testnet_address() -> Non
     assert literals, "the node command lost its miner address"
     for literal in literals:
         assert validate_address(literal, TESTNET), f"{literal} is not a testnet address"
+
+
+def _service_arguments(text: str, entrypoint: str) -> list[str]:
+    """The arguments the service that runs ``entrypoint`` passes to it."""
+    lines = text.splitlines()
+    marker = f'entrypoint: ["python", "{entrypoint}"]'
+    start = next((index for index, line in enumerate(lines) if marker in line), None)
+    assert start is not None, f"no service runs {entrypoint}"
+    arguments: list[str] = []
+    in_command = False
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if stripped == "command:":
+            in_command = True
+            continue
+        if not in_command or stripped.startswith("#"):
+            continue
+        if not stripped.startswith("- "):
+            break
+        arguments.append(stripped.removeprefix("- ").strip().strip('"'))
+    return arguments
+
+
+def test_the_traffic_command_speaks_the_flags_the_generator_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale flag would make the traffic service exit before it sends anything."""
+    argv = _service_arguments(COMPOSE.read_text(encoding="utf-8"), TRAFFIC)
+    assert argv, "the traffic service lost its command"
+    captured: dict[str, object] = {}
+
+    def fake_run(client: httpx.Client, **kwargs: object) -> list[traffic.CycleReport]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(traffic, "run", fake_run)
+    assert traffic.main(argv) == 0
+
+    options = captured["options"]
+    assert isinstance(options, traffic.Options)
+    assert (options.node, options.relay) == ("http://node:8645", "http://relay:8646")
+    # The churn and the audit are the defaults, so the command only says where to
+    # play; naming them here would freeze a pool size the deployment must measure.
+    assert options.extra_miners == traffic.EXTRA_MINERS >= 1
+    assert options.max_extra_online == traffic.MAX_EXTRA_ONLINE >= 1
+    assert options.quality_events is True
