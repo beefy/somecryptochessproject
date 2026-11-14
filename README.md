@@ -127,7 +127,9 @@ sequenceDiagram
     R->>B: Pairing for round r (derived from B_e)
     R->>A: Seat + opening line (derived from B_e)
     R->>B: Seat + opening line
-    A<->R<->B: Moves relayed, both sides sign the transcript
+    A<<->>R: Moves relayed
+    R<<->>B: Moves relayed
+    Note over A,B: Both sides sign the transcript
     A->>N: WinProof(winner=A, signed game + match certificate)
     Note over A: Repeat until A holds k wins from distinct opponents
     A->>N: Block(k proofs, transactions, seal)
