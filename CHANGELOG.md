@@ -5,6 +5,33 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [0.17.1] - 2026-11-13
+
+### Fixed
+
+- **The two-miner testnet stack would not boot.** `docker-compose.yml` still named
+  a version-0 address as the node's `--miner-address`. `node run` validates that
+  option before it binds the port and exits with status 2, so `node` was never
+  healthy, every service waiting on it was skipped, and the redeploy workflow
+  failed on `container ... is unhealthy` with nothing listening. The value is now
+  stack miner-1's version-1 address, the same one the `init` container writes, and
+  `tests/unit/test_deploy_compose.py` pins the two together — plus
+  `tests/unit/test_docs_addresses.py`, which parses every address the guides quote
+  and is how five stale examples turned up (`SEND_COINS`, `OPEN_A_WALLET`,
+  `CREATE_A_TESTNET_WALLET`, `RUN_A_TESTNET_MINER`). A clean `docker compose up`
+  now comes up healthy and settles proofs.
+
+### Changed
+
+- **Failure output and runbook for a stack that will not boot.** The redeploy
+  workflow's `Show service state` step now runs `docker compose ps -a` and dumps
+  `init`, `node`, `relay` and `bootstrap` logs; `node` was absent from that dump
+  even though its log is the one that explains a boot failure.
+  `docs/RUNBOOK.md` gained a "The stack will not start" section that separates an
+  exit-2 address validation error from a chain problem, and its health checklist
+  no longer pins the relay's epoch to 3 (the epoch follows the node: 4 once the
+  first post-bootstrap block settles).
+
 ## [0.17.0] - 2026-11-13
 
 ### Added
@@ -106,16 +133,6 @@ testnet, so the rewrite is cheaper than carrying two schemes forever.
 
 ### Fixed
 
-- **The two-miner testnet stack would not boot.** `docker-compose.yml` still
-  named a version-0 address as the node's `--miner-address`. `node run` validates
-  that option before it binds the port and exits with status 2, so `node` was
-  never healthy, every service waiting on it was skipped, and the redeploy
-  workflow failed on `container ... is unhealthy` with nothing listening. The
-  value is now stack miner-1's version-1 address, the same one the `init`
-  container writes, and `tests/unit/test_deploy_compose.py` pins the two
-  together — plus `tests/unit/test_docs_addresses.py`, which parses every address
-  the guides quote and is how five stale examples turned up (`SEND_COINS`,
-  `OPEN_A_WALLET`, `CREATE_A_TESTNET_WALLET`, `RUN_A_TESTNET_MINER`).
 - **The hand-play tab's black screen.** `#/play` derived its address from a
   32-byte Ed25519 key, which the version-1 `addressFor` correctly refuses; the
   throw happened during the first render, and with no error boundary React
