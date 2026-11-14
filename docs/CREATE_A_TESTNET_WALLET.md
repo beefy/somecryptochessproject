@@ -49,7 +49,7 @@ The command prompts for a passphrase twice, then prints the address:
 ```text
 Passphrase:
 Repeat for confirmation:
-sccpt1qrvk6qhg6jc72c2evv8kgyj8cf3y29hj85d2xj0x
+sccpt1q98xsqelum4rps2948xygnac04ur5ydmdjrlz488zx88rykhjru9qwh86pu
 ```
 
 The last line is the address. Copy it; the faucet needs it.

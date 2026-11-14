@@ -28,7 +28,8 @@ curl -fsS http://testnet.somecryptochessproject.com:8646/v1/status
 Healthy after a deploy means:
 
 - node `height` is at least 19 (the bootstrap chain);
-- relay `epoch` is 3 and `matches` is at least 1;
+- relay `matches` is at least 1, and its `epoch` follows the node (3 right after
+  the bootstrap, 4 once the first post-bootstrap block settles);
 - `miner-1`/`miner-2` log an engine fingerprint (the Stockfish SHA-256), not an
   engine crash;
 - when a game is decisive, the node log contains `mined height 20: 1 proof(s) ...`
@@ -59,6 +60,37 @@ docker compose restart miner-1
 Restarting the node replays SQLite from the last snapshot. Restarting the relay
 replays its JSON store. Do not delete `/stack/relay.json`: the bootstrap writes it
 from the chain and the relay needs the matching beacon and roster.
+
+## The stack will not start
+
+`docker compose up` reporting `container ... is unhealthy` with every other
+service `not started` means the node exited before it bound the port: the
+dependents are a symptom, not the fault. Read the node log first:
+
+```bash
+docker compose logs --tail=40 node
+```
+
+An immediate container `Error` and a log line like
+
+```text
+error: 'sccpt1q...' is not a valid testnet address
+```
+
+is a **stale address literal in the compose file**, not a chain problem. `node
+run` validates `--miner-address` before it starts serving, so an address written
+before an address-scheme change stops the whole stack. Deploy the compose file
+from the same commit as the image (the deploy workflow uploads it) and reset:
+
+```bash
+docker compose down -v --remove-orphans
+SCCP_IMAGE=ghcr.io/OWNER/REPO:testnet docker compose up -d --no-build
+```
+
+`tests/unit/test_deploy_compose.py` pins that literal to the address the `init`
+service writes for stack miner-1, and `tests/unit/test_docs_addresses.py` parses
+every address the guides quote, so this class of failure fails a test rather than
+a deploy.
 
 ## Faucet
 

@@ -68,12 +68,12 @@ sccp devnet up --miners 4 --blocks 10 --engines mock
 A smaller run (`--miners 2 --blocks 4`) prints:
 
 ```text
-devnet up: height 4 after 0.970s
-tip: c3b92857...
-genesis: 20a94874...
+devnet up: height 4 after 1.3s
+tip: 3f423dba...
+genesis: 5e346552...
 epochs: 3; 3 matches; 1 proofs mined
-  sccpt1qz4metcfj6spestnykg7dxh5q95nz70jducmanvg 99.99990000
-  sccpt1qzg85eqh9as0t9z86sq02n7k5ug54cd0uu6mkp0s 99.99990000
+  sccpt1q9ejahp48496x4zw7d6qsj020kq3l9tly9tgt5el4km824nnjpzmwddqavq 99.99990000
+  sccpt1q8c97qs6ehcm6c6aw6pwlqjt9jlmqgdjxfsvq4vu7k6jsysfkwme79lm4gn 99.99990000
 ```
 
 This runs a complete network in process: it funds and registers the miners,
@@ -207,7 +207,7 @@ sccp --passphrase-file ./stack/passphrase miner run \
 The first line names the identity and the engine fingerprint:
 
 ```text
-miner sccpt1qrvwy92u2es34fnpwnddkhtpw8wzqjpy6u6yszpz on testnet polling http://127.0.0.1:8646 with 8eed61129d1493c5...
+miner sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g on testnet polling http://127.0.0.1:8646 with 8eed61129d1493c5...
 ```
 
 Start `miner-2` the same way. A match needs both seats, so a lone miner joins and

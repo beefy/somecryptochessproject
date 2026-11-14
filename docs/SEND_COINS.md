@@ -10,13 +10,13 @@ a block includes it. Nothing about your private key leaves the host.
 sccp wallet send \
     --network testnet \
     --key alice.key \
-    --to sccpt1qrrx3yp3ufmfsqk6l9u0wg7xpjd7670v5v85vgp9 \
+    --to sccpt1q9l8ptm8fmdrsmnj80lgf76k8xqrwhpdj0dq6puawdz79c6d8dtswkjp0sd \
     --amount 12 \
     --node http://testnet.somecryptochessproject.com:8645
 ```
 
 ```text
-sent 12.00000000 to sccpt1qrrx3yp3ufmfsqk6l9u0wg7xpjd7670v5v85vgp9 (fee 0.00001000)
+sent 12.00000000 to sccpt1q9l8ptm8fmdrsmnj80lgf76k8xqrwhpdj0dq6puawdz79c6d8dtswkjp0sd (fee 0.00001000)
 txid: 4f0c1a...
 ```
 
