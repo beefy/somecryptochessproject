@@ -27,8 +27,6 @@ from sccp.node.models import (
     AccountView,
     BlockList,
     BlockView,
-    ChallengeList,
-    ChallengeView,
     DifficultyView,
     EpochView,
     FaucetRequest,
@@ -247,16 +245,6 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     @app.post("/v1/proofs", response_model=ProofAccepted)
     def submit_proof(proof: WinProof) -> ProofAccepted:
         return service.announce_proof(proof)
-
-    @app.get("/v1/challenges", response_model=ChallengeList)
-    def challenges(
-        include_resolved: bool = Query(default=False),
-    ) -> ChallengeList:
-        return service.challenges(include_resolved=include_resolved)
-
-    @app.get("/v1/challenges/{challenge_id}", response_model=ChallengeView)
-    def challenge(challenge_id: str) -> ChallengeView:
-        return service.challenge(challenge_id)
 
     @app.post("/v1/gossip", response_model=GossipResult)
     def gossip(envelope: GossipEnvelope) -> GossipResult:

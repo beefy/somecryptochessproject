@@ -249,7 +249,6 @@ ALLOWED: dict[TxType, frozenset[str]] = {
     TxType.TIMEOUT_DISPUTE: frozenset(
         {"claim_id", "move", "move_signature", "clock_evidence", "public_key"}
     ),
-    TxType.CHALLENGE: frozenset({"proof_id", "reason", "evidence", "bond", "public_key"}),
     TxType.SLASH_EVIDENCE: frozenset({"proof_id", "evidence", "public_key"}),
 }
 """Exactly which payload keys each type may carry."""
@@ -389,16 +388,6 @@ def _validate_reveal(params: NetworkParams, state: State, tx: Transaction, heigh
         _fail(TxFailure.DUPLICATE, f"{tx.sender} already revealed a different nonce")
 
 
-def _validate_challenge(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
-    from sccp.errors import ChallengeError
-    from sccp.protocol import challenges
-
-    try:
-        challenges.validate_challenge(state, tx, height)
-    except ChallengeError as exc:
-        _fail(TxFailure.TYPE, str(exc))
-
-
 VALIDATORS = {
     TxType.TRANSFER: _validate_transfer,
     TxType.REGISTER: _validate_register,
@@ -408,7 +397,6 @@ VALIDATORS = {
     TxType.WITHDRAW_BOND: _validate_withdraw_bond,
     TxType.AVAILABILITY: _validate_availability,
     TxType.REVEAL: _validate_reveal,
-    TxType.CHALLENGE: _validate_challenge,
 }
 """Handlers for every type that :func:`validate_transaction` owns outright."""
 
@@ -525,16 +513,6 @@ def _apply_slash_evidence(state: State, tx: Transaction, height: int) -> None:
     timeout.apply_slash(state, tx, height)
 
 
-def _apply_challenge(state: State, tx: Transaction, height: int) -> None:
-    from sccp.errors import ChallengeError
-    from sccp.protocol import challenges
-
-    try:
-        challenges.apply_challenge(state, tx, height)
-    except ChallengeError as exc:
-        _fail(TxFailure.TYPE, str(exc))
-
-
 APPLIERS = {
     TxType.TRANSFER: _apply_transfer,
     TxType.REGISTER: _apply_register,
@@ -546,7 +524,6 @@ APPLIERS = {
     TxType.REVEAL: _apply_reveal,
     TxType.TIMEOUT_CLAIM: _apply_timeout_claim,
     TxType.TIMEOUT_DISPUTE: _apply_timeout_dispute,
-    TxType.CHALLENGE: _apply_challenge,
     TxType.SLASH_EVIDENCE: _apply_slash_evidence,
 }
 """State transitions for every accepted transaction type."""

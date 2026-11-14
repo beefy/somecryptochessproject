@@ -38,7 +38,7 @@ proof to settle.
 | `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 60 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers both miners, commits and reveals availability, writes `relay.json` from epoch 3 |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
-| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle picks 2-10 of them, tops up the short ones from the faucet, sends 1-10 transfers between the pool's wallets, waits for both phases to be mined, and idles 1-5 minutes |
+| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle churns the extra miners, tops up and moves coins between 2-10 of the wallets, waits for both phases to be mined, and idles 1-5 minutes |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
 | `miner-1`, `miner-2` | `sccp miner run --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-1.nonce` | join, play, co-sign, announce win proofs and commit/reveal their own availability |
 
@@ -54,6 +54,26 @@ testnet nobody is watching still exercises the paths a client takes. Neither hol
 a roster slot or builds a block. `traffic` keeps its coins inside its own wallet
 pool, so it circulates them instead of draining the faucet; the
 [runbook](../docs/RUNBOOK.md#synthetic-traffic) has the arithmetic.
+
+The `traffic` container also drives the path that only a live deployment can show:
+
+* **Miner churn** (`deploy/synthetic_miner_creation.py`). It derives up to
+  `--extra-miners` (2) extra miners from published seeds, materialises a keyfile
+  and an availability secret for each, funds and re-registers a miner when it
+  starts through the same faucet gateway the wallets use, and runs it as a real
+  `sccp miner run` child. One is online at a time and each cycle starts or stops
+  it, so registrations, availability commitments and roster changes keep
+  happening. `synthetic-miner-1` is deliberately **weak**: 16 nodes a move, so it
+  loses most games and earns nothing, which is what a bad engine looks like under
+  a win-only reward. Before seating anything it calls `host_capacity`: half a core
+  and 256 MiB per miner, one core for the node and relay -- the two-core VM fits
+  both pool members, and `max_online=1` runs one at a time. When the host cannot
+  fit one it logs why instead of starving the roster.
+
+The churn prints on the cycle line (`| miners: ...`) and is off with
+`--extra-miners 0`, which leaves exactly the wallet traffic. The extra miners keep
+their keyfiles under `/data/synthetic-miners`, an anonymous volume -- every
+identity is seed-derived, so nothing has to survive a redeploy.
 
 ## The keys and engine are reproducible on purpose
 

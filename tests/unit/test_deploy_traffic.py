@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import random
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from dataclasses import dataclass
 
 import httpx
 import pytest
+from deploy import synthetic_miner_creation as miners
 from deploy import synthetic_testnet_traffic as traffic
 
 from sccp.chain.genesis import faucet_keypair
@@ -55,6 +57,7 @@ def _transport(
     settles_immediately: bool = False,
     pool_noise: Sequence[str] = (),
     pending_recipients: Sequence[str] = (),
+    status_height: int = 0,
 ) -> httpx.MockTransport:
     """Route the generator's requests into the real node.
 
@@ -66,10 +69,15 @@ def _transport(
     node that mines each cycle before the next one starts.
     ``pending_recipients`` are the wallets whose transfer stays in the pool, which
     is how a node behaves when a block does not carry the grant this time round.
+    ``status_height`` is what ``GET /v1/status`` reports.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        if path == "/v1/status":
+            return httpx.Response(
+                200, json={"network": TESTNET.network_id, "height": status_height}
+            )
         if path == "/v1/mempool":
             view = node.mempool_view().model_dump(mode="json")
             if settles_immediately:
@@ -197,7 +205,9 @@ def test_run_seats_and_funds_the_whole_pool_up_front(
 
     assert [(report.wallet_count, report.funded) for report in reports] == [(4, 4)]
     grants = [tx for tx in _admitted(node) if tx.sender == _faucet_address()]
-    assert len({tx.payload["to"] for tx in grants}) == 4
+    recipients = {tx.payload["to"] for tx in grants}
+    pool_addresses = {traffic.wallet(index).address for index in range(4)}
+    assert pool_addresses <= recipients
     assert "4 wallets" in capsys.readouterr().out
 
 
@@ -486,3 +496,252 @@ def test_the_command_line_refuses_a_pool_it_cannot_seat() -> None:
     """Two wallets is the floor: a transfer needs a distinct recipient."""
     with pytest.raises(SystemExit):
         traffic.main(["--max-wallets", "1"])
+
+
+# -- the churn ----------------------------------------------------------------
+
+
+def _offline_client() -> httpx.Client:
+    """A client that fails the test rather than reaching for a host."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError(f"unexpected request {request.url}")
+
+    return httpx.Client(transport=httpx.MockTransport(handler), base_url="http://node")
+
+
+@dataclass
+class _RecordingFleet:
+    """A churn that logs how much of the cycle had landed when it ran."""
+
+    seen: dict[str, object]
+    admitted: Callable[[], int]
+    started: tuple[str, ...] = ("synthetic-miner-1",)
+    closed: int = 0
+
+    def churn(self, rng: random.Random, *, grant: object = None) -> miners.ChurnReport:
+        self.seen["churn"] = self.admitted()
+        self.seen["grant"] = grant
+        return miners.ChurnReport(started=self.started, online=self.started)
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+def test_extras_are_off_unless_the_options_ask_for_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A plain traffic deployment must not measure the host or start a miner."""
+
+    def measured(**kwargs: object) -> miners.HostCapacity:
+        raise AssertionError("the host was measured although no churn was asked for")
+
+    monkeypatch.setattr(miners, "host_capacity", measured)
+    with _offline_client() as client:
+        quiet = traffic.extras_for(client, options=traffic.Options(extra_miners=0))
+    assert quiet.fleet is None
+    quiet.close()  # nothing was started, so closing is a no-op rather than a crash
+
+
+def test_the_churn_seats_the_pool_the_options_ask_for() -> None:
+    """The fleet is built from the options, and seats only what the host allows."""
+    capacity = miners.HostCapacity(
+        cpu_count=8, available_memory_mb=4096, allowed=2, reason="two cores free"
+    )
+    options = traffic.Options(
+        extra_miners=3,
+        max_extra_online=1,
+        relay="http://relay.example:8646",
+        node="http://node.example:8645",
+    )
+    with _offline_client() as client:
+        extras = traffic.extras_for(client, options=options, capacity=capacity)
+    try:
+        fleet = extras.fleet
+        assert isinstance(fleet, miners.ExtraMinerFleet)
+        assert fleet.directory == traffic.EXTRA_MINER_DIRECTORY
+        assert fleet.capacity is capacity
+        assert (fleet.relay, fleet.node) == (
+            "http://relay.example:8646",
+            "http://node.example:8645",
+        )
+        assert (fleet.pool_size, fleet.max_online) == (3, 1)
+        assert len(fleet.pool) == 3
+        assert fleet.online_limit == 1
+    finally:
+        extras.close()
+
+
+def test_the_churn_measures_the_host_for_the_pool_it_was_asked_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``extras_for`` measures only when the caller did not supply a budget."""
+    measured: list[dict[str, int]] = []
+
+    def host(**kwargs: int) -> miners.HostCapacity:
+        measured.append(kwargs)
+        return miners.HostCapacity(
+            cpu_count=8, available_memory_mb=4096, allowed=1, reason="one core free"
+        )
+
+    monkeypatch.setattr(miners, "host_capacity", host)
+    with _offline_client() as client:
+        extras = traffic.extras_for(client, options=traffic.Options(extra_miners=2))
+    try:
+        assert measured == [{"max_extra": 2}]
+        assert extras.fleet is not None
+        assert extras.fleet.capacity.allowed == 1
+    finally:
+        extras.close()
+
+
+def test_a_cycle_churns_before_the_grants(node: NodeService) -> None:
+    """Ordering is the contract: the churn sees an empty pool."""
+    pool = [traffic.wallet(index) for index in range(3)]
+    seen: dict[str, object] = {}
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        admitted = _admitted_count(node)
+        report = traffic.run_cycle(
+            client,
+            cycle=1,
+            pool=pool,
+            rng=random.Random(11),
+            wallet_count=3,
+            transfer_count=2,
+            options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
+            extras=traffic.Extras(
+                fleet=_RecordingFleet(seen=seen, admitted=admitted),
+            ),
+        )
+
+    assert seen["churn"] == 0, "the churn ran after a grant was already in the pool"
+    assert callable(seen["grant"]), "a churn that cannot fund a seat is refused by the node"
+    assert report.miners == "miners: started synthetic-miner-1; online: synthetic-miner-1"
+    summary = traffic._summary(report)
+    assert "| miners: started synthetic-miner-1; online: synthetic-miner-1" in summary
+
+
+def _admitted_count(node: NodeService) -> Callable[[], int]:
+    """The pool size the node's own mempool reports, read when the extras run."""
+    return lambda: len(_admitted(node))
+
+
+def test_run_stops_the_miners_it_was_given(node: NodeService) -> None:
+    """A churn that outlived the generator would leave children nobody stops."""
+    fleet = _RecordingFleet(seen={}, admitted=lambda: 0)
+    options = traffic.Options(
+        max_wallets=4,
+        wait_seconds=0.0,
+        poll_seconds=0.0,
+        extra_miners=0,
+    )
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        reports = traffic.run(
+            client,
+            options=options,
+            cycles=1,
+            sleep=lambda seconds: None,
+            extras=traffic.Extras(fleet=fleet),
+        )
+
+    assert len(reports) == 1
+    assert fleet.closed == 1
+
+
+def test_run_builds_the_extras_from_its_options(
+    node: NodeService, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``run`` owns the extras when the caller passes none, and closes them either way."""
+    built: list[traffic.Options] = []
+    fleet = _RecordingFleet(seen={}, admitted=lambda: 0)
+
+    def extras_for(
+        client: httpx.Client,
+        *,
+        options: traffic.Options,
+        params: object = TESTNET,
+        capacity: miners.HostCapacity | None = None,
+    ) -> traffic.Extras:
+        built.append(options)
+        return traffic.Extras(fleet=fleet)
+
+    monkeypatch.setattr(traffic, "extras_for", extras_for)
+    options = traffic.Options(
+        max_wallets=4,
+        wait_seconds=0.0,
+        poll_seconds=0.0,
+        extra_miners=1,
+    )
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        reports = traffic.run(client, options=options, cycles=1, sleep=lambda seconds: None)
+
+    assert len(reports) == 1
+    assert built == [options]
+    assert fleet.closed == 1
+
+
+# -- the command line ---------------------------------------------------------
+
+
+def _fake_run(monkeypatch: pytest.MonkeyPatch, captured: dict[str, object]) -> None:
+    """Swap the generator's loop for one that records the options it was handed."""
+
+    def fake_run(client: httpx.Client, **kwargs: object) -> list[traffic.CycleReport]:
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(traffic, "run", fake_run)
+
+
+def test_the_command_line_carries_the_churn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--relay`` and the pool sizes reach the generator's options."""
+    captured: dict[str, object] = {}
+    _fake_run(monkeypatch, captured)
+    code = traffic.main(
+        [
+            "--relay",
+            "http://relay.example:8646",
+            "--extra-miners",
+            "3",
+            "--max-extra-online",
+            "1",
+            "--cycles",
+            "2",
+        ]
+    )
+
+    assert code == 0
+    options = captured["options"]
+    assert isinstance(options, traffic.Options)
+    assert options.relay == "http://relay.example:8646"
+    assert (options.extra_miners, options.max_extra_online) == (3, 1)
+    assert captured["cycles"] == 2
+
+
+def test_the_stack_defaults_keep_the_churn_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compose passes no churn flags, so the parser's defaults are the deployment."""
+    captured: dict[str, object] = {}
+    _fake_run(monkeypatch, captured)
+    assert traffic.main([]) == 0
+
+    options = captured["options"]
+    assert isinstance(options, traffic.Options)
+    assert options.relay == "http://relay:8646"
+    assert options.node == "http://node:8645"
+    assert options.extra_miners == traffic.EXTRA_MINERS >= 1
+    assert options.max_extra_online == traffic.MAX_EXTRA_ONLINE >= 1
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        ["--extra-miners", "-1"],
+        ["--max-extra-online", "0"],
+        ["--cycles", "0"],
+    ],
+)
+def test_the_command_line_refuses_impossible_churn(argument: list[str]) -> None:
+    with pytest.raises(SystemExit):
+        traffic.main(argument)

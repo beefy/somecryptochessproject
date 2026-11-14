@@ -107,15 +107,6 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
         </KeyValue>
         <KeyValue label="Proof id">{view.proof_id === null ? "-" : <Mono copy>{view.proof_id}</Mono>}</KeyValue>
         <KeyValue label="Match">{view.match_id === null ? "-" : <Mono copy>{view.match_id}</Mono>}</KeyValue>
-        <KeyValue label="Challenge" mono>
-          {view.challenge_status}
-        </KeyValue>
-        <KeyValue label="Quality">{view.quality_verdict === null ? "not sampled" : view.quality_verdict}</KeyValue>
-        {view.quality_trace_hash !== null && (
-          <KeyValue label="Quality trace">
-            <Mono copy>{view.quality_trace_hash}</Mono>
-          </KeyValue>
-        )}
       </Section>
 
       {certificate !== undefined && (
@@ -186,19 +177,12 @@ function pgnSubtitle(fromTranscript: boolean, pgnKnown: boolean): string {
 /** Settlement state as a pill label. */
 function phaseLabel(view: GameView): string {
   if (view.in_mempool) return "pending";
-  if (view.challenge_status === "open") return "challenged";
-  if (view.challenge_status === "upheld") return "challenge upheld";
-  if (view.challenge_status === "rejected") return "challenge rejected";
-  if (view.quality_verdict === "fail") return "quality fail";
   return "settled";
 }
 
 /** And as a pill colour. */
 function phaseTone(view: GameView): "good" | "warn" | "bad" | "info" | "neutral" {
   if (view.in_mempool) return "warn";
-  if (view.challenge_status === "open" || view.challenge_status === "upheld") return "bad";
-  if (view.quality_verdict === "fail") return "bad";
-  if (view.challenge_status === "rejected") return "info";
   return "good";
 }
 

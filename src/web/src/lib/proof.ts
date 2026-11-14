@@ -10,17 +10,16 @@
  *
  * - `low_ply` is derived, not chosen: a game shorter than `params.min_plies`
  *   is a low-ply win, which a deployment may treat as a weaker claim.
- * - a sampled network requires a `quality_summary` field on every proof. A
- *   browser has no analysis engine, so an honest summary can only say
- *   `verdict: "unknown"`; a validator that samples it may disagree and open a
- *   bonded challenge. That is the protocol working as designed, not a bug here.
+ *
+ * A proof says nothing about how well either side played. That is deliberate:
+ * the record is enough to replay the game, and no engine verdict enters the
+ * consensus rules. See docs/PROTOCOL.md section 9.2.
  */
 
 import type {
   ClockEvidence,
   GameResult,
   MatchCertificate,
-  QualitySummary,
   ResultValue,
   MoveEvidence,
   WinProof,
@@ -33,7 +32,6 @@ import { canonicalGameHash } from "./protocol";
 export interface ProofParams {
   network_id: string;
   min_plies: number;
-  quality_mode: "off" | "sampled";
 }
 
 export interface BuildProofFields {
@@ -45,7 +43,6 @@ export interface BuildProofFields {
   /** `result.result_signatures`: one per seat, hex. */
   resultSignatures: Record<string, string>;
   params: ProofParams;
-  qualitySummary?: QualitySummary | null;
   clockEvidence?: ClockEvidence | null;
   moveEvidence?: MoveEvidence | null;
   timeoutClaimId?: string | null;
@@ -119,12 +116,6 @@ export function buildWinProof(fields: BuildProofFields): WinProof {
   if (fields.timeoutClaimId != null && result.termination !== "time_forfeit") {
     throw new ProofBuildError("timeout_claim_id is only valid for a time forfeit");
   }
-  const quality = fields.qualitySummary ?? null;
-  if (params.quality_mode === "sampled" && quality === null) {
-    throw new ProofBuildError(
-      `network ${params.network_id} requires a quality_summary on every proof`,
-    );
-  }
 
   const moveCommitment = certificateMoveRoot(
     certificate.network,
@@ -160,26 +151,6 @@ export function buildWinProof(fields: BuildProofFields): WinProof {
     result_signatures: { ...fields.resultSignatures },
     clock_evidence: fields.clockEvidence ?? null,
     move_evidence: fields.moveEvidence ?? null,
-    quality_summary: quality,
     timeout_claim_id: fields.timeoutClaimId ?? null,
-  };
-}
-
-/**
- * The honest summary a browser can attach when a network demands one.
- *
- * `verdict: "unknown"` is the only truthful value without an analysis engine:
- * claiming `pass` would be a false claim about a game nobody analysed, and the
- * field exists so a validator can sample and challenge it.
- */
-export function webQualitySummary(engineFingerprint: string | null): QualitySummary {
-  return {
-    policy: "sccp-web/hand-play-1",
-    verdict: "unknown",
-    trace_hash: null,
-    engine_fingerprint: engineFingerprint,
-    white_blunders: 0,
-    black_blunders: 0,
-    worst_cpl: 0,
   };
 }

@@ -21,8 +21,8 @@
  *
  * - the browser cannot open a trusted clock, so it never *wins on time* — the
  *   relay flags it instead, and the opponent settles that with its own claim;
- * - the page has no analysis engine, so on a network that samples quality its
- *   summary says `unknown` and a validator may challenge the game.
+ * - the page has no analysis engine, which does not matter: how well the chess
+ *   was played is not part of a proof, and the protocol does not arbitrate it.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -62,7 +62,7 @@ import {
   type HybridKeypair,
 } from "../lib/keys";
 import { movePayload, resultPayload } from "../lib/protocol";
-import { buildWinProof, webQualitySummary } from "../lib/proof";
+import { buildWinProof } from "../lib/proof";
 import {
   relayJoin,
   relayMatches,
@@ -639,7 +639,6 @@ function Table({
         network_id: network,
         rounds_per_epoch: params.rounds_per_epoch,
         min_plies: params.min_plies,
-        quality_mode: params.quality_mode,
       };
       const built = buildWinProof({
         certificate: transcript.certificate,
@@ -648,7 +647,6 @@ function Table({
         result: transcript.result,
         resultSignatures: transcript.result.result_signatures,
         params: proofParams,
-        qualitySummary: params.quality_mode === "sampled" ? webQualitySummary(ENGINE) : null,
       });
       setProof(built);
       const settledEpoch = await fetchEpoch(built.epoch);
@@ -1104,11 +1102,6 @@ function Table({
             </KeyValue>
             <KeyValue label="Low ply">
               {proof.low_ply ? `yes (${proof.plies} < ${params.min_plies})` : "no"}
-            </KeyValue>
-            <KeyValue label="Quality">
-              {proof.quality_summary === null || proof.quality_summary === undefined
-                ? "not required on this network"
-                : `${proof.quality_summary.policy}: ${proof.quality_summary.verdict}`}
             </KeyValue>
             <KeyValue label="Settlement">
               {settlementData === null || settlementData === undefined

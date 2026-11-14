@@ -24,8 +24,6 @@ The reference implementation covers the full wallet-to-block path:
   settler.
 - Unattended engine miner, block builder, in-process devnet and the complete
   `sccp` command surface.
-- Deterministic quality sampling, bonded challenges, beacon-ranked panels,
-  slashing and the adversarial test suite.
 - A funded two-miner testnet with a public faucet, deterministic bootstrap,
   Docker Compose stack, automated deploy workflow and operator runbooks.
 
@@ -41,8 +39,8 @@ preparing a mainnet decision. It is not a continuation of the protocol build.
 | Work | Why it matters | Done when |
 | --- | --- | --- |
 | **Run a continuous public testnet** | The current Compose stack is a deterministic demo that resets on every deploy. A real testnet needs rolling chain state and repeatable miner participation. | A hosted chain runs for at least 72 hours with two or more independent miners, survives restarts and publishes blocks throughout. |
-| **Add metrics and alerting** | Height, peer count, mempool depth, relay sessions, faucet grants and sampler failures are currently observed through logs and ad-hoc HTTP calls. | Node and relay expose Prometheus metrics; a dashboard and alerts cover stalled height, peer loss, relay failure, mempool growth and faucet abuse. |
-| **Ship a block explorer or read-only UI** | Users need to inspect blocks, transactions, accounts, games, proofs and challenges without writing API calls. | A read-only web view (or a maintained static explorer) serves the public testnet and links every game to its proof and challenge status. |
+| **Add metrics and alerting** | Height, peer count, mempool depth, relay sessions and faucet grants are currently observed through logs and ad-hoc HTTP calls. | Node and relay expose Prometheus metrics; a dashboard and alerts cover stalled height, peer loss, relay failure, mempool growth and faucet abuse. |
+| **Ship a block explorer or read-only UI** | Users need to inspect blocks, transactions, accounts, games and proofs without writing API calls. | A read-only web view (or a maintained static explorer) serves the public testnet and links every game to its proof. |
 | **Run failure and soak drills** | Unit and integration tests cannot expose clock drift, disk growth, restart races or long-lived peer behaviour. | A documented drill exercises node restart, relay restart, partition/heal, reorg, disk pressure and clock skew; results and fixes are published. |
 
 ### 2.2 Priority 0 — remove trusted operational edges
@@ -51,27 +49,27 @@ preparing a mainnet decision. It is not a continuation of the protocol build.
 | --- | --- | --- |
 | **Automate timeout-claim submission** | The ledger, clock evidence and local claim verification exist, but the CLI/demo does not yet submit a `timeout_claim` automatically. | A flagged timed game produces, submits and settles a claim end to end without operator intervention; an end-to-end test covers dispute and finalisation. |
 | **Pin a drand quicknet verifier** | `drand_used = 1` can only be verified when a caller injects a verifier. Without the pinned BLS12-381 check, production beacons cannot rely on drand. | A bundled verifier checks quicknet signatures against the pinned chain key; offline `sccp verify proof` accepts drand beacons and rejects bad ones. |
-| **Move panel adjudication on chain** | Challenge panels and verdicts are deterministic, but votes still arrive through an operator-trusted path. | A signed `panel_vote` or `adjudicate` transaction commits ballots; a challenge resolves from chain data alone, with no privileged operator action. |
 | **Persist faucet limits** | Faucet cooldowns and client quotas are in memory and reset with the node. | Limits survive restarts and are shared by all node workers; abuse tests cover concurrent requests and restart behaviour. |
 
 ### 2.3 Priority 1 — harden the system
 
 | Work | Why it matters | Done when |
 | --- | --- | --- |
-| **Calibrate bonds and sampling** | Bond sizes, sample rate and panel size are policy choices, not measured security parameters. | A written economic analysis relates bond size, reward value and analysis cost; testnet measurements support the chosen mainnet values. |
+| **Calibrate bonds and rewards** | Bond sizes are policy choices, not measured security parameters. | A written economic analysis relates bond size and reward value; testnet measurements support the chosen mainnet values. |
+| **Populate roster diversity fields** | `funder`, `subnet` and `asn` exist on the roster but nothing fills them, so pairing diversity is a heuristic over empty data. | Registration or the node's roster projection carries real provenance, and a pairing test shows two same-funder accounts are separated. |
 | **Pin engine artefacts completely** | The binary SHA-256 is committed, but NNUE networks are not pinned. | Engine profiles pin every network file; a mismatch is visible in the certificate and rejected by the documented policy. |
 | **Add storage lifecycle controls** | The node keeps the full chain and every stored PGN. Long-running networks need pruning, snapshots and restore procedures. | Operators can prune old block bodies/PGNs with a documented retention policy, verify state from a snapshot and restore within a rehearsed target. |
 | **Harden peer networking** | HTTP gossip has no discovery, encryption, authentication or transport rate limiting. | Discovery or a documented static-peer process, TLS/proxy guidance, per-peer rate limits and DoS tests are in place. |
 | **Improve miner and relay resilience** | A miner reconnects, retries and handles multiple relays only as far as current tests cover. | Long-running tests cover relay restarts, stale sessions, clock corrections, duplicate results and multiple relay endpoints. |
-| **Expand adversarial and property tests** | The suite is strong on protocol edges but light on multi-node timing and resource exhaustion. | New property and stochastic tests cover reorg/mempool interactions, challenge races, receipt replay and bounded resource use. |
+| **Expand adversarial and property tests** | The suite is strong on protocol edges but light on multi-node timing and resource exhaustion. | New property and stochastic tests cover reorg/mempool interactions, receipt replay and bounded resource use. |
 
 
 ### 2.4 Priority 2 — mainnet readiness
 
 | Work | Why it matters | Done when |
 | --- | --- | --- |
-| **Freeze mainnet parameters** | `wins_required`, bonds, maturity, claim window and quality policy are provisional. | A reviewed parameter set, genesis document and published genesis hash are tagged and reproduced from a clean checkout. |
-| **Commission external review** | The protocol and code have not been independently audited. | Consensus, cryptography, wallet handling and the quality/challenge lifecycle have an external review; findings are closed or documented. |
+| **Freeze mainnet parameters** | `wins_required`, bonds, maturity and claim window are provisional. | A reviewed parameter set, genesis document and published genesis hash are tagged and reproduced from a clean checkout. |
+| **Commission external review** | The protocol and code have not been independently audited. | Consensus, cryptography, wallet handling and the proof/clock lifecycle have an external review; findings are closed or documented. |
 | **Decide the economics** | Reward variance, pooling, draw incentives and bond sizing are unresolved. | A published economic model states the intended miner behaviour, attack costs and why the chosen parameters are acceptable. |
 | **Rehearse operations** | Mainnet operations need runbooks that have been exercised under failure. | Incident, upgrade, key-rotation, backup/restore and genesis-ceremony runbooks are rehearsed and timed. |
 | **Make the launch decision** | Testnet success does not automatically justify mainnet. | An explicit go/no-go record covers audit results, soak data, legal/licensing review and the option to remain testnet-only. |
@@ -90,8 +88,9 @@ preparing a mainnet decision. It is not a continuation of the protocol build.
   SPV or light-client verifier.
 - **Block and fee policy.** Block capacity, fee market and proof-count limits
   have not been stress-tested.
-- **Challenge lifecycle.** Panel selection is deterministic, but on-chain votes
-  and a clear appeal/finalisation rule remain open.
+- **Challenge lifecycle.** Panel selection and signed `panel_vote` ballots are
+  on chain, and the ballot that completes the panel resolves the case. An appeal
+  rule and a penalty for a provably false ballot remain open.
 
 
 ### 3.2 Quality and game integrity
@@ -104,8 +103,9 @@ preparing a mainnet decision. It is not a continuation of the protocol build.
   engines.
 - **Sample coverage.** A 50/1000 sample rate is a policy choice, not a security
   proof. The cost of missing bad proofs should be modelled.
-- **Operator trust.** Until panel votes are on chain, challenge adjudication has
-  an explicit operator trust assumption.
+- **Panel honesty.** Votes are attributable and on chain, but the chain cannot
+  re-run the engine, so a member that lies is not yet punished. A provable-false
+  ballot needs its own evidence type.
 - **Engine provenance.** Binary hashes help, but a repacked cheating engine and
   unpinned networks remain outside the current guarantee.
 

@@ -174,7 +174,6 @@ def build_match_vectors() -> dict[str, object]:
             "network_id": params.network_id,
             "rounds_per_epoch": params.rounds_per_epoch,
             "min_plies": params.min_plies,
-            "quality_mode": params.quality_mode.value,
         },
         "beacon": {
             "network": beacon.network,

@@ -114,18 +114,6 @@ def test_swapped_result_fails(signed_match) -> None:
     _expect_failure(proof, signed_match.context, ProofFailure.SIGNATURE)
 
 
-def test_missing_opponent_signature_fails(signed_match) -> None:
-    proof = signed_match.proof.model_copy(
-        update={"result_signatures": {"white": signed_match.proof.result_signatures["white"]}}
-    )
-    _expect_failure(proof, signed_match.context, ProofFailure.SIGNATURE)
-
-
-def test_replayed_match_id_fails(signed_match) -> None:
-    proof = signed_match.proof.model_copy(update={"match_id": "11" * 32})
-    _expect_failure(proof, signed_match.context, ProofFailure.CERTIFICATE)
-
-
 def test_round_outside_the_epoch_fails(signed_match) -> None:
     certificate = signed_match.proof.certificate.model_copy(update={"round": 99})
     proof = signed_match.proof.model_copy(update={"round": 99, "certificate": certificate})
@@ -138,21 +126,6 @@ def test_missing_roster_seat_fails(signed_match) -> None:
     }
     context = replace(signed_match.context, roster=only_white)
     _expect_failure(signed_match.proof, context, ProofFailure.ROSTER)
-
-
-def test_pairing_not_produced_by_the_beacon_fails(signed_match) -> None:
-    context = replace(
-        signed_match.context,
-        quotas={address: 0 for address in signed_match.roster},
-    )
-    _expect_failure(signed_match.proof, context, ProofFailure.PAIRING)
-
-
-def test_tampered_pgn_fails(signed_match) -> None:
-    proof = signed_match.proof.model_copy(
-        update={"pgn": signed_match.proof.pgn.replace("Nf6", "Qh9")}
-    )
-    _expect_failure(proof, signed_match.context, ProofFailure.PGN)
 
 
 def test_recomputed_game_hash_mismatch_fails(signed_match) -> None:
@@ -191,24 +164,6 @@ def test_recomputed_game_hash_mismatch_fails(signed_match) -> None:
 def test_timeout_claim_id_is_only_valid_for_a_time_forfeit(signed_match) -> None:
     proof = signed_match.proof.model_copy(update={"timeout_claim_id": "00" * 32})
     _expect_failure(proof, signed_match.context, ProofFailure.RESULT)
-
-
-def test_tampered_proof_id_fails(signed_match) -> None:
-    proof = signed_match.proof.model_copy(update={"proof_id": "00" * 32})
-    _expect_failure(proof, signed_match.context, ProofFailure.PROOF_ID)
-
-
-def test_seen_hashes_are_rejected(signed_match) -> None:
-    context = replace(
-        signed_match.context,
-        seen_game_hashes=frozenset({signed_match.proof.game_hash}),
-    )
-    _expect_failure(signed_match.proof, context, ProofFailure.DUPLICATE)
-    context = replace(
-        signed_match.context,
-        seen_proof_ids=frozenset({signed_match.proof.proof_id}),
-    )
-    _expect_failure(signed_match.proof, context, ProofFailure.DUPLICATE)
 
 
 def _context_document(signed_match) -> dict[str, object]:

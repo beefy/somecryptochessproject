@@ -8,7 +8,6 @@ time rather than at block validation time.
 
 from __future__ import annotations
 
-from enum import StrEnum
 from typing import Final, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -51,13 +50,6 @@ def format_coins(units: int) -> str:
     return f"{sign}{whole}.{fraction:08d}"
 
 
-class QualityMode(StrEnum):
-    """Whether the quality policy is enforced for a network."""
-
-    OFF = "off"
-    SAMPLED = "sampled"
-
-
 class NetworkParams(BaseModel):
     """One network's consensus constants. Frozen: instances are hashable and safe."""
 
@@ -93,7 +85,6 @@ class NetworkParams(BaseModel):
     registration_epochs: int = Field(ge=1)
     unbond_delay: int = Field(ge=0)
     min_fee: int = Field(gt=0)
-    challenge_window: int = Field(ge=0)
 
     # Clocks and timeout settlement
     lag_grace_ms: int = Field(default=250, ge=0, le=1_000)
@@ -107,10 +98,6 @@ class NetworkParams(BaseModel):
     max_plies: int = Field(ge=1, le=MAX_PLIES_LIMIT)
     nodes_per_move: int = Field(gt=0)
     book_version: str = Field(min_length=1)
-
-    # Quality policy
-    quality_mode: QualityMode
-    quality_sample_rate: int = Field(ge=0, le=1000)
 
     # Beacon
     beacon_grace_blocks: int = Field(ge=0)
@@ -153,8 +140,6 @@ class NetworkParams(BaseModel):
             raise ValueError("drand timing constants require drand_chain")
         if self.drand_chain is not None and any(field is None for field in drand_fields):
             raise ValueError("drand_chain requires drand_period_seconds and drand_round_offset")
-        if self.quality_mode is QualityMode.SAMPLED and self.quality_sample_rate == 0:
-            raise ValueError("quality_mode 'sampled' requires a non-zero quality_sample_rate")
 
         max_money = self.max_money
         if max_money is not None:
@@ -193,7 +178,6 @@ TESTNET: Final = NetworkParams(
     registration_epochs=10,
     unbond_delay=50,
     min_fee=1_000,
-    challenge_window=30,
     lag_grace_ms=250,
     timeout_dispute_window=2,
     min_timeout_bond=coins_to_units(1),
@@ -203,8 +187,6 @@ TESTNET: Final = NetworkParams(
     max_plies=300,
     nodes_per_move=50_000,
     book_version="dev-1",
-    quality_mode=QualityMode.OFF,
-    quality_sample_rate=0,
     beacon_grace_blocks=2,
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
@@ -234,7 +216,6 @@ MAINNET: Final = NetworkParams(
     registration_epochs=30,
     unbond_delay=1_000,
     min_fee=1_000,
-    challenge_window=100,
     lag_grace_ms=250,
     timeout_dispute_window=6,
     min_timeout_bond=coins_to_units(10),
@@ -244,8 +225,6 @@ MAINNET: Final = NetworkParams(
     max_plies=400,
     nodes_per_move=250_000,
     book_version="v1",
-    quality_mode=QualityMode.SAMPLED,
-    quality_sample_rate=50,
     beacon_grace_blocks=6,
     drand_chain="quicknet",
     drand_period_seconds=3,

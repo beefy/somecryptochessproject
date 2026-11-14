@@ -11,9 +11,9 @@ import type { ReactNode } from "react";
 import { StyleSheet, useWindowDimensions, View } from "react-native";
 import { Divider, Text } from "react-native-paper";
 
-import { fetchBlocks, fetchChallenges, fetchGames } from "../api";
+import { fetchBlocks, fetchGames } from "../api";
 import { BlockTable, StatCard } from "../components/BlockTable";
-import { EmptyState, FailureNotice, Loading, Section, StatusPill } from "../components/Chrome";
+import { FailureNotice, Loading, Section } from "../components/Chrome";
 import { GameTable } from "../components/GameTable";
 import { formatAge, formatAmount, formatInteger } from "../lib/format";
 import { useNode } from "../node";
@@ -23,13 +23,11 @@ export function Dashboard(): ReactNode {
   const { status, params } = useNode();
   const blocks = useResource((signal) => fetchBlocks({ limit: 6, signal }), [], { pollMs: 5000 });
   const games = useResource((signal) => fetchGames(signal), [], { pollMs: 8000 });
-  const challenges = useResource((signal) => fetchChallenges(signal), [], { pollMs: 15000 });
   const now = useNow(1000);
   const { width } = useWindowDimensions();
   const wide = width >= 720;
 
   const tip = blocks.data?.blocks[0];
-  const openChallenges = (challenges.data?.challenges ?? []).filter((item) => item.status === "open");
 
   return (
     <>
@@ -108,28 +106,6 @@ export function Dashboard(): ReactNode {
           <GameTable games={games.data.games.slice(0, 6)} />
         )}
       </Section>
-
-      <Section title="Open challenges" subtitle="fraud claims inside their resolution window">
-        {challenges.error !== undefined ? (
-          <FailureNotice error={challenges.error} />
-        ) : challenges.data === undefined ? (
-          <Loading />
-        ) : openChallenges.length === 0 ? (
-          <EmptyState>No challenge is open</EmptyState>
-        ) : (
-          openChallenges.map((item) => (
-            <View key={item.challenge_id} style={styles.challengeRow}>
-              <StatusPill label={item.status} tone="bad" />
-              <Text variant="bodyMedium" style={styles.challengeReason}>
-                {item.reason}
-              </Text>
-              <Text variant="bodySmall" style={styles.muted}>
-                #{formatInteger(item.opened_height)} → #{formatInteger(item.deadline_height)}
-              </Text>
-            </View>
-          ))
-        )}
-      </Section>
     </>
   );
 }
@@ -139,13 +115,5 @@ const styles = StyleSheet.create({
   heroTitle: { fontWeight: "600" },
   heroBody: { opacity: 0.8 },
   stats: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  challengeRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    flexWrap: "wrap",
-    paddingVertical: 6,
-  },
-  challengeReason: { flexShrink: 1 },
   muted: { opacity: 0.66 },
 });

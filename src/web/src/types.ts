@@ -10,8 +10,6 @@
 export type Color = "white" | "black";
 export type ResultValue = "1-0" | "0-1" | "1/2-1/2";
 export type TerminationValue = "checkmate" | "draw" | "resignation" | "time_forfeit";
-export type ChallengeStatus = "none" | "open" | "upheld" | "rejected";
-export type ChallengeState = "open" | "upheld" | "rejected";
 
 export interface MempoolStatus {
   transactions: number;
@@ -52,13 +50,10 @@ export interface NetworkParams {
   coinbase_maturity: number;
   min_bond: number;
   min_fee: number;
-  challenge_window: number;
   min_plies: number;
   max_plies: number;
   nodes_per_move: number;
   book_version: string;
-  quality_mode: "off" | "sampled";
-  quality_sample_rate: number;
   max_block_bytes: number;
   max_pgn_bytes: number;
   max_tx_bytes: number;
@@ -192,7 +187,6 @@ export interface WinProof {
   result_signatures: Record<string, string>;
   clock_evidence?: ClockEvidence | null;
   move_evidence?: MoveEvidence | null;
-  quality_summary?: QualitySummary | null;
   timeout_claim_id?: string | null;
 }
 
@@ -229,8 +223,6 @@ export interface GameSummary {
   height: number | null;
   in_mempool: boolean;
   low_ply: boolean;
-  challenge_status: ChallengeStatus;
-  quality_verdict: "pass" | "fail" | null;
 }
 
 export interface GameList {
@@ -246,9 +238,6 @@ export interface GameView {
   winner: string | null;
   height: number | null;
   in_mempool: boolean;
-  challenge_status: ChallengeStatus;
-  quality_verdict: "pass" | "fail" | null;
-  quality_trace_hash: string | null;
 }
 
 /** `GET /v1/games/{game_hash}/pgn`: the move text the settlement proof carries. */
@@ -272,28 +261,6 @@ export interface MempoolView {
   network: string;
   transactions: string[];
   proofs: string[];
-}
-
-export interface ChallengeView {
-  challenge_id: string;
-  network: string;
-  proof_id: string;
-  game_hash: string;
-  challenger: string;
-  miner: string;
-  reason: string;
-  evidence: string;
-  bond: number;
-  opened_height: number;
-  deadline_height: number;
-  status: ChallengeState;
-  resolved_height: number | null;
-  panel: string[];
-}
-
-export interface ChallengeList {
-  network: string;
-  challenges: ChallengeView[];
 }
 
 export interface AccountView {
@@ -381,17 +348,6 @@ export interface Beacon {
   drand_used: boolean;
   drand_round: number | null;
   drand_signature: string | null;
-}
-
-/** The relay's non-consensus quality verdict attached to a proof. */
-export interface QualitySummary {
-  policy: string;
-  verdict: "pass" | "fail" | "unknown";
-  trace_hash: string | null;
-  engine_fingerprint: string | null;
-  white_blunders: number;
-  black_blunders: number;
-  worst_cpl: number;
 }
 
 /** One witness signature on a clock receipt. */

@@ -21,10 +21,6 @@ export function gameStatus(game: GameSummary): {
   tone: "good" | "warn" | "bad" | "info" | "neutral";
 } {
   if (game.in_mempool) return { label: "pending", tone: "warn" };
-  if (game.challenge_status === "open") return { label: "challenged", tone: "bad" };
-  if (game.challenge_status === "upheld") return { label: "challenge upheld", tone: "bad" };
-  if (game.challenge_status === "rejected") return { label: "challenge rejected", tone: "info" };
-  if (game.quality_verdict === "fail") return { label: "quality fail", tone: "bad" };
   return { label: "settled", tone: "good" };
 }
 

@@ -77,6 +77,29 @@ generator is one container IP, so a wide cycle spends that budget and signs the
 rest with the published faucet key -- the bypass `sccp faucet send` already uses.
 That line is expected, not an error; the endpoint is retried on the next cycle.
 
+One more segment can appear on that same line, and it is on by default in
+`docker-compose.yml`:
+
+```
+cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | miners: started extra-miner-1; online: extra-miner-1
+```
+
+- `| miners: ...` comes from `deploy/synthetic_miner_creation.py`. The generator
+  keeps up to `--extra-miners` (2) extra miners derived from published seeds under
+  `/data/synthetic-miners`, and starts or stops one per cycle so the roster keeps
+  changing; `--max-extra-online` (1) caps how many run at once. They are real
+  `sccp miner run` children: they register, commit availability, play what the
+  relay assigns and announce their proofs, and the generator funds them through
+  the same faucet gateway as the wallets. `synthetic-miner-1` is deliberately
+  **weak** (16 nodes a move): it loses most games and earns nothing, which is the
+  whole story a bad engine tells on a chain that only pays for wins.
+  Capacity is measured, not assumed: half a core and 256 MiB per miner, one core
+  reserved for the node and relay, so an `e2-standard-2` (2 vCPU, 8 GB) fits the
+  pool and `--max-extra-online` (1) runs one at a time. A host that
+  cannot fit one logs
+  `miners: no change; online: none (the host has ... leave room for 0)` and runs
+  wallet traffic only; `--extra-miners 0` removes the churn entirely.
+
 The loop cannot drain the faucet. Transfers run between the pool's own wallets, so
 the coins circulate; the faucet is tapped only for new wallets (at most
 `--max-wallets`, ten by default, at 10 coins each) and for fees (1,000 units per

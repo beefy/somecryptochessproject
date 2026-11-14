@@ -61,7 +61,6 @@ EngineFingerprint = Annotated[
 Color = Literal["white", "black"]
 ResultValue = Literal["1-0", "0-1", "1/2-1/2"]
 TerminationValue = Literal["checkmate", "draw", "resignation", "time_forfeit"]
-Verdict = Literal["pass", "fail", "unknown"]
 
 MAX_CLOCK_MS = 24 * 60 * 60 * 1000
 """Upper bound for a clock value (24 hours), from PROTOCOL.md section 8.4."""
@@ -86,7 +85,6 @@ class TxType(StrEnum):
     REVEAL = "reveal"
     TIMEOUT_CLAIM = "timeout_claim"
     TIMEOUT_DISPUTE = "timeout_dispute"
-    CHALLENGE = "challenge"
     SLASH_EVIDENCE = "slash_evidence"
 
 
@@ -386,24 +384,6 @@ class GameResult(ProtocolModel):
     result_signatures: dict[Color, LedgerSignatureHex] = Field(default_factory=dict)
 
 
-class QualitySummary(ProtocolModel):
-    """Optional quality verdict attached to a proof (PROTOCOL.md section 9.2).
-
-    The summary is non-consensus evidence: it names the policy, records the
-    compact counters a validator can compare against a re-run, and commits to the
-    full trace by hash. Every counter defaults to zero so older proofs and
-    malformed-but-parseable summaries remain structurally valid.
-    """
-
-    policy: str = Field(min_length=1, max_length=64)
-    verdict: Verdict
-    trace_hash: DigestHex | None = None
-    engine_fingerprint: str | None = Field(default=None, max_length=128)
-    white_blunders: int = Field(default=0, ge=0)
-    black_blunders: int = Field(default=0, ge=0)
-    worst_cpl: int = Field(default=0, ge=0)
-
-
 class WinProof(ProtocolModel):
     """A winner's self-contained claim (PROTOCOL.md section 9)."""
 
@@ -428,7 +408,6 @@ class WinProof(ProtocolModel):
     clock_evidence: ClockEvidence | None = None
     move_evidence: MoveEvidence | None = None
     timeout_claim_id: DigestHex | None = None
-    quality_summary: QualitySummary | None = None
 
 
 class BlockHeader(ProtocolModel):
@@ -512,7 +491,6 @@ __all__ = [
     "MoveReceipt",
     "OpeningRef",
     "ProtocolModel",
-    "QualitySummary",
     "ResultValue",
     "Reveal",
     "RosterMember",
@@ -524,6 +502,5 @@ __all__ = [
     "Transaction",
     "Transcript",
     "TxType",
-    "Verdict",
     "WinProof",
 ]

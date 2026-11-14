@@ -27,7 +27,6 @@ export interface VerifyParams {
   network_id: string;
   rounds_per_epoch: number;
   min_plies: number;
-  quality_mode: "off" | "sampled";
 }
 
 /**
@@ -275,13 +274,6 @@ export function verifyProof(
     const expected = proofId(proof.game_hash, proof.match_id, proof.winner);
     require(expected === proof.proof_id, `the fields recompute to ${expected}`);
     return expected;
-  });
-
-  run("quality summary", () => {
-    if (context.params.quality_mode === "off") return "not required on this network";
-    const summary = proof.quality_summary ?? null;
-    if (summary === null) throw new Error("a sampled network requires a summary");
-    return `${summary.policy}: ${summary.verdict}`;
   });
 
   return { ok: checks.every((check) => check.ok), checks };

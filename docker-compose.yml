@@ -168,15 +168,26 @@ services:
     command:
       - --node
       - http://node:8645
-    # Ordinary wallet usage on top of the drip: it creates ten wallets and funds
-    # them, then each cycle picks 2-10, tops up the short ones, sends 1-10 transfers
-    # between them and waits for both phases to be mined, then idles for 1-5
-    # minutes. It holds no roster slot and builds no blocks; the node admits every
-    # transfer like any wallet's.
-    #
-    # It runs beside the miners rather than on its own VM because its lifetime is
-    # the chain's: the deploy starts from empty volumes, so a generator that
-    # outlived `docker compose down -v` would send with stale nonces and balances.
+      - --relay
+      - http://relay:8646
+      # Ordinary wallet usage on top of the drip: it creates ten wallets and funds
+      # them, then each cycle picks 2-10, tops up the short ones, sends 1-10 transfers
+      # between them and waits for both phases to be mined, then idles for 1-5
+      # minutes. It holds no roster slot and builds no blocks; the node admits every
+      # transfer like any wallet's.
+      #
+      # Two more kinds of activity ride along at their defaults. First, a churn: one
+      # extra `sccp miner run` child at a time, swapped every cycle, so registrations,
+      # availability and roster changes keep happening. `synthetic-miner-1` plays at
+      # 16 nodes a move on purpose: a deliberately weak engine that loses most games
+      # and earns nothing, because only a win pays. The
+      # churn measures the host first (half a core per miner, one core kept for the
+      # node and relay) and seats nothing rather than starving the fixed miners if
+      # nothing fits. Disable it with `--extra-miners 0`.
+      #
+      # It runs beside the miners rather than on its own VM because its lifetime is
+      # the chain's: the deploy starts from empty volumes, so a generator that
+      # outlived `docker compose down -v` would send with stale nonces and balances.
     depends_on:
       bootstrap:
         condition: service_completed_successfully

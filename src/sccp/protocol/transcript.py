@@ -50,7 +50,6 @@ from sccp.protocol.models import (
     Matchup,
     MoveEvidence,
     OpeningRef,
-    QualitySummary,
     ResultValue,
     TerminationValue,
     Transcript,
@@ -384,7 +383,6 @@ def build_win_proof(
     result_signatures: Mapping[Color, str],
     *,
     params: NetworkParams,
-    quality_summary: QualitySummary | None = None,
     clock_evidence: ClockEvidence | None = None,
     move_evidence: MoveEvidence | None = None,
     timeout_claim_id: str | None = None,
@@ -488,7 +486,6 @@ def build_win_proof(
         clock_evidence=clock_evidence,
         move_evidence=move_evidence,
         timeout_claim_id=timeout_claim_id,
-        quality_summary=quality_summary,
     )
 
 

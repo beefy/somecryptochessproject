@@ -107,34 +107,8 @@ class MempoolView(ProtocolModel):
     proofs: tuple[str, ...] = ()
 
 
-class ChallengeView(ProtocolModel):
-    """``GET /v1/challenges``: one bonded quality challenge."""
-
-    challenge_id: str
-    network: str = Field(min_length=1)
-    proof_id: str
-    game_hash: str
-    challenger: str
-    miner: str
-    reason: str
-    evidence: str
-    bond: int = Field(ge=1)
-    opened_height: int = Field(ge=0)
-    deadline_height: int = Field(ge=0)
-    status: Literal["open", "upheld", "rejected"]
-    resolved_height: int | None = Field(default=None, ge=0)
-    panel: tuple[str, ...] = ()
-
-
-class ChallengeList(ProtocolModel):
-    """``GET /v1/challenges``: the challenges this node knows about."""
-
-    network: str = Field(min_length=1)
-    challenges: tuple[ChallengeView, ...] = ()
-
-
 class GameView(ProtocolModel):
-    """``GET /v1/games/{game_hash}``: proof and challenge status."""
+    """``GET /v1/games/{game_hash}``: proof status for one game."""
 
     game_hash: str
     network: str = Field(min_length=1)
@@ -143,9 +117,6 @@ class GameView(ProtocolModel):
     winner: str | None = None
     height: int | None = Field(default=None, ge=0)
     in_mempool: bool = False
-    challenge_status: Literal["none", "open", "upheld", "rejected"] = "none"
-    quality_verdict: Literal["pass", "fail"] | None = None
-    quality_trace_hash: str | None = None
 
 
 class GamePgn(ProtocolModel):
@@ -316,8 +287,6 @@ class GameSummary(ProtocolModel):
     height: int | None = Field(default=None, ge=0)
     in_mempool: bool = False
     low_ply: bool = False
-    challenge_status: Literal["none", "open", "upheld", "rejected"] = "none"
-    quality_verdict: Literal["pass", "fail"] | None = None
 
 
 class GameList(ProtocolModel):

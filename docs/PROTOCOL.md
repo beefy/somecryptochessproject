@@ -4,8 +4,8 @@ Status: **normative** for protocol v1 (canonical encoding, game hash, PGN
 contract, opening book, engine fingerprints, epoch beacons, pairing,
 certificates, transcripts, clocks and clock evidence, stream commitments,
 win-proof verification, the ledger — transaction envelopes, account state, block
-headers and bodies, difficulty, fork choice and genesis documents — the quality
-and challenge lifecycle, and the node: HTTP API, gossip envelopes, peer scoring
+headers and bodies, difficulty, fork choice and genesis documents — and the node:
+HTTP API, gossip envelopes, peer scoring
 and pull-sync). The clock layer covers the off-chain primitives *and* on-chain
 settlement.
 
@@ -153,9 +153,10 @@ Notes:
   draws. A game stopped by one of those is only valid as a resignation.
 - For a resignation the side to move is the side that resigned, so a White
   resignation is `0-1`.
-- A resignation is additionally subject to the quality policy through
-  `validate_pgn(..., resignation_check=...)`; the check must confirm the
-  position is lost.
+- A resignation may be checked by a caller through
+  `validate_pgn(..., resignation_check=...)`, which must confirm the position is
+  lost. The node does not supply that check: judging a position is not a
+  consensus rule, and a resignation is accepted as written (section 9.2).
 - Draws are valid PGNs but earn nothing; a win proof requires a decisive
   result.
 
@@ -607,13 +608,10 @@ A proof wraps the co-signed transcript:
  "move_commitment": "hex", "low_ply": false,
  "opening": {...}, "pgn": "[Event ...] ...",
  "certificate": {...}, "result_signatures": {"white": "hex", "black": "hex"},
- "clock_evidence": null, "move_evidence": null, "timeout_claim_id": null,
- "quality_summary": null}
+ "clock_evidence": null, "move_evidence": null, "timeout_claim_id": null}
 ```
 
-`proof_id = H("sccp/v1/proof", {game_hash, match_id, winner})`. The optional
-`quality_summary` is evidence for the quality layer and is ignored by structural
-verification.
+`proof_id = H("sccp/v1/proof", {game_hash, match_id, winner})`.
 `clock_evidence` is required for every `time_forfeit` and carries the time
 control, a window of witness-signed move receipts, the final flag receipt and the
 witness checkpoint over them (section 8.5). `timeout_claim_id` binds a
@@ -646,8 +644,8 @@ Verification runs cheap checks first and stops at the first typed failure:
 | `duplicate` | neither hash has already been seen by the caller |
 
 A proof that passes is structurally and cryptographically valid. It says nothing
-about how well the moves were played; quality is handled separately as sampled
-evidence and a bonded challenge process.
+about how well the moves were played, and deliberately so: section 9.2 explains
+why that is not a consensus question.
 
 ### 9.1 Context document
 
@@ -668,26 +666,68 @@ opening book is loaded from the installed package unless `--book` names an
 override. drand needs a callable verifier, so a `drand_used = 1` beacon fails
 offline verification unless the caller supplies a pinned verifier.
 
-### 9.2 Quality evidence and challenges
+### 9.2 Why quality is not arbitrated on chain
 
-`quality_summary` is optional evidence. It never affects structural verification
-or block validity. A node that wants to audit a proof selects it
-deterministically from `H(block_hash || proof_id) mod 1000 < sample_rate`, so
-every validator computes the same sample without coordination. Analysis results
-are reported by the node's quality sampler; a persistent disagreement can become
-a bonded `challenge` transaction (section 10.2).
+Protocol v1 has no quality summary, no challenge transaction and no adjudication
+panel. Earlier drafts of this document described all three; they were built,
+exercised on a testnet, and then removed. This section records what the layer
+did, and why the useful part of it belongs off chain. It is normative only in
+the negative: a proof carries no quality field, a block cannot change because of
+how well a move was played, and `challenge`/`panel_vote` are not transaction
+types (section 10.2). The change is wire-incompatible: a chain whose blocks
+carry the old field must be rebuilt from genesis, because `WinProof` forbids
+unknown fields.
 
-A challenge is valid only inside `challenge_window`, must name an accepted
-proof, and cannot be opened by the proof's miner. The challenger's bond is
-locked. The adjudication panel is derived from the ledger and beacon: eligible
-bonded members are ranked by the challenge domain hash, the parties are excluded,
-and the panel size is odd. In the current implementation panel votes are
-delivered to the node/operator rather than committed as a transaction, so
-`adjudicate_with_panel` is called with a complete ballot. An upheld challenge
-returns the challenger's bond, slashes the proof miner's bond and burns the
-still-unvested coinbase credit from the proof's block; a rejected challenge burns
-the challenger's bond. On-chain panel voting is tracked in the implementation
-plan.
+**The record is already complete.** A proof carries the PGN, both result
+signatures, the move commitment and — for a clock or single-signature
+settlement — witness-signed clock or move evidence. Anyone can replay the game
+and check every field. A `quality_summary` added nothing a verifier could not
+derive itself: consensus touched it only to require its *presence* on a
+"sampled" network and never inspected its contents. It was an unverified cache
+with an unbounded lie surface, and the only consensus effect a false summary
+could have was to create a dispute about a field that did not matter.
+
+**Intent is not in the record.** "Lost on purpose" and "lost badly" produce the
+same legal moves, the same signatures and the same PGN. Every rule of the form
+"this game was too bad to count" is therefore a weakness tax: it prices honest
+weak engines out of the roster without ever catching the colluding miner, who
+controls both seats and can produce a decisive game at any quality threshold.
+
+**The economics favour self-play, not fraud detection.** With `wins_required=3`
+over five rounds, an epoch mints `3 * subsidy`; one miner holding both seats
+collects all of it for two bonds, which is the same per-bond return as the median
+honest miner, better than any below-median miner, and variance-free. A bond that
+comes back when an accusation sticks, and pays no bounty, does not change that
+arithmetic.
+
+**The decidable faults were already elsewhere.** Forged signatures, illegal
+moves, a PGN that does not fold to `move_commitment`, a proof from an unseated
+pair, a clock claim without receipts, a duplicate proof id — all are rejected
+inline by section 9, and none needs a bond, a window or a panel. That is the
+whole set of claims that can be decided from the record alone.
+
+**What the layer cost.** As shipped it had votes that were attested, never
+verified (a panel member's engine was trusted, so a majority could invalidate
+any proof); a panel filtered only on "bonded and not a party", with the roster's
+`funder`/`subnet`/`asn` fields never populated, so every pairing-diversity rule
+was inert; a challenger bond that was refunded on success, making a smear
+campaign cheap; no liveness rule, so one unavailable adjudicator left a
+challenge open and the challenger's bond locked indefinitely; and two different
+trigger policies in one tree (the node's sampler challenged a `fail` verdict,
+the testnet script challenged a summary mismatch). None of those is a bug a
+better implementation would remove: they follow from asking a chain to judge
+chess.
+
+**Where a quality signal belongs.** In an off-chain indexer that reads the PGNs
+the chain already stores, re-runs whatever engine it likes and publishes a label
+or a rating. It may be wrong, and may disagree with another indexer, without
+invalidating a block; it needs no bond, and no miner's money is at stake. If a
+quality dispute ever had to become consensus, the minimum shape would be: a
+fraud-only trigger on a decidable claim; the verdict re-derived on chain from
+submitted counters rather than attested; a bounty paid out of the slashed bond;
+a hard voting deadline with a liveness fallback; funder/subnet diversity read
+from populated roster fields; one open case per challenger; and a tolerant
+summary comparison. That is a different project, and this one does not need it.
 
 ## 10. Transactions
 
@@ -764,8 +804,7 @@ the one scheme, not a second way to spend.
 | `reveal` | `epoch`, `nonce`, `public_key`\* | only valid in epoch `epoch - 1`, must open that epoch's commitment, may not change |
 | `timeout_claim` | `match_id`, `certificate`, `last_move`, `clock_evidence`, `bond`, `public_key`\* | opens a bonded claim (10.4) |
 | `timeout_dispute` | `claim_id`, `move`, `move_signature`, `clock_evidence`, `public_key`\* | the accused answers with a later signed move (10.4) |
-| `slash_evidence` | `evidence`, `proof_id`, `public_key`\* | burns an equivocating clock witness (10.4); `proof_id` is refused here and is handled by the challenge layer |
-| `challenge` | `proof_id`, `reason`, `evidence`, `bond`, `public_key`\* | locks a bond and opens a quality challenge; an upheld challenge slashes the proof miner and burns unvested coinbase, a rejected challenge burns the challenger's bond (9.2) |
+| `slash_evidence` | `evidence`, `proof_id`, `public_key`\* | burns an equivocating clock witness (10.4); `proof_id` is refused here |
 
 \* optional: only needed for an account whose public key the chain does not
 already know (10.1).
@@ -811,8 +850,9 @@ The lifecycle (implemented in `src/sccp/chain/timeout.py`) is:
 `(match_id, kind, ply)`, different contents and valid signatures from the named
 witness. The witness must be registered with a non-zero bond; the bond is burned,
 the witness is de-registered and `banned_until = height + unbond_delay`.
-Equivocation about proofs (`proof_id` in the payload) is refused here; proof
-disputes go through the bonded challenge layer (9.2).
+Equivocation about proofs (`proof_id` in the payload) is refused here: the only
+on-chain invalidation there is a rejected proof, which block validation already
+handles (section 9).
 
 ### 10.5 One post-quantum identity
 
@@ -1141,8 +1181,6 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/transactions/{txid}` | `TransactionRecord`: type, height, block hash, mempool flag |
 | POST | `/v1/tx` | `TxAccepted`: the recomputed txid |
 | POST | `/v1/proofs` | `ProofAccepted`: the proof id |
-| GET | `/v1/challenges` | `ChallengeList`: open challenges by default, resolved ones with `?include_resolved=true` |
-| GET | `/v1/challenges/{challenge_id}` | `ChallengeView`: one resolved or open challenge |
 | POST | `/v1/gossip` | `GossipResult`: object id, duplicate flag, fanout |
 | GET | `/v1/peers` | `PeerView[]`: network, url, address, height, failures, ban and last-seen times |
 

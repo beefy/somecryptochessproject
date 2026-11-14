@@ -374,7 +374,7 @@ def _check_outcome(
             raise PgnValidationError("a resignation must have a decisive Result")
         if resignation_check is not None and not resignation_check(board):
             raise PgnValidationError(
-                "resignation rejected: the quality policy does not consider the position lost"
+                "resignation rejected: the resignation policy does not consider the position lost"
             )
         # The side to move resigned, so the other side won.
         winner = GameResult.BLACK if board.turn == chess.WHITE else GameResult.WHITE
@@ -413,9 +413,10 @@ def validate_pgn(
     move, the opening prefix, result/termination agreement, and -- for a proof --
     a decisive result of at least ``params.min_plies``.
 
-    ``resignation_check`` is the quality-policy hook: it receives the final
-    board and must return ``True`` when the resigning side is lost. It is only
-    called for games without a board outcome.
+    ``resignation_check`` is an optional hook: it receives the final board and
+    must return ``True`` when the resigning side is lost. It is only called for
+    games without a board outcome, and it is never a consensus rule -- a caller
+    that passes nothing accepts the resignation as written.
 
     ``clock_evidence`` is the presence marker for a clocked proof. A
     ``time_forfeit`` PGN is accepted only when it is present; every other
