@@ -16,7 +16,7 @@ import { useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { Menu, useTheme } from "react-native-paper";
 
-import { SITE_LABELS, crossSiteHref, currentSite, type Site } from "../lib/site";
+import { SITE_LABELS, crossSiteHref, currentSite, hashUrl, type Site } from "../lib/site";
 import { navigate } from "../router";
 
 /** Navigate to `hash` on `site`, crossing the subdomain only when hosted. */
@@ -30,7 +30,8 @@ function open(site: Site, hash: string): void {
     navigate(hash);
     return;
   }
-  globalThis.location.assign(`${base}/${hash}`);
+  // `base` ends in `/`; joining it to `#/wallet` naively left `host//#/wallet`.
+  globalThis.location.assign(hashUrl(base, hash));
 }
 
 function HamburgerButton({ onPress }: { onPress: () => void }): ReactNode {

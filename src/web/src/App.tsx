@@ -12,6 +12,7 @@ import { Banner, Button, PaperProvider, Surface, Text, useTheme } from "react-na
 
 import { AppMenu } from "./components/AppMenu";
 import { Anchor, Loading, Page } from "./components/Chrome";
+import { NoticeProvider } from "./components/Notices";
 import { formatInteger, shortHash } from "./lib/format";
 import { currentSite } from "./lib/site";
 import { NodeProvider, useNode } from "./node";
@@ -49,6 +50,7 @@ const WALLET_SECTIONS = [
   { key: "walletPlay", label: "Play", href: "#/wallet/play" },
   { key: "walletSend", label: "Send", href: "#/wallet/send" },
   { key: "walletReceive", label: "Receive", href: "#/wallet/receive" },
+  { key: "walletFaucet", label: "Faucet", href: "#/wallet/faucet" },
   { key: "walletHistory", label: "History", href: "#/wallet/history" },
   { key: "walletSettings", label: "Settings", href: "#/wallet/settings" },
 ] as const;
@@ -64,7 +66,9 @@ export function App(): ReactNode {
     <ThemeModeContext.Provider value={theme}>
       <PaperProvider theme={mode === "dark" ? darkTheme : lightTheme}>
         <NodeProvider>
-          <Shell />
+          <NoticeProvider>
+            <Shell />
+          </NoticeProvider>
         </NodeProvider>
       </PaperProvider>
     </ThemeModeContext.Provider>
@@ -88,6 +92,7 @@ function Shell(): ReactNode {
     route.name === "walletPlay" ||
     route.name === "walletSend" ||
     route.name === "walletReceive" ||
+    route.name === "walletFaucet" ||
     route.name === "walletHistory" ||
     route.name === "walletSettings";
   const section =
@@ -235,6 +240,7 @@ function routeKey(route: Route): string {
     case "walletPlay":
     case "walletSend":
     case "walletReceive":
+    case "walletFaucet":
     case "walletHistory":
     case "walletSettings":
       return "wallet";
@@ -250,7 +256,7 @@ function routeKey(route: Route): string {
 function WalletRoute({
   view,
 }: {
-  view: "overview" | "play" | "send" | "receive" | "history" | "settings";
+  view: "overview" | "play" | "send" | "receive" | "faucet" | "history" | "settings";
 }): ReactNode {
   return (
     <Suspense fallback={<Loading />}>
@@ -285,6 +291,8 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <WalletRoute view="send" />;
     case "walletReceive":
       return <WalletRoute view="receive" />;
+    case "walletFaucet":
+      return <WalletRoute view="faucet" />;
     case "walletHistory":
       return <WalletRoute view="history" />;
     case "walletSettings":

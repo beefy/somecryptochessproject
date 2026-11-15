@@ -34,13 +34,34 @@ not itemised here.
   and the wallet are one bundle served under two names, and the menu is exactly
   two items: Explorer and Wallet. On a hosted build it follows an absolute URL;
   on a dev server it moves by hash, where there is no second name. The wallet is
-  its own page with Overview, Play, Send, Receive, History and Settings tabs, like
-  the explorer's; `#/` lands on its overview under `wallet.` and on the dashboard
-  under `explorer.`. A faucet click shows a progress bar until the node answers,
-  on both the wallet and the table.
+  its own page with Overview, Play, Send, Receive, Faucet, History and Settings
+  tabs, like the explorer's; `#/` lands on its overview under `wallet.` and on the
+  dashboard under `explorer.`. A faucet click shows a progress bar until the node
+  answers, on both the wallet and the table.
+- **Wallet conveniences: copy, refresh, nicknames and pending rows.** Every wallet
+  page can copy its address with a button (`CopyButton`, which admits when the
+  Clipboard API refuses). The overview has a Refresh button and no longer repeats
+  Send/Receive buttons that the tab bar already names. A wallet can be nicknamed
+  in Settings, and a recipient can be nicknamed while sending; `lib/contacts.ts`
+  keeps those labels in `localStorage`, so History and the overview can name a
+  counterparty without any of it entering the keyfile or the chain. A transfer
+  the node accepts is written to `lib/pending.ts` and listed on Overview and
+  History as pending until the committed nonce passes it, with a notice when it is
+  included. The faucet moved to its own tab, so funding is a step with its own
+  progress bar instead of a button on two other pages.
 
 ### Changed
 
+- **The wallet fills the window, and its notices sit at the bottom of it.** The
+  shell's `flex: 1` had no flex parent (`#root` was a plain block), so the page
+  stopped above the bottom of the viewport; `#root` is now a flex column. A
+  `Snackbar` rendered inside the page scroller positions itself against the
+  content, so notices appeared mid-page and scrolled with it; one `NoticeProvider`
+  now sits outside the scroll view and every view raises messages through it.
+- **Cross-site menu links no longer double the slash.** `crossSiteHref` returns an
+  origin with a trailing slash and the hash starts with `#`, so joining them with
+  one more slash produced `https://wallet.chessproofofwork.com//#/wallet`.
+  `hashUrl()` in `lib/site.ts` joins them, with a test.
 - **The hosted testnet moved to `chessproofofwork.com`, in a new Google Cloud
   project.** The deployment keeps its shape -- one VM, nginx and Caddy for the
   explorer, the node on `8645`, the relay on `8646` -- but every public name is

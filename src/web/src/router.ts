@@ -19,6 +19,7 @@ export type Route =
   | { name: "walletPlay" }
   | { name: "walletSend" }
   | { name: "walletReceive" }
+  | { name: "walletFaucet" }
   | { name: "walletHistory" }
   | { name: "walletSettings" }
   | { name: "notFound"; path: string };
@@ -54,6 +55,8 @@ export function parseRoute(hash: string): Route {
           return { name: "walletSend" };
         case "receive":
           return { name: "walletReceive" };
+        case "faucet":
+          return { name: "walletFaucet" };
         case "play":
           return { name: "walletPlay" };
         case "history":
@@ -105,6 +108,8 @@ export function routeHash(route: Route): string {
       return "#/wallet/send";
     case "walletReceive":
       return "#/wallet/receive";
+    case "walletFaucet":
+      return "#/wallet/faucet";
     case "walletHistory":
       return "#/wallet/history";
     case "walletSettings":
@@ -147,6 +152,7 @@ export type Section =
   | "walletPlay"
   | "walletSend"
   | "walletReceive"
+  | "walletFaucet"
   | "walletHistory"
   | "walletSettings";
 
@@ -171,6 +177,8 @@ export function activeSection(route: Route): Section {
       return "walletSend";
     case "walletReceive":
       return "walletReceive";
+    case "walletFaucet":
+      return "walletFaucet";
     case "walletHistory":
       return "walletHistory";
     case "walletSettings":

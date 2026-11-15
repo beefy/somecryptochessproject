@@ -16,6 +16,13 @@
         margin: 0;
         background: #f7f9fc;
       }
+      /* The app root is a flex column: without this the shell's `flex: 1` has
+         nothing to grow into, and the page stops above the bottom of the
+         window, leaving a band of background under the content. */
+      #root {
+        display: flex;
+        flex-direction: column;
+      }
       @media (prefers-color-scheme: dark) {
         html,
         body,
