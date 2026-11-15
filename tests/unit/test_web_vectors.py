@@ -224,7 +224,6 @@ def test_keyfile_vector_describes_this_implementation(vectors: dict[str, object]
     assert seed_to_mnemonic(seed) == keyfile["mnemonic"]
 
 
-
 def test_match_vectors_describe_this_implementation(vectors: dict[str, object]) -> None:
     """The certificate, result and proof in the document are recomputable today."""
     match = vectors["match"]

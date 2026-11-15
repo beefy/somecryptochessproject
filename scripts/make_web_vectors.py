@@ -228,9 +228,7 @@ def build_ledger_vectors() -> dict[str, object]:
         },
     )
     signed = sign_transaction(keypair, unsigned)
-    recipient = encode_address(
-        hybrid_keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET
-    )
+    recipient = encode_address(hybrid_keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET)
     transfer = Transaction(
         network=DEVNET.network_id,
         type=TxType.TRANSFER,

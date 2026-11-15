@@ -19,6 +19,7 @@ from pathlib import Path
 WORDLIST = Path("src/web/src/lib/wordlist.ts")
 """Where the TypeScript module is written."""
 
+
 def wordlist_path() -> Path:
     """The installed `mnemonic` package's English list."""
     import mnemonic
