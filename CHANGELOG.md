@@ -5,6 +5,40 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [0.23.0] - 2026-11-15
+
+### Added
+
+- **Pagination for the game list.** `GET /v1/games` now takes `limit`,
+  `before_height` and `before_game_hash`; the hash is the tie-break when one
+  block settles several proofs, so a page boundary inside that block cannot
+  repeat or skip a game. The explorer's Games view keeps a stack of cursors and
+  offers Older/Newer buttons, and a page after the first stops polling.
+- **A Live games page (`#/live`).** It polls the relay for pending and active
+  sessions and shows both seats, the side to move, the clocks counting down from
+  the relay's last answer, and the epoch. Finished sessions leave the list; the
+  settled proof appears on Games once a block includes it.
+- **The relay's match list filters by status server-side.** `GET /v1/matches`
+  accepts repeatable `status=` parameters (`pending`, `active`, ...), and the
+  Live view also filters the response locally so older relays that ignore the
+  parameter still show only open sessions.
+
+### Fixed
+
+- **Play's Register button reports what happened.** A failed registration now
+  raises the notice bar instead of appearing to do nothing; the status reloads
+  after a successful submit; and a pending transaction disables the chain-action
+  buttons until its nonce advances or it leaves the mempool. That stops a second
+  click from reusing a spent nonce and being rejected.
+
+### Changed
+
+- **The deploy README explains why a fresh testnet's games are all `0-1`.**
+  Both synthetic miners resign at 60 plies; white moves on even plies, so white
+  resigns first and black wins every time. It is a deployment policy, not
+  scoring or the relay: an odd limit would flip the winner, and only a limit
+  that varies per match produces mixed results.
+
 ## [0.22.0] - 2026-11-15
 
 ### Added
