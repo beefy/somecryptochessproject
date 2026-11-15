@@ -28,7 +28,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Chess, type PieceSymbol, type Square } from "chess.js";
 import { Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
-import { Button, Divider, HelperText, Text, TextInput } from "react-native-paper";
+import { Button, Divider, HelperText, ProgressBar, Text, TextInput } from "react-native-paper";
 
 import {
   fetchAccount,
@@ -49,7 +49,7 @@ import {
 } from "../components/Chrome";
 import { certificatePayload, signCertificate } from "../lib/certificate";
 import { DOMAINS } from "../lib/canonical";
-import { formatAmount, formatClock, formatInteger, shortAddress } from "../lib/format";
+import { formatAmount, formatClock, formatCoins, formatInteger, shortAddress } from "../lib/format";
 import {
   addressFor,
   generateHybridKeypair,
@@ -461,7 +461,7 @@ function Table({
   const fund = (): void => {
     void act("fund", async () => {
       const grant = await requestFaucet(address);
-      return `the faucet sent ${formatAmount(grant.amount)} to ${shortAddress(address)} (${grant.txid.slice(0, 12)}…)`;
+      return `the faucet sent ${formatCoins(grant.amount)} to ${shortAddress(address)} (${grant.txid.slice(0, 12)}…)`;
     });
   };
 
@@ -835,6 +835,15 @@ function Table({
             Reveal nonce
           </Button>
         </View>
+        {busy === "fund" && (
+          <>
+            <ProgressBar indeterminate />
+            <Text variant="bodySmall" style={styles.muted}>
+              Asking the faucet for funds; the node answers with a transaction id once it accepts
+              the grant.
+            </Text>
+          </>
+        )}
         <KeyValue label="Commitment in this tab">
           {commitment === null ? "none" : `epoch ${commitment.epoch}`}
         </KeyValue>

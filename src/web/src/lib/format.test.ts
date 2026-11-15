@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { UNITS_PER_COIN, formatAmount, parseAmount } from "./format";
+import { UNITS_PER_COIN, formatAmount, formatCoins, parseAmount } from "./format";
 
 describe("parseAmount", () => {
   it("scales whole and fractional coins exactly", () => {
@@ -38,5 +38,11 @@ describe("parseAmount", () => {
         text.includes(",") ? "1,000.5 SCCP" : `${text} SCCP`,
       );
     }
+  });
+
+  it("formats a faucet grant in whole coins, not base units", () => {
+    expect(formatCoins(1000)).toBe("1,000 SCCP");
+    expect(formatCoins(1)).toBe("1 SCCP");
+    expect(formatCoins(null)).toBe("-");
   });
 });

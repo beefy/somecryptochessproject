@@ -20,18 +20,21 @@ not itemised here.
   words, opens a pasted keyfile, unlocks with the passphrase, polls the
   account's committed balance and nonce, funds from the faucet on testnet and
   devnet, and signs a `transfer` -- after a review screen that names every field
-  the signature covers, plus its txid. The encrypted document is kept in
+  the signature covers, plus its txid. The fee is the sender's to choose (default:
+  the network minimum, with 2x/5x shortcuts) and the node rejects anything below
+  that floor. History is a bounded scan of `/v1/blocks` from the tip, cached per
+  account, because the node has no history endpoint; the tab names the heights it
+  read instead of implying it read them all. The encrypted document is kept in
   IndexedDB; the seed exists only while unlocked, and an idle timer clears it.
   `buildTransfer` joins `lib/tx.ts`, pinned to the CLI's transfer txid.
-- **A hamburger menu in the top-left corner of both sites.** The explorer and
-  the wallet are one bundle served under two names, and the menu switches
-  between them by absolute URL -- a hash on a dev server, where there is no
-  second name. `#/` lands on the wallet under `wallet.` and on the explorer
-  overview everywhere else; the deploy publishes both names from the same release
-  directory and Caddy holds one certificate per name.
-
-Transaction history (the node has no history endpoint yet), a QR code and a
-service worker/manifest are not in this release.
+- **A hamburger menu in the top-left corner that switches sites.** The explorer
+  and the wallet are one bundle served under two names, and the menu is exactly
+  two items: Explorer and Wallet, the current one marked. On a hosted build it
+  follows an absolute URL; on a dev server it moves by hash, where there is no
+  second name. The wallet is its own page with Overview, Send, Receive, History
+  and Settings tabs, like the explorer's; `#/` lands on its overview under
+  `wallet.` and on the dashboard under `explorer.`. A faucet click shows a
+  progress bar until the node answers, on both the wallet and `#/play`.
 
 ### Changed
 

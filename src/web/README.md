@@ -181,6 +181,7 @@ rules, its DNS record and its rollback are in
 | `#/wallet` | the wallet: unlock or create a keyfile, balances, faucet, export |
 | `#/wallet/send` | build, review and sign a transfer |
 | `#/wallet/receive` | the address and its public-key fingerprint |
+| `#/wallet/history` | transactions touching the account, scanned from blocks |
 | `#/wallet/settings` | keyfile export, auto-lock, forget-this-browser |
 
 Routing lives in the hash, so the bundle works from any static path with no
@@ -188,9 +189,12 @@ server-side rewrite rule.
 
 `#/` is the explorer's overview on `explorer.chessproofofwork.com` and the
 wallet's overview on `wallet.chessproofofwork.com`: the two names serve the same
-release, and the hostname picks the landing view (`lib/site.ts`). The hamburger
-menu in the top-left corner switches between them — an absolute link on a hosted
-build, a hash locally so a dev server can exercise both sides.
+release, and the hostname picks the landing view (`lib/site.ts`). Opening any
+wallet route swaps the tab bar for the wallet's own (Overview, Send, Receive,
+History, Settings), even when it was reached from the explorer hostname. The
+hamburger menu in the top-left corner does exactly one thing: switches between the
+explorer and the wallet — an absolute link on a hosted build, a hash locally so a
+dev server can exercise both sides.
 
 The tab icon is [`public/favicon.svg`](public/favicon.svg): the four centre
 squares of the `#/play` board (d4, d5, e4, e5) cropped into a circle, in that
@@ -234,13 +238,16 @@ What the page does:
 - **Send** — amount and fee as decimal SCCP, a review screen showing every signed
   field plus the txid, then a hybrid signature and `POST /v1/tx`. The next nonce is
   kept locally because the account view reports the *committed* one.
+- **History** — the node has no history endpoint, so the tab scans `/v1/blocks`
+  backwards from the tip (200 blocks to start), keeps the transactions that touch
+  the address, and caches the window in IndexedDB. It names the heights it covered
+  and offers "newer", "older" and "rescan" rather than pretending to be complete.
 - **Export** — the keyfile, byte-compatible with the CLI's JSON layout, for
   `sccp wallet balance --key` and `wallet import-mnemonic`.
 
-Not here yet: transaction history (the node has no history endpoint, so the
-explorer's block list is the record), a QR code, and a service worker/manifest for
-installability. The auto-lock timer and the review screen are the parts that
-matter for safety and they are in.
+Not here yet: a QR code, and a service worker/manifest for installability. The
+auto-lock timer, the review screen and the scan's explicit window are the parts
+that matter for safety and they are in.
 
 ## The table is a miner seat
 

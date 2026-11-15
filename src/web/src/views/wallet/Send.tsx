@@ -80,7 +80,10 @@ export function SendPanel({
 
   const parsed = useMemo(() => {
     try {
-      return { amount: parseAmount(amount), fee: parseAmount(fee), failure: null as string | null };
+      // An empty amount is "not typed yet", not a malformed number: the field
+      // must not show a format error before the first keystroke.
+      const amountUnits = amount.trim() === "" ? 0 : parseAmount(amount);
+      return { amount: amountUnits, fee: parseAmount(fee), failure: null as string | null };
     } catch (failure) {
       return { amount: 0, fee: 0, failure: (failure as Error).message };
     }
@@ -94,6 +97,7 @@ export function SendPanel({
       return `a ${network} address starts with ${addressHrp(network)}1`;
     }
     if (recipient === address) return "a transfer must name a different recipient";
+    if (amount.trim() === "") return "enter an amount";
     if (parsed.amount <= 0) return "a transfer amount must be positive";
     if (parsed.fee < minFee) {
       return `the fee is below the network minimum of ${formatAmount(minFee)}`;
@@ -183,8 +187,23 @@ export function SendPanel({
           style={styles.half}
         />
       </View>
+      <View style={styles.actions}>
+        {[1, 2, 5].map((factor) => (
+          <Button
+            key={factor}
+            compact
+            mode="text"
+            onPress={() => setFee(feeText(minFee * factor))}
+          >
+            {factor === 1 ? "Minimum fee" : `${factor}× minimum`}
+          </Button>
+        ))}
+      </View>
       <HelperText type={problem === null ? "info" : "error"} visible>
-        {problem ?? `up to 8 decimals; the minimum fee is ${formatAmount(minFee)}`}
+        {problem ??
+          `Up to 8 decimals. You choose the fee; the network rejects anything below ${formatAmount(
+            minFee,
+          )}.`}
       </HelperText>
       {error !== null && review === null && (
         <HelperText type="error" visible>

@@ -53,6 +53,18 @@ export function formatAmount(base: number | null | undefined): string {
 }
 
 /**
+ * Whole coins, not base units: what `POST /v1/faucet` reports.
+ *
+ * The faucet's `amount` is already in coins (1,000 means one thousand SCCP), so
+ * running it through {@link formatAmount} would print a hundred-millionth of the
+ * grant.
+ */
+export function formatCoins(coins: number | null | undefined): string {
+  if (coins === null || coins === undefined || !Number.isFinite(coins)) return "-";
+  return `${formatInteger(Math.trunc(coins))} SCCP`;
+}
+
+/**
  * Parse a decimal SCCP amount into integer base units.
  *
  * Amounts on the wire are integers (1 SCCP = 100 000 000 units), so the text a

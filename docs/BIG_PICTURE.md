@@ -128,11 +128,13 @@ a playable seat into a wallet, and it is first because everything else needs a
 way to sign in a browser.
 
 **Status (0.20.0).** Shipped: the keystore port (§4.1), `buildTransfer` (§4.2),
-the review screen and local nonce tracking (§4.3), and the create/restore/open,
-receive, send and settings views (§4.4), deployed at
-`wallet.chessproofofwork.com` with the explorer. Still open from this workstream:
-block scanning for a transaction history (§4.3), the QR code and the PWA
-manifest/service worker (§4.4), and the Playwright devnet test (§4.5).
+the review screen and local nonce tracking (§4.3), the create/restore/open,
+receive, send, history and settings views (§4.4), deployed at
+`wallet.chessproofofwork.com` with the explorer. History is implemented as the
+bounded block scan described in §4.3, not as a full index: the tab names the
+heights it covered and caches that window in IndexedDB. Still open from this
+workstream: the QR code and the PWA manifest/service worker (§4.4), and the
+Playwright devnet test (§4.5).
 
 ### 4.1 Keystore: one file, two implementations
 

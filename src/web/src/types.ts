@@ -298,6 +298,7 @@ export interface DifficultyView {
 export interface FaucetView {
   network: string;
   address: string;
+  /** Whole coins, not base units: a grant of 1,000 is 1,000 SCCP. */
   amount: number;
   txid: string;
 }

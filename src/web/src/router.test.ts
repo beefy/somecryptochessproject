@@ -44,6 +44,7 @@ describe("wallet routes", () => {
     for (const [path, name] of [
       ["#/wallet/send", "walletSend"],
       ["#/wallet/receive", "walletReceive"],
+      ["#/wallet/history", "walletHistory"],
       ["#/wallet/settings", "walletSettings"],
     ] as const) {
       const route = parseRoute(path);

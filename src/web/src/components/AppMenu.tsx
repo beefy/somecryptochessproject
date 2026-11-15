@@ -14,7 +14,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { Divider, Menu, useTheme } from "react-native-paper";
+import { Menu, useTheme } from "react-native-paper";
 
 import { SITE_LABELS, crossSiteHref, currentSite, type Site } from "../lib/site";
 import { navigate } from "../router";
@@ -74,9 +74,6 @@ export function AppMenu(): ReactNode {
           onPress={close(() => open(site, site === "wallet" ? "#/wallet" : "#/"))}
         />
       ))}
-      <Divider />
-      <Menu.Item title="Play a game" onPress={close(() => open("explorer", "#/play"))} />
-      <Menu.Item title="Blocks" onPress={close(() => open("explorer", "#/blocks"))} />
     </Menu>
   );
 }

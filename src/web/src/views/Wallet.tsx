@@ -19,12 +19,12 @@
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
-import { Button, HelperText, Snackbar, Text } from "react-native-paper";
+import { Button, HelperText, ProgressBar, Snackbar, Text } from "react-native-paper";
 
 import { fetchAccount, requestFaucet } from "../api";
 import { FailureNotice, KeyValue, Loading, Link, Mono, Section, StatusPill } from "../components/Chrome";
 import { downloadText, keyfileName } from "../lib/download";
-import { formatAmount, formatDuration, formatInteger, shortAddress, shortHash } from "../lib/format";
+import { formatAmount, formatCoins, formatDuration, formatInteger, shortAddress, shortHash } from "../lib/format";
 import type { HybridKeypair } from "../lib/keys";
 import { keyfileText, unlockKeyfile, type KeyfileDocument } from "../lib/keystore";
 import {
@@ -40,6 +40,7 @@ import { navigate } from "../router";
 import { useResource } from "../useResource";
 import { SendPanel, type SentTransaction } from "./wallet/Send";
 import { WalletSetup } from "./wallet/Setup";
+import { HistoryPanel } from "./wallet/History";
 
 interface Session {
   record: StoredKeyfile;
@@ -56,7 +57,27 @@ function describe(failure: unknown): Error {
   return failure instanceof Error ? failure : new Error(String(failure));
 }
 
-export function Wallet({ view }: { view: "overview" | "send" | "receive" | "settings" }): ReactNode {
+/**
+ * A faucet click is a round trip to the node, and the node is what decides: show
+ * that it is working rather than a dead button with no feedback.
+ */
+function FaucetProgress(): ReactNode {
+  return (
+    <>
+      <ProgressBar indeterminate />
+      <Text variant="bodySmall" style={styles.muted}>
+        Asking the faucet for funds. It answers with a transaction id once the node accepts the
+        grant; this page reloads the balance when it does.
+      </Text>
+    </>
+  );
+}
+
+export function Wallet({
+  view,
+}: {
+  view: "overview" | "send" | "receive" | "history" | "settings";
+}): ReactNode {
   const { status, params, network } = useNode();
   const [stored, setStored] = useState<StoredKeyfile[] | null>(null);
   const [storeError, setStoreError] = useState<Error | null>(null);
@@ -188,7 +209,7 @@ export function Wallet({ view }: { view: "overview" | "send" | "receive" | "sett
     setBusy(true);
     try {
       const grant = await requestFaucet(address);
-      setNotice(`the faucet sent ${formatAmount(grant.amount)} (${shortHash(grant.txid)}…)`);
+      setNotice(`the faucet sent ${formatCoins(grant.amount)} (${shortHash(grant.txid)}…)`);
       account.reload();
     } catch (failure) {
       setNotice(describe(failure).message);
@@ -314,8 +335,18 @@ export function Wallet({ view }: { view: "overview" | "send" | "receive" | "sett
                 </Button>
               </View>
             )}
+            {busy && <FaucetProgress />}
             {account.error !== undefined && <FailureNotice error={account.error} />}
           </Section>
+        </>
+      );
+    }
+
+    if (view === "history") {
+      return (
+        <>
+          {title}
+          <HistoryPanel address={record.address} network={record.network} />
         </>
       );
     }
@@ -444,7 +475,11 @@ export function Wallet({ view }: { view: "overview" | "send" | "receive" | "sett
               <Button mode="text" onPress={() => navigate("#/wallet/receive")}>
                 Receive
               </Button>
+              <Button mode="text" onPress={() => navigate("#/wallet/history")}>
+                History
+              </Button>
             </View>
+            {busy && <FaucetProgress />}
             <KeyValue label="Explorer">
               <Link href={`#/accounts/${encodeURIComponent(record.address)}`}>this account</Link>
             </KeyValue>

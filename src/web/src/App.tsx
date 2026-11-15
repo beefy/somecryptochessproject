@@ -55,9 +55,10 @@ const EXPLORER_SECTIONS = [
 ] as const;
 
 const WALLET_SECTIONS = [
-  { key: "wallet", label: "Wallet", href: "#/wallet" },
+  { key: "wallet", label: "Overview", href: "#/wallet" },
   { key: "walletSend", label: "Send", href: "#/wallet/send" },
   { key: "walletReceive", label: "Receive", href: "#/wallet/receive" },
+  { key: "walletHistory", label: "History", href: "#/wallet/history" },
   { key: "walletSettings", label: "Settings", href: "#/wallet/settings" },
 ] as const;
 
@@ -86,10 +87,21 @@ function Shell(): ReactNode {
   const paper = useTheme();
   const { width } = useWindowDimensions();
   const compact = width < 720;
-  const section = activeSection(route);
-  const offline = status.error !== undefined;
   const site = currentSite();
-  const sections = site === "wallet" ? WALLET_SECTIONS : EXPLORER_SECTIONS;
+  // The wallet shows its own tabs wherever it is open -- the wallet subdomain,
+  // `explorer/#/wallet`, or a dev server -- so "Send" is a tab and not a detour
+  // through the hamburger. The hamburger itself only switches sites.
+  const walletOpen =
+    site === "wallet" ||
+    route.name === "wallet" ||
+    route.name === "walletSend" ||
+    route.name === "walletReceive" ||
+    route.name === "walletHistory" ||
+    route.name === "walletSettings";
+  const section =
+    walletOpen && route.name === "dashboard" ? "wallet" : activeSection(route);
+  const offline = status.error !== undefined;
+  const sections = walletOpen ? WALLET_SECTIONS : EXPLORER_SECTIONS;
 
   return (
     <View style={[styles.root, { backgroundColor: paper.colors.background }]}>
@@ -97,13 +109,13 @@ function Shell(): ReactNode {
         <View style={styles.headerRow}>
           <AppMenu />
 
-          <Anchor href="#/" onPress={() => navigate(site === "wallet" ? "#/wallet" : "#/")} style={styles.brand}>
+          <Anchor href="#/" onPress={() => navigate(walletOpen ? "#/wallet" : "#/")} style={styles.brand}>
             <Text variant="titleLarge" style={styles.brandText}>
               SCCP
             </Text>
             {!compact && (
               <Text variant="bodySmall" style={styles.brandSub}>
-                {site}
+                {walletOpen ? "wallet" : site}
               </Text>
             )}
           </Anchor>
@@ -206,7 +218,13 @@ class RouteBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-/** A stable identity per route, so a boundary reset does not leak between pages. */
+/**
+ * A stable identity per route, so a boundary reset does not leak between pages.
+ *
+ * Every wallet route shares one key: the wallet holds its unlocked keypair in
+ * component state, and a fresh key per tab would lock the user out on every tab
+ * click. Switching tabs changes the `view` prop, not the component's identity.
+ */
 function routeKey(route: Route): string {
   switch (route.name) {
     case "block":
@@ -219,14 +237,14 @@ function routeKey(route: Route): string {
       return `account:${route.address}`;
     case "notFound":
       return `notFound:${route.path}`;
+    case "dashboard":
+      return currentSite() === "wallet" ? "wallet" : "dashboard";
     case "wallet":
-      return "wallet";
     case "walletSend":
-      return "wallet:send";
     case "walletReceive":
-      return "wallet:receive";
+    case "walletHistory":
     case "walletSettings":
-      return "wallet:settings";
+      return "wallet";
     default:
       return route.name;
   }
@@ -236,7 +254,11 @@ function routeKey(route: Route): string {
  * The wallet, lazily: `#/` on the wallet subdomain is its landing page, so the
  * site's default route and `#/wallet` render the same view.
  */
-function WalletRoute({ view }: { view: "overview" | "send" | "receive" | "settings" }): ReactNode {
+function WalletRoute({
+  view,
+}: {
+  view: "overview" | "send" | "receive" | "history" | "settings";
+}): ReactNode {
   return (
     <Suspense fallback={<Loading />}>
       <Wallet view={view} />
@@ -274,6 +296,8 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <WalletRoute view="send" />;
     case "walletReceive":
       return <WalletRoute view="receive" />;
+    case "walletHistory":
+      return <WalletRoute view="history" />;
     case "walletSettings":
       return <WalletRoute view="settings" />;
     case "notFound":
