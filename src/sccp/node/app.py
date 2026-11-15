@@ -200,8 +200,13 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     def games(
         limit: int = Query(default=25, ge=1, le=200),
         before_height: int | None = Query(default=None, ge=0),
+        before_game_hash: str | None = Query(default=None, min_length=1),
     ) -> GameList:
-        return service.games(limit=limit, before_height=before_height)
+        return service.games(
+            limit=limit,
+            before_height=before_height,
+            before_game_hash=before_game_hash,
+        )
 
     @app.get("/v1/games/{game_hash}", response_model=GameView)
     def game(game_hash: str) -> GameView:

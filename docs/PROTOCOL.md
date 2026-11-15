@@ -421,7 +421,7 @@ Timed sessions work like this:
 | Method | Path | Body |
 | --- | --- | --- |
 | POST | `/v1/rounds` | `{"round": 0}` — derive and create that round's sessions |
-| GET | `/v1/matches` | all sessions, with live clocks |
+| GET | `/v1/matches` | all sessions, with live clocks; repeat `?status=pending&status=active` to select open states |
 | GET | `/v1/matches/{id}` | one session: certificate, SAN list, result, PGN, clocks |
 | GET | `/v1/matches/{id}/receipts` | the `ClockBundle`: time control, clocks, every receipt, the flag, the clock checkpoint |
 | GET | `/v1/matches/{id}/transcript` | co-signed transcript, 404 until both signs |
@@ -1165,6 +1165,7 @@ an orphan block on `POST /v1/blocks` → 202.
 | --- | --- | --- |
 | GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes |
 | GET | `/v1/params` | the network parameters |
+| GET | `/v1/blocks` | `BlockList`: newest first (`?limit=`, default 25, max 200; `?before_height=` for the next page) |
 | GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |
 | POST | `/v1/blocks` | `BlockView`, or 202 when the parent is unknown |
 | GET | `/v1/accounts/{address}` | `AccountView`: network, balance, immature, bonded, nonce, registration, endpoint, engine, key, ban height |
@@ -1173,6 +1174,7 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |
 | GET | `/v1/ratings` | `RatingsView`: derived Glicko-2 rating per miner, strongest first (`?limit=`, default 100), plus the fixed-bucket distribution |
 | GET | `/v1/ratings/{address}` | `MinerRatingDetail`: rating, deviation, volatility, record, rank and one history point per epoch (the 1500 prior when the seat has no settled game) |
+| GET | `/v1/games` | `GameList`: pooled proofs first, then newest settle (`?limit=`, default 25, max 200; `?before_height=` and `?before_game_hash=` for the next page) |
 | GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, height, mempool flag |
 | GET | `/v1/games/{game_hash}/pgn` | `GamePgn`: the move text the proof for that game carries (404 when this node holds no block body for it) |
 | GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, certificate, transcript |

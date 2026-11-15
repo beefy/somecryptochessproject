@@ -24,6 +24,7 @@ import { Blocks } from "./views/Blocks";
 import { Dashboard } from "./views/Dashboard";
 import { GameDetail } from "./views/GameDetail";
 import { Games } from "./views/Games";
+import { LiveGames } from "./views/LiveGames";
 import { MinerRating } from "./views/MinerRating";
 import { NotFound } from "./views/NotFound";
 import { Ratings } from "./views/Ratings";
@@ -42,6 +43,7 @@ const EXPLORER_SECTIONS = [
   { key: "dashboard", label: "Overview", href: "#/" },
   { key: "blocks", label: "Blocks", href: "#/blocks" },
   { key: "games", label: "Games", href: "#/games" },
+  { key: "liveGames", label: "Live", href: "#/live" },
   { key: "ratings", label: "Elo", href: "#/ratings" },
 ] as const;
 
@@ -277,6 +279,8 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <Games />;
     case "game":
       return <GameDetail gameHash={route.gameHash} />;
+    case "liveGames":
+      return <LiveGames />;
     case "ratings":
       return <Ratings />;
     case "miner":

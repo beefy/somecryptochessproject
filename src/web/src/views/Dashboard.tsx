@@ -22,7 +22,7 @@ import { useNow, useResource } from "../useResource";
 export function Dashboard(): ReactNode {
   const { status, params } = useNode();
   const blocks = useResource((signal) => fetchBlocks({ limit: 6, signal }), [], { pollMs: 5000 });
-  const games = useResource((signal) => fetchGames(signal), [], { pollMs: 8000 });
+  const games = useResource((signal) => fetchGames({ signal }), [], { pollMs: 8000 });
   const now = useNow(1000);
   const { width } = useWindowDimensions();
   const wide = width >= 720;

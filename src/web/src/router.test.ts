@@ -34,6 +34,14 @@ describe("Elo routes", () => {
   });
 });
 
+describe("live games route", () => {
+  it("round-trips the in-progress page", () => {
+    expect(parseRoute("#/live")).toEqual({ name: "liveGames" });
+    expect(routeHash({ name: "liveGames" })).toBe("#/live");
+    expect(activeSection({ name: "liveGames" })).toBe("liveGames");
+  });
+});
+
 describe("wallet routes", () => {
   it("parses the wallet landing page", () => {
     expect(parseRoute("#/wallet")).toEqual({ name: "wallet" });

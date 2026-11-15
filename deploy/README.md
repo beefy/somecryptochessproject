@@ -135,6 +135,12 @@ the game reaches 60 plies and both seats co-sign a `resignation` result, which
 the winner proves like any other win. Without that policy `GET /v1/matches`
 shows `"termination": "draw"` on every session and the tip can sit mid-epoch.
 
+The fixed limit also explains why a fresh deploy's games are all `0-1`. White
+moves on even ply counts, so 60 plies is reached on white's turn: white resigns
+first and black is the winner every time. The result is a consequence of the
+resignation policy, not of scoring or of the relay. An odd limit flips the
+winner to white; only a limit that varies per match produces a mix of results.
+
 ## Reset behaviour and limits
 
 - The deploy workflow runs `docker compose down -v` before every `up`, so each

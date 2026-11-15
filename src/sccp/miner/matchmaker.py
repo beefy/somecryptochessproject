@@ -31,10 +31,10 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import Annotated, Any, TypeVar, cast
 
 import chess
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import Field
 
@@ -1384,8 +1384,21 @@ def create_app(matchmaker: Matchmaker, *, origins: Sequence[str] = ()) -> FastAP
         }
 
     @app.get("/v1/matches", response_model=list[MatchView])
-    def list_matches() -> list[MatchView]:
-        return matchmaker.matches()
+    def list_matches(
+        status: Annotated[list[SessionStatus] | None, Query()] = None,
+    ) -> list[MatchView]:
+        """Every session, or only those in the statuses asked for.
+
+        Repeating the parameter selects several states in one request:
+        ``?status=pending&status=active`` is the in-progress view, and it keeps
+        an observer from downloading every finished session to find the open
+        ones. Without the parameter the list is unchanged.
+        """
+        views = matchmaker.matches()
+        if status is None:
+            return views
+        wanted = {state.value for state in status}
+        return [view for view in views if view.status in wanted]
 
     @app.get("/v1/matches/{match_id}", response_model=MatchView)
     def get_match(match_id: str) -> MatchView:

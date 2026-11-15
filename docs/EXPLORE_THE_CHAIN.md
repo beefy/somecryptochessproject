@@ -60,8 +60,13 @@ deploy that does exactly this is
   seal nonce, chain work, merkle/state/roster roots), the coinbase, transactions
   with their payloads, and one card per win proof: game hash, opening and PGN.
 - **Games** — proofs in the node's own order: pending first, then newest
-  settlement. A row says whether the proof is in a block or still in the mempool
-  and how the chain currently judges it.
+  settlement, paged by settle height with the game hash as the tie-break so a
+  block carrying several proofs yields exact pages. A row says whether the proof
+  is in a block or still in the mempool and how the chain currently judges it.
+- **Live** — the sessions the relay still has open, polled every couple of
+  seconds: both seats, the side to move, and clocks counted down locally from the
+  relay's last answer. Finished games are not listed here; their proofs appear on
+  the Games page once a block settles one.
 - **A game** — settlement state, the match certificate (both seats, opening,
   engines, start signatures) and the PGN, when this node has cached the
   transcript.

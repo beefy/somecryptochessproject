@@ -38,6 +38,7 @@ import {
   fetchAccount,
   fetchEpoch,
   fetchGame,
+  fetchMempool,
   requestFaucet,
   submitProof,
   submitTransaction,
@@ -51,6 +52,7 @@ import {
   Section,
   StatusPill,
 } from "../components/Chrome";
+import { useNotice } from "../components/Notices";
 import { certificatePayload, signCertificate } from "../lib/certificate";
 import { DOMAINS } from "../lib/canonical";
 import { formatAmount, formatClock, formatCoins, formatInteger, shortAddress } from "../lib/format";
@@ -171,6 +173,14 @@ interface StoredCommitment {
   nonce: string;
 }
 
+/** A transaction the node accepted, and the account nonce it spends. */
+interface PendingTx {
+  label: "register" | "commit" | "reveal";
+  txid: string;
+  nonce: number;
+  submittedAt: number;
+}
+
 function commitmentKey(address: string): string {
   return `sccp-web/availability/${address}`;
 }
@@ -267,7 +277,10 @@ function Table({
   });
   const relay = useResource(
     async (signal) => {
-      const [head, matches] = await Promise.all([relayStatus(signal), relayMatches(signal)]);
+      const [head, matches] = await Promise.all([
+        relayStatus(signal),
+        relayMatches({ signal }),
+      ]);
       return { head, matches };
     },
     [address],
@@ -277,6 +290,18 @@ function Table({
   const [busy, setBusy] = useState<string | null>(null);
   const [failure, setFailure] = useState<Error | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const notify = useNotice();
+  // A chain action returns a txid before the block that executes it. Remembering
+  // the nonce it spent is what stops a second click from resending the same
+  // nonce and reading the node's rejection as if the first click never worked.
+  const [pendingTx, setPendingTx] = useState<PendingTx | null>(null);
+  // While a transaction is pending, the node's own pool is the authority on
+  // whether it is still there; the status counters cannot identify a txid.
+  const mempool = useResource(
+    (signal) => (pendingTx === null ? Promise.resolve(null) : fetchMempool(signal)),
+    [pendingTx?.txid],
+    pendingTx === null ? {} : { pollMs: 2000 },
+  );
   const [commitment, setCommitment] = useState<StoredCommitment | null>(() =>
     loadCommitment(address),
   );
@@ -332,6 +357,7 @@ function Table({
   const accountData = account.data;
   const epochData = epochView.data;
 
+  const reloadStatus = status.reload;
   const act = useCallback(
     async (label: string, body: () => Promise<string>) => {
       setBusy(label);
@@ -340,15 +366,38 @@ function Table({
       try {
         const message = await body();
         setNotice(message);
+        notify(message);
         reloadAccount();
+        // The submission just changed the mempool, so ask the node again rather
+        // than waiting for the next poll to show the pending transaction.
+        reloadStatus();
       } catch (error) {
-        setFailure(error instanceof Error ? error : new Error(String(error)));
+        const described = error instanceof Error ? error : new Error(String(error));
+        setFailure(described);
+        notify(described.message);
       } finally {
         setBusy(null);
       }
     },
-    [reloadAccount],
+    [notify, reloadAccount, reloadStatus],
   );
+
+  // Clear the pending marker once the chain has moved past its nonce, or once a
+  // later status poll no longer lists the transaction and a block has had time
+  // to include it. Until then a click would rebuild the same nonce.
+  useEffect(() => {
+    if (pendingTx === null || accountData === undefined) return;
+    if (accountData.nonce > pendingTx.nonce) {
+      setPendingTx(null);
+      return;
+    }
+    if (mempool.updatedAt === undefined || mempool.updatedAt <= pendingTx.submittedAt) return;
+    if (now - pendingTx.submittedAt < 5000) return;
+    const queued = mempool.data?.transactions;
+    if (queued !== undefined && !queued.includes(pendingTx.txid)) {
+      setPendingTx(null);
+    }
+  }, [accountData, mempool.data, mempool.updatedAt, now, pendingTx]);
 
   const fund = (): void => {
     void act("fund", async () => {
@@ -381,6 +430,12 @@ function Table({
         }),
       );
       const accepted = await submitTransaction(toWireTransaction(tx));
+      setPendingTx({
+        label: "register",
+        txid: accepted.txid,
+        nonce: accountData.nonce,
+        submittedAt: Date.now(),
+      });
       return `registration ${accepted.txid.slice(0, 12)}… announced`;
     });
   };
@@ -408,6 +463,12 @@ function Table({
       const accepted = await submitTransaction(toWireTransaction(tx));
       saveCommitment(address, stored);
       setCommitment(stored);
+      setPendingTx({
+        label: "commit",
+        txid: accepted.txid,
+        nonce: accountData.nonce,
+        submittedAt: Date.now(),
+      });
       return `availability for epoch ${stored.epoch} committed in ${accepted.txid.slice(0, 12)}…`;
     });
   };
@@ -434,6 +495,12 @@ function Table({
         }),
       );
       const accepted = await submitTransaction(toWireTransaction(tx));
+      setPendingTx({
+        label: "reveal",
+        txid: accepted.txid,
+        nonce: accountData.nonce,
+        submittedAt: Date.now(),
+      });
       return `nonce for epoch ${stored.epoch} revealed in ${accepted.txid.slice(0, 12)}…`;
     });
   };
@@ -690,24 +757,33 @@ function Table({
           {`Register with a bond, commit availability for epoch ${nextTarget} during this epoch, reveal the nonce in epoch ${nextTarget - 1}. The chain then opens epoch ${nextTarget}'s roster with this address on it, and the relay pairs that roster from the epoch's beacon.`}
         </Text>
         <View style={styles.actions}>
-          <Button mode="outlined" onPress={fund} loading={busy === "fund"} disabled={busy !== null}>
+          <Button
+            mode="outlined"
+            onPress={fund}
+            loading={busy === "fund"}
+            disabled={busy !== null || pendingTx !== null}
+          >
             Faucet
           </Button>
           <Button
             mode="outlined"
             onPress={register}
             loading={busy === "register"}
-            disabled={busy !== null || accountData.registered_until_epoch !== null}
+            disabled={
+              busy !== null ||
+              pendingTx !== null ||
+              accountData.registered_until_epoch !== null
+            }
           >
-            Register
+            {pendingTx?.label === "register" ? "Register pending" : "Register"}
           </Button>
           <Button
             mode="outlined"
             onPress={commit}
             loading={busy === "commit"}
-            disabled={busy !== null || stage !== "commit"}
+            disabled={busy !== null || pendingTx !== null || stage !== "commit"}
           >
-            Commit availability
+            {pendingTx?.label === "commit" ? "Commit pending" : "Commit availability"}
           </Button>
           <Button
             mode="outlined"
@@ -715,13 +791,19 @@ function Table({
             loading={busy === "reveal"}
             disabled={
               busy !== null ||
+              pendingTx !== null ||
               stage !== "reveal" ||
               (commitment === null && loadCommitment(address) === null)
             }
           >
-            Reveal nonce
+            {pendingTx?.label === "reveal" ? "Reveal pending" : "Reveal nonce"}
           </Button>
         </View>
+        {pendingTx !== null && (
+          <HelperText type="info" visible>
+            {`${pendingTx.label} transaction ${pendingTx.txid.slice(0, 12)}… is in the mempool. The chain action buttons stay disabled until a block spends nonce ${formatInteger(pendingTx.nonce)}; this page cannot safely sign another transaction for this account before that.`}
+          </HelperText>
+        )}
         {busy === "fund" && (
           <>
             <ProgressBar indeterminate />

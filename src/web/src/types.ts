@@ -447,10 +447,13 @@ export interface Matchup {
   black: string;
 }
 
+/** The relay's lifecycle states for a session. */
+export type RelayMatchStatus = "pending" | "active" | "finished" | "abandoned";
+
 /** The relay's live view of one session. */
 export interface RelayMatchView {
   matchup: Matchup;
-  status: string;
+  status: RelayMatchStatus;
   san_moves: string[];
   certificate: MatchCertificate;
   result: GameResult | null;
