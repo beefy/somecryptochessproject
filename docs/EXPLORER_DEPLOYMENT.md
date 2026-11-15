@@ -5,7 +5,7 @@ Every merge that touches `src/web` or `deploy/explorer` runs
 the built bundle to:
 
 ```text
-https://explorer.somecryptochessproject.com
+https://explorer.chessproofofwork.com
 ```
 
 That host serves three things on one origin: the bundle at `/`, the node API
@@ -76,12 +76,12 @@ site is legitimately not answerable.
 ## Public endpoint
 
 ```bash
-curl -sS https://explorer.somecryptochessproject.com/v1/status \
+curl -sS https://explorer.chessproofofwork.com/v1/status \
   | jq '{network, height, tip_hash}'
-curl -sS https://explorer.somecryptochessproject.com/relay/v1/status \
+curl -sS https://explorer.chessproofofwork.com/relay/v1/status \
   | jq '{network, epoch, matches}'
-curl -sSI https://explorer.somecryptochessproject.com/ | head -3
-curl -sSI http://explorer.somecryptochessproject.com/ | head -1   # 308 -> https
+curl -sSI https://explorer.chessproofofwork.com/ | head -3
+curl -sSI http://explorer.chessproofofwork.com/ | head -1   # 308 -> https
 ```
 
 The first two answer because of the proxy; the third is the bundle; the fourth is
@@ -116,12 +116,15 @@ node and relay it proxies, so the GCP work is a firewall rule and a DNS record o
 an environment that already exists. If the VM does not exist yet, build it first
 with [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md); the commands below assume
 its variables (`$PROJECT_ID`, `$NETWORK`, `$NODE_TAG`, `$STATIC_IP`,
-`$DNS_ZONE`).
+`$DNS_ZONE`). If the whole environment is moving to a new project or domain --
+as it did when it became `chessproofofwork.com` -- do that first, in the order
+[`DOMAIN_MIGRATION.md`](DOMAIN_MIGRATION.md) gives: the certificate below can
+only issue once the name resolves.
 
 ### GCP: firewall and DNS
 
 ```bash
-export EXPLORER_HOST="explorer.somecryptochessproject.com"
+export EXPLORER_HOST="explorer.chessproofofwork.com"
 
 gcloud compute firewall-rules create sccp-testnet-explorer-web \
     --network="$NETWORK" \
@@ -253,7 +256,7 @@ everywhere, and Caddy can reach Let's Encrypt outbound (GCP's default egress rul
 allows it). If one is missing, the container logs the challenge failure:
 
 ```bash
-ssh sccp@explorer.somecryptochessproject.com \
+ssh sccp@explorer.chessproofofwork.com \
   "cd /opt/sccp-explorer && docker compose logs --tail 20 tls"
 ```
 
@@ -272,9 +275,9 @@ brings back the CORS problem this design removes.
 The last five releases stay on disk. List them and move the symlink:
 
 ```bash
-ssh sccp@explorer.somecryptochessproject.com \
+ssh sccp@explorer.chessproofofwork.com \
   "ls -1t /opt/sccp-explorer/www/releases | head -5"
-ssh sccp@explorer.somecryptochessproject.com \
+ssh sccp@explorer.chessproofofwork.com \
   "cd /opt/sccp-explorer/www \
    && ln -sfn releases/<release> current.next && mv -T current.next current \
    && readlink -f current"

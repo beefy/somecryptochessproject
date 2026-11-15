@@ -9,9 +9,9 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
- - [Block explorer](https://explorer.somecryptochessproject.com/)
+ - [Block explorer](https://explorer.chessproofofwork.com/)
  - [Living Whitepaper](https://github.com/beefy/somecryptochessproject/blob/main/docs/WHITEPAPER.md)
- - [Public testnet](http://testnet.somecryptochessproject.com:8645/v1/status)
+ - [Public testnet](http://testnet.chessproofofwork.com:8645/v1/status)
  - [Reddit](https://www.reddit.com/r/chessproofofwork/)
 
 > **Status: protocol v1 is implemented and deployed on testnet.** The repository
@@ -26,7 +26,7 @@ reward.
 > parameters exist, but no mainnet has launched or been audited; testnet and
 > devnet coins have no value.
 
-> **Public testnet:** <http://testnet.somecryptochessproject.com:8645>. The
+> **Public testnet:** <http://testnet.chessproofofwork.com:8645>. The
 > `GET /v1/status` endpoint is the health check. The chain is reset on every
 > deployment, so wallets, balances and faucet grants do not survive a redeploy.
 > This endpoint is plain HTTP and carries worthless test coins only.
@@ -275,6 +275,7 @@ responsibility rather than a construction phase.
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
 │   ├── BIG_PICTURE.md            # wallet, bridge, DEX and variant tokens (plan)
 │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
+│   ├── DOMAIN_MIGRATION.md       # move the deployment to a new project/domain
 │   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
 │   ├── EXPLORER_DEPLOYMENT.md    # publish the explorer: proxy, DNS, rollback
 │   ├── GCP_RESOURCE_SETUP.md     # project, VM, firewall and deploy wiring
@@ -342,7 +343,7 @@ Every step below is a thin wrapper over a library call, so the CLI, tests and
 services exercise the same code path.
 
 The hosted two-miner testnet is available at
-`http://testnet.somecryptochessproject.com:8645`. The quickstart below starts
+`http://testnet.chessproofofwork.com:8645`. The quickstart below starts
 local processes so you can change code without depending on it; use the hosted
 URL as `--node` or `SCCP_NODE` when you want the shared deployment instead.
 
@@ -475,11 +476,13 @@ a description of what the chain does today.
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
 [`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current
 deployment is published at
-`http://testnet.somecryptochessproject.com:8645`; the workflow connects to the
-same name over SSH (`sccp@testnet.somecryptochessproject.com`).
+`http://testnet.chessproofofwork.com:8645`; the workflow connects to the
+same name over SSH (`sccp@testnet.chessproofofwork.com`). Moving a deployment to
+a new project or domain -- the cutover that produced those names -- is
+[`docs/DOMAIN_MIGRATION.md`](docs/DOMAIN_MIGRATION.md).
 
 The explorer has its own deploy and its own name:
-`https://explorer.somecryptochessproject.com` serves the built bundle with `/v1`
+`https://explorer.chessproofofwork.com` serves the built bundle with `/v1`
 and `/relay` proxied onto that origin, because the node sends no CORS headers. A
 Caddy terminator in front holds the certificate. See
 [`docs/EXPLORER_DEPLOYMENT.md`](docs/EXPLORER_DEPLOYMENT.md).

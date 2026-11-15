@@ -1,6 +1,6 @@
 name: deploy-explorer
 
-# Publishes the built explorer (src/web) to explorer.somecryptochessproject.com.
+# Publishes the built explorer (src/web) to explorer.chessproofofwork.com.
 #
 # The page has to be same-origin with the node: the node sends no CORS headers,
 # so a browser will not let a bundle served from one origin read `/v1` on

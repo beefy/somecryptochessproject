@@ -22,8 +22,8 @@ docker compose logs --tail=100 node bootstrap relay miner-1 miner-2 drip traffic
 From anywhere, check the public node endpoint:
 
 ```bash
-curl -fsS http://testnet.somecryptochessproject.com:8645/v1/status
-curl -fsS http://testnet.somecryptochessproject.com:8646/v1/status
+curl -fsS http://testnet.chessproofofwork.com:8645/v1/status
+curl -fsS http://testnet.chessproofofwork.com:8646/v1/status
 ```
 
 Healthy after a deploy means:
