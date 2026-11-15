@@ -8,7 +8,7 @@ name: publish
 # "Publishing" -> "Add a new pending publisher":
 #
 #   PyPI project name : sccp
-#   Owner             : beefy
+#   Owner             : chessproofofwork
 #   Repository name   : somecryptochessproject
 #   Workflow name     : publish.yml
 #   Environment name  : pypi   (testpypi for TestPyPI)

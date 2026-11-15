@@ -52,7 +52,7 @@ is `cryptography`, which ships wheels.
 ### 1.1 Editable install (what development uses)
 
 ```bash
-git clone https://github.com/beefy/somecryptochessproject.git
+git clone https://github.com/chessproofofwork/somecryptochessproject.git
 cd somecryptochessproject
 python3 -m venv .venv
 source .venv/bin/activate
@@ -61,7 +61,7 @@ sccp --version
 ```
 
 ```text
-sccp 0.19.0 (protocol v1)
+sccp 0.20.0 (protocol v1)
 ```
 
 `-e` keeps `src/sccp` in place, so an edit to the checkout is the code you run.

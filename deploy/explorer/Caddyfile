@@ -14,6 +14,6 @@
 	# auto_https is on by default: :80 answers the challenge and redirects.
 }
 
-explorer.somecryptochessproject.com {
+explorer.chessproofofwork.com {
 	reverse_proxy 127.0.0.1:8080
 }

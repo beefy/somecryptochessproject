@@ -30,7 +30,7 @@ sccp --version
 ```
 
 ```text
-sccp 0.19.0 (protocol v1)
+sccp 0.20.0 (protocol v1)
 ```
 
 Python 3.11 or newer is required. The HTTP examples pipe JSON through `jq` for
@@ -101,7 +101,7 @@ export SCCP_NODE="http://127.0.0.1:8645"
 For the hosted two-miner deployment, use the public testnet host:
 
 ```bash
-export SCCP_NODE="http://testnet.somecryptochessproject.com:8645"
+export SCCP_NODE="http://testnet.chessproofofwork.com:8645"
 ```
 
 The hosted chain is reset on every deployment, so addresses and balances from

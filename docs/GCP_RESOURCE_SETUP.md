@@ -68,6 +68,10 @@ gcloud projects create "$PROJECT_ID" --name="SCCP testnet"
 gcloud config set project "$PROJECT_ID"
 ```
 
+The current deployment does not follow that example name: its project is
+`chessproofofwork`, which already existed before the domain moved. Everything
+below is written against `$PROJECT_ID`, so it works either way.
+
 Project IDs must be lowercase letters, digits and hyphens; adjust the suffix if
 `$USER` contains anything else.
 
@@ -303,9 +307,14 @@ export STATIC_IP="203.0.113.10"   # the natIP from the describe output
 For the current deployment, the public name and Cloud DNS zone are:
 
 ```bash
-export TESTNET_HOST="testnet.somecryptochessproject.com"
-export DNS_ZONE="somecryptochessproject-com"
+export TESTNET_HOST="testnet.chessproofofwork.com"
+export DNS_ZONE="chessproofofwork-com"
 ```
+
+The deployment those names describe lives in the project `chessproofofwork`
+(number 206061816244). [`DOMAIN_MIGRATION.md`](DOMAIN_MIGRATION.md) records how
+it got there from the previous project and domain, in the order the steps have to
+run.
 
 The GCP commands use `$STATIC_IP`; the deploy workflow and public smoke checks
 use `$TESTNET_HOST`.
@@ -313,9 +322,9 @@ use `$TESTNET_HOST`.
 ### DNS
 
 The current deployment publishes the node under
-`testnet.somecryptochessproject.com` and the web explorer under
-`explorer.somecryptochessproject.com`, both in the public
-`somecryptochessproject.com` Cloud DNS zone. Both are `A` records on the same
+`testnet.chessproofofwork.com` and the web explorer under
+`explorer.chessproofofwork.com`, both in the public
+`chessproofofwork.com` Cloud DNS zone. Both are `A` records on the same
 static address, because both are served by containers on the same VM. Create them
 after the static IP exists:
 
@@ -327,7 +336,7 @@ gcloud dns record-sets create "$TESTNET_HOST." \
     --rrdatas="$STATIC_IP" \
     --project="$PROJECT_ID"
 
-gcloud dns record-sets create "explorer.somecryptochessproject.com." \
+gcloud dns record-sets create "explorer.chessproofofwork.com." \
     --zone="$DNS_ZONE" \
     --type=A \
     --ttl=60 \
@@ -464,12 +473,12 @@ then SSHes to the VM and runs Compose there. Configure the repository (or the
 
 | Kind | Name | Value |
 | --- | --- | --- |
-| variable | `TESTNET_DEPLOY_HOST` | `sccp@testnet.somecryptochessproject.com` |
+| variable | `TESTNET_DEPLOY_HOST` | `sccp@testnet.chessproofofwork.com` |
 | variable | `TESTNET_DEPLOY_DIR` | `/opt/sccp-testnet` |
 | variable | `TESTNET_DEPLOY_PORT` | `22` (optional, defaults to 22) |
-| variable | `TESTNET_PUBLIC_URL` | `http://testnet.somecryptochessproject.com:8645` (optional; workflow default) |
+| variable | `TESTNET_PUBLIC_URL` | `http://testnet.chessproofofwork.com:8645` (optional; workflow default) |
 | secret | `TESTNET_SSH_KEY` | contents of `~/.ssh/sccp_testnet_deploy` |
-| secret | `TESTNET_KNOWN_HOSTS` | `ssh-keyscan -H testnet.somecryptochessproject.com` output (optional) |
+| secret | `TESTNET_KNOWN_HOSTS` | `ssh-keyscan -H testnet.chessproofofwork.com` output (optional) |
 
 Create an environment named `testnet` in **Settings → Environments**. No
 protection rules are needed for a demonstration; add them if a human should
@@ -533,7 +542,7 @@ curl -sS "http://$TESTNET_HOST:8645/v1/faucet" | jq
 Expected after a successful deploy: network `testnet`, height `19` after
 bootstrap, and a faucet policy response. The workflow also runs
 `deploy/check_testnet_stack.py` against the node and relay, then checks
-`http://testnet.somecryptochessproject.com:8645/v1/status` from the runner, so a
+`http://testnet.chessproofofwork.com:8645/v1/status` from the runner, so a
 green deploy job proves both the internal Compose network and the public DNS
 path work.
 
@@ -609,7 +618,7 @@ environment; remove those separately if you are decommissioning the repository.
 | `docker: 'compose' is not a docker command` | Compose v2 plugin missing. | `docker compose version` on the VM. |
 | GHCR `unauthorized` during deploy | Package visibility or workflow token permissions. | Check the build job and package settings. |
 | `curl :8645` times out | VM lacks `sccp-node` tag, firewall rule is wrong, or the stack is not running. | `docker compose ps` and the firewall list. |
-| `curl :80` times out | Explorer firewall rule missing, or `dig` returns nothing yet. | The `sccp-testnet-explorer-web` rule and `dig +short explorer.somecryptochessproject.com`. |
+| `curl :80` times out | Explorer firewall rule missing, or `dig` returns nothing yet. | The `sccp-testnet-explorer-web` rule and `dig +short explorer.chessproofofwork.com`. |
 | `curl https://explorer…` times out | `tcp:443` missing from that rule, or the Caddy container is down. | `gcloud compute firewall-rules describe sccp-testnet-explorer-web`; `docker compose ps` in `/opt/sccp-explorer`. |
 | Deploy succeeds but faucet `404` | Node started with `--no-faucet`. | Compose environment and `docker compose logs node`. |
 | Chain height resets after every deploy | Expected: the workflow runs `docker compose down -v`. | [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md). |
@@ -626,4 +635,6 @@ environment; remove those separately if you are decommissioning the repository.
   against the deployed node.
 - [`RUNBOOK.md`](RUNBOOK.md) — operating and recovering the testnet.
 - [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — miner-side setup.
+- [`DOMAIN_MIGRATION.md`](DOMAIN_MIGRATION.md) — moving this deployment to a
+  new project or domain, in cutover order.
 

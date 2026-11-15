@@ -10,10 +10,10 @@ SQLite path. The merge-to-deploy workflow and its monthly cost are in
 [`docs/TESTNET_DEPLOYMENT.md`](../docs/TESTNET_DEPLOYMENT.md).
 
 The current hosted deployment is at
-`http://testnet.somecryptochessproject.com:8645`; the commands below use
+`http://testnet.chessproofofwork.com:8645`; the commands below use
 `127.0.0.1` because they are for a local Compose stack. The page that reads it is
 a separate deploy, in `explorer/`, published at
-`https://explorer.somecryptochessproject.com`; see
+`https://explorer.chessproofofwork.com`; see
 [`docs/EXPLORER_DEPLOYMENT.md`](../docs/EXPLORER_DEPLOYMENT.md).
 
 ```bash

@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 
 import { relayPublicUrl } from "./relay";
 
-const PAGE = "http://explorer.somecryptochessproject.com/";
+const PAGE = "http://explorer.chessproofofwork.com/";
 
 describe("relayPublicUrl", () => {
   it("leaves an absolute base alone", () => {

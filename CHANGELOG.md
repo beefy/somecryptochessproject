@@ -5,6 +5,32 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [0.20.0] - 2026-11-15
+
+### Changed
+
+- **The hosted testnet moved to `chessproofofwork.com`, in a new Google Cloud
+  project.** The deployment keeps its shape -- one VM, nginx and Caddy for the
+  explorer, the node on `8645`, the relay on `8646` -- but every public name is
+  new: `testnet.chessproofofwork.com` and `explorer.chessproofofwork.com`,
+  served from the `chessproofofwork-com` Cloud DNS zone in the project
+  `chessproofofwork`. That updates the Caddy site label (which is also the
+  Let's Encrypt name), the `TESTNET_PUBLIC_URL` default in
+  `deploy-testnet-miners.yml`, the relay fixture in
+  `src/web/src/lib/relay.test.ts`, and every `curl`, `--node`, `--peer` and
+  `dig` example in `README.md`, `deploy/`, `docs/` and `analysis/`. New
+  `docs/DOMAIN_MIGRATION.md` records the cutover in the order it has to run --
+  billing and the Compute API, VPC and firewall, static address and VM, DNS
+  records, the GitHub variables and the host-key secret, the two deploys,
+  verification, rollback, and decommissioning the old VM without deleting the
+  project that still hosts two other zones. The new VM was also stripped of its
+  service account (`--no-service-account --no-scopes`, after starting life on
+  the project default with `roles/editor`) so a container escape cannot mint a
+  Google token, and the project carries a $75/month budget alert. No chain state
+  moves: a testnet deploy resets the chain, so the new host starts from the
+  bootstrap. Entries below keep the names they shipped with.
+
+
 ## [0.19.0] - 2026-11-14
 
 ### Added

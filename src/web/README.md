@@ -69,8 +69,8 @@ at startup:
 
 ```bash
 sccp --network testnet --data-dir data node run \
-  --peer http://testnet.somecryptochessproject.com:8645
-# synced http://testnet.somecryptochessproject.com:8645: +121 blocks to height 121
+  --peer http://testnet.chessproofofwork.com:8645
+# synced http://testnet.chessproofofwork.com:8645: +121 blocks to height 121
 ```
 
 The dev server proxies `/v1` to `SCCP_NODE` (default `http://127.0.0.1:8645`), so
@@ -127,17 +127,17 @@ Two things to know before doing that:
   Without that flag the relay answers no preflights at all, which keeps a
   relay-only deployment from advertising itself to browsers.
 
-The hosted chain (`http://testnet.somecryptochessproject.com:8645`) answers `/v1`
+The hosted chain (`http://testnet.chessproofofwork.com:8645`) answers `/v1`
 and nothing else: `http://…:8645/` is a `{"detail":"Not Found"}`, because that
 node was deployed without `dist/` behind `--web`. Point a local dev server at it
 instead of expecting a page there:
 
 ```bash
-SCCP_NODE=http://testnet.somecryptochessproject.com:8645 npm run dev
+SCCP_NODE=http://testnet.chessproofofwork.com:8645 npm run dev
 ```
 
 The published page lives on an origin of its own,
-`https://explorer.somecryptochessproject.com`, where nginx serves the bundle and
+`https://explorer.chessproofofwork.com`, where nginx serves the bundle and
 proxies `/v1` and `/relay`, behind a Caddy terminator that holds the certificate.
 That is the shape a hosted build always needs: the
 API on the page's own origin, the relay on a path of it. The deploy, its firewall
@@ -325,7 +325,7 @@ src/
   fresh `--data-dir` is a genesis-only chain, so there is nothing to show. The
   page is innocent here — it prints `/v1/status` verbatim. Nothing mines testnet
   for you either: make blocks (`--mine`, one a minute) or sync once from the
-  hosted node (`--peer http://testnet.somecryptochessproject.com:8645`, which
+  hosted node (`--peer http://testnet.chessproofofwork.com:8645`, which
   prints `synced …: +121 blocks to height 121`). A dir that "went back to 0" is a
   different `--data-dir`, not a lost chain — the SQLite file is bound to one path.
 - **`no built explorer found`** (exit 2) — `sccp node run --web` found no
