@@ -18,10 +18,13 @@ import { StyleSheet, View } from "react-native";
 import { Button, Divider, HelperText, Text, TextInput } from "react-native-paper";
 
 import { submitTransaction } from "../../api";
-import { KeyValue, Section } from "../../components/Chrome";
+import { KeyValue, Mono, Section } from "../../components/Chrome";
+import { useNotice } from "../../components/Notices";
 import { addressHrp } from "../../lib/bech32";
+import { labelFor, readContacts, saveContact } from "../../lib/contacts";
 import { formatAmount, formatInteger, parseAmount, shortAddress } from "../../lib/format";
 import { type HybridKeypair, hybridPublicKeyHex } from "../../lib/keys";
+import type { PendingTransaction } from "../../lib/pending";
 import {
   buildTransfer,
   signTransaction,
@@ -32,16 +35,6 @@ import {
 import { monospace } from "../../theme";
 import type { AccountView } from "../../types";
 
-/** A transaction the node accepted, and the nonce it consumed. */
-export interface SentTransaction {
-  txid: string;
-  to: string;
-  amount: number;
-  fee: number;
-  nonce: number;
-  submittedAt: number;
-}
-
 interface SendProps {
   keypair: HybridKeypair;
   address: string;
@@ -50,7 +43,7 @@ interface SendProps {
   minFee: number;
   /** The next unused nonce, or `null` while the chain is authoritative. */
   pendingNonce: number | null;
-  onAccepted: (sent: SentTransaction) => void;
+  onAccepted: (sent: PendingTransaction) => void;
   onPendingNonce: (nonce: number | null) => void;
 }
 
@@ -74,6 +67,9 @@ export function SendPanel({
   const [review, setReview] = useState<Transaction | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [nickname, setNickname] = useState("");
+  const [contacts, setContacts] = useState(() => readContacts());
+  const notify = useNotice();
 
   const nonce = pendingNonce ?? account.nonce;
   const spendable = account.balance;
@@ -90,6 +86,8 @@ export function SendPanel({
   }, [amount, fee]);
 
   const recipient = to.trim();
+  const known = labelFor(contacts, recipient);
+  const reviewName = known ?? (nickname.trim() === "" ? null : nickname.trim());
   const problem = ((): string | null => {
     if (parsed.failure !== null) return parsed.failure;
     if (recipient === "") return "enter a recipient address";
@@ -132,9 +130,14 @@ export function SendPanel({
     try {
       const signed = signTransaction(keypair, review);
       const accepted = await submitTransaction(toWireTransaction(signed));
+      // A nickname typed for a first transfer is saved with it: the person just
+      // named the recipient, and asking again on the next send would be silly.
+      if (nickname.trim() !== "") {
+        setContacts(saveContact(String(review.payload.to), network, nickname));
+      }
       onAccepted({
         txid: accepted.txid,
-        to: recipient,
+        to: String(review.payload.to),
         amount: parsed.amount,
         fee: parsed.fee,
         nonce: signed.nonce,
@@ -144,6 +147,7 @@ export function SendPanel({
       setReview(null);
       setTo("");
       setAmount("");
+      setNickname("");
     } catch (failure) {
       setError(failure instanceof Error ? failure : new Error(String(failure)));
       // The node refused it: this nonce is still unused, but an earlier accepted
@@ -169,6 +173,36 @@ export function SendPanel({
         onChangeText={setTo}
         style={styles.monoInput}
       />
+      <View style={styles.row}>
+        <TextInput
+          label="Nickname for this recipient (optional)"
+          mode="outlined"
+          value={nickname}
+          onChangeText={setNickname}
+          placeholder={known ?? "no nickname yet"}
+          style={styles.half}
+          autoCapitalize="words"
+        />
+        <View style={styles.actions}>
+          <Button
+            compact
+            mode="text"
+            disabled={recipient === "" || nickname.trim() === "" || nickname.trim() === known}
+            onPress={() => {
+              setContacts(saveContact(recipient, network, nickname));
+              notify(`nickname saved for ${shortAddress(recipient)}`);
+              setNickname("");
+            }}
+          >
+            Save nickname
+          </Button>
+        </View>
+      </View>
+      {known !== null && (
+        <Text variant="bodySmall" style={styles.muted}>
+          {known} is the nickname this browser keeps for that address.
+        </Text>
+      )}
       <View style={styles.row}>
         <TextInput
           label="Amount (SCCP)"
@@ -229,8 +263,9 @@ export function SendPanel({
           <KeyValue label="From" mono>
             {review.from}
           </KeyValue>
-          <KeyValue label="To" mono>
-            {String(review.payload.to)}
+          <KeyValue label="To">
+            {reviewName !== null && <Text variant="bodyMedium">{reviewName}</Text>}
+            <Mono>{String(review.payload.to)}</Mono>
           </KeyValue>
           <KeyValue label="Amount" mono>
             {formatAmount(Number(review.payload.amount))}

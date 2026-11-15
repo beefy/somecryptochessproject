@@ -178,11 +178,12 @@ rules, its DNS record and its rollback are in
 | `#/miners/<address>` | one miner: current rating, a line chart per epoch, its games |
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
 | `#/wallet/play` | a seat in a real match, signed with the unlocked wallet key (`#/play` is an alias) |
-| `#/wallet` | the wallet: unlock or create a keyfile, balances, faucet, export |
-| `#/wallet/send` | build, review and sign a transfer |
-| `#/wallet/receive` | the address and its public-key fingerprint |
-| `#/wallet/history` | transactions touching the account, scanned from blocks |
-| `#/wallet/settings` | keyfile export, auto-lock, forget-this-browser |
+| `#/wallet` | the wallet: unlock or create a keyfile, balances, nickname, pending transfers |
+| `#/wallet/send` | build, review and sign a transfer, with an optional recipient nickname |
+| `#/wallet/receive` | the address, a copy button and its public-key fingerprint |
+| `#/wallet/faucet` | ask the testnet faucet for funds, with the request's progress |
+| `#/wallet/history` | transactions touching the account, scanned from blocks, plus pending rows |
+| `#/wallet/settings` | nickname, keyfile export, auto-lock, forget-this-browser |
 
 Routing lives in the hash, so the bundle works from any static path with no
 server-side rewrite rule.
@@ -190,11 +191,11 @@ server-side rewrite rule.
 `#/` is the explorer's overview on `explorer.chessproofofwork.com` and the
 wallet's overview on `wallet.chessproofofwork.com`: the two names serve the same
 release, and the hostname picks the landing view (`lib/site.ts`). Opening any
-wallet route swaps the tab bar for the wallet's own (Overview, Send, Receive,
-History, Settings), even when it was reached from the explorer hostname. The
-hamburger menu in the top-left corner does exactly one thing: switches between the
-explorer and the wallet — an absolute link on a hosted build, a hash locally so a
-dev server can exercise both sides.
+wallet route swaps the tab bar for the wallet's own (Overview, Play, Send,
+Receive, Faucet, History, Settings), even when it was reached from the explorer
+hostname. The hamburger menu in the top-left corner does exactly one thing:
+switches between the explorer and the wallet — an absolute link on a hosted build,
+a hash locally so a dev server can exercise both sides.
 
 The tab icon is [`public/favicon.svg`](public/favicon.svg): the four centre
 squares of the `#/play` board (d4, d5, e4, e5) cropped into a circle, in that
@@ -233,19 +234,28 @@ What the page does:
   nonce around the same seed.
 - **Open** — paste a keyfile from `sccp wallet new` and unlock it; the header is
   validated and the decrypted seed has to derive the address it names.
-- **Balances** — `GET /v1/accounts/<address>` polled every 8 seconds.
+- **Balances** — `GET /v1/accounts/<address>` polled every 8 seconds, with a
+  Refresh button and a copy-address button; the nickname from Settings heads the
+  page.
 - **Play** — the table, signed with the unlocked key: register, commit
   availability, reveal, join a paired match, play, announce the proof. No seed
   field and no throwaway seat: the wallet's account is the seat.
-- **Faucet** — `POST /v1/faucet` on testnet and devnet, with a visible
-  in-progress bar until the node answers.
-- **Send** — amount and fee as decimal SCCP, a review screen showing every signed
-  field plus the txid, then a hybrid signature and `POST /v1/tx`. The next nonce is
-  kept locally because the account view reports the *committed* one.
+- **Faucet** — its own tab, because funding is a step and not a button on every
+  page: `POST /v1/faucet` on testnet and devnet, with a visible in-progress bar
+  until the node answers and the grant's txid afterwards. On mainnet the tab says
+  the service does not exist rather than hiding a button.
+- **Send** — amount and fee as decimal SCCP, an optional nickname for the
+  recipient (saved in this browser, never in the keyfile), a review screen showing
+  every signed field plus the txid, then a hybrid signature and `POST /v1/tx`. The
+  next nonce is kept locally because the account view reports the *committed* one;
+  an accepted transfer is remembered as pending and a notice confirms it.
 - **History** — the node has no history endpoint, so the tab scans `/v1/blocks`
   backwards from the tip (200 blocks to start), keeps the transactions that touch
   the address, and caches the window in IndexedDB. It names the heights it covered
   and offers "newer", "older" and "rescan" rather than pretending to be complete.
+  Transfers this browser signed but no block has carried yet appear above the scan
+  until the committed nonce passes them, and counterparties show their nickname
+  when there is one.
 - **Export** — the keyfile, byte-compatible with the CLI's JSON layout, for
   `sccp wallet balance --key` and `wallet import-mnemonic`.
 

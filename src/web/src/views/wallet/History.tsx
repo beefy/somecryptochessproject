@@ -15,6 +15,7 @@ import { StyleSheet, View } from "react-native";
 import { Button, HelperText, ProgressBar, Text } from "react-native-paper";
 
 import { Link, Loading, Mono, Section, StatusPill } from "../../components/Chrome";
+import { labelFor, readContacts, type Contact } from "../../lib/contacts";
 import { formatAge, formatAmount, formatInteger, shortAddress, shortHash } from "../../lib/format";
 import {
   type CachedHistory,
@@ -25,6 +26,7 @@ import {
   saveHistory,
   scanHistory,
 } from "../../lib/history";
+import type { PendingTransaction } from "../../lib/pending";
 import { useNode } from "../../node";
 import { useNow } from "../../useResource";
 
@@ -51,9 +53,13 @@ const LABELS: Record<HistoryDirection, string> = {
   reward: "reward",
 };
 
-function counterparty(entry: HistoryEntry): string {
-  if (entry.direction === "in" || entry.direction === "reward") return shortAddress(entry.from);
-  return entry.to === null ? "-" : shortAddress(entry.to);
+/** The other side of the entry: a nickname when this browser has one. */
+function counterparty(entry: HistoryEntry, contacts: readonly Contact[]): string {
+  if (entry.direction === "in" || entry.direction === "reward") {
+    return labelFor(contacts, entry.from) ?? shortAddress(entry.from);
+  }
+  if (entry.to === null) return "-";
+  return labelFor(contacts, entry.to) ?? shortAddress(entry.to);
 }
 
 function amountText(entry: HistoryEntry): string {
@@ -61,10 +67,23 @@ function amountText(entry: HistoryEntry): string {
   return formatAmount(entry.amount);
 }
 
-export function HistoryPanel({ address, network }: { address: string; network: string }): ReactNode {
+export function HistoryPanel({
+  address,
+  network,
+  pending,
+  committedNonce,
+}: {
+  address: string;
+  network: string;
+  /** Rows this browser signed that no block has carried yet. */
+  pending: readonly PendingTransaction[];
+  /** The node's next unused nonce; a row below it has been included. */
+  committedNonce: number;
+}): ReactNode {
   const { status } = useNode();
   const tip = status.data?.height;
   const now = useNow(30000);
+  const contacts = readContacts();
   const [cache, setCache] = useState<CachedHistory | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [scan, setScan] = useState<{ done: number; total: number } | null>(null);
@@ -143,16 +162,17 @@ export function HistoryPanel({ address, network }: { address: string; network: s
   const newerAvailable = cache !== null && tip !== undefined && tip > cache.scannedFrom;
   const olderAvailable = cache !== null && cache.scannedTo > 0;
   const entries = cache?.entries ?? [];
+  const pendingNote = pending.length === 0 ? "" : ` · ${pending.length} pending`;
 
   return (
     <Section
       title="History"
       subtitle={
         cache === null
-          ? `no window read yet · ${network}`
+          ? `no window read yet · ${network}${pendingNote}`
           : `${formatInteger(entries.length)} entries · heights ${formatInteger(
               cache.scannedTo,
-            )}–${formatInteger(cache.scannedFrom)} · ${network}`
+            )}–${formatInteger(cache.scannedFrom)} · ${network}${pendingNote}`
       }
     >
       {!loaded ? (
@@ -208,6 +228,35 @@ export function HistoryPanel({ address, network }: { address: string; network: s
         </HelperText>
       )}
 
+      {pending.length > 0 && (
+        <View style={styles.pendingBlock}>
+          <Text variant="titleSmall">Pending from this browser</Text>
+          <Text variant="bodySmall" style={styles.muted}>
+            signed here and accepted by the node; a row leaves this list when a block includes its
+            nonce
+          </Text>
+          {pending.map((entry) => (
+            <View key={entry.txid} style={styles.row}>
+              <StatusPill
+                label={committedNonce > entry.nonce ? "included" : "pending"}
+                tone={committedNonce > entry.nonce ? "info" : "warn"}
+              />
+              <Text variant="bodyMedium" style={styles.amount}>
+                {formatAmount(entry.amount)}
+              </Text>
+              <Text variant="bodySmall" style={styles.muted}>
+                to {labelFor(contacts, entry.to) ?? shortAddress(entry.to)} · nonce{" "}
+                {formatInteger(entry.nonce)}
+              </Text>
+              <Text variant="bodySmall" style={styles.muted}>
+                {formatAge(Math.floor(entry.submittedAt / 1000), now)}
+              </Text>
+              <Mono copy>{shortHash(entry.txid, 16)}</Mono>
+            </View>
+          ))}
+        </View>
+      )}
+
       {cache !== null && entries.length === 0 && scan === null && (
         <Text variant="bodyMedium" style={styles.muted}>
           No transaction touching this address in heights {formatInteger(cache.scannedTo)}–
@@ -224,7 +273,7 @@ export function HistoryPanel({ address, network }: { address: string; network: s
           </Text>
           <Text variant="bodySmall" style={styles.muted}>
             {entry.direction === "in" || entry.direction === "reward" ? "from" : "to"}{" "}
-            {counterparty(entry)} · {entry.type} · nonce {formatInteger(entry.nonce)}
+            {counterparty(entry, contacts)} · {entry.type} · nonce {formatInteger(entry.nonce)}
           </Text>
           <Text variant="bodySmall" style={styles.muted}>
             {formatAge(entry.timestamp, now)}
@@ -243,7 +292,8 @@ export function HistoryPanel({ address, network }: { address: string; network: s
       <HelperText type="info" visible>
         The node has no history endpoint, so this list is a block scan: the window named above is
         what was actually read, and it is cached in this browser. A transfer outside the window
-        will not appear until a scan reaches it.
+        will not appear until a scan reaches it. Pending rows are this browser&apos;s record of
+        what it signed, not the node&apos;s.
       </HelperText>
     </Section>
   );
@@ -251,6 +301,7 @@ export function HistoryPanel({ address, network }: { address: string; network: s
 
 const styles = StyleSheet.create({
   actions: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  pendingBlock: { gap: 4 },
   row: {
     flexDirection: "row",
     alignItems: "center",

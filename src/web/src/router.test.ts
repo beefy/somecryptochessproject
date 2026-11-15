@@ -45,6 +45,7 @@ describe("wallet routes", () => {
       ["#/wallet/play", "walletPlay"],
       ["#/wallet/send", "walletSend"],
       ["#/wallet/receive", "walletReceive"],
+      ["#/wallet/faucet", "walletFaucet"],
       ["#/wallet/history", "walletHistory"],
       ["#/wallet/settings", "walletSettings"],
     ] as const) {

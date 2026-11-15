@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import {
   SITE_ORIGINS,
   crossSiteHref,
+  hashUrl,
   isLocalDevelopment,
   siteForHostname,
   siteHash,
@@ -53,5 +54,17 @@ describe("cross-site links", () => {
     expect(isLocalDevelopment("127.0.0.1")).toBe(true);
     expect(isLocalDevelopment("mac.local")).toBe(true);
     expect(isLocalDevelopment("wallet.chessproofofwork.com")).toBe(false);
+  });
+
+  it("joins an origin and a hash without a double slash", () => {
+    expect(hashUrl("https://wallet.chessproofofwork.com/", "#/wallet")).toBe(
+      "https://wallet.chessproofofwork.com/#/wallet",
+    );
+    expect(hashUrl("https://wallet.chessproofofwork.com", "#/wallet")).toBe(
+      "https://wallet.chessproofofwork.com/#/wallet",
+    );
+    expect(hashUrl("https://wallet.chessproofofwork.com/", "#/")).toBe(
+      "https://wallet.chessproofofwork.com/#/",
+    );
   });
 });

@@ -6,9 +6,9 @@
  */
 
 import type { ComponentProps, ComponentType, ReactNode } from "react";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
-import { ActivityIndicator, Chip, Text } from "react-native-paper";
+import { ActivityIndicator, Button, Chip, Text } from "react-native-paper";
 
 import { copyText, shortHash } from "../lib/format";
 import { navigate } from "../router";
@@ -105,6 +105,47 @@ export function Mono({ children, copy = false }: { children: string; copy?: bool
     <Pressable onPress={() => void copyText(children)} style={styles.inlinePressable}>
       {label}
     </Pressable>
+  );
+}
+
+/**
+ * Copy `value` to the clipboard, with a button that says whether it worked.
+ *
+ * `Mono copy` makes a hash a tap target, but a tap target is invisible: an
+ * address needs something a person can find and press. The label reports the
+ * result because the Clipboard API can refuse (an insecure origin, a denied
+ * permission), and silently doing nothing is the one outcome worth naming.
+ */
+export function CopyButton({
+  value,
+  label = "Copy address",
+}: {
+  value: string;
+  label?: string;
+}): ReactNode {
+  const [result, setResult] = useState<"idle" | "copied" | "failed">("idle");
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (timer.current !== null) clearTimeout(timer.current);
+    },
+    [],
+  );
+
+  const copy = (): void => {
+    void copyText(value).then((copied) => {
+      setResult(copied ? "copied" : "failed");
+      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current = setTimeout(() => setResult("idle"), 2000);
+    });
+  };
+
+  const text = result === "copied" ? "Copied" : result === "failed" ? "Copy failed" : label;
+  return (
+    <Button compact mode="outlined" onPress={copy} accessibilityLabel={label}>
+      {text}
+    </Button>
   );
 }
 
@@ -223,7 +264,9 @@ const styles = StyleSheet.create({
     maxWidth: 1080,
     alignSelf: "center",
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 16,
+    // Room for the app-wide snackbar, which floats over the last rows.
+    paddingBottom: 96,
     gap: 16,
   },
   pageNarrow: { paddingHorizontal: 12 },

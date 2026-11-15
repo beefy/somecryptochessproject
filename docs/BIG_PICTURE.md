@@ -24,12 +24,12 @@ That gives four deliverables, in dependency order:
 
 | Deliverable | What it does | Consensus change | Release |
 | --- | --- | --- | --- |
-| Web wallet | creates, holds and signs in the browser | none | 0.21.0 |
-| Multi-asset ledger + variants | variant tokens mined by variant games | protocol v2 | 0.22.0 |
-| Native DEX | pools, LP positions and swaps between on-chain assets | protocol v2 | 0.23.0 |
-| ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | protocol v2 + one Ethereum contract | 0.24.0 |
+| Web wallet | creates, holds and signs in the browser | none | 0.22.0 |
+| Multi-asset ledger + variants | variant tokens mined by variant games | protocol v2 | 0.23.0 |
+| Native DEX | pools, LP positions and swaps between on-chain assets | protocol v2 | 0.24.0 |
+| ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | protocol v2 + one Ethereum contract | 0.25.0 |
 
-Optionally, 0.25.0 adds a `wETH` asset so that ETH itself can be traded in the
+Optionally, 0.26.0 adds a `wETH` asset so that ETH itself can be traded in the
 native DEX; that is a bonded federation and is explicitly out of the critical
 path (section 7.7).
 
@@ -121,13 +121,13 @@ public good that work produced. Two consequences shape the design:
    funder/subnet fields, and one proof per game hash. They need no judgement
    about chess quality, which stays off chain (`PROTOCOL.md` section 9.2).
 
-## 4. Workstream A -- the web wallet (0.21.0)
+## 4. Workstream A -- the web wallet (0.22.0)
 
 No consensus change. This is the piece that turns `src/web` from an explorer with
 a playable seat into a wallet, and it is first because everything else needs a
 way to sign in a browser.
 
-**Status (0.21.0).** Shipped: the keystore port (§4.1), `buildTransfer` (§4.2),
+**Status (0.22.0).** Shipped: the keystore port (§4.1), `buildTransfer` (§4.2),
 the review screen and local nonce tracking (§4.3), the create/restore/open,
 receive, send, history and settings views (§4.4), deployed at
 `wallet.chessproofofwork.com` with the explorer. History is implemented as the
@@ -210,7 +210,7 @@ keyed by account and height.
 | View | Contents |
 | --- | --- |
 | Receive | bech32 address with checksum, QR, hybrid public-key fingerprint, network badge |
-| Send | asset picker (SCCP only until 0.22.0), amount, fee, recipient; a review screen showing the canonical payload digest and every field that will be signed |
+| Send | asset picker (SCCP only until 0.23.0), amount, fee, recipient; a review screen showing the canonical payload digest and every field that will be signed |
 | Assets | per-asset balances, pending transactions, confirmed history, mining rewards |
 | Swap | quote, slippage, `min_out`, review, submit (workstream C) |
 | Bridge | orders, lock/claim/refund state machine with block heights (workstream D) |
@@ -235,7 +235,7 @@ A fresh browser profile can create a wallet, receive from the faucet, send SCCP,
 and export a keyfile that the CLI opens and signs with -- with vector parity and
 the devnet e2e green, and no unencrypted seed written anywhere.
 
-## 5. Workstream B -- protocol v2: assets and variants (0.22.0)
+## 5. Workstream B -- protocol v2: assets and variants (0.23.0)
 
 ### 5.1 The fork
 
@@ -360,7 +360,7 @@ variant asset, coinbase amounts match the per-variant schedule, a standard game
 is rejected when submitted as Crazyhouse, and the full suite plus the regenerated
 golden chain is green.
 
-## 6. Workstream C -- native DEX (0.23.0)
+## 6. Workstream C -- native DEX (0.24.0)
 
 The DEX trades the assets the chain mints: SCCP against variant assets, and
 variant assets against each other. It has no admin key, no pause, no fee switch
@@ -453,7 +453,7 @@ randomised property test, batch clearing resists an in-block sandwich (an
 adversarial test with a deliberately front-run order), and removing all
 liquidity after the fee accrual returns the expected amounts to the unit.
 
-## 7. Workstream D -- ETH<->SCCP bridge (0.24.0)
+## 7. Workstream D -- ETH<->SCCP bridge (0.25.0)
 
 ### 7.1 Principle: no custody, one secret
 
@@ -606,7 +606,7 @@ inventory and price move, and cancels by signed message. `sccp miner --auto-sell
 composes on top of it for operators who want rewards converted as they vest. No
 custody anywhere: the bot can lose its own inventory to a bug, and nobody else's.
 
-### 7.7 Later, and optional: wrapped ETH (0.25.0)
+### 7.7 Later, and optional: wrapped ETH (0.26.0)
 
 If users want ETH itself traded inside the native DEX (rather than swapped
 peer-to-peer), add a `wETH` asset backed by a **bonded federation**: N operators
@@ -630,11 +630,11 @@ wallet's Bridge view recovers correctly from a page reload at every step.
 | Version | Contents | Gate |
 | --- | --- | --- |
 | 0.19.0 | this document | reviewed; no code change |
-| 0.21.0 | web wallet | vectors, vitest, Playwright devnet e2e; keyfile round-trips with the CLI |
-| 0.22.0 | protocol v2: assets and variants | v2 spec in `PROTOCOL.md`; regenerated golden chain; two-variant soak |
-| 0.23.0 | native DEX | property tests for `k` and rounding; quote equals execution; no admin keys |
-| 0.24.0 | HTLC bridge and order book | adversarial swap suite on Anvil + devnet; contract audit |
-| 0.25.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure |
+| 0.22.0 | web wallet | vectors, vitest, Playwright devnet e2e; keyfile round-trips with the CLI |
+| 0.23.0 | protocol v2: assets and variants | v2 spec in `PROTOCOL.md`; regenerated golden chain; two-variant soak |
+| 0.24.0 | native DEX | property tests for `k` and rounding; quote equals execution; no admin keys |
+| 0.25.0 | HTLC bridge and order book | adversarial swap suite on Anvil + devnet; contract audit |
+| 0.26.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure |
 | 1.0.0 | mainnet | the go/no-go in `IMPLEMENTATION_PLAN.md`, plus the bridge audit |
 
 Each release keeps `make check` green, regenerates the vectors and OpenAPI

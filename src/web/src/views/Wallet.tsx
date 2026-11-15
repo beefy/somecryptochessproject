@@ -13,20 +13,45 @@
  * every signed field), and exports the keyfile the CLI can open. The BIP-39
  * phrase shown at creation is the backup, and it is shown exactly once.
  *
+ * The tabs are the wallet's own: Overview, Play, Send, Receive, Faucet, History
+ * and Settings. A nickname is a local label -- the wallet's own in the vault, and
+ * one per address it sends to -- so every screen can name an account without
+ * pretending the name is on chain. Transfers the node accepted but no block has
+ * carried yet are remembered here and listed on Overview and History until the
+ * committed nonce passes them.
+ *
  * `#/` is this page when served from `wallet.chessproofofwork.com`; the same
  * routes work from the explorer, where the hamburger menu sends people here.
  */
 
 import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
-import { Button, HelperText, ProgressBar, Snackbar, Text } from "react-native-paper";
+import { Button, HelperText, Text, TextInput } from "react-native-paper";
 
-import { fetchAccount, requestFaucet } from "../api";
-import { FailureNotice, KeyValue, Loading, Link, Mono, Section, StatusPill } from "../components/Chrome";
+import { fetchAccount } from "../api";
+import {
+  CopyButton,
+  FailureNotice,
+  KeyValue,
+  Loading,
+  Link,
+  Mono,
+  Section,
+  StatusPill,
+} from "../components/Chrome";
+import { useNotice } from "../components/Notices";
+import { labelFor, readContacts } from "../lib/contacts";
 import { downloadText, keyfileName } from "../lib/download";
-import { formatAmount, formatCoins, formatDuration, formatInteger, shortAddress, shortHash } from "../lib/format";
+import { formatAmount, formatDuration, formatInteger, shortAddress, shortHash } from "../lib/format";
 import type { HybridKeypair } from "../lib/keys";
 import { keyfileText, unlockKeyfile, type KeyfileDocument } from "../lib/keystore";
+import {
+  addPending,
+  prunePending,
+  readPending,
+  writePending,
+  type PendingTransaction,
+} from "../lib/pending";
 import {
   AUTO_LOCK_CHOICES,
   readAutoLockSeconds,
@@ -34,13 +59,19 @@ import {
   writeAutoLockSeconds,
   writeLastAddress,
 } from "../lib/settings";
-import { deleteKeyfile, listKeyfiles, saveKeyfile, type StoredKeyfile } from "../lib/vault";
+import {
+  deleteKeyfile,
+  listKeyfiles,
+  renameKeyfile,
+  saveKeyfile,
+  type StoredKeyfile,
+} from "../lib/vault";
 import { useNode } from "../node";
-import { navigate } from "../router";
 import { useResource } from "../useResource";
-import { SendPanel, type SentTransaction } from "./wallet/Send";
-import { WalletSetup } from "./wallet/Setup";
+import { FaucetPanel } from "./wallet/Faucet";
 import { HistoryPanel } from "./wallet/History";
+import { SendPanel } from "./wallet/Send";
+import { WalletSetup } from "./wallet/Setup";
 
 interface Session {
   record: StoredKeyfile;
@@ -66,36 +97,20 @@ function describe(failure: unknown): Error {
   return failure instanceof Error ? failure : new Error(String(failure));
 }
 
-/**
- * A faucet click is a round trip to the node, and the node is what decides: show
- * that it is working rather than a dead button with no feedback.
- */
-function FaucetProgress(): ReactNode {
-  return (
-    <>
-      <ProgressBar indeterminate />
-      <Text variant="bodySmall" style={styles.muted}>
-        Asking the faucet for funds. It answers with a transaction id once the node accepts the
-        grant; this page reloads the balance when it does.
-      </Text>
-    </>
-  );
-}
-
 export function Wallet({
   view,
 }: {
-  view: "overview" | "play" | "send" | "receive" | "history" | "settings";
+  view: "overview" | "play" | "send" | "receive" | "faucet" | "history" | "settings";
 }): ReactNode {
   const { status, params, network } = useNode();
+  const notify = useNotice();
   const [stored, setStored] = useState<StoredKeyfile[] | null>(null);
   const [storeError, setStoreError] = useState<Error | null>(null);
   const [selected, setSelected] = useState<string | null>(readLastAddress);
   const [session, setSession] = useState<Session | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [pendingNonce, setPendingNonce] = useState<number | null>(null);
-  const [sent, setSent] = useState<SentTransaction | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<PendingTransaction[]>([]);
+  const [nickname, setNickname] = useState("");
   const [autoLockSeconds, setAutoLockSeconds] = useState(readAutoLockSeconds);
   const [forgetting, setForgetting] = useState<string | null>(null);
 
@@ -121,26 +136,33 @@ export function Wallet({
     void refresh();
   }, [refresh]);
 
-  const lock = useCallback((reason?: string): void => {
-    setSession((current) => {
-      if (current !== null) {
-        current.keypair.seed.fill(0);
-        current.keypair.ed25519.seed.fill(0);
-      }
-      return null;
-    });
-    setPendingNonce(null);
-    setSent(null);
-    setForgetting(null);
-    if (reason !== undefined) setNotice(reason);
-  }, []);
+  const lock = useCallback(
+    (reason?: string): void => {
+      setSession((current) => {
+        if (current !== null) {
+          current.keypair.seed.fill(0);
+          current.keypair.ed25519.seed.fill(0);
+        }
+        return null;
+      });
+      setPendingNonce(null);
+      setPending([]);
+      setForgetting(null);
+      if (reason !== undefined) notify(reason);
+    },
+    [notify],
+  );
 
-  const adopt = useCallback((record: StoredKeyfile, keypair: HybridKeypair): void => {
-    setSession({ record, keypair });
-    setSelected(record.address);
-    writeLastAddress(record.address);
-    setNotice(`unlocked ${shortAddress(record.address)}`);
-  }, []);
+  const adopt = useCallback(
+    (record: StoredKeyfile, keypair: HybridKeypair): void => {
+      setSession({ record, keypair });
+      setSelected(record.address);
+      setNickname(record.label);
+      writeLastAddress(record.address);
+      notify(`unlocked ${shortAddress(record.address)}`);
+    },
+    [notify],
+  );
 
   const unlock = useCallback(
     async (record: StoredKeyfile, passphrase: string): Promise<void> => {
@@ -167,11 +189,38 @@ export function Wallet({
       }
       await refresh();
       setForgetting(null);
-      setNotice(`forgot ${shortAddress(target)}`);
+      notify(`forgot ${shortAddress(target)}`);
     },
-    [lock, refresh, selected, session],
+    [lock, notify, refresh, selected, session],
   );
 
+  const rename = useCallback(
+    async (label: string): Promise<void> => {
+      if (session === null) return;
+      try {
+        const record = await renameKeyfile(session.record.address, label);
+        setSession((current) => (current === null ? current : { ...current, record }));
+        setNickname(record.label);
+        await refresh();
+        notify(record.label === "" ? "nickname cleared" : `nickname set to ${record.label}`);
+      } catch (failure) {
+        notify(describe(failure).message);
+      }
+    },
+    [notify, refresh, session],
+  );
+
+  // Pending rows belong to one key: read them when a wallet is adopted, and let
+  // the account effect below retire them once the chain has passed their nonce.
+  const sessionAddress = session?.record.address ?? null;
+  const sessionNetwork = session?.record.network ?? null;
+  useEffect(() => {
+    if (sessionAddress === null || sessionNetwork === null) {
+      setPending([]);
+      return;
+    }
+    setPending(readPending(sessionAddress, sessionNetwork));
+  }, [sessionAddress, sessionNetwork]);
 
   // Auto-lock: any pointer or key in the tab counts as activity; silence for the
   // chosen window locks. A timer, not one `setTimeout`, so a sleeping tab wakes up
@@ -198,34 +247,49 @@ export function Wallet({
   }, [autoLockSeconds, lock, session]);
 
   // The chain is the truth about the nonce; once it reaches the optimistic one,
-  // the local override has nothing left to say.
+  // the local override has nothing left to say. The same comparison retires a
+  // pending row: it is included when the committed nonce has passed its nonce.
   const chainNonce = accountView?.nonce;
   useEffect(() => {
     if (chainNonce === undefined) return;
     if (pendingNonce !== null && chainNonce >= pendingNonce) setPendingNonce(null);
-    if (sent !== null && chainNonce > sent.nonce) {
-      setNotice(
-        `included: ${formatAmount(sent.amount)} to ${shortAddress(sent.to)} (nonce ${formatInteger(
-          sent.nonce,
-        )})`,
+    if (pending.length === 0) return;
+    const included = pending.filter((entry) => entry.nonce < chainNonce);
+    const next = prunePending(pending, chainNonce);
+    if (included.length === 0 && next.length === pending.length) return;
+    if (session !== null) {
+      writePending(session.record.address, session.record.network, next);
+    }
+    setPending(next);
+    for (const entry of included) {
+      const name = labelFor(readContacts(), entry.to) ?? shortAddress(entry.to);
+      notify(
+        `included: ${formatAmount(entry.amount)} to ${name} (nonce ${formatInteger(entry.nonce)})`,
       );
-      setSent(null);
     }
-  }, [chainNonce, pendingNonce, sent]);
+  }, [chainNonce, notify, pending, pendingNonce, session]);
 
-  const fund = async (): Promise<void> => {
-    if (address === null) return;
-    setBusy(true);
-    try {
-      const grant = await requestFaucet(address);
-      setNotice(`the faucet sent ${formatCoins(grant.amount)} (${shortHash(grant.txid)}…)`);
-      account.reload();
-    } catch (failure) {
-      setNotice(describe(failure).message);
-    } finally {
-      setBusy(false);
-    }
-  };
+  /**
+   * A send is accepted by the node before a block includes it. Record it here so
+   * History and Overview can show it as pending, and say so immediately: the
+   * review screen's "Sign and send" is not the end of the story.
+   */
+  const accepted = useCallback(
+    (tx: PendingTransaction): void => {
+      if (session === null) return;
+      // Read the book rather than the rendered state: two acceptances in one
+      // render would otherwise both start from the same list and lose one row.
+      const book = readPending(session.record.address, session.record.network);
+      const next = addPending(book, tx);
+      writePending(session.record.address, session.record.network, next);
+      setPending(next);
+      const name = labelFor(readContacts(), tx.to) ?? shortAddress(tx.to);
+      notify(
+        `sent ${formatAmount(tx.amount)} to ${name} · pending at nonce ${formatInteger(tx.nonce)}`,
+      );
+    },
+    [notify, session],
+  );
 
   const title = ((): ReactNode => {
     if (session === null) return null;
@@ -233,11 +297,10 @@ export function Wallet({
     return (
       <View style={styles.titleRow}>
         <View style={styles.titleBlock}>
-          <Text variant="headlineSmall">Wallet</Text>
+          <Text variant="headlineSmall">{record.label === "" ? "Wallet" : record.label}</Text>
           <Mono copy>{record.address}</Mono>
           <Text variant="bodySmall" style={styles.muted}>
-            {record.label === "" ? record.network : `${record.label} · ${record.network}`} · unlocked
-            in this tab
+            {record.network} · unlocked in this tab
           </Text>
         </View>
         <View style={styles.titleActions}>
@@ -245,6 +308,7 @@ export function Wallet({
             label={accountView === null ? `${record.network} (no node)` : record.network}
             tone={accountView === null ? "warn" : "info"}
           />
+          <CopyButton value={record.address} />
           <Button mode="outlined" onPress={() => lock("locked")}>
             Lock
           </Button>
@@ -272,7 +336,6 @@ export function Wallet({
     }
 
     const { record, keypair } = session;
-    const mainnet = record.network === "mainnet";
 
     if (view === "play") {
       return (
@@ -308,13 +371,15 @@ export function Wallet({
             account={accountView}
             minFee={params.data.min_fee}
             pendingNonce={pendingNonce}
-            onAccepted={setSent}
+            onAccepted={accepted}
             onPendingNonce={setPendingNonce}
           />
-          {sent !== null && (
+          {pending.length > 0 && (
             <HelperText type="info" visible>
-              {shortHash(sent.txid, 12)}… is in the mempool at nonce {formatInteger(sent.nonce)};
-              this page refreshes until the chain includes it.
+              {pending.length === 1 ? "One transfer is" : `${pending.length} transfers are`} waiting
+              for a block at nonce {formatInteger(pending[pending.length - 1]?.nonce ?? 0)}; the
+              node&apos;s committed nonce is what retires them, and History lists them while they
+              wait.
             </HelperText>
           )}
         </>
@@ -325,7 +390,11 @@ export function Wallet({
       return (
         <>
           {title}
-          <Section title="Receive" subtitle={`${record.network} only`}>
+          <Section
+            title="Receive"
+            subtitle={`${record.network} only`}
+            action={<CopyButton value={record.address} />}
+          >
             <Mono copy>{record.address}</Mono>
             <HelperText type="info" visible>
               Share this address. It is derived from the hybrid public key below, so a sender does
@@ -342,22 +411,26 @@ export function Wallet({
                 {formatAmount(accountView.balance)}
               </KeyValue>
             )}
-            {!mainnet && (
-              <View style={styles.actions}>
-                <Button
-                  mode="outlined"
-                 
-                  loading={busy}
-                  disabled={busy}
-                  onPress={() => void fund()}
-                >
-                  Fund from the faucet
-                </Button>
-              </View>
-            )}
-            {busy && <FaucetProgress />}
             {account.error !== undefined && <FailureNotice error={account.error} />}
           </Section>
+        </>
+      );
+    }
+
+    if (view === "faucet") {
+      return (
+        <>
+          {title}
+          <FaucetPanel
+            address={record.address}
+            network={record.network}
+            account={accountView}
+            onFunded={() => account.reload()}
+          />
+          <HelperText type="info" visible>
+            A grant is a transaction like any other: the spendable balance moves when a block
+            includes it, and the History tab finds it on its next scan.
+          </HelperText>
         </>
       );
     }
@@ -366,7 +439,12 @@ export function Wallet({
       return (
         <>
           {title}
-          <HistoryPanel address={record.address} network={record.network} />
+          <HistoryPanel
+            address={record.address}
+            network={record.network}
+            pending={pending}
+            committedNonce={accountView?.nonce ?? 0}
+          />
         </>
       );
     }
@@ -375,6 +453,30 @@ export function Wallet({
       return (
         <>
           {title}
+          <Section title="Nickname" subtitle="how this wallet is listed in this browser">
+            <TextInput
+              label="Nickname"
+              mode="outlined"
+              value={nickname}
+              onChangeText={setNickname}
+              placeholder="no nickname"
+            />
+            <View style={styles.actions}>
+              <Button
+                mode="contained"
+                disabled={nickname.trim() === record.label}
+                onPress={() => void rename(nickname)}
+              >
+                Save nickname
+              </Button>
+              {record.label !== "" && <Button onPress={() => void rename("")}>Clear</Button>}
+            </View>
+            <HelperText type="info" visible>
+              A nickname is local to this browser and is not part of the keyfile: it is never
+              signed and never leaves this device.
+            </HelperText>
+          </Section>
+
           <Section title="Export" subtitle="the file `sccp wallet new` writes">
             <View style={styles.actions}>
               <Button
@@ -455,7 +557,15 @@ export function Wallet({
         ) : accountView === null ? (
           <Loading />
         ) : (
-          <Section title="Balance" subtitle="as the node reports it, refreshed every few seconds">
+          <Section
+            title="Balance"
+            subtitle="as the node reports it, refreshed every few seconds"
+            action={
+              <Button compact mode="outlined" onPress={() => account.reload()}>
+                Refresh
+              </Button>
+            }
+          >
             <KeyValue label="Spendable" mono>
               {formatAmount(accountView.balance)}
             </KeyValue>
@@ -471,35 +581,13 @@ export function Wallet({
             <KeyValue label="Next nonce" mono>
               {formatInteger(pendingNonce ?? accountView.nonce)}
             </KeyValue>
-            {sent !== null && (
-              <KeyValue label="Pending">
-                {formatAmount(sent.amount)} to {shortAddress(sent.to)} · nonce{" "}
-                {formatInteger(sent.nonce)}
+            {pending.map((entry) => (
+              <KeyValue key={entry.txid} label="Pending">
+                {formatAmount(entry.amount)} to{" "}
+                {labelFor(readContacts(), entry.to) ?? shortAddress(entry.to)} · nonce{" "}
+                {formatInteger(entry.nonce)}
               </KeyValue>
-            )}
-            <View style={styles.actions}>
-              {!mainnet && (
-                <Button
-                  mode="outlined"
-                 
-                  loading={busy}
-                  disabled={busy}
-                  onPress={() => void fund()}
-                >
-                  Fund from the faucet
-                </Button>
-              )}
-              <Button mode="contained" onPress={() => navigate("#/wallet/send")}>
-                Send SCCP
-              </Button>
-              <Button mode="text" onPress={() => navigate("#/wallet/receive")}>
-                Receive
-              </Button>
-              <Button mode="text" onPress={() => navigate("#/wallet/history")}>
-                History
-              </Button>
-            </View>
-            {busy && <FaucetProgress />}
+            ))}
             <KeyValue label="Explorer">
               <Link href={`#/accounts/${encodeURIComponent(record.address)}`}>this account</Link>
             </KeyValue>
@@ -507,7 +595,8 @@ export function Wallet({
         )}
         <HelperText type="info" visible>
           The node has no transaction-history endpoint yet, so this page shows committed balances
-          and the transaction you just sent; the explorer&apos;s block list is the history.
+          and the transfers this browser is still waiting on; the History tab scans blocks for the
+          rest.
         </HelperText>
       </>
     );
@@ -521,14 +610,6 @@ export function Wallet({
         </HelperText>
       )}
       {body}
-      <Snackbar
-        visible={notice !== null}
-        onDismiss={() => setNotice(null)}
-        duration={6000}
-        action={{ label: "Dismiss", onPress: () => setNotice(null) }}
-      >
-        {notice ?? ""}
-      </Snackbar>
     </View>
   );
 }

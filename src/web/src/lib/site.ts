@@ -71,3 +71,14 @@ export function crossSiteHref(
   if (local) return siteHash(site);
   return `${SITE_ORIGINS[site]}/`;
 }
+
+/**
+ * A site origin plus a hash, with exactly one slash between them.
+ *
+ * `crossSiteHref` returns an origin with a trailing slash (`https://host/`) and a
+ * hash starts with `#`, so naive concatenation leaves `https://host//#/wallet`
+ * in the address bar. This is the one place that joins the two.
+ */
+export function hashUrl(base: string, hash: string): string {
+  return `${base.replace(/\/+$/, "")}/${hash.replace(/^\/+/, "")}`;
+}

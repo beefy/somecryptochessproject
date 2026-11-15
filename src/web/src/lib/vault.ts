@@ -106,6 +106,23 @@ export async function loadKeyfile(address: string): Promise<StoredKeyfile | unde
   return withStore<StoredKeyfile | undefined>("readonly", (store) => store.get(address));
 }
 
+/**
+ * Rename a stored wallet without touching its document or its saved date.
+ *
+ * `saveKeyfile` is the create/import path and stamps `savedAt`; renaming is not
+ * adding a wallet, so it goes through here to keep "added" honest. The nickname
+ * is local, not part of the keyfile: the ciphertext is unchanged.
+ */
+export async function renameKeyfile(address: string, label: string): Promise<StoredKeyfile> {
+  const record = await loadKeyfile(address);
+  if (record === undefined) {
+    throw new VaultError("that keyfile is no longer in this browser");
+  }
+  const renamed: StoredKeyfile = { ...record, label: label.trim() };
+  await withStore<IDBValidKey>("readwrite", (store) => store.put(renamed));
+  return renamed;
+}
+
 /** Forget a keyfile. The encrypted document is the only copy in the browser. */
 export async function deleteKeyfile(address: string): Promise<void> {
   await withStore<undefined>("readwrite", (store) => store.delete(address));
