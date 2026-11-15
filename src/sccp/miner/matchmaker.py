@@ -38,10 +38,16 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import Field
 
-from sccp.chess.openings import OpeningBook, book_for
+from sccp.chess.openings import OpeningBook, OpeningLine, book_for
 from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import Termination, canonical_game_hash, outcome_result
-from sccp.config import NetworkParams, get_network
+from sccp.chess.variants import (
+    board_for_variant,
+    chess960_start_fen,
+    is_chess960,
+    select_chess960_start,
+)
+from sccp.config import CHESS960_VARIANT, NetworkParams, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import (
     HybridKeypair,
@@ -75,6 +81,7 @@ from sccp.protocol.models import (
     Matchup,
     MoveMessage,
     MoveReceipt,
+    OpeningRef,
     ProtocolModel,
     ResultValue,
     RosterMember,
@@ -87,6 +94,7 @@ from sccp.protocol.pairing import RosterEntry, pair
 from sccp.protocol.transcript import (
     certificate_payload,
     create_certificate,
+    opening_hash,
     render_transcript_pgn,
     result_payload,
 )
@@ -350,7 +358,7 @@ class MatchSession:
         except (KeyError, TypeError, ValueError) as exc:
             raise RelayError(f"stored match session is invalid: {exc}") from None
 
-        board = chess.Board()
+        board = board_for_variant(certificate.variant, certificate.opening.start_fen)
         try:
             for san in san_moves:
                 board.push(board.parse_san(san))
@@ -377,7 +385,13 @@ class MatchSession:
                     f"stored match {matchup.match_id} is finished without a result or PGN"
                 )
             try:
-                expected_hash = canonical_game_hash(matchup.network, san_moves, result.result)
+                expected_hash = canonical_game_hash(
+                    matchup.network,
+                    san_moves,
+                    result.result,
+                    start_fen=certificate.opening.start_fen,
+                    variant=certificate.variant,
+                )
             except ValueError as exc:
                 raise RelayError(
                     f"stored match {matchup.match_id} has an invalid result: {exc}"
@@ -819,7 +833,13 @@ class Matchmaker:
         session.result = GameResult(
             network=self.params.network_id,
             match_id=session.matchup.match_id,
-            game_hash=canonical_game_hash(self.params.network_id, session.san_moves, result),
+            game_hash=canonical_game_hash(
+                self.params.network_id,
+                session.san_moves,
+                result,
+                start_fen=session.certificate.opening.start_fen,
+                variant=session.certificate.variant,
+            ),
             result=cast(ResultValue, result.value),
             termination=cast(TerminationValue, termination.value),
             plies=len(session.san_moves),
@@ -882,14 +902,33 @@ class Matchmaker:
             now = self._now()
             created: list[MatchSession] = []
             for matchup in matchups:
-                opening = self.book.select(beacon_bytes, matchup.match_id)
+                opening: OpeningLine | OpeningRef
+                if is_chess960(matchup.variant):
+                    position = select_chess960_start(beacon_bytes, matchup.match_id)
+                    start_fen = chess960_start_fen(position)
+                    opening = OpeningRef(
+                        book_version="none",
+                        line_id=position,
+                        hash=opening_hash(
+                            "none",
+                            position,
+                            (),
+                            start_fen=start_fen,
+                            variant=CHESS960_VARIANT,
+                        ),
+                        moves=(),
+                        start_fen=start_fen,
+                        variant=CHESS960_VARIANT,
+                    )
+                else:
+                    opening = self.book.select(beacon_bytes, matchup.match_id)
                 certificate = create_certificate(
                     matchup,
                     opening,
                     engine_white=self._engines[matchup.white],
                     engine_black=self._engines[matchup.black],
                 )
-                board = chess.Board()
+                board = board_for_variant(matchup.variant, certificate.opening.start_fen)
                 san_moves: list[str] = []
                 for san in opening.moves:
                     move = board.parse_san(san)
@@ -1300,6 +1339,7 @@ class Matchmaker:
                 subnet=member.subnet,
                 asn=member.asn,
                 recent_opponents=member.recent_opponents,
+                variant=member.variant,
             )
             public_keys[address] = member.public_key
             engines[address] = member.engine

@@ -32,7 +32,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from sccp.config import MAX_PLIES_LIMIT
+from sccp.config import MAX_PLIES_LIMIT, STANDARD_VARIANT
 
 DigestHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 """A 32-byte digest or 32-byte nonce, lowercase hex."""
@@ -64,6 +64,14 @@ TerminationValue = Literal["checkmate", "draw", "resignation", "time_forfeit"]
 
 MAX_CLOCK_MS = 24 * 60 * 60 * 1000
 """Upper bound for a clock value (24 hours), from PROTOCOL.md section 8.4."""
+
+STANDARD_START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+"""The ordinary initial position, repeated here so models need no chess import."""
+
+VariantName = Annotated[
+    str, StringConstraints(min_length=1, max_length=32, pattern=r"^[a-z0-9_-]+$")
+]
+"""A network-defined chess variant name (``standard``, ``chess960``, ...)."""
 
 
 class ProtocolModel(BaseModel):
@@ -179,12 +187,19 @@ class Beacon(ProtocolModel):
 
 
 class OpeningRef(ProtocolModel):
-    """The book line chosen for a match and the hash that commits to it."""
+    """The start position (and optional book line) a match is played from.
+
+    Standard chess carries a book line and the ordinary FEN. Chess960 carries
+    the position selected from the beacon, its Shredder-FEN, and no opening
+    moves, because the certified start is the whole shared prefix.
+    """
 
     book_version: str = Field(min_length=1, max_length=64)
     line_id: int = Field(ge=0)
     hash: DigestHex
-    moves: tuple[str, ...] = Field(min_length=1, max_length=12)
+    moves: tuple[str, ...] = Field(default=(), max_length=12)
+    start_fen: str = Field(default=STANDARD_START_FEN, min_length=1, max_length=128)
+    variant: VariantName = STANDARD_VARIANT
 
 
 class Matchup(ProtocolModel):
@@ -196,6 +211,7 @@ class Matchup(ProtocolModel):
     round: int = Field(ge=0)
     white: AddressText
     black: AddressText
+    variant: VariantName = STANDARD_VARIANT
 
     @property
     def seats(self) -> tuple[str, str]:
@@ -221,6 +237,7 @@ class MatchCertificate(ProtocolModel):
     opening: OpeningRef
     engine_white: EngineFingerprint
     engine_black: EngineFingerprint
+    variant: VariantName = STANDARD_VARIANT
     time_control: TimeControl = Field(
         default_factory=lambda: TimeControl(initial_ms=1_800_000, increment_ms=0)
     )
@@ -401,6 +418,7 @@ class WinProof(ProtocolModel):
     plies: int = Field(ge=1)
     move_commitment: DigestHex
     low_ply: bool = False
+    variant: VariantName = STANDARD_VARIANT
     opening: OpeningRef
     pgn: str = Field(min_length=1, max_length=262_144)
     certificate: MatchCertificate
@@ -456,6 +474,7 @@ class RosterMember(ProtocolModel):
 
     public_key: HybridPublicKeyHex
     engine: EngineFingerprint | None = None
+    variant: VariantName = STANDARD_VARIANT
     max_games: int = Field(default=1, ge=1)
     funder: str | None = None
     subnet: str | None = None
@@ -466,6 +485,7 @@ class RosterMember(ProtocolModel):
 __all__ = [
     "MAX_CLOCK_MS",
     "MAX_PLIES_LIMIT",
+    "STANDARD_START_FEN",
     "AddressText",
     "Availability",
     "Beacon",
@@ -502,5 +522,6 @@ __all__ = [
     "Transaction",
     "Transcript",
     "TxType",
+    "VariantName",
     "WinProof",
 ]

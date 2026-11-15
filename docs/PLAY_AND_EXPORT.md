@@ -165,7 +165,7 @@ settling a game also mines out the rest of its epoch:
 So a testnet game costs five blocks of chain, and every one of them carries a
 transaction or the proof. That is not padding: the four transactions are exactly
 the two seats' availability commitments and reveals for the epochs ahead, which
-is what keeps a two-miner testnet matchable epoch after epoch.
+is what keeps each miner pair matchable epoch after epoch.
 
 The chain remembers its network in `play.json`, so resuming `--chain-dir` with
 the other `--network` is refused rather than opening a testnet chain with devnet

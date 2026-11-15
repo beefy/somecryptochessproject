@@ -30,7 +30,7 @@ from sccp.crypto.pq import (
     hybrid_verify,
     is_hybrid_public_key_hex,
 )
-from sccp.errors import AddressError, KeyEncodingError, TxValidationError
+from sccp.errors import AddressError, ConfigError, KeyEncodingError, TxValidationError
 from sccp.protocol.beacon import commitment
 from sccp.protocol.models import Availability, Transaction, TxType
 from sccp.serialization import Domain, canonical_json, domain_hex, normalize
@@ -98,28 +98,41 @@ def sign_transaction(keypair: HybridKeypair, tx: Transaction) -> Transaction:
     return unsigned.model_copy(update={"signature": signature.hex()})
 
 
-def make_coinbase(miner: str, amount: int, network: str) -> Transaction:
+def make_coinbase(
+    miner: str,
+    amount: int,
+    network: str,
+    *,
+    variant_rewards: Mapping[str, int] | None = None,
+) -> Transaction:
     """The single coinbase transaction of a block.
 
     A coinbase is an unsigned ``transfer`` from the miner to itself: its
     authorisation is the block seal, not a signature, and it is never applied as
-    an ordinary transaction (so it consumes no nonce).
+    an ordinary transaction (so it consumes no nonce). ``variant_rewards`` maps
+    asset ids to non-native tokens the same block mints; it is omitted when the
+    block settled only standard chess.
     """
     if amount < 0:
         _fail(TxFailure.TYPE, "coinbase amount must be non-negative")
+    payload: dict[str, object] = {"to": miner, "amount": amount}
+    if variant_rewards:
+        payload["variant_rewards"] = {
+            asset: total for asset, total in sorted(variant_rewards.items()) if total > 0
+        }
     return Transaction(
         network=network,
         type=TxType.TRANSFER,
         sender=miner,
         nonce=0,
         fee=0,
-        payload={"to": miner, "amount": amount},
+        payload=payload,
         signature=None,
     )
 
 
 def coinbase_id(miner: str, amount: int, network: str) -> str:
-    """The txid of a coinbase."""
+    """The txid of a native-only coinbase."""
     return txid(make_coinbase(miner, amount, network))
 
 
@@ -233,8 +246,8 @@ def _require_balance(state: State, address: str, amount: int, what: str) -> None
 # -- per-type validation ------------------------------------------------------
 
 ALLOWED: dict[TxType, frozenset[str]] = {
-    TxType.TRANSFER: frozenset({"to", "amount", "public_key"}),
-    TxType.REGISTER: frozenset({"public_key", "endpoint", "engine", "bond"}),
+    TxType.TRANSFER: frozenset({"to", "amount", "asset", "public_key"}),
+    TxType.REGISTER: frozenset({"public_key", "endpoint", "engine", "bond", "variant"}),
     TxType.REGISTER_WITNESS: frozenset({"public_key", "endpoint", "bond"}),
     TxType.UPDATE_REGISTRATION: frozenset(
         {"endpoint", "engine", "extend_epochs", "bond", "public_key"}
@@ -260,7 +273,26 @@ def _validate_transfer(params: NetworkParams, state: State, tx: Transaction, hei
     to = _field_address(tx.payload, "to", params)
     if to == tx.sender:
         _fail(TxFailure.TYPE, "a transfer must name a different recipient")
-    _require_balance(state, tx.sender, amount + tx.fee, "the transfer")
+    asset = tx.payload.get("asset")
+    if asset is None:
+        _require_balance(state, tx.sender, amount + tx.fee, "the transfer")
+        return
+    if not isinstance(asset, str) or not asset:
+        _fail(TxFailure.SCHEMA, "payload field 'asset' must be an asset id")
+    try:
+        variant = params.variant_for_asset(asset)
+    except ConfigError as exc:
+        _fail(TxFailure.TYPE, str(exc))
+    if variant.native:
+        _fail(TxFailure.TYPE, "native SCCP transfers must omit the asset field")
+    # Fees stay in SCCP even when the transferred amount is a variant token.
+    _require_balance(state, tx.sender, tx.fee, "the fee")
+    if state.asset_balance(tx.sender, asset) < amount:
+        _fail(
+            TxFailure.BALANCE,
+            f"{tx.sender} has {state.asset_balance(tx.sender, asset)} of {variant.symbol}, "
+            f"cannot send {amount}",
+        )
 
 
 def _validate_register(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
@@ -268,9 +300,27 @@ def _validate_register(params: NetworkParams, state: State, tx: Transaction, hei
     bond = _field_int(tx.payload, "bond")
     endpoint = _field_text(tx.payload, "endpoint")
     engine = _field_text(tx.payload, "engine")
+    variant = tx.payload.get("variant", "standard")
+    if not isinstance(variant, str) or not variant:
+        _fail(TxFailure.SCHEMA, "payload field 'variant' must be a variant name")
+    try:
+        params.variant(variant)
+    except ConfigError as exc:
+        _fail(TxFailure.TYPE, str(exc))
     if bond < params.min_bond:
         _fail(TxFailure.BOND, f"register needs a bond of at least {params.min_bond}, got {bond}")
     account = state.account(tx.sender)
+    current = epoch_of(height, params)
+    if (
+        account.registered_until_epoch is not None
+        and account.registered_until_epoch >= current
+        and account.variant != variant
+    ):
+        _fail(
+            TxFailure.REGISTRATION,
+            f"{tx.sender} is registered for {account.variant!r}; unregister before "
+            f"switching to {variant!r}",
+        )
     if height < account.banned_until:
         _fail(TxFailure.REGISTRATION, f"{tx.sender} is banned until height {account.banned_until}")
     _require_balance(state, tx.sender, bond + tx.fee, "the registration bond")
@@ -409,8 +459,15 @@ def _apply_transfer(state: State, tx: Transaction, height: int) -> None:
     to = tx.payload.get("to")
     if not isinstance(to, str):
         _fail(TxFailure.SCHEMA, "payload field 'to' must be an address")
-    state.ensure(tx.sender).balance -= amount
-    state.ensure(to).balance += amount
+    asset = tx.payload.get("asset")
+    if asset is None:
+        state.ensure(tx.sender).balance -= amount
+        state.ensure(to).balance += amount
+        return
+    if not isinstance(asset, str):
+        _fail(TxFailure.SCHEMA, "payload field 'asset' must be an asset id")
+    state.debit_asset(tx.sender, asset, amount)
+    state.credit_asset(to, asset, amount)
 
 
 def _apply_register(state: State, tx: Transaction, height: int) -> None:
@@ -420,6 +477,8 @@ def _apply_register(state: State, tx: Transaction, height: int) -> None:
     account.bonded += bond
     account.endpoint = _field_text(tx.payload, "endpoint")
     account.engine = _field_text(tx.payload, "engine")
+    if "variant" in tx.payload:
+        account.variant = _field_text(tx.payload, "variant") or "standard"
     account.registered_until_epoch = (
         epoch_of(height, state.params) + state.params.registration_epochs
     )

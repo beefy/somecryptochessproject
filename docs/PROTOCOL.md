@@ -77,9 +77,11 @@ Rules:
 2. SAN is the canonical form emitted by `python-chess` 1.11.x: `O-O`, `O-O-O`,
    `e8=Q`, `exd8=Q+`, `Qxf7#`, and explicit disambiguation where required.
 3. `result` uses the PGN vocabulary. `"*"` never enters a proof.
-4. `start_fen` is `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1`.
-   Protocol v1 has no variant start positions; a PGN carrying a different
-   `FEN` (or any `SetUp`) is rejected.
+4. `start_fen` is `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1`
+   for standard chess. A Chess960 game uses one of the 960 legal positions in
+   Shredder-FEN, carries `SetUp "1"` and `Variant "Chess960"`, and adds
+   `"variant": "chess960"` to the hash payload. A standard PGN carrying any
+   other `FEN` (or an ambiguous `KQkq` Chess960 FEN) is rejected.
 5. PGN headers, comments, clock annotations, move numbers and whitespace are
    **not** hashed. The same moves with different metadata hash identically; a
    different move order or result hashes differently.
@@ -106,7 +108,8 @@ when a second game follows the first.
 | `SeatWhite`, `SeatBlack` | Bech32 addresses; must equal the certificate |
 | `EngineWhite`, `EngineBlack` | Engine fingerprints; must equal the certificate |
 | `OpeningID`, `OpeningHash` | Book line id and its opening hash |
-| `Rules` | Exactly `chess` |
+| `Rules` | `chess` for standard, `chess960` for Fischer Random |
+| `FEN`, `SetUp`, `Variant` | Optional for standard; required for Chess960, with `SetUp "1"` and `Variant "Chess960"` |
 
 Every tag must be present and non-empty. When a certificate is supplied,
 `MatchID`, `Epoch`, `RoundNumber`, `SeatWhite`, `SeatBlack`, `EngineWhite`,
@@ -118,8 +121,9 @@ second, and the worst case `initial_ms + increment_ms * max_plies` may not excee
 
 ### 3.2 Replay
 
-- Replay starts from the standard position. Every mainline move must satisfy
-  `Board.is_legal(move)` **before** it is pushed; `Board.push()` does not
+- Replay starts from the standard position, or from the certificate's Shredder
+  FEN for Chess960 with `Board(fen, chess960=True)`. Every mainline move must
+  satisfy `Board.is_legal(move)` **before** it is pushed; `Board.push()` does not
   validate and must never be trusted as a gate.
 - The game may not exceed `max_plies`; a proof also requires at least
   `min_plies` half-moves.
@@ -813,11 +817,14 @@ already know (10.1).
 
 Every block above genesis carries exactly one coinbase: an *unsigned* `transfer`
 from the miner to itself with `nonce = 0`, `fee = 0` and
-`payload = {to: miner, amount: subsidy + fees}`. Its authorisation is the block
-seal, not a signature, so it is never applied as an ordinary transaction and
-consumes no nonce. `subsidy = params.subsidy >> (height // halving_interval)`,
-clamped so minted supply never exceeds `max_supply`; testnet and devnet have no
-cap and no halving. The credited amount matures after `coinbase_maturity` blocks
+`payload = {to: miner, amount: native_subsidy + fees}`. When the block settles a
+non-standard variant, the payload also carries
+`variant_rewards = {asset_id: amount}` and no native subsidy is minted for that
+proof. Its authorisation is the block seal, not a signature, so it is never
+applied as an ordinary transaction and consumes no nonce.
+`native_subsidy = params.subsidy >> (height // halving_interval)`, clamped so
+minted supply never exceeds `max_supply`; each variant has the same schedule on
+its own asset. The credited amounts mature after `coinbase_maturity` blocks
 (`immature` becomes spendable) and a body transaction may not imitate a coinbase.
 
 ### 10.4 Bonded timeout settlement
@@ -937,11 +944,12 @@ nothing in it reads a clock, a random source or the network. It holds one
 
 | Account field | Meaning |
 | --- | --- |
-| `balance` | spendable base units |
-| `immature` | coinbase credits that mature at a later height |
+| `balance`, `immature` | spendable and maturing native SCCP base units |
+| `assets`, `immature_assets` | spendable and maturing variant-token balances keyed by asset id |
 | `bonded` | locked bond (registration or witness) |
 | `nonce` | next valid transaction nonce |
 | `public_key` | the spend key, once known (10.1) |
+| `variant` | the miner's registered chess variant (`standard` is native) |
 | `registered_until_epoch`, `endpoint`, `engine`, `unbonding_height`, `banned_until` | registration and bond lifecycle |
 
 alongside the proof and match registries (`game_hash -> proof_id`, match id ->
@@ -953,7 +961,8 @@ witness registry, and open/closed timeout claims.
 `state_root` is the merkle root (section 1) over `address -> account` leaves,
 where an account leaf commits to every field of the table above. `roster_root` is
 the same construction over the epoch's roster, committing only
-`{public_key, max_games}` per member. Both are recomputed rather than trusted.
+`{public_key, max_games}` per member plus `variant` for non-standard members.
+Both are recomputed rather than trusted.
 
 Snapshots are JSON with the top-level keys `network`, `height`, `tip_hash`,
 `accounts`, `proofs`, `proof_ids`, `matches`, `miner_stats`, `epochs`,

@@ -35,6 +35,7 @@ from sccp.chain.tx import txid
 from sccp.chess.engines import open_engine
 from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
+from sccp.chess.variants import is_chess960
 from sccp.config import NetworkParams, coins_to_units, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import hybrid_sign
@@ -678,6 +679,13 @@ def wallet_send(
     key: Annotated[Path, typer.Option("--key", help="Keyfile to sign with.")],
     to: Annotated[str, typer.Option("--to", help="Recipient address.")],
     amount: Annotated[int, typer.Option("--amount", help="Amount to send, in whole coins.")],
+    asset: Annotated[
+        str | None,
+        typer.Option(
+            "--asset",
+            help="Asset id, variant name or symbol (default: native SCCP).",
+        ),
+    ] = None,
     node: Annotated[
         str | None,
         typer.Option(
@@ -702,7 +710,9 @@ def wallet_send(
     wallet = _run(lambda: load_wallet(key, passphrase))
     with _account_source(ctx, params, header.address, node) as accounts:
         try:
-            tx = accounts.service.build_transfer(wallet.signer, to, coins_to_units(amount), fee=fee)
+            tx = accounts.service.build_transfer(
+                wallet.signer, to, coins_to_units(amount), fee=fee, asset=asset
+            )
         except WalletServiceError as exc:
             if accounts.chain_height == 0:
                 _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
@@ -715,6 +725,7 @@ def wallet_send(
         "from": tx.sender,
         "to": to,
         "amount": coins_to_units(amount),
+        "asset": tx.payload.get("asset", "SCCP"),
         "fee": int(tx.fee),
         "nonce": tx.nonce,
         "accepted": receipt.get("accepted"),
@@ -723,7 +734,10 @@ def wallet_send(
     if _options(ctx).json_output:
         _echo_json(payload)
         return
-    typer.echo(f"sent {_coins(coins_to_units(amount))} to {to} (fee {_coins(int(tx.fee))})")
+    asset_label = f" {asset}" if asset is not None else ""
+    typer.echo(
+        f"sent {_coins(coins_to_units(amount))}{asset_label} to {to} (fee {_coins(int(tx.fee))})"
+    )
     typer.echo(f"txid: {payload['txid']}")
 
 
@@ -1245,6 +1259,13 @@ def miner_run(
         str | None,
         typer.Option("--network", help="Require the keyfile to belong to this network."),
     ] = None,
+    variant: Annotated[
+        str,
+        typer.Option(
+            "--variant",
+            help="Chess variant this miner plays: standard or chess960.",
+        ),
+    ] = "standard",
     engine_profile: Annotated[
         str,
         typer.Option(
@@ -1322,10 +1343,17 @@ def miner_run(
         _fail("--resign-after-plies must be at least 1 ply", code=2)
     secret = _nonce_secret(nonce_secret, nonce_secret_file)
     params = _resolve_network(ctx, network)
+    _run(lambda: params.variant(variant))
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
-    engine = _run(lambda: open_engine(engine_profile, binary=engine_path))
+    engine = _run(
+        lambda: open_engine(
+            engine_profile,
+            binary=engine_path,
+            chess960=is_chess960(variant),
+        )
+    )
     witness_keys = _witness_keys(params, relay_witness_key or [])
     config = MinerConfig.for_network(
         params,
@@ -1338,12 +1366,13 @@ def miner_run(
         nonce_secret=secret,
         witness_keys=witness_keys,
         resign_after_plies=resign_after_plies,
+        variant=variant,
     )
     miner = EngineMiner(config, engine=engine)
     if not _options(ctx).json_output:
         typer.echo(
-            f"miner {wallet.address} on {params.network_id} polling {relay} "
-            f"with {engine.fingerprint}"
+            f"miner {wallet.address} on {params.network_id} variant {variant} "
+            f"polling {relay} with {engine.fingerprint}"
         )
         if secret is not None and node is None:
             typer.echo("--nonce-secret needs --node; the availability pipeline is off", err=True)
@@ -1377,6 +1406,7 @@ def miner_run(
     payload = {
         "address": wallet.address,
         "network": params.network_id,
+        "variant": variant,
         "relay": relay,
         "engine": engine.fingerprint,
         "polls": polls,
@@ -1412,6 +1442,13 @@ def miner_register(
         str,
         typer.Option("--engine", help="Engine fingerprint recorded on chain."),
     ] = "stockfish-19",
+    variant: Annotated[
+        str,
+        typer.Option(
+            "--variant",
+            help="Chess variant this registration plays: standard or chess960.",
+        ),
+    ] = "standard",
     node: Annotated[
         str | None,
         typer.Option("--node", help="Node base URL that receives the transaction."),
@@ -1426,6 +1463,7 @@ def miner_register(
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
     params = wallet.network_params
+    _run(lambda: params.variant(variant))
     with _local_node(ctx, params.network_id) as service:
         tx = _run(
             lambda: WalletService(params, service.chain.state, chain=service.chain).build_register(
@@ -1433,6 +1471,7 @@ def miner_register(
                 endpoint=endpoint,
                 engine=engine,
                 bond=coins_to_units(bond),
+                variant=variant,
             )
         )
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
@@ -1442,13 +1481,16 @@ def miner_register(
         "miner": wallet.address,
         "endpoint": endpoint,
         "engine": engine,
+        "variant": variant,
         "bond": coins_to_units(bond),
         "accepted": receipt.get("accepted"),
     }
     if _options(ctx).json_output:
         _echo_json(payload)
         return
-    typer.echo(f"registered {wallet.address} with a {_coins(coins_to_units(bond))} bond")
+    typer.echo(
+        f"registered {wallet.address} for {variant} with a {_coins(coins_to_units(bond))} bond"
+    )
     typer.echo(f"txid: {payload['txid']}")
 
 

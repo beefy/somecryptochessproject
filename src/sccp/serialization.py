@@ -87,6 +87,7 @@ class Domain(StrEnum):
     """Hash domains from docs/PROTOCOL.md section 1."""
 
     ADDRESS = "sccp/v1/address"
+    ASSET = "sccp/v1/asset"
     BEACON = "sccp/v1/beacon"
     BEACON_COMMIT = "sccp/v1/beacon-commit"
     BLOCK = "sccp/v1/block"

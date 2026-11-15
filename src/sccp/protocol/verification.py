@@ -22,10 +22,16 @@ from typing import NoReturn
 from sccp.chess.openings import OpeningBook, book_for
 from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import ParsedGame, validate_pgn
+from sccp.chess.variants import (
+    chess960_start_fen,
+    is_chess960,
+    select_chess960_start,
+)
 from sccp.config import NetworkParams, get_network
 from sccp.errors import (
     BeaconError,
     ClockError,
+    ConfigError,
     NetworkError,
     OpeningBookError,
     PairingError,
@@ -138,6 +144,17 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
             ProofFailure.BEACON,
             f"beacon is for epoch {beacon.epoch}, proof claims epoch {proof.epoch}",
         )
+    try:
+        params.variant(proof.variant)
+    except ConfigError as exc:
+        _fail(ProofFailure.CERTIFICATE, str(exc))
+    if cert.variant != proof.variant:
+        _fail(
+            ProofFailure.CERTIFICATE,
+            f"certificate is for {cert.variant!r}, proof is for {proof.variant!r}",
+        )
+    if cert.opening.variant != proof.variant:
+        _fail(ProofFailure.OPENING, "opening variant disagrees with the certificate")
 
     # 2. Beacon: recompute from reveals, availability and (optionally) drand.
     availability = dict(context.availability) if context.availability is not None else None
@@ -205,7 +222,13 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         validate_opening_ref(proof.opening)
     except TranscriptError as exc:
         _fail(ProofFailure.OPENING, str(exc))
-    if context.book is not None:
+    if is_chess960(proof.variant):
+        position = select_chess960_start(beacon_bytes, proof.match_id)
+        if proof.opening.line_id != position:
+            _fail(ProofFailure.OPENING, "opening position is not the one the beacon selected")
+        if proof.opening.start_fen != chess960_start_fen(position):
+            _fail(ProofFailure.OPENING, "opening start FEN is not the selected position")
+    elif context.book is not None:
         try:
             line = context.book.line(proof.opening.line_id)
         except OpeningBookError as exc:
@@ -224,6 +247,11 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         entry = context.roster.get(seat)
         if entry is None or entry.address != seat:
             _fail(ProofFailure.ROSTER, f"seat {seat} is not in the epoch roster")
+        if entry.variant != proof.variant:
+            _fail(
+                ProofFailure.ROSTER,
+                f"seat {seat} is registered for {entry.variant!r}, not {proof.variant!r}",
+            )
     matchup = Matchup(
         network=proof.network,
         match_id=proof.match_id,
@@ -231,6 +259,7 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         round=proof.round,
         white=cert.white,
         black=cert.black,
+        variant=proof.variant,
     )
     if not verify_pairing(
         matchup,
@@ -468,6 +497,7 @@ def context_from_document(
             subnet=member.subnet,
             asn=member.asn,
             recent_opponents=member.recent_opponents,
+            variant=member.variant,
         )
         public_keys[address] = member.public_key
 

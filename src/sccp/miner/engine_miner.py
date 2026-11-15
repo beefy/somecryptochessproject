@@ -30,10 +30,17 @@ import httpx
 
 from sccp.chain.state import State
 from sccp.chess.engines import Engine
+from sccp.chess.variants import board_for_variant
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import HybridKeypair, hybrid_sign_domain, require_pq
-from sccp.errors import ClockError, EpochPipelineError, MinerError, RelayError
+from sccp.errors import (
+    ClockError,
+    ConfigError,
+    EpochPipelineError,
+    MinerError,
+    RelayError,
+)
 from sccp.miner.epoch_pipeline import EpochPipeline, PipelineAction
 from sccp.miner.matchmaker import ClockBundle, MatchView
 from sccp.protocol.clocks import (
@@ -96,6 +103,8 @@ class MinerConfig:
     nodes_per_move: int = 200_000
     depth: int | None = None
     max_games_per_epoch: int = 1
+    variant: str = "standard"
+    """The variant this miner registered for; it refuses other matches."""
     nonce_secret: str | None = None
     """The 32-byte hex nonce that availability commitments are built from.
 
@@ -139,16 +148,20 @@ class MinerConfig:
         nonce_secret: str | None = None,
         witness_keys: Sequence[tuple[str, str]] = (),
         resign_after_plies: int | None = None,
+        variant: str = "standard",
     ) -> MinerConfig:
         """Build a config from a network id and a wallet keypair."""
+        params = get_network(network)
+        params.variant(variant)
         return cls(
-            params=get_network(network),
+            params=params,
             keypair=keypair,
             relay_url=relay_url,
             node_url=node_url,
             nodes_per_move=nodes_per_move,
             depth=depth,
             max_games_per_epoch=max_games_per_epoch,
+            variant=variant,
             nonce_secret=nonce_secret,
             resign_after_plies=resign_after_plies,
             witness_keys=tuple(witness_keys),
@@ -701,7 +714,17 @@ class EngineMiner:
             raise MinerError("certificate seats disagree with the matchup")
         if self.address not in (certificate.white, certificate.black):
             raise MinerError(f"{self.address} is not a seat of this match")
-        board = chess.Board()
+        if certificate.variant != self.config.variant:
+            raise MinerError(
+                f"certificate is for {certificate.variant!r}, "
+                f"this miner plays {self.config.variant!r}"
+            )
+        if certificate.opening.variant != certificate.variant:
+            raise MinerError("certificate opening is for another variant")
+        try:
+            board = board_for_variant(certificate.variant, certificate.opening.start_fen)
+        except ConfigError as exc:
+            raise MinerError(f"certificate has an invalid start position: {exc}") from exc
         opening = list(certificate.opening.moves)
         for san in opening:
             try:

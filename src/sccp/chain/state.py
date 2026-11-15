@@ -83,12 +83,21 @@ def reveal_deadline_tip(epoch: int, params: NetworkParams) -> int:
 
 @dataclass(slots=True)
 class Account:
-    """One account's balances, bond, nonce and registration metadata."""
+    """One account's balances, bond, nonce and registration metadata.
+
+    ``balance`` is the native SCCP coin. ``assets`` holds non-native variant
+    tokens (Chess960 first) keyed by their derived asset id; both have a matching
+    ``immature`` counter for coinbase rewards that have not matured yet.
+    """
 
     balance: int = 0
-    """Spendable balance in base units."""
+    """Spendable native balance in base units."""
     immature: int = 0
-    """Coinbase value that has not reached ``coinbase_maturity`` yet."""
+    """Native coinbase value that has not reached ``coinbase_maturity`` yet."""
+    assets: dict[str, int] = field(default_factory=dict)
+    """Spendable variant-token balances keyed by asset id."""
+    immature_assets: dict[str, int] = field(default_factory=dict)
+    """Variant-token coinbase value still waiting for maturity."""
     bonded: int = 0
     """Bonded balance: owned by the account, unspendable until unbonding."""
     unbonding_height: int | None = None
@@ -101,18 +110,28 @@ class Account:
     """Informational miner endpoint; consensus never fetches it."""
     engine: str | None = None
     """Engine fingerprint declared at registration."""
+    variant: str = "standard"
+    """Chess variant this miner registered for; standard is native SCCP."""
     public_key: str | None = None
     """Ed25519 public key (hex), set by genesis, ``register`` or first reveal."""
     banned_until: int = 0
     """Height until which the account is excluded from the roster."""
     coinbase_queue: list[tuple[int, int]] = field(default_factory=list)
-    """``(credit_height, amount)`` pairs waiting for maturity, oldest first."""
+    """Native ``(credit_height, amount)`` pairs waiting for maturity, oldest first."""
+    asset_coinbase_queue: list[tuple[int, int, str]] = field(default_factory=list)
+    """Variant ``(credit_height, amount, asset_id)`` rewards waiting for maturity."""
 
     def __post_init__(self) -> None:
         for name in ("balance", "immature", "bonded", "nonce"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise StateError(f"account {name} must be a non-negative integer")
+        for label, mapping in (("assets", self.assets), ("immature_assets", self.immature_assets)):
+            for asset, amount in mapping.items():
+                if not isinstance(asset, str) or not asset:
+                    raise StateError(f"account {label} keys must be asset ids")
+                if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+                    raise StateError(f"account {label} amounts must be non-negative integers")
 
     @property
     def total(self) -> int:
@@ -120,8 +139,13 @@ class Account:
         return self.balance + self.immature + self.bonded
 
     def as_dict(self) -> dict[str, object]:
-        """Canonical mapping used by ``state_root`` and snapshots."""
-        return {
+        """Canonical mapping used by ``state_root`` and snapshots.
+
+        Empty asset fields and the default variant are omitted, so a
+        standard-only account has exactly the protocol-v1 leaf and existing
+        state roots stay stable.
+        """
+        document: dict[str, object] = {
             "balance": self.balance,
             "immature": self.immature,
             "bonded": self.bonded,
@@ -134,6 +158,17 @@ class Account:
             "banned_until": self.banned_until,
             "coinbase_queue": [[height, amount] for height, amount in self.coinbase_queue],
         }
+        if self.variant != "standard":
+            document["variant"] = self.variant
+        if self.assets:
+            document["assets"] = dict(sorted(self.assets.items()))
+        if self.immature_assets:
+            document["immature_assets"] = dict(sorted(self.immature_assets.items()))
+        if self.asset_coinbase_queue:
+            document["asset_coinbase_queue"] = [
+                [height, amount, asset] for height, amount, asset in self.asset_coinbase_queue
+            ]
+        return document
 
     @classmethod
     def from_dict(cls, document: Mapping[str, object]) -> Account:
@@ -174,18 +209,54 @@ class Account:
                 raise StateError("coinbase_queue entries must be [height, amount] pairs")
             queue.append((item[0], item[1]))
 
+        def _assets(key: str) -> dict[str, int]:
+            raw = document.get(key, {})
+            if raw is None:
+                return {}
+            if not isinstance(raw, Mapping):
+                raise StateError(f"account field {key!r} must be an object")
+            balances: dict[str, int] = {}
+            for asset, amount in raw.items():
+                if not isinstance(asset, str) or not asset:
+                    raise StateError(f"account field {key!r} keys must be asset ids")
+                if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+                    raise StateError(f"account field {key!r} amounts must be non-negative")
+                balances[asset] = amount
+            return balances
+
+        asset_queue_raw = document.get("asset_coinbase_queue", [])
+        if not isinstance(asset_queue_raw, list):
+            raise StateError("account field 'asset_coinbase_queue' must be a list")
+        asset_queue: list[tuple[int, int, str]] = []
+        for item in asset_queue_raw:
+            if (
+                not isinstance(item, list)
+                or len(item) != 3
+                or not isinstance(item[0], int)
+                or isinstance(item[0], bool)
+                or not isinstance(item[1], int)
+                or isinstance(item[1], bool)
+                or not isinstance(item[2], str)
+            ):
+                raise StateError("asset_coinbase_queue entries must be [height, amount, asset]")
+            asset_queue.append((item[0], item[1], item[2]))
+
         return cls(
             balance=_int("balance"),
             immature=_int("immature"),
+            assets=_assets("assets"),
+            immature_assets=_assets("immature_assets"),
             bonded=_int("bonded"),
             unbonding_height=_optional_int("unbonding_height"),
             nonce=_int("nonce"),
             registered_until_epoch=_optional_int("registered_until_epoch"),
             endpoint=_optional_str("endpoint"),
             engine=_optional_str("engine"),
+            variant=_optional_str("variant") or "standard",
             public_key=_optional_str("public_key"),
             banned_until=_int("banned_until"),
             coinbase_queue=queue,
+            asset_coinbase_queue=asset_queue,
         )
 
 
@@ -199,6 +270,8 @@ class ProofRecord:
     winner: str
     miner: str = ""
     """Who announced the proof, recorded for audit."""
+    variant: str = "standard"
+    """The variant the game was played under."""
 
 
 @dataclass(slots=True)
@@ -248,6 +321,18 @@ def _as_int(value: object, name: str) -> int:
     raise StateError(f"{name} must be an integer in a state snapshot")
 
 
+def _roster_member_document(member: RosterMember) -> dict[str, object]:
+    """Serialize a roster entry, omitting the standard variant's default.
+
+    Existing standard-only snapshots therefore keep the exact document they had
+    before variant support; only non-standard members gain a ``variant`` key.
+    """
+    document = member.model_dump(mode="json")
+    if member.variant == "standard":
+        document.pop("variant", None)
+    return document
+
+
 @dataclass(slots=True)
 class EpochRecord:
     """Everything the chain knows about one epoch (PROTOCOL.md section 6).
@@ -273,7 +358,7 @@ class EpochRecord:
             "epoch": self.epoch,
             "beacon": self.beacon.model_dump(mode="json") if self.beacon is not None else None,
             "roster": {
-                address: member.model_dump(mode="json")
+                address: _roster_member_document(member)
                 for address, member in sorted(self.roster.items())
             },
             "availability": dict(sorted(self.availability.items())),
@@ -412,7 +497,9 @@ class State:
     timestamps: list[int] = field(default_factory=list)
     """The last :data:`MAX_RECENT_TIMESTAMPS` block timestamps, oldest first."""
     minted: int = 0
-    """Total subsidy ever created, for the ``max_supply`` clamp."""
+    """Total native subsidy ever created, for the ``max_supply`` clamp."""
+    minted_assets: dict[str, int] = field(default_factory=dict)
+    """Total variant-token supply ever created, keyed by asset id."""
 
     def __post_init__(self) -> None:
         if self.difficulty is None:
@@ -421,6 +508,11 @@ class State:
             raise StateError("state height must be non-negative")
         if self.minted < 0:
             raise StateError("minted supply must be non-negative")
+        for asset, amount in self.minted_assets.items():
+            if not isinstance(asset, str) or not asset:
+                raise StateError("minted_assets keys must be asset ids")
+            if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+                raise StateError("minted_assets amounts must be non-negative")
 
     # -- accessors ----------------------------------------------------------
 
@@ -516,12 +608,16 @@ class State:
         Only the consensus-relevant fields are committed: the registered public
         key and the miner's committed game quota.
         """
-        return merkle_root_hex(
-            {
-                address: {"public_key": member.public_key, "max_games": member.max_games}
-                for address, member in roster.items()
+        leaves: dict[str, dict[str, object]] = {}
+        for address, member in roster.items():
+            leaf: dict[str, object] = {
+                "public_key": member.public_key,
+                "max_games": member.max_games,
             }
-        )
+            if member.variant != "standard":
+                leaf["variant"] = member.variant
+            leaves[address] = leaf
+        return merkle_root_hex(leaves)
 
     # -- balances -----------------------------------------------------------
 
@@ -536,30 +632,76 @@ class State:
         account.coinbase_queue.append((height, amount))
         self.minted += amount
 
+    def credit_asset_coinbase(self, miner: str, asset: str, amount: int, height: int) -> None:
+        """Credit a variant-token block reward that matures like native coinbase."""
+        if amount < 0:
+            raise StateError("asset coinbase amount must be non-negative")
+        if amount == 0:
+            return
+        account = self.ensure(miner)
+        account.immature_assets[asset] = account.immature_assets.get(asset, 0) + amount
+        account.asset_coinbase_queue.append((height, amount, asset))
+        self.minted_assets[asset] = self.minted_assets.get(asset, 0) + amount
+
     def release_matured(self, height: int) -> int:
-        """Move matured coinbase value into spendable balances; return the total."""
+        """Move matured coinbase value into spendable balances; return the native total."""
         maturity = self.params.coinbase_maturity
         total = 0
         for account in self.accounts.values():
-            if not account.coinbase_queue:
-                continue
-            released = 0
-            pending: list[tuple[int, int]] = []
-            for credit_height, amount in account.coinbase_queue:
-                if credit_height + maturity <= height:
-                    released += amount
-                else:
-                    pending.append((credit_height, amount))
-            if released:
-                account.coinbase_queue = pending
-                account.immature -= released
-                account.balance += released
-                total += released
+            if account.coinbase_queue:
+                released = 0
+                pending: list[tuple[int, int]] = []
+                for credit_height, amount in account.coinbase_queue:
+                    if credit_height + maturity <= height:
+                        released += amount
+                    else:
+                        pending.append((credit_height, amount))
+                if released:
+                    account.coinbase_queue = pending
+                    account.immature -= released
+                    account.balance += released
+                    total += released
+            if account.asset_coinbase_queue:
+                asset_pending: list[tuple[int, int, str]] = []
+                for credit_height, amount, asset in account.asset_coinbase_queue:
+                    if credit_height + maturity <= height:
+                        account.assets[asset] = account.assets.get(asset, 0) + amount
+                        account.immature_assets[asset] = max(
+                            0, account.immature_assets.get(asset, 0) - amount
+                        )
+                    else:
+                        asset_pending.append((credit_height, amount, asset))
+                account.asset_coinbase_queue = asset_pending
         return total
 
     def spendable(self, address: str) -> int:
-        """The balance a transaction may draw on: spendable plus matured coinbase."""
+        """The native balance a transaction may draw on."""
         return self.account(address).balance
+
+    def asset_balance(self, address: str, asset: str) -> int:
+        """The spendable balance of ``asset`` owned by ``address``."""
+        return self.account(address).assets.get(asset, 0)
+
+    def credit_asset(self, address: str, asset: str, amount: int) -> None:
+        """Add ``amount`` of ``asset`` to a spendable balance."""
+        if amount < 0:
+            raise StateError("asset credit must be non-negative")
+        account = self.ensure(address)
+        account.assets[asset] = account.assets.get(asset, 0) + amount
+
+    def debit_asset(self, address: str, asset: str, amount: int) -> None:
+        """Subtract ``amount`` of ``asset``, refusing an overdraft."""
+        if amount < 0:
+            raise StateError("asset debit must be non-negative")
+        account = self.ensure(address)
+        current = account.assets.get(asset, 0)
+        if current < amount:
+            raise StateError(f"{address} has {current} of {asset}, cannot debit {amount}")
+        remaining = current - amount
+        if remaining:
+            account.assets[asset] = remaining
+        else:
+            account.assets.pop(asset, None)
 
     # -- epochs -------------------------------------------------------------
 
@@ -589,6 +731,7 @@ class State:
                 roster[address] = RosterMember(
                     public_key=account.public_key or "",
                     engine=account.engine,
+                    variant=account.variant,
                     max_games=quota,
                 )
                 commitments[address] = availability[address].commitment
@@ -633,6 +776,7 @@ class State:
                     "height": record.height,
                     "winner": record.winner,
                     "miner": record.miner,
+                    **({"variant": record.variant} if record.variant != "standard" else {}),
                 }
                 for game_hash, record in sorted(self.proofs.items())
             },
@@ -684,6 +828,11 @@ class State:
             "last_k_change_height": self.last_k_change_height,
             "timestamps": list(self.timestamps),
             "minted": self.minted,
+            **(
+                {"minted_assets": dict(sorted(self.minted_assets.items()))}
+                if self.minted_assets
+                else {}
+            ),
         }
 
     @classmethod
@@ -718,6 +867,7 @@ class State:
                 height=_as_int(item.get("height"), "proof height"),
                 winner=str(item["winner"]),
                 miner=str(item.get("miner") or item["winner"]),
+                variant=str(item.get("variant") or "standard"),
             )
         matches: dict[str, MatchRecord] = {}
         for match, entry in matches_raw.items():
@@ -807,6 +957,7 @@ class State:
             ),
             timestamps=[_as_int(value, "timestamp") for value in timestamps_raw],
             minted=_as_int(document.get("minted"), "minted"),
+            minted_assets=_asset_totals(document.get("minted_assets")),
         )
 
     def copy(self) -> State:
@@ -819,6 +970,22 @@ def _as_mapping(value: object, name: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise StateError(f"{name} must be a mapping in a state snapshot")
     return value
+
+
+def _asset_totals(value: object) -> dict[str, int]:
+    """Parse an optional ``asset id -> total`` map from a snapshot."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise StateError("minted_assets must be a mapping in a state snapshot")
+    totals: dict[str, int] = {}
+    for asset, amount in value.items():
+        if not isinstance(asset, str) or not asset:
+            raise StateError("minted_assets keys must be asset ids")
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+            raise StateError("minted_assets amounts must be non-negative integers")
+        totals[asset] = amount
+    return totals
 
 
 __all__ = [

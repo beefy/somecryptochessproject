@@ -2,13 +2,12 @@
 
 A block carries either a proof or at least one transaction (``PROTOCOL.md``
 12.2): one proof or one pending transaction buys exactly one block. An epoch is
-five blocks and the only ledger work the stack generates on its own is the
-miners' availability and reveal -- four transactions for a two-miner roster. The
-fifth piece of work has to be a decisive game, because a draw settles nothing
-and a proof from the epoch that just ended is not claimable until the next epoch
-opens. An epoch with no decisive game therefore runs one block short and the
-chain stops at the boundary, and it cannot restart: nothing builds a block
-without work in the pool.
+five blocks and the stack's four miners supply availability and reveal -- eight
+transactions for the roster. That is normally enough, but a slow or restarted
+miner can still leave an epoch short: a draw settles nothing, and a proof from
+the epoch that just ended is not claimable until the next epoch opens. An epoch
+without enough ledger work stops at the boundary, and it cannot restart: nothing
+builds a block without work in the pool.
 
 This script closes that gap from outside the node. Whenever the node reports an
 empty transaction pool, it signs one ordinary transfer from the published

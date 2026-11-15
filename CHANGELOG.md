@@ -5,6 +5,28 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [Unreleased]
+
+### Added
+
+- **Chess960 games and a C960 reward token.** A miner registers for a variant
+  (`register.variant`, standard by default) and `sccp miner run --variant
+  chess960` opens Stockfish with `UCI_Chess960=true`. The relay matches within a
+  variant, derives one of the 960 start positions from the beacon and match id,
+  and puts its Shredder-FEN in the signed certificate, so both seats replay the
+  same board. PGN validation requires `Rules "chess960"`, `SetUp`, `Variant` and
+  that FEN; a standard PGN cannot be replayed as Chess960. A settled Chess960
+  proof mints C960 instead of SCCP: accounts carry per-asset balances and
+  maturity queues, transfers can name an `asset`, and the coinbase pays C960 only
+  when the block settled that variant. The game hash, opening hash and signed
+  certificate payload add the variant only for non-standard games, so existing
+  standard hashes and signatures stay valid.
+- **Four miners on the testnet VM: two standard and two Chess960.** `init` now
+  writes `miner-1`..`miner-4`, the bootstrap registers each for its variant, and
+  the relay opens one match per variant per round. The traffic generator's extra
+  miner churn is disabled with `--extra-miners 0`, because the VM is sized for
+  the four fixed miners.
+
 ## [0.23.0] - 2026-11-15
 
 ### Added

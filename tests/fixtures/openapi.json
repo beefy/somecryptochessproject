@@ -8,6 +8,12 @@
             "minLength": 1,
             "type": "string"
           },
+          "assets": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
           "balance": {
             "minimum": 0.0,
             "type": "integer"
@@ -45,6 +51,12 @@
             "minimum": 0.0,
             "type": "integer"
           },
+          "immature_assets": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
           "network": {
             "minLength": 1,
             "type": "string"
@@ -77,6 +89,10 @@
           "total": {
             "minimum": 0.0,
             "type": "integer"
+          },
+          "variant": {
+            "default": "standard",
+            "type": "string"
           }
         },
         "required": [
@@ -1211,6 +1227,13 @@
           "time_control": {
             "$ref": "#/components/schemas/TimeControl"
           },
+          "variant": {
+            "default": "standard",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_-]+$",
+            "type": "string"
+          },
           "white": {
             "maxLength": 90,
             "minLength": 8,
@@ -1595,6 +1618,17 @@
           "mempool": {
             "$ref": "#/components/schemas/MempoolStatus"
           },
+          "minted": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "minted_assets": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
           "network": {
             "minLength": 1,
             "type": "string"
@@ -1643,19 +1677,31 @@
             "type": "integer"
           },
           "moves": {
+            "default": [],
             "items": {
               "type": "string"
             },
             "maxItems": 12,
-            "minItems": 1,
             "type": "array"
+          },
+          "start_fen": {
+            "default": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "variant": {
+            "default": "standard",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_-]+$",
+            "type": "string"
           }
         },
         "required": [
           "book_version",
           "line_id",
-          "hash",
-          "moves"
+          "hash"
         ],
         "type": "object"
       },
@@ -1964,6 +2010,13 @@
                 "type": "null"
               }
             ]
+          },
+          "variant": {
+            "default": "standard",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_-]+$",
+            "type": "string"
           }
         },
         "required": [
@@ -2340,6 +2393,13 @@
                 "type": "null"
               }
             ]
+          },
+          "variant": {
+            "default": "standard",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_-]+$",
+            "type": "string"
           },
           "winner": {
             "maxLength": 90,

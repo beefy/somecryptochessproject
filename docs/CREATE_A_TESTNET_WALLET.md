@@ -98,7 +98,7 @@ The faucet and balance endpoints are served by the node on port `8645`:
 export SCCP_NODE="http://127.0.0.1:8645"
 ```
 
-For the hosted two-miner deployment, use the public testnet host:
+For the hosted four-miner deployment, use the public testnet host:
 
 ```bash
 export SCCP_NODE="http://testnet.chessproofofwork.com:8645"
@@ -119,7 +119,7 @@ curl -sS "$SCCP_NODE/v1/status" | jq '{network, height, tip_hash, mempool}'
 {"network": "testnet", "height": 19, "tip_hash": "...", "mempool": {"transactions": 0, "proofs": 0}}
 ```
 
-`height: 19` is the normal post-bootstrap height of the two-miner stack.
+`height: 19` is the normal post-bootstrap height of the four-miner stack.
 
 ---
 

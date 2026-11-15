@@ -46,6 +46,8 @@ class NodeStatus(ProtocolModel):
     peers: int = Field(ge=0)
     syncing: bool
     mempool: MempoolStatus
+    minted: int = Field(default=0, ge=0)
+    minted_assets: dict[str, int] = Field(default_factory=dict)
 
 
 class AccountView(ProtocolModel):
@@ -61,6 +63,9 @@ class AccountView(ProtocolModel):
     registered_until_epoch: int | None = Field(default=None, ge=0)
     endpoint: str | None = None
     engine: str | None = None
+    variant: str = "standard"
+    assets: dict[str, int] = Field(default_factory=dict)
+    immature_assets: dict[str, int] = Field(default_factory=dict)
     public_key: str | None = None
     banned_until: int = Field(default=0, ge=0)
 

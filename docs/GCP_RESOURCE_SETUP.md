@@ -26,7 +26,7 @@ commands; see [Cost guardrails](#cost-guardrails) for the shape of that work.
 | Compute Engine API | The only GCP service the stack needs. | `compute.googleapis.com`. |
 | VPC network and subnet | Isolates the VM from the default network. | Custom-mode VPC, one regional subnet. |
 | Firewall rules | Allow node API, operator SSH and optionally the relay. | Ingress `8645`, `22`, optional `8646`. |
-| VM instance | Runs Docker Compose: one node, one relay, two miners and the synthetic traffic (wallet flow and one churning extra miner). | Debian 12, `e2-standard-2`, 20–30 GB disk. |
+| VM instance | Runs Docker Compose: one node, one relay, four miners (two standard, two Chess960) and the synthetic wallet traffic. The extra-miner churn is disabled because four miners fill the CPU budget. | Debian 12, `e2-standard-2` (the existing miners VM), 20–30 GB disk. |
 | Static external IP | Optional stable address for DNS and GitHub variables. | Regional address attached to the VM. |
 | Deploy user and SSH key | Lets the workflow reach the host without GCP credentials. | `sccp` user, key-only SSH. |
 | Docker Engine + Compose plugin | Runs the node, relay and miners. | Installed from Docker's apt repository. |
@@ -157,9 +157,9 @@ gcloud compute firewall-rules create sccp-testnet-node-api \
 
 ### Relay, only if external miners connect
 
-In the two-miner deployment both miners run on the same VM and reach the relay
-over the Compose network. Leave `8646` closed unless someone outside the VM
-needs to submit proofs through the relay:
+In this deployment all four miners run on the same VM and reach the relay over
+the Compose network. Leave `8646` closed unless someone outside the VM needs to
+submit proofs through the relay:
 
 ```bash
 gcloud compute firewall-rules create sccp-testnet-relay \
@@ -257,12 +257,11 @@ export STATIC_IP="$(gcloud compute addresses describe "$IP_NAME" \
 echo "$STATIC_IP"
 ```
 
-Create the VM. `e2-standard-2` (2 vCPU / 8 GB) is a reasonable starting point for
-the node, relay and two miners; Stockfish games are CPU-bound, so use
-`e2-standard-4` if both miners stay saturated or logs show slow progress. The
-`traffic` service's extra miner fits on the two-core box: it budgets half a core
-per miner and keeps one core for the node and relay, so one of the two churn
-miners runs at a time. The
+Create the VM. The existing deployment keeps its `e2-standard-2` (2 vCPU / 8 GB)
+shape: four miners at 5 000 nodes per move share the two cores, with the node and
+relay answering between searches. The `traffic` service runs with
+`--extra-miners 0` on this VM, because a fifth miner would compete with the four
+fixed seats. If the logs show the miners starved, move to `e2-standard-4`; the
 20 GB balanced disk holds the Debian image, Docker layers, the chain database and
 logs.
 

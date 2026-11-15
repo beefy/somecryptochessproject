@@ -1,14 +1,14 @@
 """Keep a pool of extra testnet miners that come online and go offline.
 
-The compose stack runs the two miners ``init_testnet_stack.py`` creates. That is
-enough to settle proofs, but the roster never changes: the same two accounts
-commit availability, reveal and get matched epoch after epoch. This module adds a
+The compose stack runs the four miners ``init_testnet_stack.py`` creates (two
+standard, two Chess960), which fills its VM's CPU budget. The traffic service
+therefore starts with ``--extra-miners 0``. On a larger host this module adds a
 small, deterministic pool of *extra* miners that the traffic generator starts and
 stops while the chain runs, so a deployment exercises registration, the
 availability lead and roster churn as well as wallet traffic.
 
 Everything is derived from published seeds, exactly like the traffic wallets and
-the two stack miners: these are testnet identities with no value. A miner is not
+the four stack miners: these are testnet identities with no value. A miner is not
 simulated: :class:`ExtraMinerFleet` materialises a keyfile and an availability
 secret, registers the account on chain and then runs a real ``sccp miner run``
 child process that plays the games the relay assigns.
@@ -24,13 +24,14 @@ invisible to the relay:
   bootstrap uses) before it is started, so it can commit availability again.
 
 Churn has a budget: every miner is a Stockfish process next to the node, the
-relay, the two fixed miners and the traffic generator itself. :func:`host_capacity`
-derives how many fit from the host's cores and free memory, and the fleet never
-exceeds it. A miner here searches 5 000 nodes per move, which is milliseconds of
-one thread with the process idle in between, so the budget is a *share* of a core
-rather than a whole one: the deployment's two-core VM seats one extra miner while
-the node and relay keep their own shares. A host that cannot be measured is not
-capped; one that cannot fit a miner logs why and seats none.
+relay, the four fixed miners and the traffic generator itself.
+:func:`host_capacity` derives how many fit from the host's cores and free memory,
+and the fleet never exceeds it. A miner here searches 5 000 nodes per move, which
+is milliseconds of one thread with the process idle in between, so the budget is
+a *share* of a core rather than a whole one. On the deployment's two-core VM the
+four fixed miners consume that budget, which is why Compose passes
+`--extra-miners 0`; a larger host can seat the pool. A host that cannot be
+measured is not capped; one that cannot fit a miner logs why and seats none.
 """
 
 from __future__ import annotations

@@ -1,7 +1,11 @@
 # The big picture: a wallet, a bridge and a DEX
 
-> **Status.** Forward-looking design. Nothing in this document is implemented.
-> It plans three additions on top of the protocol v1 ledger described in
+> **Status.** Forward-looking design. The Chess960 groundwork from section 5 is
+> implemented: variant-aware registration and pairing, a C960 asset minted by
+> Chess960 proofs, per-asset balances and transfers, and a four-miner testnet
+> with two seats per variant. The DEX, bridge and rest of the multi-variant
+> catalog remain planned. The document plans three additions on top of the
+> protocol v1 ledger described in
 > [`PROTOCOL.md`](PROTOCOL.md) -- a browser wallet, a trustless ETH<->SCCP
 > bridge and a native DEX -- and the variant-token model they exist to serve.
 > Consensus-visible work lands as protocol **v2**; the wallet and the Ethereum

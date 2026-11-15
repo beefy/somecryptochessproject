@@ -269,12 +269,14 @@ def open_engine(
     *,
     binary: Path | None = None,
     seed: int = 0,
+    chess960: bool = False,
 ) -> Engine:
     """Build the engine described by ``profile``.
 
     ``mock`` ignores ``binary``; every other profile requires one and refuses to
     guess, because starting the wrong binary would silently change the
-    certificate's fingerprint.
+    certificate's fingerprint. ``chess960`` turns on Stockfish's
+    ``UCI_Chess960`` option, which changes how it parses and reports castling.
     """
     selected = get_profile(profile)
     if selected.kind == "mock":
@@ -284,4 +286,7 @@ def open_engine(
             f"engine profile {selected.name!r} needs an explicit binary; "
             f"pass an engine path or run scripts/fetch_engine.py"
         )
-    return UciEngine.popen(binary, name=selected.name, options=selected.options)
+    options = dict(selected.options)
+    if chess960:
+        options["UCI_Chess960"] = True
+    return UciEngine.popen(binary, name=selected.name, options=options)

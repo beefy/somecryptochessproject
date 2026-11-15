@@ -15,7 +15,7 @@ There are three ways to see a miner run:
 
 > **Status.** Relay play, engine mining, win-proof construction, faucet funding
 > and on-chain proof settlement work today. [`deploy/README.md`](../deploy/README.md)
-> runs the whole loop with two Stockfish miners, and
+> runs the whole loop with two standard and two Chess960 Stockfish miners, and
 > [`RUNBOOK.md`](RUNBOOK.md) covers operating it. Use `sccp devnet up` for the
 > fast in-process demo, and the relay flow below for a miner you run yourself.
 >
@@ -132,9 +132,9 @@ It writes:
 These keys and that passphrase are **public on purpose**. Testnet coins have no
 value. Never reuse them on another network.
 
-Two roster entries are the minimum for a match. The bootstrap rewrites
-`stack/relay.json` after it has funded/registered both miners and opened a
-matchable epoch.
+Two roster entries of the same variant are the minimum for a match. The bootstrap
+rewrites `stack/relay.json` after it has funded/registered all four miners for
+their variants and opened a matchable epoch.
 
 A fresh testnet has no proofs to mine, so start a local node and run the
 deterministic bootstrap once:
@@ -444,11 +444,11 @@ chain and submit to the node, exactly like `wallet send`. The node validates the
 and puts them in its mempool. Registration and availability take effect when a
 block includes them.
 
-A node accepts blocks from any miner; on the two-miner deployment,
+A node accepts blocks from any miner; in the deployment,
 `node run --mine --miner-address ADDRESS --no-mine-bootstrap` also settles a
-proof that is already in the mempool. Registration and availability still take
-effect only when a block includes them, so check the mempool and block height
-rather than assuming a submitted transaction is instantly final.
+proof that is already in the mempool, whoever won it. Registration and
+availability still take effect only when a block includes them, so check the
+mempool and block height rather than assuming a submitted transaction is instantly final.
 
 ---
 

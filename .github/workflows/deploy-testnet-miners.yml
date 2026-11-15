@@ -1,7 +1,8 @@
 name: deploy-testnet-miners
 
 # Runs on every merge to main: builds the stack image, then (when a target is
-# configured) resets and redeploys the two-miner testnet over SSH.
+# configured) resets and redeploys the four-miner testnet (two standard, two
+# Chess960) over SSH.
 #
 # Required repository configuration:
 #   vars.TESTNET_DEPLOY_HOST     user@host of the deployment VM
@@ -60,7 +61,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    name: redeploy two miners
+    name: redeploy four miners
     needs: build
     # A repository without a deployment target still gets a green image build;
     # set vars.TESTNET_DEPLOY_HOST to turn the remote job on.
@@ -162,4 +163,4 @@ jobs:
         if: always()
         run: |
           ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose ps -a" || true
-          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 init node relay bootstrap drip traffic" || true
+          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 init node relay bootstrap drip traffic miner-1 miner-2 miner-3 miner-4" || true

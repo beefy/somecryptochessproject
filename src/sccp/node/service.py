@@ -382,6 +382,8 @@ class NodeService:
                 transactions=len(self.mempool.transactions),
                 proofs=len(self.mempool.proofs),
             ),
+            minted=self.chain.state.minted,
+            minted_assets=dict(sorted(self.chain.state.minted_assets.items())),
         )
 
     def block(self, reference: str) -> BlockView:
@@ -435,6 +437,9 @@ class NodeService:
             registered_until_epoch=account.registered_until_epoch,
             endpoint=account.endpoint,
             engine=account.engine,
+            variant=account.variant,
+            assets=dict(sorted(account.assets.items())),
+            immature_assets=dict(sorted(account.immature_assets.items())),
             public_key=account.public_key,
             banned_until=account.banned_until,
         )

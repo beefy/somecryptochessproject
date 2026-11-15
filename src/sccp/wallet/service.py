@@ -27,7 +27,7 @@ from sccp.chain.tx import sign_transaction, txid
 from sccp.config import NetworkParams, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import HybridKeypair
-from sccp.errors import StateError, WalletServiceError
+from sccp.errors import ConfigError, StateError, WalletServiceError
 from sccp.protocol.models import Transaction, TxType
 
 DEFAULT_SOURCE = "the local chain in --data-dir"
@@ -212,34 +212,67 @@ class WalletService:
         *,
         fee: int | None = None,
         nonce: int | None = None,
+        asset: str | None = None,
     ) -> Transaction:
-        """Build and sign a transfer, raising if the sender cannot afford it."""
+        """Build and sign a transfer, raising if the sender cannot afford it.
+
+        ``asset`` accepts an asset id, a variant name or its symbol. Omitting it
+        (or naming SCCP) transfers the native coin and keeps the protocol-v1
+        payload byte-identical. A variant transfer still pays its fee in SCCP.
+        """
         sender = self.address_for(keypair)
         self._require_address(to)
         if amount <= 0:
             raise WalletServiceError("a transfer amount must be positive")
         if to == sender:
             raise WalletServiceError("a transfer must name a different recipient")
-        resolved_fee = self.required_fee(fee)
-        total = amount + resolved_fee
-        spendable = self.state.spendable(sender)
-        if spendable < total:
-            raise WalletServiceError(
-                f"{sender} has {format_coins(spendable)} spendable, the transfer needs "
-                f"{format_coins(total)} ({format_coins(amount)} plus a "
-                f"{format_coins(resolved_fee)} fee); this balance came from {self.source}"
+        selected = None
+        if asset is not None:
+            selected = next(
+                (
+                    variant
+                    for variant in self.params.variants
+                    if asset in (variant.asset, variant.name, variant.symbol)
+                ),
+                None,
             )
+            if selected is None:
+                raise WalletServiceError(f"unknown asset {asset!r}")
+        resolved_fee = self.required_fee(fee)
+        if selected is not None and not selected.native:
+            if self.state.asset_balance(sender, selected.asset or "") < amount:
+                raise WalletServiceError(
+                    f"{sender} has "
+                    f"{self.state.asset_balance(sender, selected.asset or '')} "
+                    f"{selected.symbol}, the transfer needs {amount}"
+                )
+            if self.state.spendable(sender) < resolved_fee:
+                raise WalletServiceError(
+                    f"{sender} cannot pay the {format_coins(resolved_fee)} SCCP fee"
+                )
+        else:
+            total = amount + resolved_fee
+            spendable = self.state.spendable(sender)
+            if spendable < total:
+                raise WalletServiceError(
+                    f"{sender} has {format_coins(spendable)} spendable, the transfer needs "
+                    f"{format_coins(total)} ({format_coins(amount)} plus a "
+                    f"{format_coins(resolved_fee)} fee); this balance came from {self.source}"
+                )
+        payload: dict[str, object] = {
+            "to": to,
+            "amount": amount,
+            "public_key": keypair.public_key_hex,
+        }
+        if selected is not None and not selected.native:
+            payload["asset"] = selected.asset
         tx = Transaction(
             network=self.params.network_id,
             type=TxType.TRANSFER,
             sender=sender,
             nonce=self._resolve_nonce(sender, nonce),
             fee=resolved_fee,
-            payload={
-                "to": to,
-                "amount": amount,
-                "public_key": keypair.public_key_hex,
-            },
+            payload=payload,
         )
         return sign_transaction(keypair, tx)
 
@@ -252,9 +285,19 @@ class WalletService:
         bond: int | None = None,
         fee: int | None = None,
         nonce: int | None = None,
+        variant: str = "standard",
     ) -> Transaction:
-        """Build and sign a miner registration locking ``bond``."""
+        """Build and sign a miner registration locking ``bond``.
+
+        ``variant`` names the rules this miner plays. Standard is the default
+        and is omitted from the payload, so a standard registration has exactly
+        the protocol-v1 transaction id.
+        """
         sender = self.address_for(keypair)
+        try:
+            selected = self.params.variant(variant)
+        except ConfigError as exc:
+            raise WalletServiceError(str(exc)) from None
         resolved_bond = self.params.min_bond if bond is None else bond
         if resolved_bond < self.params.min_bond:
             raise WalletServiceError(
@@ -266,18 +309,21 @@ class WalletService:
                 f"{sender} cannot cover a {format_coins(resolved_bond)} bond plus a "
                 f"{format_coins(resolved_fee)} fee"
             )
+        payload: dict[str, object] = {
+            "public_key": keypair.public_key_hex,
+            "endpoint": endpoint,
+            "engine": engine,
+            "bond": resolved_bond,
+        }
+        if selected.name != "standard":
+            payload["variant"] = selected.name
         tx = Transaction(
             network=self.params.network_id,
             type=TxType.REGISTER,
             sender=sender,
             nonce=self._resolve_nonce(sender, nonce),
             fee=resolved_fee,
-            payload={
-                "public_key": keypair.public_key_hex,
-                "endpoint": endpoint,
-                "engine": engine,
-                "bond": resolved_bond,
-            },
+            payload=payload,
         )
         return sign_transaction(keypair, tx)
 

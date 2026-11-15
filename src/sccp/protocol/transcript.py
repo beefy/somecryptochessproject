@@ -30,7 +30,13 @@ from sccp.chess.pgn import (
 from sccp.chess.pgn import (
     GameResult as PgnResult,
 )
-from sccp.config import NetworkParams
+from sccp.chess.variants import (
+    board_for_variant,
+    is_chess960,
+    normalise_start_fen,
+    variant_rules,
+)
+from sccp.config import STANDARD_VARIANT, NetworkParams
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import (
     HybridKeypair,
@@ -39,7 +45,7 @@ from sccp.crypto.pq import (
     hybrid_sign_domain,
     hybrid_verify_domain,
 )
-from sccp.errors import KeyEncodingError, TranscriptError
+from sccp.errors import ConfigError, KeyEncodingError, TranscriptError
 from sccp.protocol.clocks import FIXED_TIME_CONTROL, time_control_tag
 from sccp.protocol.commitments import certificate_move_root
 from sccp.protocol.models import (
@@ -64,16 +70,28 @@ RULES_TAG: Final = "chess"
 SEATS: Final[tuple[Color, Color]] = ("white", "black")
 
 
-def opening_hash(book_version: str, line_id: int, moves: tuple[str, ...] | list[str]) -> str:
-    """``H("sccp/v1/opening", {book_version, line_id, moves})`` as hex."""
-    return domain_hex(
-        Domain.OPENING,
-        {
-            "book_version": book_version,
-            "line_id": line_id,
-            "moves": list(moves),
-        },
-    )
+def opening_hash(
+    book_version: str,
+    line_id: int,
+    moves: tuple[str, ...] | list[str],
+    *,
+    start_fen: str = chess.STARTING_FEN,
+    variant: str = STANDARD_VARIANT,
+) -> str:
+    """``H("sccp/v1/opening", {book_version, line_id, moves})`` as hex.
+
+    Non-standard variants add the start FEN and variant name. Standard openings
+    keep the exact v1 payload, so existing books and certificates stay valid.
+    """
+    payload: dict[str, object] = {
+        "book_version": book_version,
+        "line_id": line_id,
+        "moves": list(moves),
+    }
+    if variant != STANDARD_VARIANT:
+        payload["start_fen"] = start_fen
+        payload["variant"] = variant
+    return domain_hex(Domain.OPENING, payload)
 
 
 def opening_ref(line: OpeningLine) -> OpeningRef:
@@ -87,12 +105,24 @@ def opening_ref(line: OpeningLine) -> OpeningRef:
 
 
 def validate_opening_ref(ref: OpeningRef) -> None:
-    """Replay the line and check its canonical SAN and hash.
+    """Replay the line and check its canonical SAN, start FEN and hash.
 
     The certificate carries the line itself, so a verifier never needs a local
-    copy of the book to know what prefix the game must have.
+    copy of the book to know what prefix the game must have. A Chess960 opening
+    has no moves: its start position is the prefix.
     """
-    board = chess.Board()
+    try:
+        start_fen = normalise_start_fen(ref.start_fen, ref.variant)
+        board = board_for_variant(ref.variant, start_fen)
+    except ConfigError as exc:
+        raise TranscriptError(f"opening {ref.line_id}: {exc}") from None
+    if start_fen != ref.start_fen:
+        raise TranscriptError(
+            f"opening {ref.line_id} start FEN is {ref.start_fen}, "
+            f"but the variant canonicalises it to {start_fen}"
+        )
+    if is_chess960(ref.variant) and ref.moves:
+        raise TranscriptError("a Chess960 opening must not carry book moves")
     canonical: list[str] = []
     for number, san in enumerate(ref.moves, start=1):
         if board.is_game_over(claim_draw=False):
@@ -112,7 +142,13 @@ def validate_opening_ref(ref: OpeningRef) -> None:
             f"opening line {ref.line_id} is not canonical SAN: {list(ref.moves)} "
             f"should be {canonical}"
         )
-    recomputed = opening_hash(ref.book_version, ref.line_id, tuple(ref.moves))
+    recomputed = opening_hash(
+        ref.book_version,
+        ref.line_id,
+        tuple(ref.moves),
+        start_fen=ref.start_fen,
+        variant=ref.variant,
+    )
     if recomputed != ref.hash:
         raise TranscriptError(
             f"opening hash is {ref.hash}, but the line recomputes to {recomputed}"
@@ -128,6 +164,10 @@ def create_certificate(
 ) -> MatchCertificate:
     """Build an unsigned certificate for ``matchup``."""
     ref = opening_ref(opening) if isinstance(opening, OpeningLine) else opening
+    if ref.variant != matchup.variant:
+        raise TranscriptError(
+            f"opening is for {ref.variant!r}, but the matchup is {matchup.variant!r}"
+        )
     validate_opening_ref(ref)
     return MatchCertificate(
         network=matchup.network,
@@ -139,6 +179,7 @@ def create_certificate(
         opening=ref,
         engine_white=engine_white,
         engine_black=engine_black,
+        variant=matchup.variant,
         time_control=FIXED_TIME_CONTROL,
     )
 
@@ -150,7 +191,7 @@ def certificate_payload(cert: MatchCertificate) -> dict[str, object]:
     seat, so the colour assignment is covered without ambiguity. ``network`` is
     included so a certificate can never be replayed on another chain.
     """
-    return {
+    payload: dict[str, object] = {
         "network": cert.network,
         "match_id": cert.match_id,
         "epoch": cert.epoch,
@@ -167,6 +208,10 @@ def certificate_payload(cert: MatchCertificate) -> dict[str, object]:
             "black": cert.engine_black,
         },
     }
+    if cert.variant != STANDARD_VARIANT:
+        payload["variant"] = cert.variant
+        payload["start_fen"] = cert.opening.start_fen
+    return payload
 
 
 def result_payload(result: GameResult) -> dict[str, object]:
@@ -314,12 +359,14 @@ def expected_from_certificate(cert: MatchCertificate) -> GameExpectations:
         opening_hash=cert.opening.hash,
         opening_moves=cert.opening.moves,
         time_control=time_control_tag(cert.time_control),
+        variant=cert.variant,
+        start_fen=cert.opening.start_fen,
     )
 
 
 def pgn_headers(cert: MatchCertificate) -> dict[str, str]:
     """Protocol headers for a transcript PGN (section 3.1 of PROTOCOL.md)."""
-    return {
+    headers = {
         "Event": EVENT_TAG,
         "Site": SITE_TAG,
         "Date": DATE_TAG,
@@ -336,8 +383,13 @@ def pgn_headers(cert: MatchCertificate) -> dict[str, str]:
         "OpeningID": str(cert.opening.line_id),
         "OpeningHash": cert.opening.hash,
         "TimeControl": time_control_tag(cert.time_control),
-        "Rules": RULES_TAG,
+        "Rules": variant_rules(cert.variant),
     }
+    if is_chess960(cert.variant):
+        headers["FEN"] = cert.opening.start_fen
+        headers["SetUp"] = "1"
+        headers["Variant"] = "Chess960"
+    return headers
 
 
 def render_transcript_pgn(
@@ -479,6 +531,7 @@ def build_win_proof(
         plies=result.plies,
         move_commitment=result.move_commitment,
         low_ply=parsed.low_ply,
+        variant=cert.variant,
         opening=cert.opening,
         pgn=pgn_text,
         certificate=cert,

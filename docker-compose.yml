@@ -1,5 +1,7 @@
-# The two-miner testnet deployment: one node, one relay, one bootstrap job, two
-# miners and the two traffic generators that keep the chain in use.
+# The four-miner testnet deployment: one node, one relay, one bootstrap job, two
+# standard miners, two Chess960 miners and the traffic generators that keep the
+# chain in use. Each variant has its own pair, and the relay matches within a
+# variant, so a round opens one standard and one Chess960 game.
 # `deploy/bootstrap_testnet_stack.py` builds the funded, registered, matchable
 # chain once; see deploy/README.md and docs/RUNBOOK.md.
 #
@@ -65,7 +67,7 @@ services:
       # Pace blocks at the network's target spacing. A block's timestamp is the
       # wall clock and the difficulty retarget reads it: settling on every 2s
       # poll makes the chain look 30x too fast, so the schedule raises
-      # `wins_required` past what a two-miner roster can win per epoch and the
+      # `wins_required` past what the four-miner roster can win per epoch and the
       # chain stops. At one block per `target_block_seconds` the retarget is
       # neutral.
       - --mine-interval-seconds
@@ -176,18 +178,16 @@ services:
       # minutes. It holds no roster slot and builds no blocks; the node admits every
       # transfer like any wallet's.
       #
-      # Two more kinds of activity ride along at their defaults. First, a churn: one
-      # extra `sccp miner run` child at a time, swapped every cycle, so registrations,
-      # availability and roster changes keep happening. `synthetic-miner-1` plays at
-      # 16 nodes a move on purpose: a deliberately weak engine that loses most games
-      # and earns nothing, because only a win pays. The
-      # churn measures the host first (half a core per miner, one core kept for the
-      # node and relay) and seats nothing rather than starving the fixed miners if
-      # nothing fits. Disable it with `--extra-miners 0`.
+      # The extra-miner churn is off. The VM is sized for the four fixed miners
+      # (two standard, two Chess960), and a fifth churned miner competed with them
+      # for the same CPU budget. `--extra-miners 0` keeps only wallet traffic; the
+      # fixed miners already commit availability and reveal every epoch.
       #
       # It runs beside the miners rather than on its own VM because its lifetime is
       # the chain's: the deploy starts from empty volumes, so a generator that
       # outlived `docker compose down -v` would send with stale nonces and balances.
+      - --extra-miners
+      - "0"
     depends_on:
       bootstrap:
         condition: service_completed_successfully
@@ -204,6 +204,8 @@ services:
       - testnet
       - --key
       - /stack/keys/miner-1.key
+      - --variant
+      - standard
       # Keeps the miner on the roster: it commits availability two epochs ahead
       # and reveals every epoch, so the chain keeps finding proofs after the
       # bootstrap's own reveals run out.
@@ -245,6 +247,8 @@ services:
       - testnet
       - --key
       - /stack/keys/miner-2.key
+      - --variant
+      - standard
       - --nonce-secret-file
       - /stack/keys/miner-2.nonce
       - --engine-profile
@@ -254,6 +258,81 @@ services:
       - --nodes-per-move
       - "5000"
       # Testnet only: resign on our own turn after 60 plies (see miner-1).
+      - --resign-after-plies
+      - "60"
+      - --relay
+      - http://relay:8646
+      - --node
+      - http://node:8645
+      - --poll-seconds
+      - "0.1"
+    volumes:
+      - stack:/stack
+    depends_on:
+      relay:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # The Chess960 pair. Stockfish runs with UCI_Chess960 because the miner passes
+  # --variant chess960 to open_engine; the relay selects the start position from
+  # the epoch beacon, so both seats rebuild the same board from the certificate.
+  miner-3:
+    <<: *sccp-service
+    command:
+      - --passphrase-file
+      - /stack/passphrase
+      - miner
+      - run
+      - --network
+      - testnet
+      - --key
+      - /stack/keys/miner-3.key
+      - --variant
+      - chess960
+      - --nonce-secret-file
+      - /stack/keys/miner-3.nonce
+      - --engine-profile
+      - stockfish-19
+      - --engine-path
+      - /usr/games/stockfish
+      - --nodes-per-move
+      - "5000"
+      - --resign-after-plies
+      - "60"
+      - --relay
+      - http://relay:8646
+      - --node
+      - http://node:8645
+      - --poll-seconds
+      - "0.1"
+    volumes:
+      - stack:/stack
+    depends_on:
+      relay:
+        condition: service_healthy
+    restart: unless-stopped
+
+  miner-4:
+    <<: *sccp-service
+    command:
+      - --passphrase-file
+      - /stack/passphrase
+      - miner
+      - run
+      - --network
+      - testnet
+      - --key
+      - /stack/keys/miner-4.key
+      - --variant
+      - chess960
+      - --nonce-secret-file
+      - /stack/keys/miner-4.nonce
+      - --engine-profile
+      - stockfish-19
+      - --engine-path
+      - /usr/games/stockfish
+      - --nodes-per-move
+      - "5000"
       - --resign-after-plies
       - "60"
       - --relay

@@ -69,11 +69,19 @@ def test_missing_and_blank_tags_are_rejected(
         validate_pgn(make_pgn(FOOLS_MATE, blank), params=TESTNET)
 
 
-def test_rules_tag_must_be_chess(
+def test_rules_tag_must_name_a_supported_variant(
+    make_pgn: Callable[[str, Mapping[str, str]], str], match_tags: dict[str, str]
+) -> None:
+    tags = _tags(Rules="crazyhouse")(match_tags)
+    with pytest.raises(PgnValidationError, match="unsupported Rules"):
+        validate_pgn(make_pgn(FOOLS_MATE, tags), params=TESTNET)
+
+
+def test_chess960_rules_need_a_start_fen(
     make_pgn: Callable[[str, Mapping[str, str]], str], match_tags: dict[str, str]
 ) -> None:
     tags = _tags(Rules="chess960")(match_tags)
-    with pytest.raises(PgnValidationError, match="unsupported Rules"):
+    with pytest.raises(PgnValidationError, match="needs its start FEN"):
         validate_pgn(make_pgn(FOOLS_MATE, tags), params=TESTNET)
 
 
@@ -179,7 +187,7 @@ def test_custom_start_position_is_rejected(
     make_pgn: Callable[[str, Mapping[str, str]], str], match_tags: dict[str, str]
 ) -> None:
     tags = {**match_tags, "SetUp": "1", "FEN": "4k3/8/8/8/8/8/8/4K3 w - - 0 1"}
-    with pytest.raises(PgnValidationError, match="custom start positions"):
+    with pytest.raises(PgnValidationError, match="initial position"):
         validate_pgn(make_pgn("1. Kd2 1-0", tags), params=TESTNET)
 
 

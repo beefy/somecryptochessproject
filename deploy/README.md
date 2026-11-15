@@ -1,12 +1,13 @@
-# The two-miner testnet stack
+# The four-miner testnet stack
 
 `docker-compose.yml` runs the testnet deployment on one machine: a full node, the
-matchmaking relay, one deterministic bootstrap job, a traffic drip and two
-Stockfish miners. It starts from the pinned `testnet` genesis, funds and
-registers both miners, commits/reveals availability, opens a matchable epoch,
-plays games and settles the winning proofs on chain. `sccp devnet up` remains the
-fast in-process demo; this stack exercises the real multi-process, HTTP and
-SQLite path. The merge-to-deploy workflow and its monthly cost are in
+matchmaking relay, one deterministic bootstrap job, a traffic drip and four
+Stockfish miners -- two standard-chess seats and two Chess960 seats. It starts
+from the pinned `testnet` genesis, funds and registers all four miners for their
+variants, commits/reveals availability, opens a matchable epoch, plays one game
+per variant per round and settles the winning proofs on chain. `sccp devnet up`
+remains the fast in-process demo; this stack exercises the real multi-process,
+HTTP and SQLite path. The merge-to-deploy workflow and its monthly cost are in
 [`docs/TESTNET_DEPLOYMENT.md`](../docs/TESTNET_DEPLOYMENT.md).
 
 The current hosted deployment is at
@@ -34,13 +35,14 @@ proof to settle.
 
 | Service | Command | Purpose |
 | --- | --- | --- |
-| `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the two keyfiles, their availability secrets, the passphrase file and `stack.json` |
+| `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the four keyfiles, their availability secrets, the passphrase file and `stack.json` |
 | `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 60 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
-| `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers both miners, commits and reveals availability, writes `relay.json` from epoch 3 |
+| `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers all four miners for their variants, commits and reveals availability, writes `relay.json` from epoch 3 |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
-| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle churns the extra miners, tops up and moves coins between 2-10 of the wallets, waits for both phases to be mined, and idles 1-5 minutes |
-| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
-| `miner-1`, `miner-2` | `sccp miner run --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-1.nonce` | join, play, co-sign, announce win proofs and commit/reveal their own availability |
+| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 0` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, waits for both phases to be mined, and idles 1-5 minutes; the extra-miner churn is off because the VM holds the four fixed miners |
+| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, pairs within each variant, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
+| `miner-1`, `miner-2` | `sccp miner run --variant standard --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | standard-chess pair: join, play, co-sign, announce win proofs and commit/reveal their own availability |
+| `miner-3`, `miner-4` | `sccp miner run --variant chess960 --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | Chess960 pair: replay the beacon-selected start position, play with `UCI_Chess960`, and settle C960 proofs |
 
 The bootstrap is deliberately separate from mining. It builds each block with
 the same `BlockBuilder` a miner uses and submits it through the node's public
@@ -55,34 +57,24 @@ a roster slot or builds a block. `traffic` keeps its coins inside its own wallet
 pool, so it circulates them instead of draining the faucet; the
 [runbook](../docs/RUNBOOK.md#synthetic-traffic) has the arithmetic.
 
-The `traffic` container also drives the path that only a live deployment can show:
-
-* **Miner churn** (`deploy/synthetic_miner_creation.py`). It derives up to
-  `--extra-miners` (2) extra miners from published seeds, materialises a keyfile
-  and an availability secret for each, funds and re-registers a miner when it
-  starts through the same faucet gateway the wallets use, and runs it as a real
-  `sccp miner run` child. One is online at a time and each cycle starts or stops
-  it, so registrations, availability commitments and roster changes keep
-  happening. `synthetic-miner-1` is deliberately **weak**: 16 nodes a move, so it
-  loses most games and earns nothing, which is what a bad engine looks like under
-  a win-only reward. Before seating anything it calls `host_capacity`: half a core
-  and 256 MiB per miner, one core for the node and relay -- the two-core VM fits
-  both pool members, and `max_online=1` runs one at a time. When the host cannot
-  fit one it logs why instead of starving the roster.
-
-The churn prints on the cycle line (`| miners: ...`) and is off with
-`--extra-miners 0`, which leaves exactly the wallet traffic. The extra miners keep
-their keyfiles under `/data/synthetic-miners`, an anonymous volume -- every
-identity is seed-derived, so nothing has to survive a redeploy.
+The `traffic` container can also churn extra miners
+(`deploy/synthetic_miner_creation.py`), but the Compose deployment disables it
+with `--extra-miners 0`. The VM's CPU budget is reserved for the four fixed
+miners, and a fifth churned identity competed with them for the same cores. The
+fixed roster already registers, commits availability and reveals every epoch, so
+nothing about roster turnover is left untested. Set `--extra-miners` on the
+`traffic` service if a larger host later has room for the weak-engine path; its
+keyfiles live under `/data/synthetic-miners`, an anonymous volume.
 
 ## The keys and engine are reproducible on purpose
 
-`deploy/init_testnet_stack.py` derives both miners from fixed seeds and the stack
-passphrase is published (`sccp-testnet-stack`). The image installs Debian's
+`deploy/init_testnet_stack.py` derives all four miners from fixed seeds and the
+stack passphrase is published (`sccp-testnet-stack`). The image installs Debian's
 Stockfish as `/usr/games/stockfish`; the bootstrap registers that binary's
-fingerprint and both miners run it. Testnet coins have no value, and a
-reproducible stack is what makes `docker compose up` work without a coordination
-step. **Never reuse these seeds, that passphrase or that bond on mainnet.**
+fingerprint and every miner runs it, with `UCI_Chess960=true` for the Chess960
+pair. Testnet coins have no value, and a reproducible stack is what makes
+`docker compose up` work without a coordination step. **Never reuse these seeds,
+that passphrase or that bond on mainnet.**
 
 `/stack/stack.json` lists each miner's address, keyfile and availability nonce
 secret, and `/stack/keys/miner-N.nonce` holds that secret for
@@ -107,11 +99,11 @@ proof or at least one transaction: a draw produces no proof, so the availability
 and reveal transactions double as the heartbeat that carries the chain into the
 next epoch. The builder puts exactly one transaction in a proofless block, so
 each pending transaction buys one block and an epoch of five blocks needs five
-pieces of ledger work. A two-miner roster supplies four per epoch (availability
-plus reveal each), so one decisive game per epoch is what carries the stack; a
-roster of three or more is self-sustaining. A game that ends on the clock also
-files a bonded timeout claim, and that claim is an ordinary transaction, so it
-moves the ledger even before its proof settles.
+pieces of ledger work. The four-miner roster supplies eight per epoch
+(availability plus reveal each), so the heartbeat is self-sustaining even when
+both variants draw. A game that ends on the clock also files a bonded timeout
+claim, and that claim is an ordinary transaction, so it moves the ledger even
+before its proof settles.
 
 Two further settings make that arithmetic hold even when the games do not:
 
@@ -125,12 +117,12 @@ Two further settings make that arithmetic hold even when the games do not:
   difficulty retarget reads those timestamps, so a settler that built a block on
   every two-second poll made the chain look thirty times too fast; the schedule
   answered by raising `wins_required` to `2`, which asks one block to carry two
-  wins by the same miner -- more than a two-miner roster wins in an epoch -- and
-  the chain stopped at the first block that demanded it. At one block per target
+  wins by the same miner -- more than the roster supplies in an epoch -- and the
+  chain stopped at the first block that demanded it. At one block per target
   interval the retarget is neutral and `wins_required` stays `1`.
 
-Two equal Stockfish builds mostly draw, and a draw is not a proof, so both stack
-miners run with `--resign-after-plies 60`: on its own turn a miner resigns once
+Two equal Stockfish builds mostly draw, and a draw is not a proof, so all four
+stack miners run with `--resign-after-plies 60`: on its own turn a miner resigns once
 the game reaches 60 plies and both seats co-sign a `resignation` result, which
 the winner proves like any other win. Without that policy `GET /v1/matches`
 shows `"termination": "draw"` on every session and the tip can sit mid-epoch.
