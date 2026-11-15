@@ -42,7 +42,7 @@ sccp --version
 You should see the package and protocol version, for example:
 
 ```text
-sccp 0.20.0 (protocol v1)
+sccp 0.21.0 (protocol v1)
 ```
 
 ---
