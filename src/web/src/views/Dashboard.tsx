@@ -13,9 +13,10 @@ import { Divider, Text } from "react-native-paper";
 
 import { fetchBlocks, fetchGames } from "../api";
 import { BlockTable, StatCard } from "../components/BlockTable";
-import { FailureNotice, Loading, Section } from "../components/Chrome";
+import { FailureNotice, KeyValue, Loading, Section } from "../components/Chrome";
 import { GameTable } from "../components/GameTable";
-import { formatAge, formatAmount, formatInteger } from "../lib/format";
+import { tokensFor, variantLabel } from "../lib/assets";
+import { formatAge, formatAmount, formatInteger, formatTokenAmount } from "../lib/format";
 import { useNode } from "../node";
 import { useNow, useResource } from "../useResource";
 
@@ -28,6 +29,8 @@ export function Dashboard(): ReactNode {
   const wide = width >= 720;
 
   const tip = blocks.data?.blocks[0];
+  const tokens = tokensFor(params.data);
+  const variantTokens = tokens.filter((token) => !token.native);
 
   return (
     <>
@@ -84,6 +87,27 @@ export function Dashboard(): ReactNode {
           />
         )}
       </View>
+
+      {variantTokens.length > 0 && status.data !== undefined && (
+        <Section
+          title="Variant tokens"
+          subtitle="every variant mints its own token; native SCCP remains the fee currency"
+        >
+          <KeyValue label="SCCP minted" mono>
+            {formatAmount(status.data.minted)}
+          </KeyValue>
+          {variantTokens.map((token) => (
+            <KeyValue key={token.asset ?? token.symbol} label={`${variantLabel(token.variant)} · ${token.symbol}`} mono>
+              {formatTokenAmount(
+                status.data?.minted_assets?.[token.asset ?? ""] ?? 0,
+                token.symbol,
+                token.decimals,
+              )}{" "}
+              · {formatTokenAmount(token.subsidy, token.symbol, token.decimals)} per block
+            </KeyValue>
+          ))}
+        </Section>
+      )}
 
       <Divider />
 

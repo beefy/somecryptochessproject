@@ -15,8 +15,15 @@ import { StyleSheet, View } from "react-native";
 import { Button, HelperText, ProgressBar, Text } from "react-native-paper";
 
 import { Link, Loading, Mono, Section, StatusPill } from "../../components/Chrome";
+import { tokenForAsset, tokensFor, type Token } from "../../lib/assets";
 import { labelFor, readContacts, type Contact } from "../../lib/contacts";
-import { formatAge, formatAmount, formatInteger, shortAddress, shortHash } from "../../lib/format";
+import {
+  formatAge,
+  formatInteger,
+  formatTokenAmount,
+  shortAddress,
+  shortHash,
+} from "../../lib/format";
 import {
   type CachedHistory,
   type HistoryDirection,
@@ -62,9 +69,14 @@ function counterparty(entry: HistoryEntry, contacts: readonly Contact[]): string
   return labelFor(contacts, entry.to) ?? shortAddress(entry.to);
 }
 
-function amountText(entry: HistoryEntry): string {
+function amountText(entry: HistoryEntry, tokens: readonly Token[]): string {
   if (entry.amount === null) return "-";
-  return formatAmount(entry.amount);
+  const token = tokenForAsset(tokens, entry.asset);
+  return formatTokenAmount(
+    entry.amount,
+    token?.symbol ?? (entry.asset === null ? "SCCP" : "asset"),
+    token?.decimals ?? 8,
+  );
 }
 
 export function HistoryPanel({
@@ -80,7 +92,8 @@ export function HistoryPanel({
   /** The node's next unused nonce; a row below it has been included. */
   committedNonce: number;
 }): ReactNode {
-  const { status } = useNode();
+  const { status, params } = useNode();
+  const tokens = tokensFor(params.data);
   const tip = status.data?.height;
   const now = useNow(30000);
   const contacts = readContacts();
@@ -242,7 +255,7 @@ export function HistoryPanel({
                 tone={committedNonce > entry.nonce ? "info" : "warn"}
               />
               <Text variant="bodyMedium" style={styles.amount}>
-                {formatAmount(entry.amount)}
+                {formatTokenAmount(entry.amount, entry.symbol ?? "SCCP")}
               </Text>
               <Text variant="bodySmall" style={styles.muted}>
                 to {labelFor(contacts, entry.to) ?? shortAddress(entry.to)} · nonce{" "}
@@ -269,7 +282,7 @@ export function HistoryPanel({
           <Link href={`#/blocks/${entry.height}`}>{`#${formatInteger(entry.height)}`}</Link>
           <StatusPill label={LABELS[entry.direction]} tone={TONES[entry.direction]} />
           <Text variant="bodyMedium" style={styles.amount}>
-            {amountText(entry)}
+            {amountText(entry, tokens)}
           </Text>
           <Text variant="bodySmall" style={styles.muted}>
             {entry.direction === "in" || entry.direction === "reward" ? "from" : "to"}{" "}

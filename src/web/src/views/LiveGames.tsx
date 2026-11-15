@@ -13,6 +13,7 @@ import { StyleSheet, useWindowDimensions, View } from "react-native";
 import { Button, HelperText, Text } from "react-native-paper";
 
 import { EmptyState, Link, Loading, Section, StatusPill } from "../components/Chrome";
+import { variantShort } from "../lib/assets";
 import { formatClock, formatInteger, shortAddress, shortHash } from "../lib/format";
 import { relayMatches } from "../lib/relay";
 import type { RelayMatchView } from "../types";
@@ -163,7 +164,7 @@ function LiveRow({
           </Link>
         </View>
         <Text variant="bodySmall" style={styles.muted}>
-          {`${shortHash(match.matchup.match_id, 12)} · ${formatInteger(match.last_ply)} plies · ${timeControl}`}
+          {`${variantShort(match.matchup.variant)} · ${shortHash(match.matchup.match_id, 12)} · ${formatInteger(match.last_ply)} plies · ${timeControl}`}
         </Text>
       </View>
       <View style={styles.colClock}>

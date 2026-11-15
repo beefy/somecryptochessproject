@@ -12,6 +12,7 @@ import { useWindowDimensions, View } from "react-native";
 import { Surface, Text } from "react-native-paper";
 
 import { formatAge, formatInteger, shortAddress } from "../lib/format";
+import { variantShort } from "../lib/assets";
 import type { BlockSummary } from "../types";
 import { useNow } from "../useResource";
 import { EmptyState, HashLink, Link } from "./Chrome";
@@ -70,11 +71,19 @@ function HeaderRow({ wide }: { wide: boolean }): ReactNode {
   );
 }
 
+/** One line of proof counts, e.g. `2 SCCP · 1 C960`. */
+function variantCounts(block: BlockSummary): string {
+  const entries = Object.entries(block.variants ?? {});
+  if (entries.length === 0) return "";
+  return entries.map(([variant, count]) => `${count} ${variantShort(variant)}`).join(" · ");
+}
+
 /** One block in list form. */
 export function BlockRow({ block }: { block: BlockSummary }): ReactNode {
   const { width } = useWindowDimensions();
   const wide = width >= 720;
   const now = useNow(1000);
+  const variants = variantCounts(block);
   return (
     <View style={styles.row}>
       <View style={styles.colHeight}>
@@ -87,9 +96,16 @@ export function BlockRow({ block }: { block: BlockSummary }): ReactNode {
           {formatAge(block.timestamp, now)}
         </Text>
       )}
-      <Text variant="bodyMedium" style={styles.colCounts}>
-        {block.transactions} / {block.proofs}
-      </Text>
+      <View style={styles.colCounts}>
+        <Text variant="bodyMedium" style={styles.numeric}>
+          {block.transactions} / {block.proofs}
+        </Text>
+        {wide && variants !== "" && (
+          <Text variant="bodySmall" style={styles.muted}>
+            {variants}
+          </Text>
+        )}
+      </View>
       {wide && (
         <View style={styles.colMiner}>
           <Link href={`#/miners/${block.miner}`} mono>

@@ -23,12 +23,16 @@ import {
   Section,
   StatusPill,
 } from "../components/Chrome";
-import { formatInteger, prettyJson } from "../lib/format";
+import { formatInteger, formatTokenAmount, prettyJson } from "../lib/format";
+import { tokenForAsset, tokensFor } from "../lib/assets";
 import { txId as computeTxId, type TxType } from "../lib/tx";
+import { useNode } from "../node";
 import { useResource } from "../useResource";
 import type { Block, Transaction } from "../types";
 
 export function TransactionDetail({ txid }: { txid: string }): ReactNode {
+  const { params } = useNode();
+  const tokens = tokensFor(params.data);
   const record = useResource(
     (signal) => fetchTransaction(txid, signal),
     [txid],
@@ -137,6 +141,21 @@ export function TransactionDetail({ txid }: { txid: string }): ReactNode {
             <KeyValue label="Fee" mono>
               {formatInteger(body.data.fee)}
             </KeyValue>
+            {body.data.type === "transfer" && (
+              <KeyValue label="Transfer" mono>
+                {(() => {
+                  const amount = Number(body.data.payload.amount);
+                  const asset =
+                    typeof body.data.payload.asset === "string" ? body.data.payload.asset : null;
+                  const token = tokenForAsset(tokens, asset);
+                  return formatTokenAmount(
+                    amount,
+                    token?.symbol ?? (asset === null ? "SCCP" : "asset"),
+                    token?.decimals ?? 8,
+                  );
+                })()}
+              </KeyValue>
+            )}
             <KeyValue label="Payload">
               {Object.keys(body.data.payload).length === 0 ? (
                 "empty"

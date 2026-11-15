@@ -26,6 +26,7 @@ import {
   StatusPill,
 } from "../components/Chrome";
 import { formatInteger, shortAddress } from "../lib/format";
+import { variantLabel } from "../lib/assets";
 import { useResource } from "../useResource";
 import type { GameView } from "../types";
 
@@ -87,6 +88,9 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
       </View>
 
       <Section title="Settlement" subtitle="where the proof stands on this node">
+        <KeyValue label="Variant" mono>
+          {`${variantLabel(view.variant)} · ${view.variant}`}
+        </KeyValue>
         <KeyValue label="Winner">
           {view.winner === null ? (
             "unknown"
@@ -113,6 +117,12 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
         <Section title="Certificate" subtitle="the signed start-of-match commitment">
           <KeyValue label="Epoch / round" mono>
             {`${certificate.epoch} / ${certificate.round}`}
+          </KeyValue>
+          <KeyValue label="Variant" mono>
+            {`${variantLabel(certificate.variant)} · ${certificate.variant}`}
+          </KeyValue>
+          <KeyValue label="Start position">
+            <Mono copy>{certificate.opening.start_fen}</Mono>
           </KeyValue>
           <KeyValue label="White">
             <Link href={`#/accounts/${certificate.white}`} mono>

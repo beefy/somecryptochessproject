@@ -42,14 +42,27 @@ export function formatRating(value: number | null | undefined, digits = 1, local
 /** Amounts are integer base units: one coin is 100 000 000 units. */
 export const UNITS_PER_COIN = 100_000_000;
 
-/** Base units as a coin amount, e.g. `50 SCCP` or `0.0005 SCCP`. */
-export function formatAmount(base: number | null | undefined): string {
+/** Base units as a coin amount with an explicit token symbol. */
+export function formatTokenAmount(
+  base: number | null | undefined,
+  symbol: string,
+  decimals = 8,
+): string {
   if (base === null || base === undefined || !Number.isFinite(base)) return "-";
+  const scale = 10 ** Math.max(0, Math.trunc(decimals));
   const absolute = Math.abs(Math.trunc(base));
-  const whole = Math.floor(absolute / UNITS_PER_COIN);
-  const fraction = (absolute % UNITS_PER_COIN).toString().padStart(8, "0").replace(/0+$/, "");
+  const whole = Math.floor(absolute / scale);
+  const fraction =
+    decimals <= 0
+      ? ""
+      : (absolute % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
   const text = fraction.length === 0 ? formatInteger(whole) : `${formatInteger(whole)}.${fraction}`;
-  return `${base < 0 ? "-" : ""}${text} SCCP`;
+  return `${base < 0 ? "-" : ""}${text} ${symbol}`;
+}
+
+/** Base units as a native SCCP amount, e.g. `50 SCCP` or `0.0005 SCCP`. */
+export function formatAmount(base: number | null | undefined): string {
+  return formatTokenAmount(base, "SCCP");
 }
 
 /**
@@ -59,33 +72,45 @@ export function formatAmount(base: number | null | undefined): string {
  * running it through {@link formatAmount} would print a hundred-millionth of the
  * grant.
  */
-export function formatCoins(coins: number | null | undefined): string {
+export function formatCoins(coins: number | null | undefined, symbol = "SCCP"): string {
   if (coins === null || coins === undefined || !Number.isFinite(coins)) return "-";
-  return `${formatInteger(Math.trunc(coins))} SCCP`;
+  return `${formatInteger(Math.trunc(coins))} ${symbol}`;
 }
 
 /**
- * Parse a decimal SCCP amount into integer base units.
+ * Parse a decimal token amount into integer base units.
  *
- * Amounts on the wire are integers (1 SCCP = 100 000 000 units), so the text a
- * person types has to be scaled exactly once, here, rather than by multiplying a
- * float in the view. Thousands separators are accepted because that is how the
- * number is displayed next to the field; anything else -- exponents, more than
- * eight decimals, signs -- is refused instead of rounded.
+ * Amounts on the wire are integers, so the text a person types has to be scaled
+ * exactly once, here, rather than by multiplying a float in the view. Thousands
+ * separators are accepted because that is how the number is displayed next to
+ * the field; anything else -- exponents, too many decimals, signs -- is refused
+ * instead of rounded.
  */
-export function parseAmount(text: string): number {
+export function parseTokenAmount(text: string, symbol: string, decimals = 8): number {
   const trimmed = text.trim().replace(/,/g, "");
-  const match = /^(\d+)(?:\.(\d{1,8}))?$/.exec(trimmed);
+  const places = Math.max(0, Math.trunc(decimals));
+  const pattern =
+    places === 0 ? /^[0-9]+$/ : new RegExp(`^([0-9]+)(?:[.]([0-9]{1,${places}}))?$`);
+  const match = pattern.exec(trimmed);
   if (match === null) {
-    throw new Error(`"${text.trim()}" is not an SCCP amount (up to 8 decimals)`);
+    const article = symbol === "SCCP" ? "an" : "a";
+    throw new Error(
+      `"${text.trim()}" is not ${article} ${symbol} amount (up to ${places} decimals)`,
+    );
   }
+  const scale = 10 ** places;
   const whole = Number(match[1]);
-  const fraction = Number((match[2] ?? "").padEnd(8, "0"));
-  const units = whole * UNITS_PER_COIN + fraction;
+  const fraction = Number((match[2] ?? "").padEnd(places, "0") || "0");
+  const units = whole * scale + fraction;
   if (!Number.isSafeInteger(units)) {
     throw new Error(`"${text.trim()}" is larger than an account balance can hold`);
   }
   return units;
+}
+
+/** Parse a native SCCP amount; kept for existing callers. */
+export function parseAmount(text: string): number {
+  return parseTokenAmount(text, "SCCP", 8);
 }
 
 /** Render a byte count with a binary unit. */

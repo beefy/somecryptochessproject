@@ -15,8 +15,12 @@
 export interface PendingTransaction {
   txid: string;
   to: string;
-  /** Base units. */
+  /** Base units of the transferred token. */
   amount: number;
+  /** Asset id for a C960-style transfer; `null`/absent means native SCCP. */
+  asset?: string | null;
+  /** Printable symbol captured when signed, so history still reads without params. */
+  symbol?: string;
   fee: number;
   nonce: number;
   submittedAt: number;

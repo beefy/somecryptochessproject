@@ -74,7 +74,8 @@ export function FaucetPanel({
         <>
           <Text variant="bodyMedium">
             Ask the node to fund this address. The amount is the node&apos;s choice, not this
-            page&apos;s.
+            page&apos;s. Faucet grants are native SCCP only; C960 comes from settled Chess960
+            proofs or a transfer.
           </Text>
           <View style={styles.actions}>
             <Button mode="contained" loading={busy} disabled={busy} onPress={() => void fund()}>

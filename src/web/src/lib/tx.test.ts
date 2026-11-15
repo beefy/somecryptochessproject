@@ -51,6 +51,37 @@ describe("ledger transactions", () => {
     expect(tx.payload).toEqual(wire.payload);
   });
 
+  it("adds the asset field only for a non-native transfer", () => {
+    const wire = ledger.transfer.transaction;
+    const base = {
+      network: wire.network,
+      sender: wire.from,
+      nonce: wire.nonce,
+      fee: wire.fee,
+      to: wire.payload.to,
+      amount: wire.payload.amount,
+      publicKeyHex: wire.payload.public_key,
+    };
+    expect(buildTransfer(base).payload).not.toHaveProperty("asset");
+    expect(buildTransfer({ ...base, asset: "a".repeat(64) }).payload.asset).toBe("a".repeat(64));
+  });
+
+  it("names a non-standard variant in the register payload", () => {
+    const built = buildRegister({
+      network: wire.network,
+      sender: wire.from,
+      nonce: wire.nonce,
+      fee: wire.fee,
+      bond: 0,
+      endpoint: String(wire.payload.endpoint),
+      engine: String(wire.payload.engine),
+      variant: "chess960",
+      publicKeyHex: ledger.public_key_hex,
+    });
+    expect(built.payload.variant).toBe("chess960");
+  });
+
+
   it("refuses a non-positive transfer amount", () => {
     const wire = ledger.transfer.transaction;
     expect(() =>

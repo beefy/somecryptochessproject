@@ -178,10 +178,10 @@ rules, its DNS record and its rollback are in
 | `#/ratings` | miner Elo: the top ten, their record and deviation, and the distribution |
 | `#/miners/<address>` | one miner: current rating, a line chart per epoch, its games |
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
-| `#/wallet/play` | a seat in a real match, signed with the unlocked wallet key (`#/play` is an alias) |
-| `#/wallet` | the wallet: unlock or create a keyfile, balances, nickname, pending transfers |
-| `#/wallet/send` | build, review and sign a transfer, with an optional recipient nickname |
-| `#/wallet/receive` | the address, a copy button and its public-key fingerprint |
+| `#/wallet/play` | a seat in a real match, signed with the unlocked wallet key (`#/play` is an alias); standard or Chess960 |
+| `#/wallet` | the wallet: unlock or create a keyfile, SCCP and variant-token balances, nickname, pending transfers |
+| `#/wallet/send` | build, review and sign an SCCP or C960 transfer, with an optional recipient nickname |
+| `#/wallet/receive` | the address, every token it can receive, a copy button and its public-key fingerprint |
 | `#/wallet/faucet` | ask the testnet faucet for funds, with the request's progress |
 | `#/wallet/history` | transactions touching the account, scanned from blocks, plus pending rows |
 | `#/wallet/settings` | nickname, keyfile export, auto-lock, forget-this-browser |
@@ -245,11 +245,12 @@ What the page does:
   page: `POST /v1/faucet` on testnet and devnet, with a visible in-progress bar
   until the node answers and the grant's txid afterwards. On mainnet the tab says
   the service does not exist rather than hiding a button.
-- **Send** — amount and fee as decimal SCCP, an optional nickname for the
-  recipient (saved in this browser, never in the keyfile), a review screen showing
-  every signed field plus the txid, then a hybrid signature and `POST /v1/tx`. The
-  next nonce is kept locally because the account view reports the *committed* one;
-  an accepted transfer is remembered as pending and a notice confirms it.
+- **Send** — choose native SCCP or a variant token such as C960, then an amount
+  and fee (the fee is always SCCP), an optional nickname for the recipient (saved
+  in this browser, never in the keyfile), a review screen showing every signed
+  field plus the txid, then a hybrid signature and `POST /v1/tx`. The next nonce
+  is kept locally because the account view reports the *committed* one; an
+  accepted transfer is remembered as pending and a notice confirms it.
 - **History** — the node has no history endpoint, so the tab scans `/v1/blocks`
   backwards from the tip (200 blocks to start), keeps the transactions that touch
   the address, and caches the window in IndexedDB. It names the heights it covered
@@ -267,9 +268,13 @@ that matter for safety and they are in.
 ## The table is a miner seat
 
 `#/wallet/play` is not a demo board: it is the wallet's own account, put on the
-roster. The key it signs with goes through the same four steps a Stockfish miner
-goes through, as signed ledger transactions (`#/play` still resolves here, so an
-older link does not break):
+roster. Before registering, the seat chooses the network's standard or Chess960
+variant; the choice is locked by the `register` transaction. Chess960 boards start
+from the certificate's Shredder-FEN, and the page applies the 960 castling rules
+itself because `chess.js` only models the standard king/rook squares. The key it
+signs with goes through the same four steps a Stockfish miner goes through, as
+signed ledger transactions (`#/play` still resolves here, so an older link does
+not break):
 
 | Step | Transaction | Why |
 | --- | --- | --- |

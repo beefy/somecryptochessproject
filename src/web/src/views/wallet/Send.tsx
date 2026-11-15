@@ -15,14 +15,26 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
-import { Button, Divider, HelperText, Text, TextInput } from "react-native-paper";
+import { Button, Divider, HelperText, SegmentedButtons, Text, TextInput } from "react-native-paper";
 
 import { submitTransaction } from "../../api";
 import { KeyValue, Mono, Section } from "../../components/Chrome";
 import { useNotice } from "../../components/Notices";
+import {
+  tokenBalance,
+  tokenForVariant,
+  type Token,
+} from "../../lib/assets";
 import { addressHrp } from "../../lib/bech32";
 import { labelFor, readContacts, saveContact } from "../../lib/contacts";
-import { formatAmount, formatInteger, parseAmount, shortAddress } from "../../lib/format";
+import {
+  formatAmount,
+  formatInteger,
+  formatTokenAmount,
+  parseAmount,
+  parseTokenAmount,
+  shortAddress,
+} from "../../lib/format";
 import { type HybridKeypair, hybridPublicKeyHex } from "../../lib/keys";
 import type { PendingTransaction } from "../../lib/pending";
 import {
@@ -41,6 +53,8 @@ interface SendProps {
   network: string;
   account: AccountView;
   minFee: number;
+  /** Every token this network settles, SCCP first. */
+  tokens: Token[];
   /** The next unused nonce, or `null` while the chain is authoritative. */
   pendingNonce: number | null;
   onAccepted: (sent: PendingTransaction) => void;
@@ -57,6 +71,7 @@ export function SendPanel({
   network,
   account,
   minFee,
+  tokens,
   pendingNonce,
   onAccepted,
   onPendingNonce,
@@ -64,6 +79,7 @@ export function SendPanel({
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("");
   const [fee, setFee] = useState(() => feeText(minFee));
+  const [variant, setVariant] = useState(() => tokens[0]?.variant ?? "standard");
   const [review, setReview] = useState<Transaction | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -71,25 +87,31 @@ export function SendPanel({
   const [contacts, setContacts] = useState(() => readContacts());
   const notify = useNotice();
 
+  const token = tokenForVariant(tokens, variant) ?? tokens[0];
   const nonce = pendingNonce ?? account.nonce;
-  const spendable = account.balance;
+  const spendable = token === undefined ? 0 : tokenBalance(account, token);
+  const nativeSpendable = account.balance;
 
   const parsed = useMemo(() => {
     try {
       // An empty amount is "not typed yet", not a malformed number: the field
       // must not show a format error before the first keystroke.
-      const amountUnits = amount.trim() === "" ? 0 : parseAmount(amount);
+      const amountUnits =
+        amount.trim() === "" || token === undefined
+          ? 0
+          : parseTokenAmount(amount, token.symbol, token.decimals);
       return { amount: amountUnits, fee: parseAmount(fee), failure: null as string | null };
     } catch (failure) {
       return { amount: 0, fee: 0, failure: (failure as Error).message };
     }
-  }, [amount, fee]);
+  }, [amount, fee, token]);
 
   const recipient = to.trim();
   const known = labelFor(contacts, recipient);
   const reviewName = known ?? (nickname.trim() === "" ? null : nickname.trim());
   const problem = ((): string | null => {
     if (parsed.failure !== null) return parsed.failure;
+    if (token === undefined) return "this network exposes no token to send";
     if (recipient === "") return "enter a recipient address";
     if (!recipient.startsWith(`${addressHrp(network)}1`)) {
       return `a ${network} address starts with ${addressHrp(network)}1`;
@@ -100,10 +122,27 @@ export function SendPanel({
     if (parsed.fee < minFee) {
       return `the fee is below the network minimum of ${formatAmount(minFee)}`;
     }
-    if (parsed.amount + parsed.fee > spendable) {
-      return `spendable balance is ${formatAmount(spendable)}; this needs ${formatAmount(
-        parsed.amount + parsed.fee,
-      )} including the fee`;
+    if (parsed.fee > nativeSpendable) {
+      return `the fee is ${formatAmount(parsed.fee)}, but only ${formatAmount(
+        nativeSpendable,
+      )} SCCP is spendable`;
+    }
+    if (token.native) {
+      if (parsed.amount + parsed.fee > spendable) {
+        return `spendable balance is ${formatAmount(spendable)}; this needs ${formatAmount(
+          parsed.amount + parsed.fee,
+        )} including the fee`;
+      }
+    } else if (parsed.amount > spendable) {
+      return `${token.symbol} balance is ${formatTokenAmount(
+        spendable,
+        token.symbol,
+        token.decimals,
+      )}; this transfer needs ${formatTokenAmount(
+        parsed.amount,
+        token.symbol,
+        token.decimals,
+      )} plus its SCCP fee`;
     }
     return null;
   })();
@@ -118,6 +157,7 @@ export function SendPanel({
         fee: parsed.fee,
         to: recipient,
         amount: parsed.amount,
+        asset: token?.asset ?? null,
         publicKeyHex: hybridPublicKeyHex(keypair),
       }),
     );
@@ -139,6 +179,8 @@ export function SendPanel({
         txid: accepted.txid,
         to: String(review.payload.to),
         amount: parsed.amount,
+        asset: token?.asset ?? null,
+        symbol: token?.symbol ?? "SCCP",
         fee: parsed.fee,
         nonce: signed.nonce,
         submittedAt: Date.now(),
@@ -162,8 +204,22 @@ export function SendPanel({
   return (
     <Section
       title="Send"
-      subtitle={`${formatAmount(spendable)} spendable · next nonce ${formatInteger(nonce)}`}
+      subtitle={`${formatTokenAmount(
+        spendable,
+        token?.symbol ?? "SCCP",
+        token?.decimals ?? 8,
+      )} spendable · next nonce ${formatInteger(nonce)}`}
     >
+      {tokens.length > 1 && review === null && (
+        <SegmentedButtons
+          value={variant}
+          onValueChange={setVariant}
+          buttons={tokens.map((candidate) => ({
+            value: candidate.variant,
+            label: candidate.symbol,
+          }))}
+        />
+      )}
       <TextInput
         label="Recipient"
         mode="outlined"
@@ -205,7 +261,7 @@ export function SendPanel({
       )}
       <View style={styles.row}>
         <TextInput
-          label="Amount (SCCP)"
+          label={`Amount (${token?.symbol ?? "SCCP"})`}
           mode="outlined"
           keyboardType="decimal-pad"
           value={amount}
@@ -235,7 +291,7 @@ export function SendPanel({
       </View>
       <HelperText type={problem === null ? "info" : "error"} visible>
         {problem ??
-          `Up to 8 decimals. You choose the fee; the network rejects anything below ${formatAmount(
+          `Up to ${token?.decimals ?? 8} decimals. The fee is always paid in SCCP; the network rejects anything below ${formatAmount(
             minFee,
           )}.`}
       </HelperText>
@@ -267,8 +323,15 @@ export function SendPanel({
             {reviewName !== null && <Text variant="bodyMedium">{reviewName}</Text>}
             <Mono>{String(review.payload.to)}</Mono>
           </KeyValue>
+          <KeyValue label="Asset" mono>
+            {review.payload.asset === undefined ? "SCCP (native)" : (token?.symbol ?? "variant asset")}
+          </KeyValue>
           <KeyValue label="Amount" mono>
-            {formatAmount(Number(review.payload.amount))}
+            {formatTokenAmount(
+              Number(review.payload.amount),
+              token?.symbol ?? "SCCP",
+              token?.decimals ?? 8,
+            )}
           </KeyValue>
           <KeyValue label="Fee" mono>
             {formatAmount(review.fee)}

@@ -11,6 +11,7 @@ import { useWindowDimensions, View } from "react-native";
 import { Text } from "react-native-paper";
 
 import { formatInteger, shortAddress } from "../lib/format";
+import { variantShort } from "../lib/assets";
 import type { GameSummary } from "../types";
 import { EmptyState, HashLink, Link, StatusPill } from "./Chrome";
 import { tableStyles as styles } from "./tableStyles";
@@ -36,11 +37,19 @@ export function GameRow({ game }: { game: GameSummary }): ReactNode {
           {game.result ?? "—"}
         </Text>
       </View>
+      {wide && (
+        <View style={styles.colVariant}>
+          <Text variant="bodySmall" style={styles.muted}>
+            {variantShort(game.variant)}
+          </Text>
+        </View>
+      )}
       <View style={styles.colSeats}>
         <Link href={`#/miners/${game.winner}`} mono>
           {shortAddress(game.winner)}
         </Link>
         <Text variant="bodySmall" style={styles.muted}>
+          {!wide && `${variantShort(game.variant)} · `}
           {game.loser === null ? "opponent unknown" : "beat "}
           {game.loser !== null && (
             <Link href={`#/miners/${game.loser}`} mono>
@@ -89,6 +98,11 @@ export function GameTable({ games }: { games: GameSummary[] }): ReactNode {
         <Text variant="labelSmall" style={[styles.colResult, styles.muted]}>
           RESULT
         </Text>
+        {wide && (
+          <Text variant="labelSmall" style={[styles.colVariant, styles.muted]}>
+            VARIANT
+          </Text>
+        )}
         <Text variant="labelSmall" style={[styles.colSeats, styles.muted]}>
           WINNER
         </Text>

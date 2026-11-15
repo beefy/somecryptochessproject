@@ -13,7 +13,8 @@ import { Text } from "react-native-paper";
 import { fetchAccount, fetchGames } from "../api";
 import { FailureNotice, KeyValue, Link, Loading, Mono, Section, StatusPill } from "../components/Chrome";
 import { GameTable } from "../components/GameTable";
-import { formatAmount, formatInteger, shortAddress } from "../lib/format";
+import { tokenImmature, tokensFor, tokenBalance, variantLabel } from "../lib/assets";
+import { formatAmount, formatInteger, formatTokenAmount, shortAddress } from "../lib/format";
 import { useNode } from "../node";
 import { useResource } from "../useResource";
 
@@ -25,6 +26,7 @@ export function AccountView({ address }: { address: string }): ReactNode {
     pollMs: 20000,
   });
   const { params } = useNode();
+  const tokens = tokensFor(params.data);
 
   if (account.error !== undefined) return <FailureNotice error={account.error} />;
   if (account.data === undefined) return <Loading />;
@@ -46,19 +48,36 @@ export function AccountView({ address }: { address: string }): ReactNode {
         </View>
       </View>
 
-      <Section title="Balance" subtitle="millionths of a coin, one coin per block subsidy unit">
-        <KeyValue label="Total" mono>
-          {formatAmount(view.total)}
-        </KeyValue>
-        <KeyValue label="Spendable" mono>
-          {formatAmount(view.balance)}
-        </KeyValue>
-        <KeyValue label="Immature" mono>
-          {formatAmount(view.immature)}
-        </KeyValue>
-        <KeyValue label="Bonded" mono>
-          {formatAmount(view.bonded)}
-        </KeyValue>
+      <Section title="Balances" subtitle="each variant mints its own token; fees stay in SCCP">
+        {tokens.map((token) => {
+          const spendable = tokenBalance(view, token);
+          const immature = tokenImmature(view, token);
+          return (
+            <View key={token.asset ?? "native"} style={styles.tokenBlock}>
+              <Text variant="titleSmall">
+                {token.name} · {token.symbol}
+              </Text>
+              <KeyValue label="Spendable" mono>
+                {formatTokenAmount(spendable, token.symbol, token.decimals)}
+              </KeyValue>
+              {immature > 0 && (
+                <KeyValue label="Immature" mono>
+                  {formatTokenAmount(immature, token.symbol, token.decimals)}
+                </KeyValue>
+              )}
+              {token.native && (
+                <>
+                  <KeyValue label="Bonded" mono>
+                    {formatAmount(view.bonded)}
+                  </KeyValue>
+                  <KeyValue label="Total SCCP" mono>
+                    {formatAmount(view.total)}
+                  </KeyValue>
+                </>
+              )}
+            </View>
+          );
+        })}
         <KeyValue label="Next nonce" mono>
           {formatInteger(view.nonce)}
         </KeyValue>
@@ -67,6 +86,9 @@ export function AccountView({ address }: { address: string }): ReactNode {
       <Section title="Registration" subtitle="what this account last announced">
         <KeyValue label="Registered until">
           {view.registered_until_epoch === null ? "not registered" : `epoch ${formatInteger(view.registered_until_epoch)}`}
+        </KeyValue>
+        <KeyValue label="Variant" mono>
+          {`${variantLabel(view.variant)} · ${view.variant}`}
         </KeyValue>
         <KeyValue label="Endpoint" mono>
           {view.endpoint ?? "-"}
@@ -121,5 +143,11 @@ const styles = StyleSheet.create({
   },
   titleBlock: { gap: 4, flexShrink: 1 },
   titleActions: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" },
+  tokenBlock: {
+    gap: 2,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(128,128,128,0.24)",
+  },
   muted: { opacity: 0.66 },
 });

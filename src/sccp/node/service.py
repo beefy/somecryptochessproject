@@ -150,6 +150,9 @@ def _rounded_volatility(value: float) -> float:
 def _block_summary(stored: StoredBlock) -> BlockSummary:
     """Project one stored block onto its list row."""
     header = stored.header
+    variants: dict[str, int] = {}
+    for proof in stored.block.proofs:
+        variants[proof.variant] = variants.get(proof.variant, 0) + 1
     return BlockSummary(
         hash=stored.block_hash,
         parent_hash=stored.parent_hash,
@@ -159,6 +162,7 @@ def _block_summary(stored: StoredBlock) -> BlockSummary:
         miner=header.miner,
         transactions=len(stored.block.transactions),
         proofs=len(stored.block.proofs),
+        variants=dict(sorted(variants.items())),
         wins_required=header.wins_required,
         seal_bits=header.seal_bits,
     )
@@ -208,6 +212,7 @@ def _pending_summary(proof: WinProof) -> GameSummary:
         result=proof.result,
         termination=proof.termination,
         plies=proof.plies,
+        variant=proof.variant,
         in_mempool=True,
         low_ply=proof.low_ply,
     )
@@ -225,6 +230,7 @@ def _settled_summary(record: ProofRecord, proof: WinProof | None) -> GameSummary
             game_hash=record.game_hash,
             proof_id=record.proof_id,
             winner=record.winner,
+            variant=record.variant,
             height=record.height,
         )
     return GameSummary(
@@ -239,6 +245,7 @@ def _settled_summary(record: ProofRecord, proof: WinProof | None) -> GameSummary
         result=proof.result,
         termination=proof.termination,
         plies=proof.plies,
+        variant=proof.variant,
         height=record.height,
         low_ply=proof.low_ply,
     )
@@ -521,8 +528,7 @@ class NodeService:
         self._ratings = (self.chain.tip_hash, ledger)
         return ledger
 
-    @staticmethod
-    def _miner_rating_view(miner: MinerRating) -> MinerRatingView:
+    def _miner_rating_view(self, miner: MinerRating) -> MinerRatingView:
         """Project one ledger row onto the leaderboard shape."""
         return MinerRatingView(
             address=miner.address,
@@ -534,6 +540,7 @@ class NodeService:
             wins=miner.wins,
             draws=miner.draws,
             losses=miner.losses,
+            variant=self.chain.state.account(miner.address).variant,
             provisional=miner.provisional,
             last_epoch=miner.last_epoch,
             last_height=miner.last_height,
@@ -594,6 +601,7 @@ class NodeService:
                 wins=0,
                 draws=0,
                 losses=0,
+                variant=self.chain.state.account(address).variant,
                 provisional=True,
             )
         return MinerRatingDetail(
@@ -607,6 +615,7 @@ class NodeService:
             wins=found.wins,
             draws=found.draws,
             losses=found.losses,
+            variant=self.chain.state.account(found.address).variant,
             provisional=found.provisional,
             last_epoch=found.last_epoch,
             last_height=found.last_height,
@@ -645,6 +654,7 @@ class NodeService:
                 proof_id=record.proof_id,
                 match_id=transcript.certificate.match_id if transcript else None,
                 winner=record.winner,
+                variant=record.variant,
                 height=record.height,
             )
         for proof in self.mempool.proofs.values():
@@ -655,6 +665,7 @@ class NodeService:
                     proof_id=proof.proof_id,
                     match_id=proof.match_id,
                     winner=proof.winner,
+                    variant=proof.variant,
                     in_mempool=True,
                 )
         raise NotFoundError(f"unknown game {game_hash!r}")
@@ -753,6 +764,7 @@ class NodeService:
             epoch=epoch,
             round=round_number,
             seats=seats,
+            variant=certificate.variant if certificate is not None else "standard",
             certificate=certificate,
             transcript=transcript,
         )

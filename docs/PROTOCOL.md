@@ -1172,21 +1172,21 @@ an orphan block on `POST /v1/blocks` → 202.
 
 | Method | Path | Response |
 | --- | --- | --- |
-| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes |
-| GET | `/v1/params` | the network parameters |
-| GET | `/v1/blocks` | `BlockList`: newest first (`?limit=`, default 25, max 200; `?before_height=` for the next page) |
+| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals |
+| GET | `/v1/params` | the network parameters, including each variant and the asset it mints |
+| GET | `/v1/blocks` | `BlockList`: newest first (`?limit=`, default 25, max 200; `?before_height=` for the next page), with proof counts per variant |
 | GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |
 | POST | `/v1/blocks` | `BlockView`, or 202 when the parent is unknown |
-| GET | `/v1/accounts/{address}` | `AccountView`: network, balance, immature, bonded, nonce, registration, endpoint, engine, key, ban height |
+| GET | `/v1/accounts/{address}` | `AccountView`: network, native and per-asset balances, immature queues, bonded, nonce, registration variant, endpoint, engine, key, ban height |
 | GET | `/v1/epochs/{epoch}` | `EpochView`: beacon, roster, availability, quotas, matchable flag |
 | GET | `/v1/epochs/{epoch}/beacon` | `Beacon` (404 when the chain has none) |
 | GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |
-| GET | `/v1/ratings` | `RatingsView`: derived Glicko-2 rating per miner, strongest first (`?limit=`, default 100), plus the fixed-bucket distribution |
-| GET | `/v1/ratings/{address}` | `MinerRatingDetail`: rating, deviation, volatility, record, rank and one history point per epoch (the 1500 prior when the seat has no settled game) |
-| GET | `/v1/games` | `GameList`: pooled proofs first, then newest settle (`?limit=`, default 25, max 200; `?before_height=` and `?before_game_hash=` for the next page) |
-| GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, height, mempool flag |
+| GET | `/v1/ratings` | `RatingsView`: derived Glicko-2 rating per miner, strongest first (`?limit=`, default 100), each row naming the miner's registered variant, plus the fixed-bucket distribution |
+| GET | `/v1/ratings/{address}` | `MinerRatingDetail`: rating, deviation, volatility, record, rank, registered variant and one history point per epoch (the 1500 prior when the seat has no settled game) |
+| GET | `/v1/games` | `GameList`: pooled proofs first, then newest settle (`?limit=`, default 25, max 200; `?before_height=` and `?before_game_hash=` for the next page); every row names its variant |
+| GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, variant, height, mempool flag |
 | GET | `/v1/games/{game_hash}/pgn` | `GamePgn`: the move text the proof for that game carries (404 when this node holds no block body for it) |
-| GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, certificate, transcript |
+| GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, variant, certificate, transcript |
 | GET | `/v1/matches/{match_id}/transcript` | `Transcript` |
 | GET | `/v1/mempool` | `MempoolView`: pending txids and proof ids |
 | GET | `/v1/transactions/{txid}` | `TransactionRecord`: type, height, block hash, mempool flag |
@@ -1267,6 +1267,10 @@ every address that has settled a game. The rating is **derived, not committed**:
 - It is not in `state_root`. A node that has not synced a proof simply has a
   shorter history to replay; two nodes at the same tip replay the same blocks in
   the same order, and the node caches that replay by tip hash.
+- Each leaderboard row and detail view also names the miner's current registered
+  variant (`standard` or `chess960`, from the account), so a reader can tell
+  which discipline the rating belongs to. The Glicko-2 replay itself remains
+  global across variants.
 
 The parameters are the paper's: the prior is 1500 with deviation 350 and
 volatility 0.06, `tau = 0.5`, and one rating period is one block epoch. Every

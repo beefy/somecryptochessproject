@@ -119,22 +119,28 @@ export interface RegisterFields {
   endpoint: string;
   engine: string;
   publicKeyHex: string;
+  /** `standard` is the protocol-v1 default and is omitted from the payload. */
+  variant?: string;
 }
 
 /** The `register` transaction: a bond, an endpoint and an engine fingerprint. */
 export function buildRegister(fields: RegisterFields): Transaction {
+  const payload: Record<string, unknown> = {
+    public_key: fields.publicKeyHex.toLowerCase(),
+    endpoint: fields.endpoint,
+    engine: fields.engine,
+    bond: fields.bond,
+  };
+  if (fields.variant !== undefined && fields.variant !== "standard") {
+    payload.variant = fields.variant;
+  }
   return {
     network: fields.network,
     type: "register",
     from: fields.sender,
     nonce: fields.nonce,
     fee: fields.fee,
-    payload: {
-      public_key: fields.publicKeyHex.toLowerCase(),
-      endpoint: fields.endpoint,
-      engine: fields.engine,
-      bond: fields.bond,
-    },
+    payload,
   };
 }
 
@@ -186,21 +192,32 @@ export interface TransferFields {
   fee: number;
   /** Recipient, a bech32 address on the same network. */
   to: string;
-  /** Base units (1 SCCP = 100 000 000), always positive. */
+  /** Base units (one token unit = 10^-decimals), always positive. */
   amount: number;
   publicKeyHex: string;
+  /** A non-native asset id; omit for SCCP so the v1 payload stays byte-identical. */
+  asset?: string | null;
 }
 
 /**
- * The `transfer` transaction: `{to, amount, public_key}`, exactly the payload
- * `sccp.wallet.service.WalletService.build_transfer` signs.
+ * The `transfer` transaction: `{to, amount, asset?, public_key}`, exactly the
+ * payload `sccp.wallet.service.WalletService.build_transfer` signs.
  *
  * The chain's `_check_unknown_keys` makes this set strict, so nothing else may
  * be added here without a protocol change (`docs/BIG_PICTURE.md` section 5).
+ * A token transfer still pays its fee in native SCCP.
  */
 export function buildTransfer(fields: TransferFields): Transaction {
   if (!Number.isSafeInteger(fields.amount) || fields.amount <= 0) {
     throw new TxError(`a transfer amount must be a positive integer, got ${fields.amount}`);
+  }
+  const payload: Record<string, unknown> = {
+    to: fields.to,
+    amount: fields.amount,
+    public_key: fields.publicKeyHex.toLowerCase(),
+  };
+  if (fields.asset !== undefined && fields.asset !== null && fields.asset !== "") {
+    payload.asset = fields.asset;
   }
   return {
     network: fields.network,
@@ -208,11 +225,7 @@ export function buildTransfer(fields: TransferFields): Transaction {
     from: fields.sender,
     nonce: fields.nonce,
     fee: fields.fee,
-    payload: {
-      to: fields.to,
-      amount: fields.amount,
-      public_key: fields.publicKeyHex.toLowerCase(),
-    },
+    payload,
   };
 }
 

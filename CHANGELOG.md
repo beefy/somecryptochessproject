@@ -26,6 +26,16 @@ not itemised here.
   the relay opens one match per variant per round. The traffic generator's extra
   miner churn is disabled with `--extra-miners 0`, because the VM is sized for
   the four fixed miners.
+- **Explorer and wallet are multi-token and variant-aware.** The games list,
+  game/block detail, account page, Elo leaderboard and miner page name each
+  game's or miner's variant. The dashboard reports SCCP and C960 issuance, the
+  block list summarises each block's proofs by variant, and transaction pages
+  decode an asset transfer. The wallet shows SCCP and C960 balances separately,
+  the Receive tab lists every token one address holds, and Send has a token
+  picker with the SCCP fee shown for every asset. Play can register for either
+  variant, draws the certified Chess960 start position (including castling via
+  the 960 rules), and builds a proof with the variant's start FEN, hash and
+  minimum-ply rule.
 
 ## [0.23.0] - 2026-11-15
 

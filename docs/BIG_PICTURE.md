@@ -214,7 +214,7 @@ keyed by account and height.
 | View | Contents |
 | --- | --- |
 | Receive | bech32 address with checksum, QR, hybrid public-key fingerprint, network badge |
-| Send | asset picker (SCCP only until 0.23.0), amount, fee, recipient; a review screen showing the canonical payload digest and every field that will be signed |
+| Send | asset picker (native SCCP and each variant token, e.g. C960), amount, fee, recipient; a review screen showing the canonical payload digest and every field that will be signed |
 | Assets | per-asset balances, pending transactions, confirmed history, mining rewards |
 | Swap | quote, slippage, `min_out`, review, submit (workstream C) |
 | Bridge | orders, lock/claim/refund state machine with block heights (workstream D) |

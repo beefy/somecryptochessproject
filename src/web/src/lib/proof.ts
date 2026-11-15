@@ -98,7 +98,13 @@ export function buildWinProof(fields: BuildProofFields): WinProof {
       `the result claims ${result.plies} plies, the move list has ${fields.sanMoves.length}`,
     );
   }
-  const gameHash = canonicalGameHash(certificate.network, fields.sanMoves, result.result);
+  const gameHash = canonicalGameHash(
+    certificate.network,
+    fields.sanMoves,
+    result.result,
+    certificate.opening.start_fen,
+    certificate.variant,
+  );
   if (gameHash !== result.game_hash) {
     throw new ProofBuildError(
       `the moves hash to ${gameHash}, the co-signed result says ${result.game_hash}`,
@@ -145,6 +151,7 @@ export function buildWinProof(fields: BuildProofFields): WinProof {
     plies: result.plies,
     move_commitment: moveCommitment,
     low_ply: result.plies < params.min_plies,
+    variant: certificate.variant,
     opening: certificate.opening,
     pgn: fields.pgn,
     certificate,

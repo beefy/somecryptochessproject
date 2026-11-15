@@ -14,6 +14,7 @@ import { Button, Divider, Text } from "react-native-paper";
 import { fetchBlock } from "../api";
 import { CodeBlock, FailureNotice, KeyValue, Link, Loading, Mono, Section, StatusPill } from "../components/Chrome";
 import { formatAge, formatInteger, formatTimestamp, prettyJson, shortAddress } from "../lib/format";
+import { variantLabel, variantShort } from "../lib/assets";
 import { useNode } from "../node";
 import { navigate } from "../router";
 import { useNow, useResource } from "../useResource";
@@ -158,7 +159,7 @@ function ProofCard({ proof }: { proof: WinProof }): ReactNode {
   return (
     <View style={styles.proof}>
       <View style={styles.txRow}>
-        <StatusPill label={`${proof.result} · ${proof.winner_seat}`} tone="good" />
+        <StatusPill label={`${variantShort(proof.variant)} · ${proof.result} · ${proof.winner_seat}`} tone="good" />
         <Text variant="bodyMedium">
           {shortAddress(proof.winner)} beat {shortAddress(proof.loser)}
         </Text>
@@ -166,6 +167,12 @@ function ProofCard({ proof }: { proof: WinProof }): ReactNode {
           {proof.plies} plies · epoch {proof.epoch} round {proof.round}
         </Text>
       </View>
+      <KeyValue label="Variant" mono>
+        {`${variantLabel(proof.variant)} · ${proof.variant}`}
+      </KeyValue>
+      <KeyValue label="Start position">
+        <Mono copy>{proof.opening.start_fen}</Mono>
+      </KeyValue>
       <KeyValue label="Game">
         <Link href={`#/games/${proof.game_hash}`} mono>
           {proof.game_hash}

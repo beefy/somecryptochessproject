@@ -113,20 +113,25 @@ export function resultPayload(result: ResultFields): Record<string, string | num
  * `H("sccp/v1/game", {network, start_fen, san_list, result})` as hex.
  *
  * Headers, clocks and PGN formatting are excluded on purpose: two transcripts of
- * the same moves and result hash identically.
+ * the same moves and result hash identically. Non-standard games add `variant`
+ * so a short PGN cannot be replayed under different rules. Standard hashes stay
+ * byte-identical to protocol v1.
  */
 export function canonicalGameHash(
   network: string,
   sanMoves: readonly string[],
   result: ResultValue,
   startFen: string = STARTING_FEN,
+  variant: string = "standard",
 ): string {
-  return domainHex(DOMAINS.GAME, {
+  const payload: Record<string, unknown> = {
     network,
     start_fen: startFen,
     san_list: [...sanMoves],
     result,
-  });
+  };
+  if (variant !== "standard") payload.variant = variant;
+  return domainHex(DOMAINS.GAME, payload);
 }
 
 /** `sha256` of an arbitrary string, used for the demo table's beacon. */

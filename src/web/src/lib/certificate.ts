@@ -14,7 +14,7 @@ import { sortedSeats } from "./protocol";
 
 /** The exact payload a seat signs to join a match (PROTOCOL.md section 8.1). */
 export function certificatePayload(certificate: MatchCertificate): Record<string, unknown> {
-  return {
+  const payload: Record<string, unknown> = {
     network: certificate.network,
     match_id: certificate.match_id,
     epoch: certificate.epoch,
@@ -28,6 +28,11 @@ export function certificatePayload(certificate: MatchCertificate): Record<string
       black: certificate.engine_black,
     },
   };
+  if (certificate.variant !== "standard") {
+    payload.variant = certificate.variant;
+    payload.start_fen = certificate.opening.start_fen;
+  }
+  return payload;
 }
 
 function controlFields(control: TimeControl): Record<string, number> {
@@ -36,11 +41,16 @@ function controlFields(control: TimeControl): Record<string, number> {
 
 /** `H("sccp/v1/opening", {book_version, line_id, moves})` as hex. */
 export function openingHash(opening: OpeningRef): string {
-  return domainHex(DOMAINS.OPENING, {
+  const payload: Record<string, unknown> = {
     book_version: opening.book_version,
     line_id: opening.line_id,
     moves: [...opening.moves],
-  });
+  };
+  if (opening.variant !== "standard") {
+    payload.start_fen = opening.start_fen;
+    payload.variant = opening.variant;
+  }
+  return domainHex(DOMAINS.OPENING, payload);
 }
 
 /**

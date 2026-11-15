@@ -25,6 +25,7 @@ from sccp.protocol.models import (
     TerminationValue,
     Transcript,
     TxType,
+    VariantName,
 )
 
 
@@ -120,6 +121,7 @@ class GameView(ProtocolModel):
     proof_id: str | None = None
     match_id: str | None = None
     winner: str | None = None
+    variant: VariantName = "standard"
     height: int | None = Field(default=None, ge=0)
     in_mempool: bool = False
 
@@ -145,6 +147,7 @@ class MatchInfo(ProtocolModel):
     epoch: int = Field(ge=0)
     round: int = Field(ge=0)
     seats: tuple[str, str]
+    variant: VariantName = "standard"
     certificate: MatchCertificate | None = None
     transcript: Transcript | None = None
 
@@ -257,6 +260,7 @@ class BlockSummary(ProtocolModel):
     miner: AddressText
     transactions: int = Field(ge=0)
     proofs: int = Field(ge=0)
+    variants: dict[str, int] = Field(default_factory=dict)
     wins_required: int = Field(ge=1)
     seal_bits: int = Field(ge=0, le=32)
 
@@ -289,6 +293,7 @@ class GameSummary(ProtocolModel):
     result: ResultValue | None = None
     termination: TerminationValue | None = None
     plies: int | None = Field(default=None, ge=1)
+    variant: VariantName = "standard"
     height: int | None = Field(default=None, ge=0)
     in_mempool: bool = False
     low_ply: bool = False
@@ -378,6 +383,7 @@ class MinerRatingView(ProtocolModel):
     wins: int = Field(ge=0)
     draws: int = Field(ge=0)
     losses: int = Field(ge=0)
+    variant: VariantName = "standard"
     provisional: bool
     last_epoch: int = Field(ge=0)
     last_height: int = Field(ge=0)
@@ -401,6 +407,7 @@ class MinerRatingDetail(ProtocolModel):
     wins: int = Field(ge=0)
     draws: int = Field(ge=0)
     losses: int = Field(ge=0)
+    variant: VariantName = "standard"
     provisional: bool
     last_epoch: int | None = Field(default=None, ge=0)
     last_height: int | None = Field(default=None, ge=0)

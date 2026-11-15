@@ -378,6 +378,12 @@
             "minimum": 0.0,
             "type": "integer"
           },
+          "variants": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
           "wins_required": {
             "minimum": 1.0,
             "type": "integer"
@@ -992,6 +998,13 @@
               }
             ]
           },
+          "variant": {
+            "default": "standard",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_-]+$",
+            "type": "string"
+          },
           "winner": {
             "maxLength": 90,
             "minLength": 8,
@@ -1064,6 +1077,13 @@
                 "type": "null"
               }
             ]
+          },
+          "variant": {
+            "default": "standard",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_-]+$",
+            "type": "string"
           },
           "winner": {
             "anyOf": [
@@ -1304,6 +1324,13 @@
                 "type": "null"
               }
             ]
+          },
+          "variant": {
+            "default": "standard",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_-]+$",
+            "type": "string"
           }
         },
         "required": [
@@ -1433,6 +1460,13 @@
           "rating": {
             "type": "number"
           },
+          "variant": {
+            "default": "standard",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_-]+$",
+            "type": "string"
+          },
           "volatility": {
             "exclusiveMinimum": 0.0,
             "type": "number"
@@ -1498,6 +1532,13 @@
           },
           "rating": {
             "type": "number"
+          },
+          "variant": {
+            "default": "standard",
+            "maxLength": 32,
+            "minLength": 1,
+            "pattern": "^[a-z0-9_-]+$",
+            "type": "string"
           },
           "volatility": {
             "exclusiveMinimum": 0.0,

@@ -11,6 +11,26 @@ export type Color = "white" | "black";
 export type ResultValue = "1-0" | "0-1" | "1/2-1/2";
 export type TerminationValue = "checkmate" | "draw" | "resignation" | "time_forfeit";
 
+/** A network-defined chess variant, e.g. `standard` or `chess960`. */
+export type VariantName = string;
+
+/** One variant and the asset its settled proofs mint (`GET /v1/params`). */
+export interface VariantParams {
+  name: VariantName;
+  rules: string;
+  /** `null` for standard chess: its proofs mint native SCCP. */
+  asset: string | null;
+  symbol: string;
+  display_name: string;
+  decimals: number;
+  subsidy: number;
+  halving_interval: number | null;
+  max_supply: number | null;
+  min_plies: number;
+  max_games_per_block: number;
+  opening_book: string;
+}
+
 export interface MempoolStatus {
   transactions: number;
   proofs: number;
@@ -25,6 +45,10 @@ export interface NodeStatus {
   peers: number;
   syncing: boolean;
   mempool: MempoolStatus;
+  /** Native SCCP minted so far, in base units. */
+  minted: number;
+  /** Asset id -> minted base units for every non-native variant token. */
+  minted_assets: Record<string, number>;
 }
 
 export interface NetworkParams {
@@ -54,6 +78,8 @@ export interface NetworkParams {
   max_plies: number;
   nodes_per_move: number;
   book_version: string;
+  /** Every settled variant, standard first; non-native entries mint assets. */
+  variants: VariantParams[];
   max_block_bytes: number;
   max_pgn_bytes: number;
   max_tx_bytes: number;
@@ -72,6 +98,8 @@ export interface BlockSummary {
   miner: string;
   transactions: number;
   proofs: number;
+  /** Proof count per variant, e.g. `{standard: 1, chess960: 0}` omitted when empty. */
+  variants: Record<string, number>;
   wins_required: number;
   seal_bits: number;
 }
@@ -123,6 +151,8 @@ export interface OpeningRef {
   line_id: number;
   hash: string;
   moves: string[];
+  start_fen: string;
+  variant: VariantName;
 }
 
 export interface TimeControl {
@@ -141,9 +171,10 @@ export interface MatchCertificate {
   white: string;
   black: string;
   opening: OpeningRef;
-  time_control: TimeControl;
   engine_white: EngineFingerprint;
   engine_black: EngineFingerprint;
+  variant: VariantName;
+  time_control: TimeControl;
   start_signatures: Record<string, string>;
 }
 
@@ -181,6 +212,7 @@ export interface WinProof {
   /** The commit-to-the-move-stream root; the result signatures cover it. */
   move_commitment: string;
   low_ply: boolean;
+  variant: VariantName;
   opening: OpeningRef;
   pgn: string;
   certificate: MatchCertificate;
@@ -230,6 +262,7 @@ export interface GameSummary {
   result: ResultValue | null;
   termination: TerminationValue | null;
   plies: number | null;
+  variant: VariantName;
   height: number | null;
   in_mempool: boolean;
   low_ply: boolean;
@@ -246,6 +279,7 @@ export interface GameView {
   proof_id: string | null;
   match_id: string | null;
   winner: string | null;
+  variant: VariantName;
   height: number | null;
   in_mempool: boolean;
 }
@@ -263,6 +297,7 @@ export interface MatchInfo {
   epoch: number;
   round: number;
   seats: [string, string];
+  variant: VariantName;
   certificate: MatchCertificate | null;
   transcript: Transcript | null;
 }
@@ -284,6 +319,12 @@ export interface AccountView {
   registered_until_epoch: number | null;
   endpoint: string | null;
   engine: string | null;
+  /** The variant this account registered for. */
+  variant: VariantName;
+  /** Asset id -> spendable base units for every non-native token. */
+  assets: Record<string, number>;
+  /** Asset id -> immature base units, e.g. a C960 block reward. */
+  immature_assets: Record<string, number>;
   public_key: string | null;
   banned_until: number;
 }
@@ -342,6 +383,7 @@ export interface EpochView {
 export interface RosterMemberView {
   public_key: string;
   engine: string | null;
+  variant: VariantName;
   max_games: number;
   funder?: string | null;
   subnet?: string | null;
@@ -455,6 +497,7 @@ export interface Matchup {
   round: number;
   white: string;
   black: string;
+  variant: VariantName;
 }
 
 /** The relay's lifecycle states for a session. */
@@ -504,6 +547,7 @@ export interface MinerRating {
   wins: number;
   draws: number;
   losses: number;
+  variant: VariantName;
   provisional: boolean;
   last_epoch: number;
   last_height: number;
@@ -553,6 +597,7 @@ export interface MinerRatingDetail {
   wins: number;
   draws: number;
   losses: number;
+  variant: VariantName;
   provisional: boolean;
   last_epoch: number | null;
   last_height: number | null;

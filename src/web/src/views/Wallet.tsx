@@ -41,8 +41,16 @@ import {
 } from "../components/Chrome";
 import { useNotice } from "../components/Notices";
 import { labelFor, readContacts } from "../lib/contacts";
+import { tokenImmature, tokensFor, tokenBalance } from "../lib/assets";
 import { downloadText, keyfileName } from "../lib/download";
-import { formatAmount, formatDuration, formatInteger, shortAddress, shortHash } from "../lib/format";
+import {
+  formatAmount,
+  formatDuration,
+  formatInteger,
+  formatTokenAmount,
+  shortAddress,
+  shortHash,
+} from "../lib/format";
 import type { HybridKeypair } from "../lib/keys";
 import { keyfileText, unlockKeyfile, type KeyfileDocument } from "../lib/keystore";
 import {
@@ -285,7 +293,7 @@ export function Wallet({
       setPending(next);
       const name = labelFor(readContacts(), tx.to) ?? shortAddress(tx.to);
       notify(
-        `sent ${formatAmount(tx.amount)} to ${name} · pending at nonce ${formatInteger(tx.nonce)}`,
+        `sent ${formatTokenAmount(tx.amount, tx.symbol ?? "SCCP")} to ${name} · pending at nonce ${formatInteger(tx.nonce)}`,
       );
     },
     [notify, session],
@@ -336,6 +344,7 @@ export function Wallet({
     }
 
     const { record, keypair } = session;
+    const tokens = tokensFor(params.data);
 
     if (view === "play") {
       return (
@@ -370,6 +379,7 @@ export function Wallet({
             network={record.network}
             account={accountView}
             minFee={params.data.min_fee}
+            tokens={tokens}
             pendingNonce={pendingNonce}
             onAccepted={accepted}
             onPendingNonce={setPendingNonce}
@@ -407,9 +417,22 @@ export function Wallet({
               {record.network}
             </KeyValue>
             {accountView !== null && (
-              <KeyValue label="Spendable now" mono>
-                {formatAmount(accountView.balance)}
-              </KeyValue>
+              <View style={styles.tokenBlock}>
+                <Text variant="titleSmall">Can receive</Text>
+                {tokens.map((token) => (
+                  <KeyValue key={token.asset ?? "native"} label={token.symbol} mono>
+                    {formatTokenAmount(
+                      tokenBalance(accountView, token),
+                      token.symbol,
+                      token.decimals,
+                    )}
+                  </KeyValue>
+                ))}
+                <HelperText type="info" visible>
+                  One address holds every token this network settles; the sender chooses SCCP or
+                  a variant asset such as C960. The fee is always paid in SCCP.
+                </HelperText>
+              </View>
             )}
             {account.error !== undefined && <FailureNotice error={account.error} />}
           </Section>
@@ -558,32 +581,49 @@ export function Wallet({
           <Loading />
         ) : (
           <Section
-            title="Balance"
-            subtitle="as the node reports it, refreshed every few seconds"
+            title="Balances"
+            subtitle="as the node reports them, refreshed every few seconds"
             action={
               <Button compact mode="outlined" onPress={() => account.reload()}>
                 Refresh
               </Button>
             }
           >
-            <KeyValue label="Spendable" mono>
-              {formatAmount(accountView.balance)}
-            </KeyValue>
-            <KeyValue label="Immature" mono>
-              {formatAmount(accountView.immature)}
-            </KeyValue>
-            <KeyValue label="Bonded" mono>
-              {formatAmount(accountView.bonded)}
-            </KeyValue>
-            <KeyValue label="Total" mono>
-              {formatAmount(accountView.total)}
-            </KeyValue>
+            {tokens.map((token) => {
+              const spendable = tokenBalance(accountView, token);
+              const immature = tokenImmature(accountView, token);
+              return (
+                <View key={token.asset ?? "native"} style={styles.tokenBlock}>
+                  <Text variant="titleSmall">
+                    {token.name} · {token.symbol}
+                  </Text>
+                  <KeyValue label="Spendable" mono>
+                    {formatTokenAmount(spendable, token.symbol, token.decimals)}
+                  </KeyValue>
+                  {immature > 0 && (
+                    <KeyValue label="Immature" mono>
+                      {formatTokenAmount(immature, token.symbol, token.decimals)}
+                    </KeyValue>
+                  )}
+                  {token.native && (
+                    <>
+                      <KeyValue label="Bonded" mono>
+                        {formatAmount(accountView.bonded)}
+                      </KeyValue>
+                      <KeyValue label="Total SCCP" mono>
+                        {formatAmount(accountView.total)}
+                      </KeyValue>
+                    </>
+                  )}
+                </View>
+              );
+            })}
             <KeyValue label="Next nonce" mono>
               {formatInteger(pendingNonce ?? accountView.nonce)}
             </KeyValue>
             {pending.map((entry) => (
               <KeyValue key={entry.txid} label="Pending">
-                {formatAmount(entry.amount)} to{" "}
+                {formatTokenAmount(entry.amount, entry.symbol ?? "SCCP")} to{" "}
                 {labelFor(readContacts(), entry.to) ?? shortAddress(entry.to)} · nonce{" "}
                 {formatInteger(entry.nonce)}
               </KeyValue>
@@ -626,5 +666,11 @@ const styles = StyleSheet.create({
   titleBlock: { gap: 4, flexShrink: 1 },
   titleActions: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" },
   actions: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  tokenBlock: {
+    gap: 2,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(128,128,128,0.24)",
+  },
   muted: { opacity: 0.66 },
 });

@@ -14,14 +14,13 @@
  * single opaque "invalid".
  */
 
-import { Chess } from "chess.js";
-
 import type { WinProof } from "../types";
 import { DOMAINS, fromHex } from "./canonical";
 import { certificatePayload, openingHash } from "./certificate";
 import { certificateMoveRoot } from "./commitment";
 import { canonicalGameHash, matchId, resultPayload, whiteSeat } from "./protocol";
 import { proofId } from "./proof";
+import { VariantGame } from "./variantGame";
 
 export interface VerifyParams {
   network_id: string;
@@ -81,7 +80,7 @@ export function verifyProof(
   context: VerifyContext,
 ): { ok: boolean; checks: CheckResult[] } {
   const checks: CheckResult[] = [];
-  const replay = new Chess();
+  const replay = new VariantGame(proof.variant, proof.opening.start_fen);
 
   const skip = (rule: string, detail: string): void => {
     checks.push({ rule, ok: true, skipped: true, detail });
@@ -116,6 +115,11 @@ export function verifyProof(
     require(cert.match_id === proof.match_id, "certificate match id differs from the proof");
     require(cert.epoch === proof.epoch, "certificate epoch differs from the proof");
     require(cert.round === proof.round, "certificate round differs from the proof");
+    require(cert.variant === proof.variant, "certificate variant differs from the proof");
+    require(
+      cert.opening.start_fen === proof.opening.start_fen,
+      "certificate and proof name different start positions",
+    );
     require(cert.white !== cert.black, "the two seats are the same address");
     require(proof.round < context.params.rounds_per_epoch, "round is outside the epoch");
     const seats = [cert.white, cert.black];
@@ -175,7 +179,7 @@ export function verifyProof(
   });
 
   run("pgn replay", () => {
-    replay.loadPgn(proof.pgn);
+    require(replay.loadPgn(proof.pgn), "the PGN has a move that is illegal in this variant");
     const history = replay.history();
     require(
       history.length === proof.plies,
@@ -195,7 +199,7 @@ export function verifyProof(
     require(history.length >= 1, "a proof needs at least one move");
     if (proof.termination === "checkmate") {
       require(replay.isCheckmate(), "the replayed position is not checkmate");
-      const expected = replay.turn() === "w" ? "0-1" : "1-0";
+      const expected = replay.turn === "w" ? "0-1" : "1-0";
       require(proof.result === expected, `checkmate scores ${expected}, the proof says ${proof.result}`);
     } else if (proof.termination === "draw") {
       require(replay.isDraw() || replay.isStalemate(), "the replayed position is not a draw");
@@ -205,7 +209,13 @@ export function verifyProof(
   });
 
   run("game hash", () => {
-    const expected = canonicalGameHash(proof.network, replay.history(), proof.result);
+    const expected = canonicalGameHash(
+      proof.network,
+      replay.history(),
+      proof.result,
+      proof.opening.start_fen,
+      proof.variant,
+    );
     require(expected === proof.game_hash, `the replayed game hashes to ${expected}`);
     return expected;
   });

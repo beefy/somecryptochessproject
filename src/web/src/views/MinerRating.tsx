@@ -24,6 +24,7 @@ import {
 } from "../components/Chrome";
 import { GameTable } from "../components/GameTable";
 import { LineChart } from "../components/LineChart";
+import { variantLabel } from "../lib/assets";
 import { formatInteger, formatRating, shortAddress } from "../lib/format";
 import type { RatingPoint } from "../types";
 import { useResource } from "../useResource";
@@ -72,6 +73,7 @@ export function MinerRating({ address }: { address: string }): ReactNode {
           <Mono copy>{view.address}</Mono>
         </View>
         <View style={styles.titleActions}>
+          <StatusPill label={variantLabel(view.variant)} tone="info" />
           {view.rank !== null && (
             <StatusPill label={`rank #${formatInteger(view.rank)}`} tone="info" />
           )}
@@ -125,6 +127,9 @@ export function MinerRating({ address }: { address: string }): ReactNode {
       <Section title="Details" subtitle="what the rating was computed from">
         <KeyValue label="Account">
           <Link href={`#/accounts/${view.address}`}>balances and registration</Link>
+        </KeyValue>
+        <KeyValue label="Variant" mono>
+          {`${variantLabel(view.variant)} · ${view.variant}`}
         </KeyValue>
         <KeyValue label="Volatility" mono>
           {formatRating(view.volatility, 5)}
