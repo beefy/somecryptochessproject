@@ -33,3 +33,44 @@ describe("Elo routes", () => {
     expect(activeSection({ name: "miner", address: ADDRESS })).toBe("ratings");
   });
 });
+
+describe("wallet routes", () => {
+  it("parses the wallet landing page", () => {
+    expect(parseRoute("#/wallet")).toEqual({ name: "wallet" });
+    expect(routeHash({ name: "wallet" })).toBe("#/wallet");
+  });
+
+  it("round-trips each wallet section", () => {
+    for (const [path, name] of [
+      ["#/wallet/play", "walletPlay"],
+      ["#/wallet/send", "walletSend"],
+      ["#/wallet/receive", "walletReceive"],
+      ["#/wallet/history", "walletHistory"],
+      ["#/wallet/settings", "walletSettings"],
+    ] as const) {
+      const route = parseRoute(path);
+      expect(route).toEqual({ name });
+      expect(routeHash(route)).toBe(path);
+    }
+  });
+
+  it("keeps the old #/play link as an alias for the wallet table", () => {
+    expect(parseRoute("#/play")).toEqual({ name: "walletPlay" });
+    expect(routeHash({ name: "walletPlay" })).toBe("#/wallet/play");
+    expect(activeSection({ name: "walletPlay" })).toBe("walletPlay");
+  });
+
+  it("refuses unknown and over-long wallet paths", () => {
+    expect(parseRoute("#/wallet/nope")).toEqual({ name: "notFound", path: "/wallet/nope" });
+    expect(parseRoute("#/wallet/send/extra")).toEqual({
+      name: "notFound",
+      path: "/wallet/send/extra",
+    });
+  });
+
+  it("lights up the matching tab", () => {
+    expect(activeSection({ name: "wallet" })).toBe("wallet");
+    expect(activeSection({ name: "walletSend" })).toBe("walletSend");
+    expect(activeSection({ name: "walletSettings" })).toBe("walletSettings");
+  });
+});

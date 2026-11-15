@@ -14,9 +14,15 @@ export type Route =
   | { name: "game"; gameHash: string }
   | { name: "ratings" }
   | { name: "miner"; address: string }
-  | { name: "play" }
   | { name: "account"; address: string }
+  | { name: "wallet" }
+  | { name: "walletPlay" }
+  | { name: "walletSend" }
+  | { name: "walletReceive" }
+  | { name: "walletHistory" }
+  | { name: "walletSettings" }
   | { name: "notFound"; path: string };
+
 
 /** Parse `location.hash` (or a bare path) into a route. */
 export function parseRoute(hash: string): Route {
@@ -34,12 +40,33 @@ export function parseRoute(hash: string): Route {
       return { name: "ratings" };
     case "miners":
       return second === undefined ? { name: "notFound", path } : { name: "miner", address: decode(second) };
+    // The table moved into the wallet; the old `#/play` link keeps working as an
+    // alias, and lands on the same page the wallet's Play tab uses.
     case "play":
-      return { name: "play" };
+      return { name: "walletPlay" };
     case "accounts":
       return second === undefined ? { name: "notFound", path } : { name: "account", address: decode(second) };
+    case "wallet": {
+      if (second === undefined) return { name: "wallet" };
+      if (segments.length > 2) return { name: "notFound", path };
+      switch (second) {
+        case "send":
+          return { name: "walletSend" };
+        case "receive":
+          return { name: "walletReceive" };
+        case "play":
+          return { name: "walletPlay" };
+        case "history":
+          return { name: "walletHistory" };
+        case "settings":
+          return { name: "walletSettings" };
+        default:
+          return { name: "notFound", path };
+      }
+    }
     default:
       return { name: "notFound", path };
+
   }
 }
 
@@ -68,10 +95,20 @@ export function routeHash(route: Route): string {
       return "#/ratings";
     case "miner":
       return `#/miners/${encodeURIComponent(route.address)}`;
-    case "play":
-      return "#/play";
     case "account":
       return `#/accounts/${encodeURIComponent(route.address)}`;
+    case "wallet":
+      return "#/wallet";
+    case "walletPlay":
+      return "#/wallet/play";
+    case "walletSend":
+      return "#/wallet/send";
+    case "walletReceive":
+      return "#/wallet/receive";
+    case "walletHistory":
+      return "#/wallet/history";
+    case "walletSettings":
+      return "#/wallet/settings";
     case "notFound":
       return `#/${route.path}`;
   }
@@ -100,9 +137,20 @@ export function useRoute(): Route {
 }
 
 /** Which nav tab is active for `route`. */
-export function activeSection(
-  route: Route,
-): "dashboard" | "blocks" | "games" | "ratings" | "play" | "account" {
+export type Section =
+  | "dashboard"
+  | "blocks"
+  | "games"
+  | "ratings"
+  | "account"
+  | "wallet"
+  | "walletPlay"
+  | "walletSend"
+  | "walletReceive"
+  | "walletHistory"
+  | "walletSettings";
+
+export function activeSection(route: Route): Section {
   switch (route.name) {
     case "blocks":
     case "block":
@@ -113,10 +161,20 @@ export function activeSection(
     case "ratings":
     case "miner":
       return "ratings";
-    case "play":
-      return "play";
     case "account":
       return "account";
+    case "wallet":
+      return "wallet";
+    case "walletPlay":
+      return "walletPlay";
+    case "walletSend":
+      return "walletSend";
+    case "walletReceive":
+      return "walletReceive";
+    case "walletHistory":
+      return "walletHistory";
+    case "walletSettings":
+      return "walletSettings";
     default:
       return "dashboard";
   }

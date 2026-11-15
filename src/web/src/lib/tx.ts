@@ -178,6 +178,55 @@ export interface RevealFields {
   publicKeyHex: string;
 }
 
+/** The `transfer` transaction that moves SCCP between accounts. */
+export interface TransferFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  /** Recipient, a bech32 address on the same network. */
+  to: string;
+  /** Base units (1 SCCP = 100 000 000), always positive. */
+  amount: number;
+  publicKeyHex: string;
+}
+
+/**
+ * The `transfer` transaction: `{to, amount, public_key}`, exactly the payload
+ * `sccp.wallet.service.WalletService.build_transfer` signs.
+ *
+ * The chain's `_check_unknown_keys` makes this set strict, so nothing else may
+ * be added here without a protocol change (`docs/BIG_PICTURE.md` section 5).
+ */
+export function buildTransfer(fields: TransferFields): Transaction {
+  if (!Number.isSafeInteger(fields.amount) || fields.amount <= 0) {
+    throw new TxError(`a transfer amount must be a positive integer, got ${fields.amount}`);
+  }
+  return {
+    network: fields.network,
+    type: "transfer",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload: {
+      to: fields.to,
+      amount: fields.amount,
+      public_key: fields.publicKeyHex.toLowerCase(),
+    },
+  };
+}
+
+export interface RevealFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  /** The epoch the commitment was made for; a reveal is only valid at `epoch - 1`. */
+  epoch: number;
+  nonceSecret: string;
+  publicKeyHex: string;
+}
+
 /** The `reveal` transaction that opens a committed epoch's roster slot. */
 export function buildReveal(fields: RevealFields): Transaction {
   return {

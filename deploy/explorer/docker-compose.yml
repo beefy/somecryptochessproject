@@ -1,6 +1,10 @@
-# The explorer's static host: an nginx origin that serves the uploaded release
+# The web app's static host: an nginx origin that serves the uploaded release
 # and puts the node and the relay on the same origin, behind a Caddy container
 # that terminates TLS.
+#
+# It answers whatever Host arrives, so the same release directory and the same
+# container serve `explorer.chessproofofwork.com` and
+# `wallet.chessproofofwork.com`; only Caddy's site blocks name them.
 #
 # Both proxies exist because the node sends no CORS headers: a page served from
 # one origin cannot read /v1 on another, and `#/play` signs payloads for both.

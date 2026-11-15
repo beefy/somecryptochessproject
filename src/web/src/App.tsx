@@ -8,10 +8,12 @@
 
 import { Component, lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
-import { Banner, Button, IconButton, PaperProvider, Surface, Text, useTheme } from "react-native-paper";
+import { Banner, Button, PaperProvider, Surface, Text, useTheme } from "react-native-paper";
 
+import { AppMenu } from "./components/AppMenu";
 import { Anchor, Loading, Page } from "./components/Chrome";
 import { formatInteger, shortHash } from "./lib/format";
+import { currentSite } from "./lib/site";
 import { NodeProvider, useNode } from "./node";
 import { activeSection, navigate, useRoute, type Route } from "./router";
 import { darkTheme, lightTheme, ThemeModeContext, preferredMode, useThemeMode, type ThemeMode } from "./theme";
@@ -26,21 +28,31 @@ import { NotFound } from "./views/NotFound";
 import { Ratings } from "./views/Ratings";
 
 /**
- * The table pulls in `chess.js`, which the explorer itself never needs, so it
- * loads on demand: an explorer visit should not pay for a move generator.
+ * The wallet pulls in scrypt, ML-DSA-65 key derivation and the BIP-39 wordlist.
+ * Loaded on demand for the same reason: most explorer visits never open it, and
+ * on the wallet subdomain it is the first and only thing asked for.
  */
-const Play = lazy(async () => {
-  const module = await import("./views/Play");
-  return { default: module.Play };
+const Wallet = lazy(async () => {
+  const module = await import("./views/Wallet");
+  return { default: module.Wallet };
 });
 
-const SECTIONS = [
+const EXPLORER_SECTIONS = [
   { key: "dashboard", label: "Overview", href: "#/" },
   { key: "blocks", label: "Blocks", href: "#/blocks" },
   { key: "games", label: "Games", href: "#/games" },
   { key: "ratings", label: "Elo", href: "#/ratings" },
-  { key: "play", label: "Play", href: "#/play" },
 ] as const;
+
+const WALLET_SECTIONS = [
+  { key: "wallet", label: "Overview", href: "#/wallet" },
+  { key: "walletPlay", label: "Play", href: "#/wallet/play" },
+  { key: "walletSend", label: "Send", href: "#/wallet/send" },
+  { key: "walletReceive", label: "Receive", href: "#/wallet/receive" },
+  { key: "walletHistory", label: "History", href: "#/wallet/history" },
+  { key: "walletSettings", label: "Settings", href: "#/wallet/settings" },
+] as const;
+
 
 export function App(): ReactNode {
   const [mode, setMode] = useState<ThemeMode>(preferredMode);
@@ -66,26 +78,42 @@ function Shell(): ReactNode {
   const paper = useTheme();
   const { width } = useWindowDimensions();
   const compact = width < 720;
-  const section = activeSection(route);
+  const site = currentSite();
+  // The wallet shows its own tabs wherever it is open -- the wallet subdomain,
+  // `explorer/#/wallet`, or a dev server -- so "Send" is a tab and not a detour
+  // through the hamburger. The hamburger itself only switches sites.
+  const walletOpen =
+    site === "wallet" ||
+    route.name === "wallet" ||
+    route.name === "walletPlay" ||
+    route.name === "walletSend" ||
+    route.name === "walletReceive" ||
+    route.name === "walletHistory" ||
+    route.name === "walletSettings";
+  const section =
+    walletOpen && route.name === "dashboard" ? "wallet" : activeSection(route);
   const offline = status.error !== undefined;
+  const sections = walletOpen ? WALLET_SECTIONS : EXPLORER_SECTIONS;
 
   return (
     <View style={[styles.root, { backgroundColor: paper.colors.background }]}>
       <Surface elevation={2} style={styles.header}>
         <View style={styles.headerRow}>
-          <Anchor href="#/" onPress={() => navigate("#/")} style={styles.brand}>
+          <AppMenu />
+
+          <Anchor href="#/" onPress={() => navigate(walletOpen ? "#/wallet" : "#/")} style={styles.brand}>
             <Text variant="titleLarge" style={styles.brandText}>
               SCCP
             </Text>
             {!compact && (
               <Text variant="bodySmall" style={styles.brandSub}>
-                explorer
+                {walletOpen ? "wallet" : site}
               </Text>
             )}
           </Anchor>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nav}>
-            {SECTIONS.map((item) => {
+            {sections.map((item) => {
               const active = item.key === section;
               return (
                 <Anchor key={item.key} href={item.href} onPress={() => navigate(item.href)} style={styles.navItem}>
@@ -104,12 +132,11 @@ function Shell(): ReactNode {
                 {formatInteger(status.data.height)}
               </Text>
             )}
-            <IconButton
-              icon={mode === "dark" ? "weather-sunny" : "weather-night"}
-              size={20}
-              onPress={toggle}
-              accessibilityLabel="Toggle colour scheme"
-            />
+            {/* A label, not an icon: no icon library ships with this bundle, so
+                `IconButton icon="weather-night"` renders an empty circle. */}
+            <Button compact mode="text" onPress={toggle} accessibilityLabel="Toggle colour scheme">
+              {mode === "dark" ? "Light" : "Dark"}
+            </Button>
           </View>
         </View>
         {status.data !== undefined && (
@@ -183,7 +210,13 @@ class RouteBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-/** A stable identity per route, so a boundary reset does not leak between pages. */
+/**
+ * A stable identity per route, so a boundary reset does not leak between pages.
+ *
+ * Every wallet route shares one key: the wallet holds its unlocked keypair in
+ * component state, and a fresh key per tab would lock the user out on every tab
+ * click. Switching tabs changes the `view` prop, not the component's identity.
+ */
 function routeKey(route: Route): string {
   switch (route.name) {
     case "block":
@@ -196,15 +229,40 @@ function routeKey(route: Route): string {
       return `account:${route.address}`;
     case "notFound":
       return `notFound:${route.path}`;
+    case "dashboard":
+      return currentSite() === "wallet" ? "wallet" : "dashboard";
+    case "wallet":
+    case "walletPlay":
+    case "walletSend":
+    case "walletReceive":
+    case "walletHistory":
+    case "walletSettings":
+      return "wallet";
     default:
       return route.name;
   }
 }
 
+/**
+ * The wallet, lazily: `#/` on the wallet subdomain is its landing page, so the
+ * site's default route and `#/wallet` render the same view.
+ */
+function WalletRoute({
+  view,
+}: {
+  view: "overview" | "play" | "send" | "receive" | "history" | "settings";
+}): ReactNode {
+  return (
+    <Suspense fallback={<Loading />}>
+      <Wallet view={view} />
+    </Suspense>
+  );
+}
+
 function RouteView({ route }: { route: Route }): ReactNode {
   switch (route.name) {
     case "dashboard":
-      return <Dashboard />;
+      return currentSite() === "wallet" ? <WalletRoute view="overview" /> : <Dashboard />;
     case "blocks":
       return <Blocks />;
     case "block":
@@ -217,14 +275,20 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <Ratings />;
     case "miner":
       return <MinerRating address={route.address} />;
-    case "play":
-      return (
-        <Suspense fallback={<Loading />}>
-          <Play />
-        </Suspense>
-      );
     case "account":
       return <AccountView address={route.address} />;
+    case "wallet":
+      return <WalletRoute view="overview" />;
+    case "walletPlay":
+      return <WalletRoute view="play" />;
+    case "walletSend":
+      return <WalletRoute view="send" />;
+    case "walletReceive":
+      return <WalletRoute view="receive" />;
+    case "walletHistory":
+      return <WalletRoute view="history" />;
+    case "walletSettings":
+      return <WalletRoute view="settings" />;
     case "notFound":
       return <NotFound path={route.path} />;
   }
