@@ -55,13 +55,24 @@ deploy that does exactly this is
 - **Overview** — height, tip age, epoch, peer count, pool sizes and the newest
   blocks and games.
 - **Blocks** — newest first, paged with the node's `before_height` cursor rather
-  than an offset, so a reorg cannot make a page skip a block.
+  than an offset, so a reorg cannot make a page skip a block. The search box
+  accepts a height, a block hash or a transaction id: a hash and a txid have the
+  same shape, so it asks the node for a block first and falls back to the
+  transaction index.
+- **A transaction** — the node's index entry for one txid: pending in the
+  mempool or mined at a height, its type and block link, and the sender, nonce,
+  fee and payload when the node still holds that block's body.
 - **A block** — every header field (parent, epoch, beacon, miner, difficulty,
   seal nonce, chain work, merkle/state/roster roots), the coinbase, transactions
   with their payloads, and one card per win proof: game hash, opening and PGN.
 - **Games** — proofs in the node's own order: pending first, then newest
-  settlement. A row says whether the proof is in a block or still in the mempool
-  and how the chain currently judges it.
+  settlement, paged by settle height with the game hash as the tie-break so a
+  block carrying several proofs yields exact pages. A row says whether the proof
+  is in a block or still in the mempool and how the chain currently judges it.
+- **Live** — the sessions the relay still has open, polled every couple of
+  seconds: both seats, the side to move, and clocks counted down locally from the
+  relay's last answer. Finished games are not listed here; their proofs appear on
+  the Games page once a block settles one.
 - **A game** — settlement state, the match certificate (both seats, opening,
   engines, start signatures) and the PGN, when this node has cached the
   transcript.

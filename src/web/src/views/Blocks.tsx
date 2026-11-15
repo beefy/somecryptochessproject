@@ -14,7 +14,8 @@ import { fetchBlocks } from "../api";
 import { BlockTable } from "../components/BlockTable";
 import { EmptyState, FailureNotice, Loading, Section } from "../components/Chrome";
 import { formatInteger } from "../lib/format";
-import { navigate } from "../router";
+import { resolveSearchTarget } from "../lib/search";
+import { navigate, routeHash } from "../router";
 import { useResource } from "../useResource";
 
 const PAGE_SIZE = 25;
@@ -22,6 +23,8 @@ const PAGE_SIZE = 25;
 export function Blocks(): ReactNode {
   const [cursors, setCursors] = useState<Array<number | undefined>>([undefined]);
   const [query, setQuery] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<Error | undefined>(undefined);
   const before = cursors[cursors.length - 1];
   const page = useResource(
     (signal) => fetchBlocks({ limit: PAGE_SIZE, beforeHeight: before, signal }),
@@ -33,6 +36,25 @@ export function Blocks(): ReactNode {
   const oldest = blocks[blocks.length - 1];
   const newest = blocks[0];
   const trimmed = query.trim();
+
+  /** Resolve a height, block hash or transaction id, then open its page. */
+  const openReference = async (): Promise<void> => {
+    if (trimmed === "" || searching) return;
+    setSearching(true);
+    setSearchError(undefined);
+    try {
+      const target = await resolveSearchTarget(trimmed);
+      if (target === null) {
+        setSearchError(new Error(`no block or transaction matches ${trimmed}`));
+        return;
+      }
+      navigate(routeHash(target));
+    } catch (failure) {
+      setSearchError(failure instanceof Error ? failure : new Error(String(failure)));
+    } finally {
+      setSearching(false);
+    }
+  };
 
   return (
     <Section
@@ -70,27 +92,34 @@ export function Blocks(): ReactNode {
         <TextInput
           mode="outlined"
           dense
-          label="Jump to a height or block hash"
+          label="Search height, block hash or transaction id"
           value={query}
-          onChangeText={setQuery}
+          onChangeText={(value) => {
+            setQuery(value);
+            setSearchError(undefined);
+          }}
           autoCapitalize="none"
           autoCorrect={false}
-          onSubmitEditing={() => {
-            if (trimmed !== "") navigate(`#/blocks/${encodeURIComponent(trimmed)}`);
-          }}
+          onSubmitEditing={() => void openReference()}
           style={styles.searchInput}
         />
         <Button
           mode="contained"
-          disabled={trimmed === ""}
-          onPress={() => navigate(`#/blocks/${encodeURIComponent(trimmed)}`)}
+          loading={searching}
+          disabled={trimmed === "" || searching}
+          onPress={() => void openReference()}
         >
-          Open
+          Search
         </Button>
       </View>
       <HelperText type="info" visible>
-        Heights are links; a hash works too, so a block can be shared straight from the chain.
+        A height or block hash opens a block; a transaction id opens the transaction it identifies.
       </HelperText>
+      {searchError !== undefined && (
+        <HelperText type="error" visible>
+          {searchError.message}
+        </HelperText>
+      )}
 
       {page.error !== undefined ? (
         <FailureNotice error={page.error} />

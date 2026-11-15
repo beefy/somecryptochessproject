@@ -164,6 +164,26 @@ def _block_summary(stored: StoredBlock) -> BlockSummary:
     )
 
 
+def _before_game_cursor(
+    height: int,
+    game_hash: str,
+    before_height: int,
+    before_game_hash: str | None,
+) -> bool:
+    """Whether a settled game sorts strictly after the page cursor.
+
+    Games are ordered by ``(-height, game_hash)``. A block can hold several
+    proofs, so a height-only cursor is ambiguous: it would drop the rest of a
+    block's games on the next page. With the hash as a tie-break the boundary
+    is exact; without it the old height-only behaviour is unchanged.
+    """
+    if height != before_height:
+        return height < before_height
+    if before_game_hash is None:
+        return False
+    return game_hash > before_game_hash
+
+
 def _proof_in(stored: StoredBlock | None, game_hash: str) -> WinProof | None:
     """The full proof for ``game_hash`` if the node still holds its block."""
     if stored is None:
@@ -655,14 +675,25 @@ class NodeService:
                 return GamePgn(game_hash=game_hash, network=self.params.network_id, pgn=proof.pgn)
         raise NotFoundError(f"unknown game {game_hash!r}")
 
-    def games(self, *, limit: int = 25, before_height: int | None = None) -> GameList:
+    def games(
+        self,
+        *,
+        limit: int = 25,
+        before_height: int | None = None,
+        before_game_hash: str | None = None,
+    ) -> GameList:
         """Recent settled games, newest first, preceded by the proofs in the pool.
 
-        ``before_height`` pages backwards from a settle height; pending proofs
-        only appear on the first page because they have no height to page by.
-        Each row is described from the proof itself when this node still holds
-        the block, which is what lets an explorer show result, termination and
-        ply count without a second request.
+        ``before_height`` pages backwards from a settle height. A block can hold
+        more than one proof, so ``before_game_hash`` is the tie-break: pass the
+        last row's height and hash together and a page boundary inside a block
+        cannot repeat or skip a game. Either cursor on its own still works,
+        which is what keeps older clients and links valid.
+
+        Pending proofs only appear on the first page because they have no
+        height to page by. Each row is described from the proof itself when
+        this node still holds the block, which is what lets an explorer show
+        result, termination and ply count without a second request.
         """
         by_height = {stored.height: stored for stored in self.chain.main_chain()}
         pending: list[GameSummary] = []
@@ -673,7 +704,9 @@ class NodeService:
         for record in sorted(
             self.chain.state.proofs.values(), key=lambda item: (-item.height, item.game_hash)
         ):
-            if before_height is not None and record.height >= before_height:
+            if before_height is not None and not _before_game_cursor(
+                record.height, record.game_hash, before_height, before_game_hash
+            ):
                 continue
             if len(settled) >= limit:
                 break

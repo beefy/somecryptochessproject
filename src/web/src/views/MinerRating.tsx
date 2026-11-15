@@ -40,7 +40,12 @@ export function MinerRating({ address }: { address: string }): ReactNode {
   const detail = useResource((signal) => fetchMinerRating(address, signal), [address], {
     pollMs: 15000,
   });
-  const games = useResource((signal) => fetchGames(signal), [], { pollMs: 20000 });
+  // The node has no per-miner games filter yet, so ask for the largest page it
+  // serves (200) and narrow client-side; a miner older than that shows fewer
+  // rows rather than a wrong one.
+  const games = useResource((signal) => fetchGames({ limit: 200, signal }), [], {
+    pollMs: 20000,
+  });
   const paper = useTheme();
   const { width } = useWindowDimensions();
   const wide = width >= 720;

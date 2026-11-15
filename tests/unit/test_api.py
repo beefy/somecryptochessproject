@@ -16,6 +16,7 @@ import pytest
 
 from sccp.chain.genesis import faucet_keypair
 from sccp.chain.mempool import Mempool
+from sccp.chain.state import ProofRecord
 from sccp.chain.tx import txid
 from sccp.config import DEVNET, TESTNET
 from sccp.crypto.address import encode_address
@@ -252,6 +253,46 @@ def test_game_list_shows_pending_then_settled_results(
     assert row["match_id"] == match.proof.match_id
     assert older == []
     service.close()
+
+
+def test_game_list_cursor_breaks_a_height_tie() -> None:
+    """The game cursor breaks a height tie, so a block's proofs page exactly.
+
+    A block can settle several proofs. Paging by height alone would drop every
+    game after the first one in that block; ``before_game_hash`` is the
+    tie-break that makes the next page start where the last one stopped. The
+    records are seeded directly: the point here is the list cursor, not mining.
+    """
+    service = _node()
+    for suffix in ("11", "22", "33"):
+        game_hash = suffix * 32
+        service.chain.state.proofs[game_hash] = ProofRecord(
+            proof_id=f"proof-{suffix}",
+            game_hash=game_hash,
+            height=1,
+            winner=MINER_ADDRESS,
+        )
+    with _client(service) as client:
+        everything = client.get("/v1/games?limit=200").json()["games"]
+        first = client.get("/v1/games?limit=1").json()["games"]
+        cursor = first[0]
+        rest = client.get(
+            f"/v1/games?limit=200&before_height={cursor['height']}"
+            f"&before_game_hash={cursor['game_hash']}"
+        ).json()["games"]
+        height_only = client.get(f"/v1/games?before_height={cursor['height']}").json()["games"]
+    assert [row["game_hash"] for row in everything] == ["11" * 32, "22" * 32, "33" * 32]
+    assert [row["game_hash"] for row in first] == [everything[0]["game_hash"]]
+    assert [row["game_hash"] for row in rest] == [row["game_hash"] for row in everything[1:]]
+    assert height_only == []
+    service.close()
+
+
+def test_game_list_rejects_an_empty_cursor_hash() -> None:
+    """An empty hash is a caller bug, not a cursor that happens to match."""
+    with _client(_node()) as client:
+        response = client.get("/v1/games?before_height=1&before_game_hash=")
+    assert response.status_code == 422
 
 
 def test_game_pgn_route_serves_the_proof_body(

@@ -207,6 +207,16 @@ export interface BlockView {
   block: Block;
 }
 
+/** `GET /v1/transactions/{txid}`: where the node last saw a transaction. */
+export interface TransactionRecord {
+  txid: string;
+  network: string;
+  type: string;
+  height: number | null;
+  in_mempool: boolean;
+  block_hash: string | null;
+}
+
 
 export interface GameSummary {
   game_hash: string;
@@ -447,10 +457,13 @@ export interface Matchup {
   black: string;
 }
 
+/** The relay's lifecycle states for a session. */
+export type RelayMatchStatus = "pending" | "active" | "finished" | "abandoned";
+
 /** The relay's live view of one session. */
 export interface RelayMatchView {
   matchup: Matchup;
-  status: string;
+  status: RelayMatchStatus;
   san_moves: string[];
   certificate: MatchCertificate;
   result: GameResult | null;

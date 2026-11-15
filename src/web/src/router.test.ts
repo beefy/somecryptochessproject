@@ -34,6 +34,35 @@ describe("Elo routes", () => {
   });
 });
 
+describe("live games route", () => {
+  it("round-trips the in-progress page", () => {
+    expect(parseRoute("#/live")).toEqual({ name: "liveGames" });
+    expect(routeHash({ name: "liveGames" })).toBe("#/live");
+    expect(activeSection({ name: "liveGames" })).toBe("liveGames");
+  });
+});
+
+describe("transaction routes", () => {
+  const TXID = "ab".repeat(32);
+
+  it("round-trips a transaction id", () => {
+    const route = parseRoute(`#/transactions/${TXID}`);
+    expect(route).toEqual({ name: "transaction", txid: TXID });
+    expect(routeHash(route)).toBe(`#/transactions/${TXID}`);
+  });
+
+  it("keeps a bare transactions path out of the router", () => {
+    expect(parseRoute("#/transactions")).toEqual({
+      name: "notFound",
+      path: "/transactions",
+    });
+  });
+
+  it("lights up the Blocks tab", () => {
+    expect(activeSection({ name: "transaction", txid: TXID })).toBe("blocks");
+  });
+});
+
 describe("wallet routes", () => {
   it("parses the wallet landing page", () => {
     expect(parseRoute("#/wallet")).toEqual({ name: "wallet" });

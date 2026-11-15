@@ -19,7 +19,11 @@ import { useResource } from "../useResource";
 
 export function AccountView({ address }: { address: string }): ReactNode {
   const account = useResource((signal) => fetchAccount(address, signal), [address], { pollMs: 10000 });
-  const games = useResource((signal) => fetchGames(signal), [], { pollMs: 20000 });
+  // Same 200-row window as the miner page: filter by player only after the
+  // node has answered, since `/v1/games` has no address parameter yet.
+  const games = useResource((signal) => fetchGames({ limit: 200, signal }), [], {
+    pollMs: 20000,
+  });
   const { params } = useNode();
 
   if (account.error !== undefined) return <FailureNotice error={account.error} />;

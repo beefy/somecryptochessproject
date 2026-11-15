@@ -26,6 +26,7 @@ import type {
   NodeStatus,
   ProofAccepted,
   RatingsView,
+  TransactionRecord,
   Transcript,
   TxAccepted,
   WinProof,
@@ -132,8 +133,26 @@ export function fetchBlock(reference: string | number, signal?: AbortSignal): Pr
 }
 
 /** `GET /v1/games`: pending proofs first, then newest settle first. */
-export function fetchGames(signal?: AbortSignal): Promise<GameList> {
-  return request<GameList>("/v1/games", { signal });
+export function fetchGames(
+  options: {
+    limit?: number;
+    beforeHeight?: number;
+    beforeGameHash?: string;
+    signal?: AbortSignal;
+  } = {},
+): Promise<GameList> {
+  const query = new URLSearchParams();
+  if (options.limit !== undefined) query.set("limit", String(options.limit));
+  if (options.beforeHeight !== undefined) {
+    query.set("before_height", String(options.beforeHeight));
+  }
+  // Height alone cannot separate two proofs settled in one block; the hash is
+  // the node's tie-break, so pages that hit a block boundary stay exact.
+  if (options.beforeGameHash !== undefined) {
+    query.set("before_game_hash", options.beforeGameHash);
+  }
+  const suffix = query.size === 0 ? "" : `?${query.toString()}`;
+  return request<GameList>(`/v1/games${suffix}`, { signal: options.signal });
 }
 
 /** `GET /v1/games/{game_hash}`: one game's settlement state. */
@@ -161,6 +180,14 @@ export function fetchTranscript(matchIdText: string, signal?: AbortSignal): Prom
 /** `GET /v1/mempool`: ids waiting for a block. */
 export function fetchMempool(signal?: AbortSignal): Promise<MempoolView> {
   return request<MempoolView>("/v1/mempool", { signal });
+}
+
+/** `GET /v1/transactions/{txid}`: pending in the pool, or mined into a block. */
+export function fetchTransaction(
+  txid: string,
+  signal?: AbortSignal,
+): Promise<TransactionRecord> {
+  return request<TransactionRecord>(`/v1/transactions/${encodeURIComponent(txid)}`, { signal });
 }
 
 /** `GET /v1/accounts/{address}`: balances, nonce and registration. */

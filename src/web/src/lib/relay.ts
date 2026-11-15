@@ -14,6 +14,7 @@
 
 import type {
   ClockBundleView,
+  RelayMatchStatus,
   RelayMatchView,
   TranscriptView,
 } from "../types";
@@ -118,9 +119,20 @@ export function relayStatus(signal?: AbortSignal): Promise<RelayStatus> {
   return request<RelayStatus>("/v1/status", { signal });
 }
 
-/** `GET /v1/matches`: every session, pending first by creation time. */
-export function relayMatches(signal?: AbortSignal): Promise<RelayMatchView[]> {
-  return request<RelayMatchView[]>("/v1/matches", { signal });
+/**
+ * `GET /v1/matches`: every session, pending first by creation time.
+ *
+ * A live page asks only for the states it renders, and the relay accepts the
+ * parameter repeatedly (`?status=pending&status=active`), so finished sessions
+ * are filtered before they cross the network.
+ */
+export function relayMatches(
+  options: { statuses?: readonly RelayMatchStatus[]; signal?: AbortSignal } = {},
+): Promise<RelayMatchView[]> {
+  const query = new URLSearchParams();
+  for (const status of options.statuses ?? []) query.append("status", status);
+  const suffix = query.size === 0 ? "" : `?${query.toString()}`;
+  return request<RelayMatchView[]>(`/v1/matches${suffix}`, { signal: options.signal });
 }
 
 /** `GET /v1/matches/{match_id}`: one session with its live clocks. */

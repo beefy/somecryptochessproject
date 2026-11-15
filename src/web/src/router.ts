@@ -10,8 +10,10 @@ export type Route =
   | { name: "dashboard" }
   | { name: "blocks" }
   | { name: "block"; reference: string }
+  | { name: "transaction"; txid: string }
   | { name: "games" }
   | { name: "game"; gameHash: string }
+  | { name: "liveGames" }
   | { name: "ratings" }
   | { name: "miner"; address: string }
   | { name: "account"; address: string }
@@ -35,8 +37,14 @@ export function parseRoute(hash: string): Route {
   switch (head) {
     case "blocks":
       return second === undefined ? { name: "blocks" } : { name: "block", reference: decode(second) };
+    case "transactions":
+      return second === undefined
+        ? { name: "notFound", path }
+        : { name: "transaction", txid: decode(second) };
     case "games":
       return second === undefined ? { name: "games" } : { name: "game", gameHash: decode(second) };
+    case "live":
+      return { name: "liveGames" };
     case "ratings":
       return { name: "ratings" };
     case "miners":
@@ -90,10 +98,14 @@ export function routeHash(route: Route): string {
       return "#/blocks";
     case "block":
       return `#/blocks/${encodeURIComponent(route.reference)}`;
+    case "transaction":
+      return `#/transactions/${encodeURIComponent(route.txid)}`;
     case "games":
       return "#/games";
     case "game":
       return `#/games/${encodeURIComponent(route.gameHash)}`;
+    case "liveGames":
+      return "#/live";
     case "ratings":
       return "#/ratings";
     case "miner":
@@ -146,6 +158,7 @@ export type Section =
   | "dashboard"
   | "blocks"
   | "games"
+  | "liveGames"
   | "ratings"
   | "account"
   | "wallet"
@@ -160,10 +173,13 @@ export function activeSection(route: Route): Section {
   switch (route.name) {
     case "blocks":
     case "block":
+    case "transaction":
       return "blocks";
     case "games":
     case "game":
       return "games";
+    case "liveGames":
+      return "liveGames";
     case "ratings":
     case "miner":
       return "ratings";

@@ -1,5 +1,5 @@
 /**
- * How a relay base is presented to a person.
+ * How the relay is addressed and asked for sessions.
  *
  * A build can name the relay absolutely (`http://127.0.0.1:8646`) or relatively
  * (`/relay`, when a proxy on the page's own origin forwards it). The second form
@@ -8,9 +8,9 @@
  * the message a reader is most likely to act on.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { relayPublicUrl } from "./relay";
+import { RELAY_BASE, relayMatches, relayPublicUrl } from "./relay";
 
 const PAGE = "http://explorer.chessproofofwork.com/";
 
@@ -45,5 +45,44 @@ describe("relayPublicUrl", () => {
     // against; a label must not throw for that.
     expect(relayPublicUrl("/relay")).toBe("/relay");
     expect(relayPublicUrl()).toBe("http://127.0.0.1:8646");
+  });
+});
+
+describe("relayMatches", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubRelay(): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response("[]", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("asks for every session when no status is given", async () => {
+    const fetchMock = stubRelay();
+    await relayMatches();
+    expect(fetchMock).toHaveBeenCalledWith(`${RELAY_BASE}/v1/matches`, {
+      method: "GET",
+      signal: undefined,
+      headers: undefined,
+      body: undefined,
+    });
+  });
+
+  it("repeats status so several open states arrive in one request", async () => {
+    const fetchMock = stubRelay();
+    await relayMatches({ statuses: ["pending", "active"] });
+    // The repeated form is what FastAPI's `list[SessionStatus]` accepts; a
+    // comma-joined value would be read as one unknown status and rejected.
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      `${RELAY_BASE}/v1/matches?status=pending&status=active`,
+    );
   });
 });

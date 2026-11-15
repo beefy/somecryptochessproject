@@ -149,6 +149,36 @@ def test_a_complete_match_produces_a_verifiable_proof(signed_match) -> None:
     )
 
 
+def test_match_list_filters_by_status(signed_match) -> None:
+    """The relay can return only the sessions a live page needs.
+
+    Repeating ``status`` selects several states in one request, so a consumer
+    asks for the pending and active sessions without downloading every finished
+    one. The unfiltered list stays the default.
+    """
+    state = _relay(signed_match)
+    view = state.open_round(0)[0]
+    client = TestClient(create_app(state))
+    match_id = view.matchup.match_id
+    view = client.get(f"/v1/matches/{match_id}").json()
+
+    assert len(client.get("/v1/matches").json()) == 1
+    pending = client.get("/v1/matches?status=pending").json()
+    assert [item["matchup"]["match_id"] for item in pending] == [match_id]
+    assert client.get("/v1/matches?status=active").json() == []
+
+    view = _join(client, signed_match, view)
+    assert view["status"] == SessionStatus.ACTIVE.value
+    assert client.get("/v1/matches?status=pending").json() == []
+    active = client.get("/v1/matches?status=active").json()
+    assert [item["matchup"]["match_id"] for item in active] == [match_id]
+
+    both = client.get("/v1/matches?status=pending&status=active").json()
+    assert [item["matchup"]["match_id"] for item in both] == [match_id]
+    assert client.get("/v1/matches?status=finished").json() == []
+    assert client.get("/v1/matches?status=nonsense").status_code == 422
+
+
 def test_relay_rejects_bad_requests(signed_match) -> None:
     state = _relay(signed_match)
     view = state.open_round(0)[0]

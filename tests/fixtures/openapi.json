@@ -2692,6 +2692,22 @@
                 }
               ]
             }
+          },
+          {
+            "in": "query",
+            "name": "before_game_hash",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
           }
         ],
         "responses": {

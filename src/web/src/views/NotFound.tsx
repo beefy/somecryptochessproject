@@ -18,7 +18,8 @@ export function NotFound({ path }: { path: string }): ReactNode {
       <View style={styles.body}>
         <Mono>{`#/${path}`}</Mono>
         <Text variant="bodyMedium" style={styles.muted}>
-          Blocks are at <Text style={styles.mono}>#/blocks/&lt;height-or-hash&gt;</Text>, games at{" "}
+          Blocks are at <Text style={styles.mono}>#/blocks/&lt;height-or-hash&gt;</Text>, transactions at{" "}
+          <Text style={styles.mono}>#/transactions/&lt;txid&gt;</Text>, games at{" "}
           <Text style={styles.mono}>#/games/&lt;game-hash&gt;</Text>, accounts at{" "}
           <Text style={styles.mono}>#/accounts/&lt;bech32-address&gt;</Text>.
         </Text>

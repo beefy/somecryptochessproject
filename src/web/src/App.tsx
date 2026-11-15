@@ -24,9 +24,11 @@ import { Blocks } from "./views/Blocks";
 import { Dashboard } from "./views/Dashboard";
 import { GameDetail } from "./views/GameDetail";
 import { Games } from "./views/Games";
+import { LiveGames } from "./views/LiveGames";
 import { MinerRating } from "./views/MinerRating";
 import { NotFound } from "./views/NotFound";
 import { Ratings } from "./views/Ratings";
+import { TransactionDetail } from "./views/TransactionDetail";
 
 /**
  * The wallet pulls in scrypt, ML-DSA-65 key derivation and the BIP-39 wordlist.
@@ -42,6 +44,7 @@ const EXPLORER_SECTIONS = [
   { key: "dashboard", label: "Overview", href: "#/" },
   { key: "blocks", label: "Blocks", href: "#/blocks" },
   { key: "games", label: "Games", href: "#/games" },
+  { key: "liveGames", label: "Live", href: "#/live" },
   { key: "ratings", label: "Elo", href: "#/ratings" },
 ] as const;
 
@@ -226,6 +229,8 @@ function routeKey(route: Route): string {
   switch (route.name) {
     case "block":
       return `block:${route.reference}`;
+    case "transaction":
+      return `transaction:${route.txid}`;
     case "game":
       return `game:${route.gameHash}`;
     case "miner":
@@ -273,10 +278,14 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <Blocks />;
     case "block":
       return <BlockDetail reference={route.reference} />;
+    case "transaction":
+      return <TransactionDetail txid={route.txid} />;
     case "games":
       return <Games />;
     case "game":
       return <GameDetail gameHash={route.gameHash} />;
+    case "liveGames":
+      return <LiveGames />;
     case "ratings":
       return <Ratings />;
     case "miner":
