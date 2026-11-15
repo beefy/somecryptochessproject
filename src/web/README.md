@@ -172,6 +172,7 @@ rules, its DNS record and its rollback are in
 | `#/` | overview: height, tip age, epoch, peers, pool sizes, newest blocks and games |
 | `#/blocks` | blocks newest first, paged by the node's `before_height` cursor |
 | `#/blocks/12`, `#/blocks/<hash>` | one block: header, coinbase, transactions, proofs |
+| `#/transactions/<txid>` | one transaction: whether it is pending or mined, its block and body |
 | `#/games` | proofs in the node's order: pending first, then newest settlement |
 | `#/games/<game_hash>` | settlement state, the match certificate, the PGN |
 | `#/ratings` | miner Elo: the top ten, their record and deviation, and the distribution |

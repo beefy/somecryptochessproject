@@ -10,6 +10,7 @@ export type Route =
   | { name: "dashboard" }
   | { name: "blocks" }
   | { name: "block"; reference: string }
+  | { name: "transaction"; txid: string }
   | { name: "games" }
   | { name: "game"; gameHash: string }
   | { name: "liveGames" }
@@ -36,6 +37,10 @@ export function parseRoute(hash: string): Route {
   switch (head) {
     case "blocks":
       return second === undefined ? { name: "blocks" } : { name: "block", reference: decode(second) };
+    case "transactions":
+      return second === undefined
+        ? { name: "notFound", path }
+        : { name: "transaction", txid: decode(second) };
     case "games":
       return second === undefined ? { name: "games" } : { name: "game", gameHash: decode(second) };
     case "live":
@@ -93,6 +98,8 @@ export function routeHash(route: Route): string {
       return "#/blocks";
     case "block":
       return `#/blocks/${encodeURIComponent(route.reference)}`;
+    case "transaction":
+      return `#/transactions/${encodeURIComponent(route.txid)}`;
     case "games":
       return "#/games";
     case "game":
@@ -166,6 +173,7 @@ export function activeSection(route: Route): Section {
   switch (route.name) {
     case "blocks":
     case "block":
+    case "transaction":
       return "blocks";
     case "games":
     case "game":

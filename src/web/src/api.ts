@@ -26,6 +26,7 @@ import type {
   NodeStatus,
   ProofAccepted,
   RatingsView,
+  TransactionRecord,
   Transcript,
   TxAccepted,
   WinProof,
@@ -179,6 +180,14 @@ export function fetchTranscript(matchIdText: string, signal?: AbortSignal): Prom
 /** `GET /v1/mempool`: ids waiting for a block. */
 export function fetchMempool(signal?: AbortSignal): Promise<MempoolView> {
   return request<MempoolView>("/v1/mempool", { signal });
+}
+
+/** `GET /v1/transactions/{txid}`: pending in the pool, or mined into a block. */
+export function fetchTransaction(
+  txid: string,
+  signal?: AbortSignal,
+): Promise<TransactionRecord> {
+  return request<TransactionRecord>(`/v1/transactions/${encodeURIComponent(txid)}`, { signal });
 }
 
 /** `GET /v1/accounts/{address}`: balances, nonce and registration. */

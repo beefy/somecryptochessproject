@@ -55,7 +55,13 @@ deploy that does exactly this is
 - **Overview** — height, tip age, epoch, peer count, pool sizes and the newest
   blocks and games.
 - **Blocks** — newest first, paged with the node's `before_height` cursor rather
-  than an offset, so a reorg cannot make a page skip a block.
+  than an offset, so a reorg cannot make a page skip a block. The search box
+  accepts a height, a block hash or a transaction id: a hash and a txid have the
+  same shape, so it asks the node for a block first and falls back to the
+  transaction index.
+- **A transaction** — the node's index entry for one txid: pending in the
+  mempool or mined at a height, its type and block link, and the sender, nonce,
+  fee and payload when the node still holds that block's body.
 - **A block** — every header field (parent, epoch, beacon, miner, difficulty,
   seal nonce, chain work, merkle/state/roster roots), the coinbase, transactions
   with their payloads, and one card per win proof: game hash, opening and PGN.

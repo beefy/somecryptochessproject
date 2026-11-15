@@ -28,6 +28,7 @@ import { LiveGames } from "./views/LiveGames";
 import { MinerRating } from "./views/MinerRating";
 import { NotFound } from "./views/NotFound";
 import { Ratings } from "./views/Ratings";
+import { TransactionDetail } from "./views/TransactionDetail";
 
 /**
  * The wallet pulls in scrypt, ML-DSA-65 key derivation and the BIP-39 wordlist.
@@ -228,6 +229,8 @@ function routeKey(route: Route): string {
   switch (route.name) {
     case "block":
       return `block:${route.reference}`;
+    case "transaction":
+      return `transaction:${route.txid}`;
     case "game":
       return `game:${route.gameHash}`;
     case "miner":
@@ -275,6 +278,8 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <Blocks />;
     case "block":
       return <BlockDetail reference={route.reference} />;
+    case "transaction":
+      return <TransactionDetail txid={route.txid} />;
     case "games":
       return <Games />;
     case "game":

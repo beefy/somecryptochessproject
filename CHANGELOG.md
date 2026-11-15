@@ -22,6 +22,12 @@ not itemised here.
   accepts repeatable `status=` parameters (`pending`, `active`, ...), and the
   Live view also filters the response locally so older relays that ignore the
   parameter still show only open sessions.
+- **Transactions are searchable in the explorer.** The Blocks search box now
+  accepts a txid as well as a height or block hash. Because a block hash and a
+  txid are both 32-byte hex, it asks the node for the block first and falls back
+  to `GET /v1/transactions/{txid}`; a new `#/transactions/<txid>` page shows
+  whether the transaction is pending or mined, its type, height and block, and —
+  when the node still holds the block body — its sender, nonce, fee and payload.
 
 ### Fixed
 

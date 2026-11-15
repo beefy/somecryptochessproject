@@ -207,6 +207,16 @@ export interface BlockView {
   block: Block;
 }
 
+/** `GET /v1/transactions/{txid}`: where the node last saw a transaction. */
+export interface TransactionRecord {
+  txid: string;
+  network: string;
+  type: string;
+  height: number | null;
+  in_mempool: boolean;
+  block_hash: string | null;
+}
+
 
 export interface GameSummary {
   game_hash: string;
