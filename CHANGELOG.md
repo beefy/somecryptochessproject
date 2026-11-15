@@ -32,12 +32,12 @@ not itemised here.
   pinned to the CLI's transfer txid.
 - **A hamburger menu in the top-left corner that switches sites.** The explorer
   and the wallet are one bundle served under two names, and the menu is exactly
-  two items: Explorer and Wallet, the current one marked. On a hosted build it
-  follows an absolute URL; on a dev server it moves by hash, where there is no
-  second name. The wallet is its own page with Overview, Play, Send, Receive,
-  History and Settings tabs, like the explorer's; `#/` lands on its overview
-  under `wallet.` and on the dashboard under `explorer.`. A faucet click shows a
-  progress bar until the node answers, on both the wallet and the table.
+  two items: Explorer and Wallet. On a hosted build it follows an absolute URL;
+  on a dev server it moves by hash, where there is no second name. The wallet is
+  its own page with Overview, Play, Send, Receive, History and Settings tabs, like
+  the explorer's; `#/` lands on its overview under `wallet.` and on the dashboard
+  under `explorer.`. A faucet click shows a progress bar until the node answers,
+  on both the wallet and the table.
 
 ### Changed
 

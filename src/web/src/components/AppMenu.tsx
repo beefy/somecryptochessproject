@@ -52,13 +52,10 @@ function HamburgerButton({ onPress }: { onPress: () => void }): ReactNode {
 
 export function AppMenu(): ReactNode {
   const [visible, setVisible] = useState(false);
-  const here = currentSite();
   const close = (action: () => void) => () => {
     setVisible(false);
     action();
   };
-  const siteTitle = (site: Site): string =>
-    site === here ? `${SITE_LABELS[site]} (current)` : SITE_LABELS[site];
 
   return (
     <Menu
@@ -70,7 +67,7 @@ export function AppMenu(): ReactNode {
       {(Object.keys(SITE_LABELS) as Site[]).map((site) => (
         <Menu.Item
           key={site}
-          title={siteTitle(site)}
+          title={SITE_LABELS[site]}
           onPress={close(() => open(site, site === "wallet" ? "#/wallet" : "#/"))}
         />
       ))}
