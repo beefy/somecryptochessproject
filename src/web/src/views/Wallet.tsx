@@ -418,7 +418,7 @@ export function Wallet({
             </KeyValue>
             {accountView !== null && (
               <View style={styles.tokenBlock}>
-                <Text variant="titleSmall">Can receive</Text>
+                <Text variant="titleSmall">Balances at this address</Text>
                 {tokens.map((token) => (
                   <KeyValue key={token.asset ?? "native"} label={token.symbol} mono>
                     {formatTokenAmount(
@@ -429,8 +429,10 @@ export function Wallet({
                   </KeyValue>
                 ))}
                 <HelperText type="info" visible>
-                  One address holds every token this network settles; the sender chooses SCCP or
-                  a variant asset such as C960. The fee is always paid in SCCP.
+                  One address can receive every token this network settles: SCCP and assets such
+                  as C960. The sender&apos;s transaction names the asset; this address needs no
+                  separate token account. Holding C960 does not pay fees, though -- the same
+                  account needs a little SCCP to move it.
                 </HelperText>
               </View>
             )}
