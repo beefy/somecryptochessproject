@@ -24,17 +24,20 @@ not itemised here.
   the network minimum, with 2x/5x shortcuts) and the node rejects anything below
   that floor. History is a bounded scan of `/v1/blocks` from the tip, cached per
   account, because the node has no history endpoint; the tab names the heights it
-  read instead of implying it read them all. The encrypted document is kept in
-  IndexedDB; the seed exists only while unlocked, and an idle timer clears it.
-  `buildTransfer` joins `lib/tx.ts`, pinned to the CLI's transfer txid.
+  read instead of implying it read them all. Play moved in with it: the table no
+  longer generates a throwaway seat key in the page, it signs with the wallet's
+  unlocked account, and the explorer's old `#/play` link resolves to the wallet's
+  Play tab. The encrypted document is kept in IndexedDB; the seed exists only
+  while unlocked, and an idle timer clears it. `buildTransfer` joins `lib/tx.ts`,
+  pinned to the CLI's transfer txid.
 - **A hamburger menu in the top-left corner that switches sites.** The explorer
   and the wallet are one bundle served under two names, and the menu is exactly
   two items: Explorer and Wallet, the current one marked. On a hosted build it
   follows an absolute URL; on a dev server it moves by hash, where there is no
-  second name. The wallet is its own page with Overview, Send, Receive, History
-  and Settings tabs, like the explorer's; `#/` lands on its overview under
-  `wallet.` and on the dashboard under `explorer.`. A faucet click shows a
-  progress bar until the node answers, on both the wallet and `#/play`.
+  second name. The wallet is its own page with Overview, Play, Send, Receive,
+  History and Settings tabs, like the explorer's; `#/` lands on its overview
+  under `wallet.` and on the dashboard under `explorer.`. A faucet click shows a
+  progress bar until the node answers, on both the wallet and the table.
 
 ### Changed
 

@@ -17,7 +17,7 @@
  * routes work from the explorer, where the hamburger menu sends people here.
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 import { Button, HelperText, ProgressBar, Snackbar, Text } from "react-native-paper";
 
@@ -46,6 +46,15 @@ interface Session {
   record: StoredKeyfile;
   keypair: HybridKeypair;
 }
+
+/**
+ * The table draws a chessboard and pulls in `chess.js`; the wallet's other tabs
+ * never need it, so it loads when the Play tab is first opened.
+ */
+const Play = lazy(async () => {
+  const module = await import("./Play");
+  return { default: module.Play };
+});
 
 /** How often the unlocked wallet re-reads the account. */
 const ACCOUNT_POLL_MS = 8000;
@@ -76,7 +85,7 @@ function FaucetProgress(): ReactNode {
 export function Wallet({
   view,
 }: {
-  view: "overview" | "send" | "receive" | "history" | "settings";
+  view: "overview" | "play" | "send" | "receive" | "history" | "settings";
 }): ReactNode {
   const { status, params, network } = useNode();
   const [stored, setStored] = useState<StoredKeyfile[] | null>(null);
@@ -264,6 +273,17 @@ export function Wallet({
 
     const { record, keypair } = session;
     const mainnet = record.network === "mainnet";
+
+    if (view === "play") {
+      return (
+        <>
+          {title}
+          <Suspense fallback={<Loading />}>
+            <Play keypair={keypair} network={record.network} />
+          </Suspense>
+        </>
+      );
+    }
 
     if (view === "send") {
       if (accountView === null || params.data === undefined) {

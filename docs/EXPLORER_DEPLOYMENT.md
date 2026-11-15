@@ -31,7 +31,7 @@ the browser with an opaque network error even though `curl` works. The page has
 to be same-origin with the API, which is why the workflow builds with
 `VITE_SCCP_API` empty and lets nginx proxy the path.
 
-The relay is proxied for the same reason, one step further: `#/play` talks to it
+The relay is proxied for the same reason, one step further: `#/wallet/play` talks to it
 directly (`VITE_SCCP_RELAY`), so a hosted build would need a second origin, an
 `--origin` allowlist on `sccp matchmaker run` and a port open to browsers. Built
 with `VITE_SCCP_RELAY=/relay`, the page calls `/relay/v1/...` on its own origin,
@@ -101,7 +101,7 @@ curl -sS https://wallet.chessproofofwork.com/v1/status | jq '{network, height}'
 The first two answer because of the proxy; the third and fifth are the bundle; the
 fourth and sixth are Caddy sending the plain-HTTP names to the secure ones. Open
 `https://explorer.chessproofofwork.com/` in a browser for the explorer,
-`https://wallet.chessproofofwork.com/` for the wallet, or `#/play` on either for
+`https://wallet.chessproofofwork.com/` for the wallet, or `#/wallet/play` on either for
 the table. The hamburger in the top-left corner switches between the two names.
 
 ## Layout on the host
@@ -275,9 +275,10 @@ asks Let's Encrypt for a certificate for **each** name in the file (the explorer
 and the wallet), renews them in the background, redirects `http://` to `https://`,
 and proxies to the nginx origin on `127.0.0.1:8080`.
 
-The certificate matters here more than for a JSON endpoint: `#/play` generates a
-seat keypair **in the page** and signs moves with it, so plain HTTP would put that
-key on the wire. It is also what a browser expects — an address bar defaults to
+The certificate matters here more than for a JSON endpoint: the wallet takes a
+passphrase and decrypts a keyfile **in the page**, and the table signs moves with
+that key, so plain HTTP would put the passphrase and the key on the wire. It is
+also what a browser expects — an address bar defaults to
 `https://`, and a VM with no listener on `443` answers that with
 `ERR_CONNECTION_TIMED_OUT`, which looks like the deploy failed when it did not.
 
@@ -340,14 +341,14 @@ an old bundle may show errors instead of data; the fix is a forward deploy, or a
 
 The one visible overlap is timing: while the chain deploy restarts the node, the
 page shows its "cannot reach the node at this origin" state for a few seconds,
-and `#/play` may lose an in-flight move. Reload when the deploy goes green. The
+and `#/wallet/play` may lose an in-flight move. Reload when the deploy goes green. The
 chain is also reset on every chain deploy, so the explorer will show a freshly
 bootstrapped chain afterwards — that is the reset, not a broken page.
 
 The explorer is also unaffected by 8646 being firewalled off. Browsers only ever
 reach the relay through `/relay` on port 80, so the relay rule in
 [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md) can stay closed to the internet
-even though `#/play` plays real matches.
+even though `#/wallet/play` plays real matches.
 
 ## Troubleshooting
 
@@ -370,7 +371,7 @@ even though `#/play` plays real matches.
 | `curl -I http://…` returns `308`, not the page | Working as designed: Caddy redirects to `https://` | Follow the `location:` header, or use `https://` |
 | `docker compose ps` shows `tls` restarting | Port `443` (or `80`) is already bound on the host | `sudo ss -ltnp 'sport = :443'`; move that service |
 | Workflow deploy job skipped | No host configured | `gh variable list \| grep -i deploy_host` |
-| `#/play` says "the relay at … is on devnet" | The relay follows a different chain than the node | The **Two networks** panel names both; restart the relay with the node's `--network`, see [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) |
+| `#/wallet/play` says "the relay at … is on devnet" | The relay follows a different chain than the node | The **Two networks** panel names both; restart the relay with the node's `--network`, see [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) |
 | `wallet.chessproofofwork.com` serves a TLS error while the explorer is fine | The wallet record is missing, or its challenge has not completed yet | `dig +short wallet.chessproofofwork.com`; `docker compose logs tls \| grep wallet`; both names need port 80 open |
 | The wallet name shows the explorer dashboard | The page was opened under `explorer.` (the landing view follows the hostname) | Use `https://wallet.chessproofofwork.com/`, or the hamburger menu |
 | "this browser will not store wallets" | IndexedDB is disabled, or another tab holds an older database version | Leave private mode, close the other tab and reload; `Open a keyfile` works without storage |

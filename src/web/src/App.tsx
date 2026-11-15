@@ -28,15 +28,6 @@ import { NotFound } from "./views/NotFound";
 import { Ratings } from "./views/Ratings";
 
 /**
- * The table pulls in `chess.js`, which the explorer itself never needs, so it
- * loads on demand: an explorer visit should not pay for a move generator.
- */
-const Play = lazy(async () => {
-  const module = await import("./views/Play");
-  return { default: module.Play };
-});
-
-/**
  * The wallet pulls in scrypt, ML-DSA-65 key derivation and the BIP-39 wordlist.
  * Loaded on demand for the same reason: most explorer visits never open it, and
  * on the wallet subdomain it is the first and only thing asked for.
@@ -51,11 +42,11 @@ const EXPLORER_SECTIONS = [
   { key: "blocks", label: "Blocks", href: "#/blocks" },
   { key: "games", label: "Games", href: "#/games" },
   { key: "ratings", label: "Elo", href: "#/ratings" },
-  { key: "play", label: "Play", href: "#/play" },
 ] as const;
 
 const WALLET_SECTIONS = [
   { key: "wallet", label: "Overview", href: "#/wallet" },
+  { key: "walletPlay", label: "Play", href: "#/wallet/play" },
   { key: "walletSend", label: "Send", href: "#/wallet/send" },
   { key: "walletReceive", label: "Receive", href: "#/wallet/receive" },
   { key: "walletHistory", label: "History", href: "#/wallet/history" },
@@ -94,6 +85,7 @@ function Shell(): ReactNode {
   const walletOpen =
     site === "wallet" ||
     route.name === "wallet" ||
+    route.name === "walletPlay" ||
     route.name === "walletSend" ||
     route.name === "walletReceive" ||
     route.name === "walletHistory" ||
@@ -240,6 +232,7 @@ function routeKey(route: Route): string {
     case "dashboard":
       return currentSite() === "wallet" ? "wallet" : "dashboard";
     case "wallet":
+    case "walletPlay":
     case "walletSend":
     case "walletReceive":
     case "walletHistory":
@@ -257,7 +250,7 @@ function routeKey(route: Route): string {
 function WalletRoute({
   view,
 }: {
-  view: "overview" | "send" | "receive" | "history" | "settings";
+  view: "overview" | "play" | "send" | "receive" | "history" | "settings";
 }): ReactNode {
   return (
     <Suspense fallback={<Loading />}>
@@ -282,16 +275,12 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <Ratings />;
     case "miner":
       return <MinerRating address={route.address} />;
-    case "play":
-      return (
-        <Suspense fallback={<Loading />}>
-          <Play />
-        </Suspense>
-      );
     case "account":
       return <AccountView address={route.address} />;
     case "wallet":
       return <WalletRoute view="overview" />;
+    case "walletPlay":
+      return <WalletRoute view="play" />;
     case "walletSend":
       return <WalletRoute view="send" />;
     case "walletReceive":

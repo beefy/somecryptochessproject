@@ -9,13 +9,17 @@
  *
  * What the page signs is exactly what a Stockfish miner signs: the certificate
  * at match start, every move with its ply, and the result at the end. The key is
- * the hybrid Ed25519 + ML-DSA-65 account derived from one 32-byte master seed in
- * this tab, so the transactions it posts are accepted by the chain and its
- * starts and results verify at the relay. What it announces is the same
- * `WinProof` a miner builds from the same transcript, and the checks listed here
- * are the ones `sccp/protocol/verification.py` applies that need nothing but the
- * proof and the epoch beacon — including both hybrid signature rules, verified
- * against the roster's keys.
+ * the wallet's unlocked hybrid Ed25519 + ML-DSA-65 account, so the transactions
+ * it posts are accepted by the chain and its starts and results verify at the
+ * relay. What it announces is the same `WinProof` a miner builds from the same
+ * transcript, and the checks listed here are the ones
+ * `sccp/protocol/verification.py` applies that need nothing but the proof and the
+ * epoch beacon — including both hybrid signature rules, verified against the
+ * roster's keys.
+ *
+ * The page lives under the wallet's Play tab, not in the explorer: a seat is a
+ * funded account, and the wallet is where the key and the funds already are.
+ * `#/play` still resolves here so an old link does not break.
  *
  * Two honest limits are shown, not hidden:
  *
@@ -28,7 +32,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Chess, type PieceSymbol, type Square } from "chess.js";
 import { Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
-import { Button, Divider, HelperText, ProgressBar, Text, TextInput } from "react-native-paper";
+import { Button, Divider, HelperText, ProgressBar, Text } from "react-native-paper";
 
 import {
   fetchAccount,
@@ -52,12 +56,9 @@ import { DOMAINS } from "../lib/canonical";
 import { formatAmount, formatClock, formatCoins, formatInteger, shortAddress } from "../lib/format";
 import {
   addressFor,
-  generateHybridKeypair,
-  hybridKeypairFromSeedHex,
   hybridPublicKeyHex,
   hybridSignDomain,
   hybridVerifyDomain,
-  seedHex,
   signDomain,
   type HybridKeypair,
 } from "../lib/keys";
@@ -211,14 +212,6 @@ function dropCommitment(address: string): void {
   }
 }
 
-function safeHybridKeypair(seed: string): HybridKeypair | null {
-  try {
-    return hybridKeypairFromSeedHex(seed);
-  } catch {
-    return null;
-  }
-}
-
 /** Pick the session this seat is playing in this epoch. */
 function pickMatch(
   matches: readonly RelayMatchView[],
@@ -235,131 +228,30 @@ function pickMatch(
   );
 }
 
-export function Play(): ReactNode {
-  const { status } = useNode();
-  const network = status.data?.network ?? null;
-  const [seed, setSeed] = useState<string | null>(null);
-  const [seedText, setSeedText] = useState("");
-  const keypair = useMemo(() => (seed === null ? null : safeHybridKeypair(seed)), [seed]);
-
-  if (network === null) {
-    if (status.error !== undefined) return <FailureNotice error={status.error} />;
-    return <Loading />;
-  }
-
-  if (seed === null || keypair === null) {
-    return (
-      <KeyPanel
-        network={network}
-        seedText={seedText}
-        onSeedText={setSeedText}
-        onUse={(value) => setSeed(value)}
-      />
-    );
-  }
-
-  return (
-    <Table
-      key={seed}
-      network={network}
-      keypair={keypair}
-      onForget={() => {
-        setSeed(null);
-        setSeedText("");
-      }}
-    />
-  );
-}
-
-function KeyPanel({
+/**
+ * The table, played with the account the wallet unlocked.
+ *
+ * There is no seed field and no separate "sit down" key: the key that registers,
+ * commits availability and signs every move is the wallet's, so a seat is the
+ * same account that holds the funds. The wallet renders this under its Play tab;
+ * `#/play` is an alias for that page.
+ */
+export function Play({
+  keypair,
   network,
-  seedText,
-  onSeedText,
-  onUse,
 }: {
+  keypair: HybridKeypair;
   network: string;
-  seedText: string;
-  onSeedText: (value: string) => void;
-  onUse: (seed: string) => void;
 }): ReactNode {
-  const [fresh, setFresh] = useState(() => seedHex(generateHybridKeypair()));
-  const candidate = seedText.trim() === "" ? fresh : seedText.trim();
-  const keypair = safeHybridKeypair(candidate);
-  const address = keypair === null ? null : addressFor(keypair.publicKey, network);
-
-  return (
-    <>
-      <View style={styles.hero}>
-        <Text variant="headlineSmall" style={styles.heroTitle}>
-          Take a seat on {network}
-        </Text>
-        <Text variant="bodyMedium" style={styles.heroBody}>
-          A seat is a key on the epoch roster. Register it, commit availability two epochs ahead,
-          reveal in the epoch before it opens, and the relay pairs it from the beacon. Every move you
-          sign is a move a verifier will replay.
-        </Text>
-      </View>
-
-      <Section title="Key" subtitle="held in this tab only, never written to disk">
-        <View style={styles.fields}>
-          <TextInput
-            mode="outlined"
-            dense
-            label="Seed (64 hex characters)"
-            value={seedText === "" ? fresh : seedText}
-            onChangeText={onSeedText}
-            autoCapitalize="none"
-            style={styles.field}
-          />
-          <Button
-            mode="outlined"
-            onPress={() => {
-              setFresh(seedHex(generateHybridKeypair()));
-              onSeedText("");
-            }}
-          >
-            Generate
-          </Button>
-        </View>
-        {address === null ? (
-          <HelperText type="error" visible>
-            A seed is 32 bytes of hex (64 characters): the master seed both halves of the hybrid key
-            derive from.
-          </HelperText>
-        ) : (
-          <KeyValue label="Address">
-            <Mono copy>{address}</Mono>
-          </KeyValue>
-        )}
-        <View style={styles.actions}>
-          <Button
-            mode="contained"
-            disabled={keypair === null}
-            onPress={() => {
-              if (keypair !== null) onUse(candidate);
-            }}
-          >
-            Sit down
-          </Button>
-        </View>
-        <HelperText type="info" visible>
-          The master seed is the private key: it derives the Ed25519 half and the ML-DSA-65 half, and
-          this page keeps it in memory, so a refresh forgets it — that is the point. Do not fund a
-          key you would be sad to lose.
-        </HelperText>
-      </Section>
-    </>
-  );
+  return <Table key={network} network={network} keypair={keypair} />;
 }
 
 function Table({
   network,
   keypair,
-  onForget,
 }: {
   network: string;
   keypair: HybridKeypair;
-  onForget: () => void;
 }): ReactNode {
   const { status, params: paramsResource } = useNode();
   const params = paramsResource.data;
@@ -789,11 +681,6 @@ function Table({
             : `through epoch ${accountData.registered_until_epoch}`}
         </KeyValue>
         <KeyValue label="Engine fingerprint">{accountData.engine ?? ENGINE}</KeyValue>
-        <View style={styles.actions}>
-          <Button mode="text" onPress={onForget}>
-            Forget this key
-          </Button>
-        </View>
       </Section>
 
       <Divider />
@@ -1162,8 +1049,6 @@ const styles = StyleSheet.create({
   heroTitle: { fontWeight: "600" },
   heroBody: { opacity: 0.8 },
   actions: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
-  fields: { flexDirection: "row", gap: 8, flexWrap: "wrap", paddingTop: 4 },
-  field: { flexGrow: 1, minWidth: 160 },
   table: {
     flexDirection: "row",
     gap: 20,

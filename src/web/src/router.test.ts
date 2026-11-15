@@ -42,6 +42,7 @@ describe("wallet routes", () => {
 
   it("round-trips each wallet section", () => {
     for (const [path, name] of [
+      ["#/wallet/play", "walletPlay"],
       ["#/wallet/send", "walletSend"],
       ["#/wallet/receive", "walletReceive"],
       ["#/wallet/history", "walletHistory"],
@@ -51,6 +52,12 @@ describe("wallet routes", () => {
       expect(route).toEqual({ name });
       expect(routeHash(route)).toBe(path);
     }
+  });
+
+  it("keeps the old #/play link as an alias for the wallet table", () => {
+    expect(parseRoute("#/play")).toEqual({ name: "walletPlay" });
+    expect(routeHash({ name: "walletPlay" })).toBe("#/wallet/play");
+    expect(activeSection({ name: "walletPlay" })).toBe("walletPlay");
   });
 
   it("refuses unknown and over-long wallet paths", () => {

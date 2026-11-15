@@ -132,7 +132,9 @@ the review screen and local nonce tracking (§4.3), the create/restore/open,
 receive, send, history and settings views (§4.4), deployed at
 `wallet.chessproofofwork.com` with the explorer. History is implemented as the
 bounded block scan described in §4.3, not as a full index: the tab names the
-heights it covered and caches that window in IndexedDB. Still open from this
+heights it covered and caches that window in IndexedDB. The table moved in too:
+`#/wallet/play` registers and signs with the wallet's unlocked key instead of a
+throwaway seat in the explorer (`#/play` remains an alias). Still open from this
 workstream: the QR code and the PWA manifest/service worker (§4.4), and the
 Playwright devnet test (§4.5).
 

@@ -4,7 +4,7 @@ The browser client: a block explorer and a table that is one real seat in a real
 match. React Native for Web rendered through Material Design
 (`react-native-paper`), bundled by Vite, TypeScript in strict mode.
 
-It talks to two things: the node's `/v1` JSON API and, from `#/play`, the
+It talks to two things: the node's `/v1` JSON API and, from `#/wallet/play`, the
 matchmaking relay. Every number on screen is a field one of them sent and every
 response is typed in [`src/types.ts`](src/types.ts). There is no fixtures mode:
 with no node reachable, the pages say so rather than invent data.
@@ -177,7 +177,7 @@ rules, its DNS record and its rollback are in
 | `#/ratings` | miner Elo: the top ten, their record and deviation, and the distribution |
 | `#/miners/<address>` | one miner: current rating, a line chart per epoch, its games |
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
-| `#/play` | a seat in a real match: register, get paired, play, announce the proof |
+| `#/wallet/play` | a seat in a real match, signed with the unlocked wallet key (`#/play` is an alias) |
 | `#/wallet` | the wallet: unlock or create a keyfile, balances, faucet, export |
 | `#/wallet/send` | build, review and sign a transfer |
 | `#/wallet/receive` | the address and its public-key fingerprint |
@@ -234,7 +234,11 @@ What the page does:
 - **Open** — paste a keyfile from `sccp wallet new` and unlock it; the header is
   validated and the decrypted seed has to derive the address it names.
 - **Balances** — `GET /v1/accounts/<address>` polled every 8 seconds.
-- **Faucet** — `POST /v1/faucet` on testnet and devnet.
+- **Play** — the table, signed with the unlocked key: register, commit
+  availability, reveal, join a paired match, play, announce the proof. No seed
+  field and no throwaway seat: the wallet's account is the seat.
+- **Faucet** — `POST /v1/faucet` on testnet and devnet, with a visible
+  in-progress bar until the node answers.
 - **Send** — amount and fee as decimal SCCP, a review screen showing every signed
   field plus the txid, then a hybrid signature and `POST /v1/tx`. The next nonce is
   kept locally because the account view reports the *committed* one.
@@ -251,8 +255,10 @@ that matter for safety and they are in.
 
 ## The table is a miner seat
 
-`#/play` is not a demo board. The key it holds goes through the same four steps a
-Stockfish miner goes through, as signed ledger transactions:
+`#/wallet/play` is not a demo board: it is the wallet's own account, put on the
+roster. The key it signs with goes through the same four steps a Stockfish miner
+goes through, as signed ledger transactions (`#/play` still resolves here, so an
+older link does not break):
 
 | Step | Transaction | Why |
 | --- | --- | --- |
@@ -261,14 +267,15 @@ Stockfish miner goes through, as signed ledger transactions:
 | reveal | `reveal` | the committed nonce, valid only in epoch `E - 1` |
 | join | (signed certificate, posted to the relay) | the start signature; the second one activates the match and starts both clocks |
 
-The 64 hex characters the page asks for are a **master seed**, not an Ed25519
-seed: `HMAC-SHA-256(seed, "sccp/v1/pq/ed25519")` is the half that signs moves and
+The key is the wallet's hybrid account: one 32-byte master seed behind both
+halves. `HMAC-SHA-256(seed, "sccp/v1/pq/ed25519")` is the half that signs moves and
 `HMAC-SHA-256(seed, "sccp/v1/pq/mldsa65")` seeds ML-DSA-65 for everything the
 ledger and the relay check as hybrid — transactions, certificate start
 signatures, results. `@noble/curves` and `@noble/post-quantum` produce the same
-bytes as `sccp/crypto/pq.py`, so one seed is one account in the page, in
-`sccp wallet` and on chain. Nothing is written to disk: a refresh forgets the
-key.
+bytes as `sccp/crypto/pq.py`, so one seed is one account in the wallet, in
+`sccp wallet` and on chain. The Play tab asks for no seed of its own: the wallet
+holds the encrypted keyfile and the unlocked keypair, and locking the wallet (or
+its idle timer) ends the seat with it.
 
 From there the page is a relay client: it publishes each move with its ply and
 signature, co-signs the result automatically when the game ends, and then builds
