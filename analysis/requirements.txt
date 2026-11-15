@@ -4,7 +4,7 @@
 # synthetic wallets from `deploy/synthetic_testnet_traffic.py`, which needs the
 # package and its runtime dependencies (including httpx). These are what the charts
 # need on top of that.
-jupyterlab>=4,<5
+jupyterlab>=4.6.6,<5
 matplotlib>=3.11.2,<4
 networkx>=3.6.1,<4
 nbclient>=0.11.0,<1
