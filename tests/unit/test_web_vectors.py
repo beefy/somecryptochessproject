@@ -23,6 +23,7 @@ from sccp.chess.pgn import GameResult, canonical_game_hash
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import verify_domain
 from sccp.crypto.pq import hybrid_keypair_from_seed, hybrid_verify_domain
+from sccp.crypto.wallet import KeyfileHeader, decrypt_seed, seed_to_mnemonic
 from sccp.protocol.beacon import commitment
 from sccp.protocol.models import GameResult as ProtocolGameResult
 from sccp.protocol.models import MatchCertificate, Transaction, WinProof
@@ -188,6 +189,40 @@ def test_ledger_vectors_describe_this_implementation(vectors: dict[str, object])
         )
         == ledger["availability_commitment"]["commitment"]
     )
+
+
+def test_transfer_vector_describes_this_implementation(vectors: dict[str, object]) -> None:
+    """The transfer txid and its hybrid signature are still what the chain expects."""
+    ledger = vectors["ledger"]
+    assert isinstance(ledger, dict)
+    transfer = ledger["transfer"]
+    assert isinstance(transfer, dict)
+    wire = transfer["transaction"]
+    unsigned = Transaction.model_validate({**wire, "signature": None})
+    assert txid(unsigned) == transfer["txid"]
+    keypair = hybrid_keypair_from_seed(bytes.fromhex(ledger["seed_hex"]))
+    assert hybrid_verify_domain(
+        bytes.fromhex(keypair.public_key_hex),
+        Domain.TX,
+        tx_body(unsigned),
+        bytes.fromhex(wire["signature"]),
+    )
+
+
+def test_keyfile_vector_describes_this_implementation(vectors: dict[str, object]) -> None:
+    """The pinned keyfile opens in the CLI and the phrase restores the same seed."""
+    keyfile = vectors["keyfile"]
+    assert isinstance(keyfile, dict)
+    document = keyfile["document"]
+    assert isinstance(document, dict)
+    header = KeyfileHeader.from_dict(document)
+    seed = decrypt_seed(header, bytes.fromhex(document["ciphertext"]), keyfile["passphrase"])
+    assert seed.hex() == keyfile["seed_hex"]
+    assert header.address == encode_address(
+        hybrid_keypair_from_seed(seed).public_key_bytes, header.network
+    )
+    assert seed_to_mnemonic(seed) == keyfile["mnemonic"]
+
 
 
 def test_match_vectors_describe_this_implementation(vectors: dict[str, object]) -> None:

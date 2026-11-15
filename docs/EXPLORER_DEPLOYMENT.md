@@ -1,17 +1,21 @@
-# Deploying the explorer
+# Deploying the explorer and the wallet
 
 Every merge that touches `src/web` or `deploy/explorer` runs
 [`deploy-explorer.yml`](../.github/workflows/deploy-explorer.yml), which publishes
-the built bundle to:
+the built bundle to both public names:
 
 ```text
 https://explorer.chessproofofwork.com
+https://wallet.chessproofofwork.com
 ```
 
-That host serves three things on one origin: the bundle at `/`, the node API
-under `/v1` and the matchmaking relay under `/relay`. It is two containers, not a
+They are one bundle and one release directory. Caddy holds a certificate per
+name, nginx answers whichever Host arrives, and the page decides what `#/` means
+from the hostname: the dashboard on `explorer.`, the wallet on `wallet.`. Each
+host serves three things on one origin: the bundle at `/`, the node API under
+`/v1` and the matchmaking relay under `/relay`. It is two containers, not a
 bucket, for the reason in the next section: a Caddy terminator, which owns the
-certificate, in front of an nginx origin.
+certificates, in front of an nginx origin.
 
 The deploy never touches the chain. It uploads a new release directory, moves one
 symlink and leaves the node, the relay and the SQLite file alone — unlike
@@ -61,11 +65,16 @@ need no Docker network in common with the chain's stack and no credentials.
 3. **start** — `docker compose up -d` in the deploy directory. Idempotent: it
    recreates a container only when its configuration changed, and the certificate
    lives in the `caddy_data` volume, so a deploy never re-issues it.
-4. **switch** — `ln -sfn` a `current.next` link and `mv -T` it over `current`.
+4. **reload** — `caddy reload` in the `tls` container. A bind-mounted Caddyfile is
+   not part of compose's config hash and Caddy does not watch it, so a new site
+   block (the wallet name) would otherwise wait for a restart. On a first run the
+   admin endpoint may not be listening yet; the step falls back to
+   `docker compose restart tls`, which loads the same file.
+5. **switch** — `ln -sfn` a `current.next` link and `mv -T` it over `current`.
    That rename is the deploy: nginx resolves the symlink per request, so no
    container is restarted and no request can see a half-written bundle. The step
    then asserts that `current` really resolves to the new release.
-5. **prune** — keeps the last five releases, for rollback.
+6. **prune** — keeps the last five releases, for rollback.
 
 The workflow does not call the site afterwards. Every step it can assert locally —
 the bundle built, the containers came up, the symlink moved — it asserts, and the
@@ -82,11 +91,18 @@ curl -sS https://explorer.chessproofofwork.com/relay/v1/status \
   | jq '{network, epoch, matches}'
 curl -sSI https://explorer.chessproofofwork.com/ | head -3
 curl -sSI http://explorer.chessproofofwork.com/ | head -1   # 308 -> https
+
+# The wallet is the same origin under a second name; it has its own certificate.
+curl -sSI https://wallet.chessproofofwork.com/ | head -3
+curl -sSI http://wallet.chessproofofwork.com/ | head -1    # 308 -> https
+curl -sS https://wallet.chessproofofwork.com/v1/status | jq '{network, height}'
 ```
 
-The first two answer because of the proxy; the third is the bundle; the fourth is
-Caddy sending the plain-HTTP name to the secure one. Open the root in a browser
-for the explorer, or `#/play` for the table.
+The first two answer because of the proxy; the third and fifth are the bundle; the
+fourth and sixth are Caddy sending the plain-HTTP names to the secure ones. Open
+`https://explorer.chessproofofwork.com/` in a browser for the explorer,
+`https://wallet.chessproofofwork.com/` for the wallet, or `#/play` on either for
+the table. The hamburger in the top-left corner switches between the two names.
 
 ## Layout on the host
 
@@ -125,6 +141,7 @@ only issue once the name resolves.
 
 ```bash
 export EXPLORER_HOST="explorer.chessproofofwork.com"
+export WALLET_HOST="wallet.chessproofofwork.com"
 
 gcloud compute firewall-rules create sccp-testnet-explorer-web \
     --network="$NETWORK" \
@@ -147,7 +164,7 @@ gcloud compute firewall-rules update sccp-testnet-explorer-web \
     --rules=tcp:80,tcp:443 --project="$PROJECT_ID"
 ```
 
-Then point the name at the same address the node uses:
+Then point both names at the same address the node uses:
 
 ```bash
 gcloud dns record-sets create "$EXPLORER_HOST." \
@@ -156,20 +173,34 @@ gcloud dns record-sets create "$EXPLORER_HOST." \
     --ttl=60 \
     --rrdatas="$STATIC_IP" \
     --project="$PROJECT_ID"
+
+gcloud dns record-sets create "$WALLET_HOST." \
+    --zone="$DNS_ZONE" \
+    --type=A \
+    --ttl=60 \
+    --rrdatas="$STATIC_IP" \
+    --project="$PROJECT_ID"
 ```
 
-If the record already exists, use `gcloud dns record-sets update` with the same
+If a record already exists, use `gcloud dns record-sets update` with the same
 arguments. Verify from your workstation before wiring GitHub:
 
 ```bash
 dig +short "$EXPLORER_HOST" A
+dig +short "$WALLET_HOST" A
 ```
 
+Both names must resolve before the first deploy: Caddy asks for one certificate
+per name over HTTP-01, and a name that does not resolve yet leaves that site
+serving a TLS error while the other one works. The wallet name is not a redirect
+to the explorer and does not need its own release directory; it is the same
+origin answering a second name.
+
 A CNAME pointing at another *name* that resolves to the same VM also works, but
-the deployment expects an `A` record on the instance's address: `/v1` and
-`/relay` are paths on the origin that served the page, so the name has to land on
-the host running the proxy rather than on a redirect. TLS is a separate decision;
-see [TLS](#tls).
+the deployment expects `A` records on the instance's address: `/v1` and `/relay`
+are paths on the origin that served the page, so the name has to land on the host
+running the proxy rather than on a redirect. TLS is a separate decision; see
+[TLS](#tls).
 
 ### GCP: the deploy directory
 
@@ -240,9 +271,9 @@ TLS is part of the deployment, not an option. The `tls` service in
 [`deploy/explorer/docker-compose.yml`](../deploy/explorer/docker-compose.yml) runs
 Caddy with
 [`deploy/explorer/Caddyfile`](../deploy/explorer/Caddyfile), which on first start
-asks Let's Encrypt for a certificate for the name, renews it in the background,
-redirects `http://` to `https://`, and proxies to the nginx origin on
-`127.0.0.1:8080`.
+asks Let's Encrypt for a certificate for **each** name in the file (the explorer
+and the wallet), renews them in the background, redirects `http://` to `https://`,
+and proxies to the nginx origin on `127.0.0.1:8080`.
 
 The certificate matters here more than for a JSON endpoint: `#/play` generates a
 seat keypair **in the page** and signs moves with it, so plain HTTP would put that
@@ -340,6 +371,10 @@ even though `#/play` plays real matches.
 | `docker compose ps` shows `tls` restarting | Port `443` (or `80`) is already bound on the host | `sudo ss -ltnp 'sport = :443'`; move that service |
 | Workflow deploy job skipped | No host configured | `gh variable list \| grep -i deploy_host` |
 | `#/play` says "the relay at … is on devnet" | The relay follows a different chain than the node | The **Two networks** panel names both; restart the relay with the node's `--network`, see [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) |
+| `wallet.chessproofofwork.com` serves a TLS error while the explorer is fine | The wallet record is missing, or its challenge has not completed yet | `dig +short wallet.chessproofofwork.com`; `docker compose logs tls \| grep wallet`; both names need port 80 open |
+| The wallet name shows the explorer dashboard | The page was opened under `explorer.` (the landing view follows the hostname) | Use `https://wallet.chessproofofwork.com/`, or the hamburger menu |
+| "this browser will not store wallets" | IndexedDB is disabled, or another tab holds an older database version | Leave private mode, close the other tab and reload; `Open a keyfile` works without storage |
+| The wallet says "wrong passphrase or corrupted ciphertext" | The passphrase is wrong, or the header was edited after encryption | Re-check the phrase; a keyfile from `sccp wallet new` opens with the passphrase it was written with |
 
 ## Cost
 

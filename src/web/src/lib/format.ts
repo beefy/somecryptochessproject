@@ -52,6 +52,30 @@ export function formatAmount(base: number | null | undefined): string {
   return `${base < 0 ? "-" : ""}${text} SCCP`;
 }
 
+/**
+ * Parse a decimal SCCP amount into integer base units.
+ *
+ * Amounts on the wire are integers (1 SCCP = 100 000 000 units), so the text a
+ * person types has to be scaled exactly once, here, rather than by multiplying a
+ * float in the view. Thousands separators are accepted because that is how the
+ * number is displayed next to the field; anything else -- exponents, more than
+ * eight decimals, signs -- is refused instead of rounded.
+ */
+export function parseAmount(text: string): number {
+  const trimmed = text.trim().replace(/,/g, "");
+  const match = /^(\d+)(?:\.(\d{1,8}))?$/.exec(trimmed);
+  if (match === null) {
+    throw new Error(`"${text.trim()}" is not an SCCP amount (up to 8 decimals)`);
+  }
+  const whole = Number(match[1]);
+  const fraction = Number((match[2] ?? "").padEnd(8, "0"));
+  const units = whole * UNITS_PER_COIN + fraction;
+  if (!Number.isSafeInteger(units)) {
+    throw new Error(`"${text.trim()}" is larger than an account balance can hold`);
+  }
+  return units;
+}
+
 /** Render a byte count with a binary unit. */
 export function formatBytes(value: number): string {
   let size = value;

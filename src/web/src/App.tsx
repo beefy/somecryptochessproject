@@ -8,10 +8,12 @@
 
 import { Component, lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
-import { Banner, Button, IconButton, PaperProvider, Surface, Text, useTheme } from "react-native-paper";
+import { Banner, Button, PaperProvider, Surface, Text, useTheme } from "react-native-paper";
 
+import { AppMenu } from "./components/AppMenu";
 import { Anchor, Loading, Page } from "./components/Chrome";
 import { formatInteger, shortHash } from "./lib/format";
+import { currentSite } from "./lib/site";
 import { NodeProvider, useNode } from "./node";
 import { activeSection, navigate, useRoute, type Route } from "./router";
 import { darkTheme, lightTheme, ThemeModeContext, preferredMode, useThemeMode, type ThemeMode } from "./theme";
@@ -34,13 +36,31 @@ const Play = lazy(async () => {
   return { default: module.Play };
 });
 
-const SECTIONS = [
+/**
+ * The wallet pulls in scrypt, ML-DSA-65 key derivation and the BIP-39 wordlist.
+ * Loaded on demand for the same reason: most explorer visits never open it, and
+ * on the wallet subdomain it is the first and only thing asked for.
+ */
+const Wallet = lazy(async () => {
+  const module = await import("./views/Wallet");
+  return { default: module.Wallet };
+});
+
+const EXPLORER_SECTIONS = [
   { key: "dashboard", label: "Overview", href: "#/" },
   { key: "blocks", label: "Blocks", href: "#/blocks" },
   { key: "games", label: "Games", href: "#/games" },
   { key: "ratings", label: "Elo", href: "#/ratings" },
   { key: "play", label: "Play", href: "#/play" },
 ] as const;
+
+const WALLET_SECTIONS = [
+  { key: "wallet", label: "Wallet", href: "#/wallet" },
+  { key: "walletSend", label: "Send", href: "#/wallet/send" },
+  { key: "walletReceive", label: "Receive", href: "#/wallet/receive" },
+  { key: "walletSettings", label: "Settings", href: "#/wallet/settings" },
+] as const;
+
 
 export function App(): ReactNode {
   const [mode, setMode] = useState<ThemeMode>(preferredMode);
@@ -68,24 +88,28 @@ function Shell(): ReactNode {
   const compact = width < 720;
   const section = activeSection(route);
   const offline = status.error !== undefined;
+  const site = currentSite();
+  const sections = site === "wallet" ? WALLET_SECTIONS : EXPLORER_SECTIONS;
 
   return (
     <View style={[styles.root, { backgroundColor: paper.colors.background }]}>
       <Surface elevation={2} style={styles.header}>
         <View style={styles.headerRow}>
-          <Anchor href="#/" onPress={() => navigate("#/")} style={styles.brand}>
+          <AppMenu />
+
+          <Anchor href="#/" onPress={() => navigate(site === "wallet" ? "#/wallet" : "#/")} style={styles.brand}>
             <Text variant="titleLarge" style={styles.brandText}>
               SCCP
             </Text>
             {!compact && (
               <Text variant="bodySmall" style={styles.brandSub}>
-                explorer
+                {site}
               </Text>
             )}
           </Anchor>
 
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.nav}>
-            {SECTIONS.map((item) => {
+            {sections.map((item) => {
               const active = item.key === section;
               return (
                 <Anchor key={item.key} href={item.href} onPress={() => navigate(item.href)} style={styles.navItem}>
@@ -104,12 +128,11 @@ function Shell(): ReactNode {
                 {formatInteger(status.data.height)}
               </Text>
             )}
-            <IconButton
-              icon={mode === "dark" ? "weather-sunny" : "weather-night"}
-              size={20}
-              onPress={toggle}
-              accessibilityLabel="Toggle colour scheme"
-            />
+            {/* A label, not an icon: no icon library ships with this bundle, so
+                `IconButton icon="weather-night"` renders an empty circle. */}
+            <Button compact mode="text" onPress={toggle} accessibilityLabel="Toggle colour scheme">
+              {mode === "dark" ? "Light" : "Dark"}
+            </Button>
           </View>
         </View>
         {status.data !== undefined && (
@@ -196,15 +219,35 @@ function routeKey(route: Route): string {
       return `account:${route.address}`;
     case "notFound":
       return `notFound:${route.path}`;
+    case "wallet":
+      return "wallet";
+    case "walletSend":
+      return "wallet:send";
+    case "walletReceive":
+      return "wallet:receive";
+    case "walletSettings":
+      return "wallet:settings";
     default:
       return route.name;
   }
 }
 
+/**
+ * The wallet, lazily: `#/` on the wallet subdomain is its landing page, so the
+ * site's default route and `#/wallet` render the same view.
+ */
+function WalletRoute({ view }: { view: "overview" | "send" | "receive" | "settings" }): ReactNode {
+  return (
+    <Suspense fallback={<Loading />}>
+      <Wallet view={view} />
+    </Suspense>
+  );
+}
+
 function RouteView({ route }: { route: Route }): ReactNode {
   switch (route.name) {
     case "dashboard":
-      return <Dashboard />;
+      return currentSite() === "wallet" ? <WalletRoute view="overview" /> : <Dashboard />;
     case "blocks":
       return <Blocks />;
     case "block":
@@ -225,6 +268,14 @@ function RouteView({ route }: { route: Route }): ReactNode {
       );
     case "account":
       return <AccountView address={route.address} />;
+    case "wallet":
+      return <WalletRoute view="overview" />;
+    case "walletSend":
+      return <WalletRoute view="send" />;
+    case "walletReceive":
+      return <WalletRoute view="receive" />;
+    case "walletSettings":
+      return <WalletRoute view="settings" />;
     case "notFound":
       return <NotFound path={route.path} />;
   }

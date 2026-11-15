@@ -13,6 +13,7 @@ import {
   buildAvailability,
   buildRegister,
   buildReveal,
+  buildTransfer,
   isLedgerSignatureHex,
   signTransaction,
   txId,
@@ -35,6 +36,53 @@ function unsignedRegister(): Transaction {
 }
 
 describe("ledger transactions", () => {
+  it("hashes a transfer to the CLI's txid", () => {
+    const wire = ledger.transfer.transaction;
+    const tx = buildTransfer({
+      network: wire.network,
+      sender: wire.from,
+      nonce: wire.nonce,
+      fee: wire.fee,
+      to: wire.payload.to,
+      amount: wire.payload.amount,
+      publicKeyHex: wire.payload.public_key,
+    });
+    expect(txId(tx)).toBe(ledger.transfer.txid);
+    expect(tx.payload).toEqual(wire.payload);
+  });
+
+  it("refuses a non-positive transfer amount", () => {
+    const wire = ledger.transfer.transaction;
+    expect(() =>
+      buildTransfer({
+        network: wire.network,
+        sender: wire.from,
+        nonce: wire.nonce,
+        fee: wire.fee,
+        to: wire.payload.to,
+        amount: 0,
+        publicKeyHex: wire.payload.public_key,
+      }),
+    ).toThrow(/positive integer/);
+  });
+
+  it("produces a transfer signature the hybrid verifier accepts", () => {
+    const wire = ledger.transfer.transaction;
+    const keypair = hybridKeypairFromSeedHex(ledger.seed_hex);
+    const tx = buildTransfer({
+      network: wire.network,
+      sender: wire.from,
+      nonce: wire.nonce,
+      fee: wire.fee,
+      to: wire.payload.to,
+      amount: wire.payload.amount,
+      publicKeyHex: wire.payload.public_key,
+    });
+    const signed = signTransaction(keypair, tx);
+    expect(isLedgerSignatureHex(signed.signature)).toBe(true);
+    expect(hybridVerify(ledger.public_key_hex, fromHex(txId(tx)), signed.signature as string)).toBe(true);
+  });
+
   it("hashes a register transaction to the Python txid", () => {
     expect(txId(unsignedRegister())).toBe(ledger.register.txid);
   });

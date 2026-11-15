@@ -10,6 +10,7 @@ featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
  - [Block explorer](https://explorer.chessproofofwork.com/)
+ - [Web wallet](https://wallet.chessproofofwork.com/)
  - [Living Whitepaper](https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/WHITEPAPER.md)
  - [Public testnet](http://testnet.chessproofofwork.com:8645/v1/status)
  - [Reddit](https://www.reddit.com/r/chessproofofwork/)
@@ -484,7 +485,10 @@ a new project or domain -- the cutover that produced those names -- is
 The explorer has its own deploy and its own name:
 `https://explorer.chessproofofwork.com` serves the built bundle with `/v1`
 and `/relay` proxied onto that origin, because the node sends no CORS headers. A
-Caddy terminator in front holds the certificate. See
+Caddy terminator in front holds the certificate. The wallet is the same bundle
+under a second name, `https://wallet.chessproofofwork.com`, with its own
+certificate from the same Caddy; the hamburger menu in the top-left corner
+switches between the two. See
 [`docs/EXPLORER_DEPLOYMENT.md`](docs/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws

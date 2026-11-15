@@ -127,11 +127,18 @@ No consensus change. This is the piece that turns `src/web` from an explorer wit
 a playable seat into a wallet, and it is first because everything else needs a
 way to sign in a browser.
 
+**Status (0.20.0).** Shipped: the keystore port (§4.1), `buildTransfer` (§4.2),
+the review screen and local nonce tracking (§4.3), and the create/restore/open,
+receive, send and settings views (§4.4), deployed at
+`wallet.chessproofofwork.com` with the explorer. Still open from this workstream:
+block scanning for a transaction history (§4.3), the QR code and the PWA
+manifest/service worker (§4.4), and the Playwright devnet test (§4.5).
+
 ### 4.1 Keystore: one file, two implementations
 
 The browser must open the same keyfile `sccp wallet` writes, and the CLI must
 open the one the browser exports. `crypto/wallet.py` already fixes the format --
-scrypt (`n = 2**15`, `r = 8`, `p = 1`, 16-byte salt), AES-256-GCM with a 12-byte
+scrypt (`n = 2**17`, `r = 8`, `p = 1`, 16-byte salt), AES-256-GCM with a 12-byte
 nonce, and the canonical JSON of the header as associated data -- and
 `@noble/hashes` (already a dependency) provides scrypt in the browser while
 `crypto.subtle` provides AES-GCM. So the plan is a straight port, not a second
@@ -663,7 +670,7 @@ receipts for producing them.
 | Area | Threat | Mitigation | Where |
 | --- | --- | --- | --- |
 | Wallet | a compromised dependency exfiltrates the seed | no remote code, bundled deps, CSP, seed only in memory, no seed in logs/clipboard | 4.1 |
-| Wallet | offline brute force of a keyfile | scrypt `n = 2**15` and a 32-byte seed, the same cost the CLI pays | 4.1 |
+| Wallet | offline brute force of a keyfile | scrypt `n = 2**17` and a 32-byte seed, the same cost the CLI pays | 4.1 |
 | Wallet | nonce reuse or a dropped transaction | local counter seeded from committed state, reconciled against `/v1/mempool` | 4.3 |
 | Wallet | address substitution | bech32 checksum, key fingerprint, full-payload review before signing | 4.4 |
 | DEX | in-block sandwich | single clearing price per block, `min_out` per order | 6.2 |

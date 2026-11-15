@@ -5,9 +5,11 @@ Run this only when a consensus-visible rule changes, or when a vector is added::
     python scripts/make_web_vectors.py
 
 ``src/web`` re-implements canonical JSON, bech32, Ed25519 signing, match ids,
-colour draws and the game hash in TypeScript. Those ports must agree with the
-Python implementation byte for byte, so the numbers they are tested against are
-generated here from ``sccp`` itself rather than typed in by hand.
+colour draws and the game hash in TypeScript, and ports the wallet keystore
+(scrypt + AES-256-GCM), the BIP-39 encoding and the transfer builder. Those ports
+must agree with the Python implementation byte for byte, so the numbers they are
+tested against are generated here from ``sccp`` itself rather than typed in by
+hand.
 
 ``tests/unit/test_web_vectors.py`` re-checks the same file against the library,
 so a drift in either direction fails the Python suite as well.
@@ -20,14 +22,23 @@ from hashlib import sha256
 from pathlib import Path
 
 import chess
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from sccp.chain.tx import sign_transaction, txid
 from sccp.chess.openings import books_from_document
 from sccp.chess.pgn import GameResult, canonical_game_hash
-from sccp.config import DEVNET
+from sccp.config import DEVNET, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import sign_domain
 from sccp.crypto.pq import hybrid_keypair_from_seed, hybrid_sign_domain
+from sccp.crypto.wallet import (
+    KEYFILE_VERSION,
+    SCHEME,
+    KdfParams,
+    KeyfileHeader,
+    derive_key,
+    seed_to_mnemonic,
+)
 from sccp.protocol.beacon import commitment, compute_beacon
 from sccp.protocol.clocks import move_payload
 from sccp.protocol.commitments import ZERO_ROOT, fold, move_leaf
@@ -200,7 +211,7 @@ def build_match_vectors() -> dict[str, object]:
 
 
 def build_ledger_vectors() -> dict[str, object]:
-    """A signed ``register`` transaction and an availability commitment."""
+    """Signed ``register`` and ``transfer`` transactions, plus a commitment."""
     keypair = hybrid_keypair_from_seed(bytes([7]) * 32)
     sender = encode_address(keypair.public_key_bytes, DEVNET)
     unsigned = Transaction(
@@ -217,6 +228,21 @@ def build_ledger_vectors() -> dict[str, object]:
         },
     )
     signed = sign_transaction(keypair, unsigned)
+    recipient = encode_address(
+        hybrid_keypair_from_seed(bytes([9]) * 32).public_key_bytes, DEVNET
+    )
+    transfer = Transaction(
+        network=DEVNET.network_id,
+        type=TxType.TRANSFER,
+        sender=sender,
+        nonce=1,
+        fee=DEVNET.min_fee,
+        payload={
+            "to": recipient,
+            "amount": 25_000_000,
+            "public_key": keypair.public_key_hex,
+        },
+    )
     return {
         "seed_hex": keypair.seed.hex(),
         "public_key_hex": keypair.public_key_hex,
@@ -225,12 +251,59 @@ def build_ledger_vectors() -> dict[str, object]:
             "transaction": signed.model_dump(mode="json", by_alias=True),
             "txid": txid(signed),
         },
+        "transfer": {
+            "transaction": sign_transaction(keypair, transfer).model_dump(
+                mode="json", by_alias=True
+            ),
+            "txid": txid(transfer),
+        },
         "availability_commitment": {
             "address": sender,
             "epoch": 3,
             "nonce": "11" * 32,
             "commitment": commitment(sender, 3, "11" * 32),
         },
+    }
+
+
+KEYFILE_PASSPHRASE = "correct horse battery staple"
+"""The passphrase the pinned keyfile vector was encrypted with."""
+
+
+def build_keyfile_vector() -> dict[str, object]:
+    """A keyfile ``sccp wallet new`` could have written, with fixed salt and nonce.
+
+    The browser keystore must open this exact document and derive the same address,
+    so every input that would otherwise be random -- seed, salt, nonce, timestamp
+    and the scrypt cost -- is pinned. ``n = 2**10`` keeps the vitest run fast: the
+    header carries its own KDF parameters, so a cheap vector still proves the
+    derivation, the associated data and the ciphertext layout are right.
+    """
+    seed = bytes(range(32))
+    keypair = hybrid_keypair_from_seed(seed)
+    params = get_network(NETWORK)
+    header = KeyfileHeader(
+        version=KEYFILE_VERSION,
+        scheme=SCHEME,
+        network=params.network_id,
+        address=encode_address(keypair.public_key_bytes, params),
+        public_key=keypair.public_key_hex,
+        kdf=KdfParams(n=2**10),
+        salt=bytes(range(16)),
+        nonce=bytes(range(16, 28)),
+        created_at=1763200000,
+    )
+    ciphertext = AESGCM(derive_key(KEYFILE_PASSPHRASE, header.salt, header.kdf)).encrypt(
+        header.nonce, seed, header.associated_data
+    )
+    document = header.as_dict()
+    document["ciphertext"] = ciphertext.hex()
+    return {
+        "document": document,
+        "text": json.dumps(document, indent=2, sort_keys=True) + "\n",
+        "passphrase": KEYFILE_PASSPHRASE,
+        "seed_hex": seed.hex(),
+        "mnemonic": seed_to_mnemonic(seed),
     }
 
 
@@ -342,6 +415,7 @@ def build_vectors() -> dict[str, object]:
             ],
         },
         "ledger": build_ledger_vectors(),
+        "keyfile": build_keyfile_vector(),
         "match": build_match_vectors(),
     }
 

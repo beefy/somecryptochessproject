@@ -16,7 +16,12 @@ export type Route =
   | { name: "miner"; address: string }
   | { name: "play" }
   | { name: "account"; address: string }
+  | { name: "wallet" }
+  | { name: "walletSend" }
+  | { name: "walletReceive" }
+  | { name: "walletSettings" }
   | { name: "notFound"; path: string };
+
 
 /** Parse `location.hash` (or a bare path) into a route. */
 export function parseRoute(hash: string): Route {
@@ -38,8 +43,23 @@ export function parseRoute(hash: string): Route {
       return { name: "play" };
     case "accounts":
       return second === undefined ? { name: "notFound", path } : { name: "account", address: decode(second) };
+    case "wallet": {
+      if (second === undefined) return { name: "wallet" };
+      if (segments.length > 2) return { name: "notFound", path };
+      switch (second) {
+        case "send":
+          return { name: "walletSend" };
+        case "receive":
+          return { name: "walletReceive" };
+        case "settings":
+          return { name: "walletSettings" };
+        default:
+          return { name: "notFound", path };
+      }
+    }
     default:
       return { name: "notFound", path };
+
   }
 }
 
@@ -72,6 +92,14 @@ export function routeHash(route: Route): string {
       return "#/play";
     case "account":
       return `#/accounts/${encodeURIComponent(route.address)}`;
+    case "wallet":
+      return "#/wallet";
+    case "walletSend":
+      return "#/wallet/send";
+    case "walletReceive":
+      return "#/wallet/receive";
+    case "walletSettings":
+      return "#/wallet/settings";
     case "notFound":
       return `#/${route.path}`;
   }
@@ -100,9 +128,19 @@ export function useRoute(): Route {
 }
 
 /** Which nav tab is active for `route`. */
-export function activeSection(
-  route: Route,
-): "dashboard" | "blocks" | "games" | "ratings" | "play" | "account" {
+export type Section =
+  | "dashboard"
+  | "blocks"
+  | "games"
+  | "ratings"
+  | "play"
+  | "account"
+  | "wallet"
+  | "walletSend"
+  | "walletReceive"
+  | "walletSettings";
+
+export function activeSection(route: Route): Section {
   switch (route.name) {
     case "blocks":
     case "block":
@@ -117,6 +155,14 @@ export function activeSection(
       return "play";
     case "account":
       return "account";
+    case "wallet":
+      return "wallet";
+    case "walletSend":
+      return "walletSend";
+    case "walletReceive":
+      return "walletReceive";
+    case "walletSettings":
+      return "walletSettings";
     default:
       return "dashboard";
   }
