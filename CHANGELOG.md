@@ -52,9 +52,12 @@ not itemised here.
   billing and the Compute API, VPC and firewall, static address and VM, DNS
   records, the GitHub variables and the host-key secret, the two deploys,
   verification, rollback, and decommissioning the old VM without deleting the
-  project that still hosts two other zones. No chain state moves: a testnet
-  deploy resets the chain, so the new host starts from the bootstrap. Entries
-  below keep the names they shipped with.
+  project that still hosts two other zones. The new VM was also stripped of its
+  service account (`--no-service-account --no-scopes`, after starting life on
+  the project default with `roles/editor`) so a container escape cannot mint a
+  Google token, and the project carries a $75/month budget alert. No chain state
+  moves: a testnet deploy resets the chain, so the new host starts from the
+  bootstrap. Entries below keep the names they shipped with.
 
 ## [0.18.0] - 2026-11-14
 

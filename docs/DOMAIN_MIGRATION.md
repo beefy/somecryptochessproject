@@ -4,6 +4,13 @@ The public testnet and the explorer now live under `chessproofofwork.com`, in a
 new Google Cloud project. This page is the cutover: what already exists, what
 still has to be created, the order to do it in, and how to get back.
 
+**Status (2026-11-15): infrastructure complete, deployment not yet run.** The
+project, network, firewall, static IP, VM, Docker host, deploy user, DNS records,
+GitHub variables and secrets are all in place. The chain and the explorer are
+deployed by `deploy-testnet-miners.yml` and `deploy-explorer.yml`. The steps below
+are the record of what was done and the rebuild recipe for the next project; the
+concrete values are in [As built](#as-built).
+
 The repository side is done -- every name in the code, the workflows and the
 docs is already the new one:
 
@@ -27,26 +34,64 @@ state to migrate.
 | Node name | `testnet.somecryptochessproject.com` | `testnet.chessproofofwork.com` |
 | Explorer name | `explorer.somecryptochessproject.com` | `explorer.chessproofofwork.com` |
 | Cloud DNS zone | `somecryptochessproject-com` | `chessproofofwork-com` |
-| VM | `sccp-testnet-1`, `us-central1-a`, `e2-standard-2`, 20 GB `pd-balanced`, Debian 12 | the same shape, built below |
-| Network | custom VPC `sccp-testnet`, subnet `10.20.0.0/24`, tag `sccp-node` | one-to-one, same names |
-| Static IP | `sccp-testnet-ip` = `34.61.101.81` | reserved below |
+| VM | `sccp-testnet-1`, `us-central1-a`, `e2-standard-2`, 20 GB `pd-balanced`, Debian 12 | the same name and shape, no service account (step 3) |
+| Network | custom VPC `sccp-testnet`, subnet `10.20.0.0/24`, tag `sccp-node` | one-to-one, same names, no peering |
+| Static IP | `sccp-testnet-ip` = `34.61.101.81` | `sccp-testnet-ip` = `34.66.79.187` |
 | Firewall | `tcp:80,443`, `tcp:8645`, `tcp:8646`, `tcp:22`, all tagged `sccp-node` | one-to-one, same names |
 
-## What already exists (checked 2026-11-14)
+## What was already there (checked 2026-11-14)
 
-- The project `chessproofofwork` exists.
-- The Cloud DNS zone `chessproofofwork-com` exists in it, is public, and serves
-  `chessproofofwork.com.`. Google Domains already delegates to
-  `ns-cloud-d1..d4.googledomains.com`, so records created with `gcloud dns` are
-  live within the TTL.
-- No `A` records yet: `dig +short testnet.chessproofofwork.com` and the
-  `explorer.` name both return nothing.
-- Only `dns.googleapis.com` is enabled in the new project; `compute.googleapis.com`
-  is **not** (step 1).
-- The billing link could not be confirmed (the check hit a Cloud Billing quota
-  error), so verify it before creating anything.
-- The old project still runs `sccp-testnet-1` at `34.61.101.81` with both names
-  pointing at it. Leave it alone until step 8.
+- The project `chessproofofwork` existed, and so did its Cloud DNS zone
+  `chessproofofwork-com`: public, serving `chessproofofwork.com.`, with Google
+  Domains already delegating to `ns-cloud-d1..d4.googledomains.com`. Records
+  created with `gcloud dns` go live within the TTL.
+- No `A` records: neither name resolved.
+- Only `dns.googleapis.com` was enabled; `compute.googleapis.com` was not.
+- The old project still runs `sccp-testnet-1` at `34.61.101.81` with both old
+  names pointing at it. Leave it alone until step 9.
+
+## As built
+
+Everything below was done on 2026-11-15 and verified from a shell, not merely
+created:
+
+| Resource | Value |
+| --- | --- |
+| Project | `chessproofofwork` (206061816244), billing account `01CF82-258F97-56B4CD` |
+| API | `compute.googleapis.com` enabled; billing was already linked (`billingEnabled: true`) |
+| VPC | `sccp-testnet`, custom mode, no peering |
+| Subnet | `sccp-testnet-us-central1`, `us-central1`, `10.20.0.0/24` |
+| Firewall | `sccp-testnet-ssh` (22), `-node-api` (8645), `-relay` (8646), `-explorer-web` (80,443); all `0.0.0.0/0`, all on tag `sccp-node` |
+| Static IP | `sccp-testnet-ip` = `34.66.79.187`, attached (so it does not bill as idle) |
+| VM | `sccp-testnet-1`, `us-central1-a`, `e2-standard-2`, 20 GB `pd-balanced`, Debian 12, tag `sccp-node`, internal `10.20.0.2`, **no service account** |
+| Docker | Engine 29.9.3, Compose v5.7.1 |
+| Deploy user | `sccp`, uid 1002, member of `docker`, **not** of `sudo`; owns `/opt/sccp-testnet` and `/opt/sccp-explorer`; `~/.ssh/sccp_testnet_deploy.pub` installed |
+| DNS | `testnet.` and `explorer.chessproofofwork.com.`, type `A`, `34.66.79.187`, TTL 60, zone `chessproofofwork-com` |
+| GitHub | vars `TESTNET_DEPLOY_HOST`, `TESTNET_PUBLIC_URL`; secret `TESTNET_KNOWN_HOSTS` refreshed (step 6) |
+| Budget | `chessproofofwork testnet`, $75/month, project-scoped, alerts at 50/90/100% |
+
+Two details that are easy to lose when the VM is rebuilt:
+
+- The instance is created with the project's default compute service account,
+  which holds `roles/editor`. Before the first deploy it was stopped, set with
+  `--no-service-account --no-scopes` and started again, so a container escape on
+  the VM cannot mint a Google token:
+
+  ```bash
+  gcloud compute instances stop sccp-testnet-1 --zone="$ZONE"
+  gcloud compute instances set-service-account sccp-testnet-1 --zone="$ZONE" \
+      --no-service-account --no-scopes
+  gcloud compute instances start sccp-testnet-1 --zone="$ZONE"
+  ```
+
+  Verify from the VM:
+  `curl -s -o /dev/null -w '%{http_code}' -H 'Metadata-Flavor: Google' \
+  http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token`
+  answers `404`.
+- `oslogin.googleapis.com` is enabled in the project, but OS Login is **not**
+  active: nothing sets `enable-oslogin`, so metadata `ssh-keys` still decide who
+  logs in. Setting `enable-oslogin=TRUE` is the clean way to move human access to
+  IAM and drop the project-wide key.
 
 ## Two ways to move, and why this guide takes the second
 
@@ -178,8 +223,9 @@ the old address, and nothing should sit in a resolver cache for an hour. The old
 
 ## 6. GitHub variables and secrets
 
-The deploy job reads these repository-level values, which still name the old
-host (checked 2026-11-14):
+The deploy job reads these repository-level values. They named the old host until
+2026-11-15; these are the commands that set them, and the ones to re-run if a
+value is ever lost:
 
 ```bash
 gh variable set TESTNET_DEPLOY_HOST \
@@ -281,13 +327,35 @@ The VPC, subnet and firewall rules can go too once nothing else uses them. Keep
 the DNS zone itself: it costs almost nothing and the domain registration may
 outlive the deployment.
 
+Then retire the credentials that were shared while both hosts were live:
+
+- `TESTNET_SSH_KEY` is authorized on the old VM as well, so until that instance is
+  gone one private key opens both hosts. Generate a new deploy key, install it for
+  `sccp` on the surviving VM, update the secret, and only then delete the old key.
+- The project-level `ssh-keys` metadata entry (`nate:ssh-rsa ...`) creates a
+  `google-sudoers` member on **every** instance in either project. Removing it is
+  the difference between one credential per host and one credential for
+  everything.
+- Raise the two `A` record TTLs from 60 to 300 once the new host has been up for
+  a week; the short TTL exists only for the rollback window.
+
+While doing any of this, remember that a local `gcloud` config still defaults to
+`project-title-here`, and both projects contain a VM called `sccp-testnet-1`, a
+VPC called `sccp-testnet` and identically named firewall rules. Pass `--project`
+on every destructive command, or pin the config first:
+
+```bash
+gcloud config set project chessproofofwork
+```
+
 ## What does not move
 
 - Chain state, wallets and faucet grants: the chain is reset on every deploy, so
   the new testnet is a new chain. A testnet keyfile is still valid; its balance
   starts over.
 - The GitHub repository, the package name and the
-  `ghcr.io/beefy/somecryptochessproject` image: the domain does not touch them.
+  `ghcr.io/chessproofofwork/somecryptochessproject` image: the domain does not
+  touch them.
 - The pinned Stockfish downloads in `data/engines.json`: URL-based, not
   host-based.
 

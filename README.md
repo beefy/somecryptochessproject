@@ -10,7 +10,7 @@ featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
  - [Block explorer](https://explorer.chessproofofwork.com/)
- - [Living Whitepaper](https://github.com/beefy/somecryptochessproject/blob/main/docs/WHITEPAPER.md)
+ - [Living Whitepaper](https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/WHITEPAPER.md)
  - [Public testnet](http://testnet.chessproofofwork.com:8645/v1/status)
  - [Reddit](https://www.reddit.com/r/chessproofofwork/)
 
@@ -348,7 +348,7 @@ local processes so you can change code without depending on it; use the hosted
 URL as `--node` or `SCCP_NODE` when you want the shared deployment instead.
 
 ```bash
-git clone git@github.com:beefy/somecryptochessproject.git
+git clone git@github.com:chessproofofwork/somecryptochessproject.git
 cd somecryptochessproject
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
