@@ -172,6 +172,28 @@ first and black is the winner every time. The result is a consequence of the
 resignation policy, not of scoring or of the relay. An odd limit flips the
 winner to white; only a limit that varies per match produces a mix of results.
 
+## Testing the image itself
+
+`make container-e2e` builds the current tree and runs
+`tests/e2e/test_container_smoke.py`. The test creates a private Docker network,
+starts the node, the drip and a traffic container, and asserts through the node
+API that the mined chain contains closed HTLCs: one claimed before its timelock
+and one refunded after it. The traffic container only talks to the node; the
+assertions run in the host process, so the test covers the artefact the deploy
+workflow ships rather than the Python packages in place.
+
+It is opt-in and deselects itself otherwise:
+
+```bash
+make container-e2e
+# or
+SCCP_RUN_CONTAINER_E2E=1 pytest -m container tests/e2e/test_container_smoke.py -s
+```
+
+Set `SCCP_CONTAINER_E2E_IMAGE` to an existing tag to skip the build while
+iterating on the test. A testnet funded only by the faucet mints no C960, so the
+run expects an empty DEX pool list and a `dex: skipped` line rather than a swap.
+
 ## Reset behaviour and limits
 
 - The deploy workflow runs `docker compose down -v` before every `up`, so each
