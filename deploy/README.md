@@ -176,11 +176,22 @@ winner to white; only a limit that varies per match produces a mix of results.
 
 `make container-e2e` builds the current tree and runs
 `tests/e2e/test_container_smoke.py`. The test creates a private Docker network,
-starts the node, the drip and a traffic container, and asserts through the node
-API that the mined chain contains closed HTLCs: one claimed before its timelock
-and one refunded after it. The traffic container only talks to the node; the
-assertions run in the host process, so the test covers the artefact the deploy
-workflow ships rather than the Python packages in place.
+seeds twelve deterministic traffic wallets, starts the node, the drip and a
+traffic container, and asserts through the node API that the mined chain
+contains closed HTLCs: one claimed before its timelock and one refunded after
+it. A transfer case sends an ordinary SCCP payment and checks both balances and
+the mined transaction record, and a DEX case drives a C960 pool through create,
+swap, add-liquidity and remove-liquidity. The containers only talk to the node;
+the assertions run in the host process, so the test covers the artefact the
+deploy workflow ships rather than the Python packages in place.
+
+C960 is only minted when a Chess960 proof settles, and neither genesis nor the
+faucet creates it. The DEX case therefore uses a dedicated devnet node whose
+fixture credits the published traffic wallets with C960 before serving; every
+transaction after that seed goes through normal admission, block building and
+validation. This smoke test does not play a Chess960 match, so C960 issuance
+itself remains covered by `test_chess960.py`, and the DEX transitions by
+`test_dex.py`.
 
 It is opt-in and deselects itself otherwise:
 
@@ -191,8 +202,7 @@ SCCP_RUN_CONTAINER_E2E=1 pytest -m container tests/e2e/test_container_smoke.py -
 ```
 
 Set `SCCP_CONTAINER_E2E_IMAGE` to an existing tag to skip the build while
-iterating on the test. A testnet funded only by the faucet mints no C960, so the
-run expects an empty DEX pool list and a `dex: skipped` line rather than a swap.
+iterating on the test.
 
 ## Reset behaviour and limits
 

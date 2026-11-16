@@ -5,8 +5,11 @@ starts from the artefact a deployment actually ships: it builds the current
 working tree with ``docker build``, creates a private network, and runs the
 node, the traffic generator and the drip as separate containers. The node mines
 on its own, the drip keeps a quiet chain supplied with ledger work, and the
-traffic generator funds wallets, sends transfers, and locks, claims and refunds
-HTLCs.
+traffic generator sends transfers and locks, claims and refunds HTLCs. Separate
+cases assert that an ordinary transfer moves the balances the node reports, and
+that the DEX can create a pool, swap, add liquidity and remove it again. C960
+only exists after a settled Chess960 proof, so the DEX fixture credits the
+published traffic wallets before its dedicated devnet node serves.
 
 It is opt-in because it needs a Docker daemon and a few minutes of wall clock.
 Set ``SCCP_RUN_CONTAINER_E2E=1`` and select the ``container`` marker::
@@ -19,6 +22,7 @@ already-built tag to skip the build while iterating on the test itself.
 
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
@@ -30,9 +34,11 @@ from typing import Any
 
 import httpx
 import pytest
+from deploy import synthetic_testnet_traffic as traffic
 
+from sccp.chain import dex
 from sccp.chain.block import bootstrap_end_height
-from sccp.config import TESTNET, coins_to_units
+from sccp.config import CHESS960_ASSET_ID, DEVNET, TESTNET, coins_to_units
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 
@@ -40,9 +46,31 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 NODE_CONTAINER_PORT = 8645
 NODE_ALIAS = "node"
+DEVNET_NODE_ALIAS = "devnet-node"
 
 MINER_SEED = b"\x5c" * 32
 MINER_ADDRESS = encode_address(hybrid_keypair_from_seed(MINER_SEED).public_key_bytes, TESTNET)
+DEVNET_MINER_ADDRESS = encode_address(hybrid_keypair_from_seed(MINER_SEED).public_key_bytes, DEVNET)
+
+SEEDED_WALLET_COUNT = 12
+"""Traffic wallets both node fixtures seat; the DEX cases use the first two."""
+
+TRAFFIC_SEED_COINS = 100
+"""Native coins each testnet traffic wallet receives before the drip starts."""
+
+SEEDED_NATIVE_COINS = 1_000
+SEEDED_VARIANT_COINS = 1_000
+
+TRANSFER_SENDER_INDEX = 10
+TRANSFER_RECIPIENT_INDEX = 11
+DEX_CREATOR_INDEX = 0
+DEX_TRADER_INDEX = 1
+DEX_POOL_ID = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+
+TRANSFER_COINS = 5
+DEX_CREATE_COINS = 100
+DEX_SWAP_COINS = 5
+DEX_ADD_COINS = 10
 
 BOOTSTRAP_TIMEOUT_SECONDS = 120.0
 REQUEST_TIMEOUT_SECONDS = 10.0
@@ -142,6 +170,30 @@ def _wait_for_log(name: str, needle: str, *, timeout: float) -> None:
     pytest.fail(f"timed out waiting for {needle!r} in {name} logs:\n{observed}")
 
 
+def _height(url: str) -> int:
+    """The node's adopted tip height."""
+    with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+        status = client.get(f"{url}/v1/status").json()
+    height = status.get("height")
+    assert isinstance(height, int) and not isinstance(height, bool)
+    return height
+
+
+def _marker_json(output: str, marker: str) -> dict[str, Any]:
+    """The object on the last line beginning with ``marker``."""
+    for line in reversed(output.splitlines()):
+        if not line.startswith(marker):
+            continue
+        try:
+            document = json.loads(line[len(marker) :])
+        except json.JSONDecodeError as exc:
+            pytest.fail(f"malformed {marker.strip()} output: {line}\n{exc}")
+        if not isinstance(document, dict):
+            pytest.fail(f"{marker.strip()} output is not an object: {line}")
+        return document
+    pytest.fail(f"no {marker.strip()} line in output:\n{output}")
+
+
 @pytest.fixture(scope="session")
 def node_image() -> Iterator[str]:
     """Build the current tree, or reuse a tag named by the override variable."""
@@ -237,9 +289,125 @@ def node(node_image: str, private_network: str) -> Iterator[str]:
             description=f"height {bootstrap_end_height(TESTNET)}",
             timeout=BOOTSTRAP_TIMEOUT_SECONDS,
         )
+        # Fund every traffic wallet in one run before the drip starts. Traffic
+        # then never touches the faucet account, leaving its nonce to the drip.
+        print(
+            _run_script(
+                node_image,
+                private_network,
+                label="seed-traffic",
+                script=TRAFFIC_SEED_SCRIPT,
+                timeout=BOOTSTRAP_TIMEOUT_SECONDS,
+            )
+        )
         yield url
     except BaseException:
         print(f"node logs before teardown:\n{_docker_logs(name)}")
+        raise
+    finally:
+        _docker("rm", "--force", name, check=False)
+
+
+def _seeded_devnet_node_script() -> str:
+    """The in-container devnet node, with C960 credited before it starts serving.
+
+    A settled Chess960 proof is the only consensus source of C960 and neither
+    genesis nor the faucet mints it. The smoke test is about the transfer and DEX
+    state transitions, not about playing a whole Chess960 match in the image, so
+    the fixture credits the deterministic traffic wallets directly. After this
+    one-time seed every transaction still goes through normal admission and is
+    applied by the production block builder and validator.
+    """
+    return f"""
+import threading
+
+import uvicorn
+
+from deploy import synthetic_testnet_traffic as traffic
+from sccp.config import CHESS960_ASSET_ID, DEVNET, coins_to_units
+from sccp.node.app import create_app
+from sccp.node.miner import NodeMiner
+from sccp.node.service import NodeService
+
+service = NodeService.open(DEVNET)
+service.check_startup()
+for index in range({SEEDED_WALLET_COUNT}):
+    wallet = traffic.wallet(index, DEVNET)
+    account = service.chain.state.ensure(wallet.address)
+    account.public_key = wallet.keypair.public_key_hex
+    account.balance = coins_to_units({SEEDED_NATIVE_COINS})
+    account.assets[CHESS960_ASSET_ID] = coins_to_units({SEEDED_VARIANT_COINS})
+service.chain.state.minted += coins_to_units({SEEDED_NATIVE_COINS}) * {SEEDED_WALLET_COUNT}
+service.chain.state.minted_assets[CHESS960_ASSET_ID] = (
+    coins_to_units({SEEDED_VARIANT_COINS}) * {SEEDED_WALLET_COUNT}
+)
+# The mempool copied the genesis projection when the service opened; rebase it
+# so admission sees the seeded balances before the first block does.
+service.mempool.reset(service.chain.state)
+
+miner = NodeMiner(service, {DEVNET_MINER_ADDRESS!r}, mine_bootstrap=True)
+stop = threading.Event()
+threading.Thread(
+    target=miner.run,
+    kwargs={{
+        "stop": stop,
+        "poll_seconds": 0.2,
+        "on_block": lambda block: print(f"mined {{block.header.height}}", flush=True),
+    }},
+    daemon=True,
+).start()
+uvicorn.run(create_app(service), host="0.0.0.0", port={NODE_CONTAINER_PORT})
+"""
+
+
+@pytest.fixture(scope="session")
+def devnet_node(node_image: str, private_network: str) -> Iterator[str]:
+    """A seeded devnet node for the transfer and DEX smoke cases.
+
+    It starts on its own alias rather than ``node`` so it can share the run's
+    private network with the testnet node instead of racing it in DNS.
+    """
+    name = f"{private_network}-devnet-node"
+    host_port = _free_port()
+    published = f"127.0.0.1:{host_port}:{NODE_CONTAINER_PORT}"
+    _docker(
+        "run",
+        "--detach",
+        "--rm",
+        "--name",
+        name,
+        "--network",
+        private_network,
+        "--network-alias",
+        DEVNET_NODE_ALIAS,
+        "--publish",
+        published,
+        "--entrypoint",
+        "python",
+        node_image,
+        "-c",
+        _seeded_devnet_node_script(),
+    )
+    url = f"http://127.0.0.1:{host_port}"
+    try:
+        _wait_for_json(
+            f"{url}/v1/status",
+            lambda status: status.get("network") == "devnet",
+            description="the devnet node's status route",
+            timeout=STARTUP_TIMEOUT_SECONDS,
+        )
+        _wait_for_json(
+            f"{url}/v1/status",
+            lambda status: (
+                isinstance(status.get("height"), int)
+                and status["height"] >= bootstrap_end_height(DEVNET)
+            ),
+            description=f"height {bootstrap_end_height(DEVNET)}",
+            timeout=BOOTSTRAP_TIMEOUT_SECONDS,
+        )
+        yield url
+    except BaseException:
+        print(f"devnet node logs before teardown:\n{_docker_logs(name)}")
         raise
     finally:
         _docker("rm", "--force", name, check=False)
@@ -304,7 +472,11 @@ options = traffic.Options(
     # and beneficiary, which is what the refund needs.
     max_wallets=12,
     grant_coins=100,
-    min_balance_coins=50,
+    # The node fixture funds all twelve wallets before the drip starts. Keeping
+    # the top-up threshold at zero means traffic never spends from the faucet
+    # account, which the drip uses for heartbeat blocks: two clients numbering
+    # the same account can otherwise collide under a fast miner.
+    min_balance_coins=0,
     max_transfer_coins=1,
     idle_min_seconds=0.0,
     idle_max_seconds=0.0,
@@ -312,7 +484,9 @@ options = traffic.Options(
     poll_seconds=0.2,
     extra_miners=0,
     bridge=True,
-    dex=True,
+    # The C960 pool has its own seeded devnet case below; a testnet faucet only
+    # mints SCCP, so this run leaves the DEX branch off.
+    dex=False,
     bridge_coins=1,
     bridge_claim_blocks=12,
     bridge_refund_blocks=2,
@@ -331,9 +505,264 @@ print(f"completed {len(reports)} cycle(s)")
 """
 
 
-def _run_traffic(node_image: str, private_network: str) -> str:
-    """Run two traffic cycles in a container and return its combined output."""
-    name = f"{private_network}-traffic"
+TRAFFIC_SEED_SCRIPT = f"""
+import httpx
+
+from deploy import synthetic_testnet_traffic as traffic
+from sccp.chain.genesis import faucet_keypair
+from sccp.config import TESTNET, coins_to_units
+from sccp.crypto.address import encode_address
+
+FAUCET = faucet_keypair(TESTNET.network_id)
+FAUCET_WALLET = traffic.Wallet(
+    index=-1,
+    keypair=FAUCET,
+    address=encode_address(FAUCET.public_key_bytes, TESTNET),
+)
+
+with httpx.Client(base_url="http://{NODE_ALIAS}:{NODE_CONTAINER_PORT}", timeout=30.0) as client:
+    for index in range({SEEDED_WALLET_COUNT}):
+        recipient = traffic.wallet(index, TESTNET)
+        tx = traffic.transfer_transaction(
+            FAUCET_WALLET,
+            to=recipient.address,
+            amount=coins_to_units({TRAFFIC_SEED_COINS}),
+            nonce=traffic.nonce(client, FAUCET_WALLET.address),
+            params=TESTNET,
+        )
+        digest = traffic.submit_transaction(client, tx)
+        confirmed = traffic.wait_for_transactions(
+            client,
+            (digest,),
+            wait_seconds=60.0,
+            poll_seconds=0.2,
+        )
+        if digest not in confirmed:
+            status = client.get("/v1/status").json()
+            pool = client.get("/v1/mempool").json()
+            raise SystemExit(
+                f"funding {{digest}} did not confirm; status={{status}} pool={{pool}}"
+            )
+    print(f"funded {SEEDED_WALLET_COUNT} traffic wallets", flush=True)
+"""
+
+
+TRANSFER_SCRIPT = f"""
+import json
+
+import httpx
+
+from deploy import synthetic_testnet_traffic as traffic
+from sccp.config import DEVNET, coins_to_units
+
+SENDER = traffic.wallet({TRANSFER_SENDER_INDEX}, DEVNET)
+RECIPIENT = traffic.wallet({TRANSFER_RECIPIENT_INDEX}, DEVNET)
+AMOUNT = coins_to_units({TRANSFER_COINS})
+
+with httpx.Client(
+    base_url="http://{DEVNET_NODE_ALIAS}:{NODE_CONTAINER_PORT}", timeout=30.0
+) as client:
+    sender_before = traffic.account(client, SENDER.address)
+    recipient_before = traffic.account(client, RECIPIENT.address)
+    tx = traffic.transfer_transaction(
+        SENDER,
+        to=RECIPIENT.address,
+        amount=AMOUNT,
+        nonce=int(sender_before["nonce"]),
+        params=DEVNET,
+    )
+    digest = traffic.submit_transaction(client, tx)
+    confirmed = traffic.wait_for_transactions(
+        client,
+        (digest,),
+        wait_seconds=120.0,
+        poll_seconds=0.2,
+    )
+    response = client.get(f"/v1/transactions/{{digest}}")
+    response.raise_for_status()
+    record = response.json()
+    sender_after = traffic.account(client, SENDER.address)
+    recipient_after = traffic.account(client, RECIPIENT.address)
+    print(
+        "TRANSFER_RESULT "
+        + json.dumps(
+            {{
+                "txid": digest,
+                "confirmed": digest in confirmed,
+                "height": record.get("height"),
+                "amount": AMOUNT,
+                "fee": DEVNET.min_fee,
+                "sender": SENDER.address,
+                "recipient": RECIPIENT.address,
+                "sender_before": int(sender_before["balance"]),
+                "sender_after": int(sender_after["balance"]),
+                "recipient_before": int(recipient_before["balance"]),
+                "recipient_after": int(recipient_after["balance"]),
+            }}
+        ),
+        flush=True,
+    )
+    if digest not in confirmed:
+        raise SystemExit(f"transfer {{digest}} did not confirm")
+"""
+
+DEX_SCRIPT = f"""
+import json
+
+import httpx
+
+from deploy import synthetic_testnet_traffic as traffic
+from sccp.chain import dex
+from sccp.config import CHESS960_ASSET_ID, DEVNET, coins_to_units
+
+POOL_ID = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+CREATOR = traffic.wallet({DEX_CREATOR_INDEX}, DEVNET)
+TRADER = traffic.wallet({DEX_TRADER_INDEX}, DEVNET)
+
+
+def submit(client, tx):
+    \"\"\"Submit one signed transaction and wait until a block holds it.\"\"\"
+    digest = traffic.submit_transaction(client, tx)
+    confirmed = traffic.wait_for_transactions(
+        client, (digest,), wait_seconds=120.0, poll_seconds=0.2
+    )
+    if digest not in confirmed:
+        raise SystemExit(f"transaction {{digest}} did not confirm")
+    return digest
+
+
+def pool(client):
+    \"\"\"The C960 pool, which must have been created by this script.\"\"\"
+    rows = {{row["pool_id"]: row for row in traffic.pool_views(client)}}
+    try:
+        return rows[POOL_ID]
+    except KeyError:
+        raise SystemExit(f"pool {{POOL_ID}} is missing") from None
+
+
+with httpx.Client(
+    base_url="http://{DEVNET_NODE_ALIAS}:{NODE_CONTAINER_PORT}", timeout=30.0
+) as client:
+    if traffic.pool_views(client):
+        raise SystemExit("the seeded node already has a pool; the DEX test needs a fresh one")
+
+    created_amount = coins_to_units({DEX_CREATE_COINS})
+    create_txid = submit(
+        client,
+        traffic.create_pool_transaction(
+            CREATOR,
+            asset=CHESS960_ASSET_ID,
+            amount=created_amount,
+            nonce=traffic.nonce(client, CREATOR.address),
+            params=DEVNET,
+        ),
+    )
+    after_create = pool(client)
+
+    swap_in = coins_to_units({DEX_SWAP_COINS})
+    quote = dex.swap_output(
+        after_create["reserve_a"],
+        after_create["reserve_b"],
+        swap_in,
+        after_create["fee_bps"],
+    )
+    trader_before = traffic.account(client, TRADER.address)
+    swap_txid = submit(
+        client,
+        traffic.swap_transaction(
+            TRADER,
+            pool_id=POOL_ID,
+            asset_in=dex.NATIVE_ASSET,
+            amount_in=swap_in,
+            min_amount_out=quote * 9950 // 10000,
+            nonce=traffic.nonce(client, TRADER.address),
+            params=DEVNET,
+        ),
+    )
+    after_swap = pool(client)
+    trader_after = traffic.account(client, TRADER.address)
+
+    deposit_a = coins_to_units({DEX_ADD_COINS})
+    deposit_b = dex.proportional_amount(
+        deposit_a, after_swap["reserve_a"], after_swap["reserve_b"]
+    )
+    add_txid = submit(
+        client,
+        traffic.add_liquidity_transaction(
+            CREATOR,
+            pool_id=POOL_ID,
+            amount_a=deposit_a,
+            amount_b=deposit_b,
+            nonce=traffic.nonce(client, CREATOR.address),
+            params=DEVNET,
+        ),
+    )
+    after_add = pool(client)
+
+    owned = after_add["shares"].get(CREATOR.address, 0)
+    shares = max(1, owned // 10)
+    payout_a, payout_b = dex.removed_amounts(
+        after_add["reserve_a"],
+        after_add["reserve_b"],
+        after_add["total_shares"],
+        shares,
+    )
+    remove_txid = submit(
+        client,
+        traffic.remove_liquidity_transaction(
+            CREATOR,
+            pool_id=POOL_ID,
+            shares=shares,
+            nonce=traffic.nonce(client, CREATOR.address),
+            params=DEVNET,
+        ),
+    )
+    final = pool(client)
+
+    print(
+        "DEX_RESULT "
+        + json.dumps(
+            {{
+                "pool_id": POOL_ID,
+                "create": {{"txid": create_txid, "pool": after_create}},
+                "swap": {{
+                    "txid": swap_txid,
+                    "amount_in": swap_in,
+                    "quote": quote,
+                    "pool": after_swap,
+                    "trader_before": int(trader_before["assets"][CHESS960_ASSET_ID]),
+                    "trader_after": int(trader_after["assets"][CHESS960_ASSET_ID]),
+                }},
+                "add": {{
+                    "txid": add_txid,
+                    "amount_a": deposit_a,
+                    "amount_b": deposit_b,
+                    "pool": after_add,
+                }},
+                "remove": {{
+                    "txid": remove_txid,
+                    "shares": shares,
+                    "payout_a": payout_a,
+                    "payout_b": payout_b,
+                    "pool": final,
+                }},
+            }}
+        ),
+        flush=True,
+    )
+"""
+
+
+def _run_script(
+    node_image: str,
+    private_network: str,
+    *,
+    label: str,
+    script: str,
+    timeout: float = TRAFFIC_TIMEOUT_SECONDS,
+) -> str:
+    """Run one Python program in the image and return its combined output."""
+    name = f"{private_network}-{label}"
     try:
         completed = _docker(
             "run",
@@ -346,12 +775,43 @@ def _run_traffic(node_image: str, private_network: str) -> str:
             "python",
             node_image,
             "-c",
-            TRAFFIC_SCRIPT,
-            timeout=TRAFFIC_TIMEOUT_SECONDS,
+            script,
+            timeout=timeout,
         )
     finally:
         _docker("rm", "--force", name, check=False)
     return f"{completed.stdout}\n{completed.stderr}"
+
+
+def _run_traffic(node_image: str, private_network: str) -> str:
+    """Run two traffic cycles in a container and return its combined output."""
+    return _run_script(
+        node_image,
+        private_network,
+        label="traffic",
+        script=TRAFFIC_SCRIPT,
+    )
+
+
+def _run_transfer(node_image: str, private_network: str) -> str:
+    """Send one ordinary transfer from the image's wallet code."""
+    return _run_script(
+        node_image,
+        private_network,
+        label="transfer",
+        script=TRANSFER_SCRIPT,
+        timeout=BOOTSTRAP_TIMEOUT_SECONDS,
+    )
+
+
+def _run_dex(node_image: str, private_network: str) -> str:
+    """Create a C960 pool and exercise all three pool actions."""
+    return _run_script(
+        node_image,
+        private_network,
+        label="dex",
+        script=DEX_SCRIPT,
+    )
 
 
 def _all_htlcs_closed(document: dict[str, Any]) -> bool:
@@ -380,10 +840,6 @@ def test_image_mines_and_closes_htlcs(
     print(output)
     assert "completed 2 cycle(s)" in output, output
     assert "cycle 2:" in output, output
-    # The traffic generator reaches the DEX every cycle. A testnet funded only
-    # by the faucet mints no C960, so the pool list must stay empty; the skip
-    # line proves the DEX branch ran instead of being bypassed.
-    assert "dex: skipped" in output, output
 
     after = _wait_for_json(
         f"{node}/v1/status",
@@ -424,7 +880,100 @@ def test_image_mines_and_closes_htlcs(
         assert view["closed_at_height"] >= view["timelock_height"]
         assert view["preimage"] is None
 
+
+def test_image_transfers_coins(
+    devnet_node: str,
+    node_image: str,
+    private_network: str,
+) -> None:
+    """The built image sends an ordinary transfer that a block settles."""
+    sender = traffic.wallet(TRANSFER_SENDER_INDEX, DEVNET)
+    recipient = traffic.wallet(TRANSFER_RECIPIENT_INDEX, DEVNET)
+    start_height = _height(devnet_node)
+
+    output = _run_transfer(node_image, private_network)
+    print(output)
+    result = _marker_json(output, "TRANSFER_RESULT ")
+
+    assert result["confirmed"] is True
+    assert result["sender"] == sender.address
+    assert result["recipient"] == recipient.address
+    assert result["amount"] == coins_to_units(TRANSFER_COINS)
+    assert result["fee"] == DEVNET.min_fee
+    height = result["height"]
+    assert isinstance(height, int) and height >= start_height
+    assert result["sender_after"] == result["sender_before"] - result["amount"] - result["fee"]
+    assert result["recipient_after"] == result["recipient_before"] + result["amount"]
+
     with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
-        pools = client.get(f"{node}/v1/pools")
-    assert pools.status_code == 200
-    assert pools.json() == {"network": "testnet", "pools": []}
+        record = client.get(f"{devnet_node}/v1/transactions/{result['txid']}").json()
+    assert record["type"] == "transfer"
+    assert record["height"] == height
+    assert record["in_mempool"] is False
+
+
+def test_image_exercises_dex(
+    devnet_node: str,
+    node_image: str,
+    private_network: str,
+) -> None:
+    """The built image creates, swaps through and drains a C960 pool."""
+    creator = traffic.wallet(DEX_CREATOR_INDEX, DEVNET)
+    start_height = _height(devnet_node)
+
+    output = _run_dex(node_image, private_network)
+    print(output)
+    result = _marker_json(output, "DEX_RESULT ")
+
+    assert result["pool_id"] == DEX_POOL_ID
+    created = result["create"]["pool"]
+    assert created["network"] == "devnet"
+    assert created["asset_a"] is None
+    assert created["asset_b"] == CHESS960_ASSET_ID
+    assert created["reserve_a"] == created["reserve_b"] == coins_to_units(DEX_CREATE_COINS)
+    assert created["total_shares"] > 0
+    assert created["shares"][creator.address] == created["total_shares"]
+    assert created["fee_bps"] == DEVNET.dex_fee_bps
+
+    swap = result["swap"]
+    swapped = swap["pool"]
+    assert swap["amount_in"] == coins_to_units(DEX_SWAP_COINS)
+    assert swap["quote"] > 0
+    assert swapped["reserve_a"] == created["reserve_a"] + swap["amount_in"]
+    assert swapped["reserve_b"] == created["reserve_b"] - swap["quote"]
+    assert swapped["total_shares"] == created["total_shares"]
+    assert swap["trader_after"] - swap["trader_before"] == swap["quote"]
+
+    add = result["add"]
+    added = add["pool"]
+    assert add["amount_a"] > 0 and add["amount_b"] > 0
+    assert added["reserve_a"] == swapped["reserve_a"] + add["amount_a"]
+    assert added["reserve_b"] == swapped["reserve_b"] + add["amount_b"]
+    assert added["total_shares"] > swapped["total_shares"]
+    assert added["shares"][creator.address] > created["shares"][creator.address]
+
+    remove = result["remove"]
+    final = remove["pool"]
+    assert remove["shares"] > 0
+    assert final["reserve_a"] == added["reserve_a"] - remove["payout_a"]
+    assert final["reserve_b"] == added["reserve_b"] - remove["payout_b"]
+    assert final["total_shares"] == added["total_shares"] - remove["shares"]
+    assert final["shares"][creator.address] == added["shares"][creator.address] - remove["shares"]
+
+    steps = (
+        ("create", "create_pool"),
+        ("swap", "swap"),
+        ("add", "add_liquidity"),
+        ("remove", "remove_liquidity"),
+    )
+    with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+        for key, kind in steps:
+            record = client.get(f"{devnet_node}/v1/transactions/{result[key]['txid']}").json()
+            assert record["type"] == kind
+            height = record["height"]
+            assert isinstance(height, int) and height >= start_height
+            assert record["in_mempool"] is False
+        pool = client.get(f"{devnet_node}/v1/pools/{DEX_POOL_ID}").json()
+    assert pool["reserve_a"] == final["reserve_a"]
+    assert pool["reserve_b"] == final["reserve_b"]
+    assert pool["total_shares"] == final["total_shares"]
