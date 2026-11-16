@@ -44,6 +44,12 @@ not itemised here.
   transaction still pays its ordinary SCCP fee. The web DEX quotes locally, signs
   a minimum output into the swap, and offers swap, create-pool and add/remove
   liquidity views with the wallet's position.
+- **CLI coverage for the bridge and DEX.** `sccp dex` creates pools, adds and
+  removes liquidity, quotes and swaps; `sccp bridge` publishes and inspects
+  signed orders, publishes takes, and locks, claims or refunds both the SCCP
+  and ETH legs. The ETH leg uses the node's configured Anvil environment and an
+  unlocked JSON-RPC account; the browser Bridge page remains the EIP-1193 path.
+  `wallet balance` now prints every variant-token balance as well as SCCP.
 - **A trustless ETH↔SCCP bridge.** `htlc_lock`, `htlc_claim` and `htlc_refund`
   are consensus transactions; open and closed locks, including the revealed
   preimage, are committed in `state_root` and served from `GET /v1/htlcs` and the

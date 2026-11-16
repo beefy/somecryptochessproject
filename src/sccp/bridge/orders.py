@@ -128,6 +128,40 @@ def take_id(take: TakeBody) -> str:
     return domain_hex(Domain.TAKE, _take_body_dump(take))
 
 
+def sccp_timelock_height(
+    current_height: int,
+    eth_timelock: int,
+    now: int,
+    target_block_seconds: int,
+    margin: int,
+    minimum: int,
+) -> int:
+    """The SCCP height a taker may name for an ETH lock that expires at ``eth_timelock``.
+
+    The SCCP leg must expire before the ETH leg by ``margin`` blocks, so the
+    maker still has time to claim ETH after a last-moment SCCP claim. The same
+    rule is implemented in the browser and enforced again by the node.
+    """
+    if target_block_seconds <= 0:
+        raise OrderError("target_block_seconds must be positive")
+    if margin < 0:
+        raise OrderError("sccp_margin must be non-negative")
+    blocks_until_eth = max(0, (eth_timelock - now) // target_block_seconds)
+    safe_blocks = blocks_until_eth - margin
+    if safe_blocks < 1:
+        raise OrderError(
+            f"the ETH timelock is too short for {margin} SCCP blocks of margin; "
+            "choose a longer lock"
+        )
+    height = current_height + safe_blocks
+    if height < minimum:
+        raise OrderError(
+            f"the order asks for SCCP height {minimum}, "
+            f"but this ETH timelock is only safe up to {height}"
+        )
+    return height
+
+
 def sign_order(
     keypair: HybridKeypair,
     params: NetworkParams,

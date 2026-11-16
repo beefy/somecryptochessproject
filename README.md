@@ -292,6 +292,7 @@ responsibility rather than a construction phase.
 │   ├── TESTNET_DEPLOYMENT.md     # CI deployment and monthly cost estimate
 │   ├── RUN_A_TESTNET_MINER.md    # operator guide: relay, miner and registration
 │   ├── SEND_COINS.md             # fund a wallet and send a transfer
+│   ├── TEST_DEVNET_BRIDGE_DEX.md # bridge, DEX and Chess960/C960 devnet test
 │   └── THREAT_MODEL.md           # adversary model and residual risk
 ├── data/
 │   ├── openings.json             # curated opening lines, shipped in the wheel
@@ -468,6 +469,9 @@ The wallet and miner guides are separate:
 - [`docs/RUN_A_DEVNET.md`](docs/RUN_A_DEVNET.md) — run a whole devnet from source:
   `devnet up`, the faucet, wallets, transfers, a miner and the two-process relay
   stack, with the devnet parameters and troubleshooting.
+- [`docs/TEST_DEVNET_BRIDGE_DEX.md`](docs/TEST_DEVNET_BRIDGE_DEX.md) — test the
+  ETH↔SCCP bridge, the on-chain DEX and the Chess960/C960 path end to end, from
+  the CLI and from the web UI.
 - [`docs/CREATE_A_TESTNET_WALLET.md`](docs/CREATE_A_TESTNET_WALLET.md) — create a
   testnet keyfile, fund it from the faucet and check the balance.
 - [`docs/OPEN_A_WALLET.md`](docs/OPEN_A_WALLET.md) — create a keyfile, back up the
@@ -479,7 +483,9 @@ The wallet and miner guides are separate:
 - [`docs/EXPLORE_THE_CHAIN.md`](docs/EXPLORE_THE_CHAIN.md) — build the web
   explorer, serve it from `sccp node run --web`, and play a signed table.
 
-The browser wallet, native DEX and trustless ETH↔SCCP HTLC bridge are implemented;
+The browser wallet, native DEX and trustless ETH↔SCCP HTLC bridge are implemented.
+The same user actions are available from the CLI under `sccp dex` and
+`sccp bridge`; the node, relay and miners remain operator processes.
 [`docs/BIG_PICTURE.md`](docs/BIG_PICTURE.md) records the design and the remaining
 work (the optional federated `wETH` asset, more bridge chains and an external
 audit of `contracts/EthHtlc.sol`).

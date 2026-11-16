@@ -910,6 +910,8 @@ them, which is why the examples above look inconsistent at a glance.
 
 - [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — play on the devnet chain, then
   export every game in a block as PGN with `scripts/export_block_games.py`.
+- [`TEST_DEVNET_BRIDGE_DEX.md`](TEST_DEVNET_BRIDGE_DEX.md) — the full devnet
+  bridge, DEX and Chess960/C960 test, with both `sccp` and web UI steps.
 - [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) — keyfiles, the 24-word backup, the
   hybrid signing rules and `sccp wallet sign-result`.
 - [`SEND_COINS.md`](SEND_COINS.md) and
