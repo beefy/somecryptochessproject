@@ -261,6 +261,95 @@ class Account:
 
 
 @dataclass(slots=True)
+class Pool:
+    """One constant-product liquidity pool, including its LP share ledger.
+
+    ``asset_a`` is the empty string for native SCCP and a 64-hex asset id
+    otherwise. The pair is ordered, so a pool has exactly one representation and
+    :func:`sccp.chain.dex.pool_id` can be derived from either side order.
+    """
+
+    pool_id: str
+    asset_a: str
+    asset_b: str
+    reserve_a: int
+    reserve_b: int
+    total_shares: int
+    shares: dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if len(self.pool_id) != 64 or self.pool_id != self.pool_id.lower():
+            raise StateError("pool id must be a 32-byte lowercase hex digest")
+        try:
+            bytes.fromhex(self.pool_id)
+        except ValueError:
+            raise StateError("pool id must be hex") from None
+        if not self.asset_b or self.asset_a == self.asset_b:
+            raise StateError("a pool needs two different assets")
+        if self.asset_a > self.asset_b:
+            raise StateError("pool assets must be ordered")
+        for label, asset in (("asset_a", self.asset_a), ("asset_b", self.asset_b)):
+            if asset and (len(asset) != 64 or asset != asset.lower()):
+                raise StateError(f"pool {label} must be an asset id")
+        for label in ("reserve_a", "reserve_b", "total_shares"):
+            value = getattr(self, label)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise StateError(f"pool {label} must be a non-negative integer")
+        for address, amount in self.shares.items():
+            if not isinstance(address, str) or not address:
+                raise StateError("pool share addresses must be non-empty strings")
+            if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+                raise StateError("pool share amounts must be positive integers")
+        if sum(self.shares.values()) != self.total_shares:
+            raise StateError("pool total_shares must equal the sum of LP shares")
+
+    def as_dict(self) -> dict[str, object]:
+        """Canonical mapping committed by ``state_root`` and written to snapshots."""
+        return {
+            "asset_a": self.asset_a,
+            "asset_b": self.asset_b,
+            "reserve_a": self.reserve_a,
+            "reserve_b": self.reserve_b,
+            "total_shares": self.total_shares,
+            "shares": dict(sorted(self.shares.items())),
+        }
+
+    @classmethod
+    def from_dict(cls, pool_id: str, document: Mapping[str, object]) -> Pool:
+        """Rebuild a pool from :meth:`as_dict` output."""
+
+        def _int(key: str) -> int:
+            value = document.get(key)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise StateError(f"pool field {key!r} must be an integer")
+            return value
+
+        raw_shares = document.get("shares", {})
+        if not isinstance(raw_shares, Mapping):
+            raise StateError("pool field 'shares' must be a mapping")
+        asset_a = document.get("asset_a", "")
+        asset_b = document.get("asset_b", "")
+        if not isinstance(asset_a, str) or not isinstance(asset_b, str):
+            raise StateError("pool assets must be strings")
+        shares: dict[str, int] = {}
+        for address, amount in raw_shares.items():
+            if not isinstance(address, str) or not address:
+                raise StateError("pool share addresses must be non-empty strings")
+            if not isinstance(amount, int) or isinstance(amount, bool):
+                raise StateError("pool share amounts must be integers")
+            shares[address] = amount
+        return cls(
+            pool_id=pool_id,
+            asset_a=asset_a,
+            asset_b=asset_b,
+            reserve_a=_int("reserve_a"),
+            reserve_b=_int("reserve_b"),
+            total_shares=_int("total_shares"),
+            shares=shares,
+        )
+
+
+@dataclass(slots=True)
 class ProofRecord:
     """A proof accepted into the chain, keyed by its game hash."""
 
@@ -500,6 +589,8 @@ class State:
     """Total native subsidy ever created, for the ``max_supply`` clamp."""
     minted_assets: dict[str, int] = field(default_factory=dict)
     """Total variant-token supply ever created, keyed by asset id."""
+    pools: dict[str, Pool] = field(default_factory=dict)
+    """``pool_id -> Pool`` for every DEX pair the chain has created."""
 
     def __post_init__(self) -> None:
         if self.difficulty is None:
@@ -513,6 +604,9 @@ class State:
                 raise StateError("minted_assets keys must be asset ids")
             if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
                 raise StateError("minted_assets amounts must be non-negative")
+        for pool_id, pool in self.pools.items():
+            if not isinstance(pool_id, str) or pool_id != pool.pool_id:
+                raise StateError("pools must be keyed by their pool id")
 
     # -- accessors ----------------------------------------------------------
 
@@ -596,10 +690,18 @@ class State:
     # -- commitments --------------------------------------------------------
 
     def state_root(self) -> str:
-        """Merkle root over ``address -> account`` leaves (PROTOCOL.md sections 12-13)."""
-        return merkle_root_hex(
-            {address: account.as_dict() for address, account in self.accounts.items()}
-        )
+        """Merkle root over account and DEX-pool leaves (PROTOCOL.md section 11).
+
+        Account keys are bech32 addresses; pool keys are prefixed with ``pool:``
+        so the two namespaces cannot collide. A chain with no pools produces the
+        same all-account root as before pools existed.
+        """
+        leaves: dict[str, object] = {
+            address: account.as_dict() for address, account in self.accounts.items()
+        }
+        for pool_id, pool in self.pools.items():
+            leaves[f"pool:{pool_id}"] = pool.as_dict()
+        return merkle_root_hex(leaves)
 
     @staticmethod
     def roster_root_of(roster: Mapping[str, RosterMember]) -> str:
@@ -833,6 +935,11 @@ class State:
                 if self.minted_assets
                 else {}
             ),
+            **(
+                {"pools": {pool_id: pool.as_dict() for pool_id, pool in sorted(self.pools.items())}}
+                if self.pools
+                else {}
+            ),
         }
 
     @classmethod
@@ -853,6 +960,7 @@ class State:
         reveals_raw = _as_mapping(document.get("reveals"), "reveals")
         witnesses_raw = _as_mapping(document.get("witnesses"), "witnesses")
         claims_raw = _as_mapping(document.get("timeout_claims"), "timeout_claims")
+        pools_raw = _as_mapping(document.get("pools", {}), "pools")
 
         accounts = {
             str(address): Account.from_dict(_as_mapping(entry, "account"))
@@ -925,6 +1033,10 @@ class State:
             str(claim_id): TimeoutClaimRecord.from_dict(_as_mapping(entry, "timeout claim"))
             for claim_id, entry in claims_raw.items()
         }
+        pools = {
+            str(pool_id): Pool.from_dict(str(pool_id), _as_mapping(entry, "pool"))
+            for pool_id, entry in pools_raw.items()
+        }
         difficulty = None
         if document.get("difficulty") is not None:
             item = _as_mapping(document.get("difficulty"), "difficulty")
@@ -958,6 +1070,7 @@ class State:
             timestamps=[_as_int(value, "timestamp") for value in timestamps_raw],
             minted=_as_int(document.get("minted"), "minted"),
             minted_assets=_asset_totals(document.get("minted_assets")),
+            pools=pools,
         )
 
     def copy(self) -> State:
@@ -995,6 +1108,7 @@ __all__ = [
     "EpochRecord",
     "MatchRecord",
     "MinerStats",
+    "Pool",
     "ProofRecord",
     "State",
     "TimeoutClaimRecord",

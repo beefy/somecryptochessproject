@@ -18,7 +18,9 @@ export type Route =
   | { name: "miner"; address: string }
   | { name: "account"; address: string }
   | { name: "wallet" }
-  | { name: "walletPlay" }
+  | { name: "play" }
+  | { name: "dex" }
+  | { name: "bridge" }
   | { name: "walletSend" }
   | { name: "walletReceive" }
   | { name: "walletFaucet" }
@@ -49,10 +51,14 @@ export function parseRoute(hash: string): Route {
       return { name: "ratings" };
     case "miners":
       return second === undefined ? { name: "notFound", path } : { name: "miner", address: decode(second) };
-    // The table moved into the wallet; the old `#/play` link keeps working as an
-    // alias, and lands on the same page the wallet's Play tab uses.
+    // The table has its own page now. The old wallet tab URL is an alias, so a
+    // bookmark or an old link does not break.
     case "play":
-      return { name: "walletPlay" };
+      return { name: "play" };
+    case "dex":
+      return { name: "dex" };
+    case "bridge":
+      return { name: "bridge" };
     case "accounts":
       return second === undefined ? { name: "notFound", path } : { name: "account", address: decode(second) };
     case "wallet": {
@@ -66,7 +72,7 @@ export function parseRoute(hash: string): Route {
         case "faucet":
           return { name: "walletFaucet" };
         case "play":
-          return { name: "walletPlay" };
+          return { name: "play" };
         case "history":
           return { name: "walletHistory" };
         case "settings":
@@ -114,8 +120,12 @@ export function routeHash(route: Route): string {
       return `#/accounts/${encodeURIComponent(route.address)}`;
     case "wallet":
       return "#/wallet";
-    case "walletPlay":
-      return "#/wallet/play";
+    case "play":
+      return "#/play";
+    case "dex":
+      return "#/dex";
+    case "bridge":
+      return "#/bridge";
     case "walletSend":
       return "#/wallet/send";
     case "walletReceive":
@@ -162,7 +172,9 @@ export type Section =
   | "ratings"
   | "account"
   | "wallet"
-  | "walletPlay"
+  | "play"
+  | "dex"
+  | "bridge"
   | "walletSend"
   | "walletReceive"
   | "walletFaucet"
@@ -187,8 +199,12 @@ export function activeSection(route: Route): Section {
       return "account";
     case "wallet":
       return "wallet";
-    case "walletPlay":
-      return "walletPlay";
+    case "play":
+      return "play";
+    case "dex":
+      return "dex";
+    case "bridge":
+      return "bridge";
     case "walletSend":
       return "walletSend";
     case "walletReceive":

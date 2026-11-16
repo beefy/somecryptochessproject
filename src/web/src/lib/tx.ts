@@ -26,7 +26,16 @@ import {
 } from "./keys";
 
 /** Wire spellings from `sccp.protocol.models.TxType`. */
-export type TxType = "transfer" | "register" | "register_witness" | "availability" | "reveal";
+export type TxType =
+  | "transfer"
+  | "register"
+  | "register_witness"
+  | "availability"
+  | "reveal"
+  | "create_pool"
+  | "add_liquidity"
+  | "remove_liquidity"
+  | "swap";
 
 /** A signed ledger transaction, in wire order (`from` is the sender field). */
 export interface Transaction {
@@ -253,5 +262,145 @@ export function buildReveal(fields: RevealFields): Transaction {
       epoch: fields.epoch,
       nonce: fields.nonceSecret,
     },
+  };
+}
+
+/** The `create_pool` transaction: an initial two-sided deposit. */
+export interface CreatePoolFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  /** `null` means native SCCP. The builder orders the pair itself. */
+  assetA: string | null;
+  amountA: number;
+  assetB: string | null;
+  amountB: number;
+  publicKeyHex: string;
+}
+
+function requirePositive(field: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TxError(`${field} must be a positive integer, got ${value}`);
+  }
+}
+
+/** The `create_pool` transaction: `{asset_a?, amount_a, asset_b?, amount_b}`. */
+export function buildCreatePool(fields: CreatePoolFields): Transaction {
+  requirePositive("amount_a", fields.amountA);
+  requirePositive("amount_b", fields.amountB);
+  const first = { asset: fields.assetA ?? "", amount: fields.amountA };
+  const second = { asset: fields.assetB ?? "", amount: fields.amountB };
+  if (first.asset === second.asset) {
+    throw new TxError("a pool needs two different assets");
+  }
+  const [a, b] = first.asset < second.asset ? [first, second] : [second, first];
+  const payload: Record<string, unknown> = {
+    amount_a: a.amount,
+    amount_b: b.amount,
+    public_key: fields.publicKeyHex.toLowerCase(),
+  };
+  if (a.asset !== "") payload.asset_a = a.asset;
+  if (b.asset !== "") payload.asset_b = b.asset;
+  return {
+    network: fields.network,
+    type: "create_pool",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload,
+  };
+}
+
+export interface AddLiquidityFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  poolId: string;
+  amountA: number;
+  amountB: number;
+  publicKeyHex: string;
+}
+
+/** The `add_liquidity` transaction: a proportional two-sided deposit. */
+export function buildAddLiquidity(fields: AddLiquidityFields): Transaction {
+  requirePositive("amount_a", fields.amountA);
+  requirePositive("amount_b", fields.amountB);
+  return {
+    network: fields.network,
+    type: "add_liquidity",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload: {
+      pool_id: fields.poolId,
+      amount_a: fields.amountA,
+      amount_b: fields.amountB,
+      public_key: fields.publicKeyHex.toLowerCase(),
+    },
+  };
+}
+
+export interface RemoveLiquidityFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  poolId: string;
+  shares: number;
+  publicKeyHex: string;
+}
+
+/** The `remove_liquidity` transaction: redeem pool shares for both reserves. */
+export function buildRemoveLiquidity(fields: RemoveLiquidityFields): Transaction {
+  requirePositive("shares", fields.shares);
+  return {
+    network: fields.network,
+    type: "remove_liquidity",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload: {
+      pool_id: fields.poolId,
+      shares: fields.shares,
+      public_key: fields.publicKeyHex.toLowerCase(),
+    },
+  };
+}
+
+export interface SwapFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  poolId: string;
+  /** `null` means native SCCP. */
+  assetIn: string | null;
+  amountIn: number;
+  minAmountOut: number;
+  publicKeyHex: string;
+}
+
+/** The `swap` transaction: one side in, the other out, both in one transition. */
+export function buildSwap(fields: SwapFields): Transaction {
+  requirePositive("amount_in", fields.amountIn);
+  if (!Number.isSafeInteger(fields.minAmountOut) || fields.minAmountOut < 0) {
+    throw new TxError(`min_amount_out must be a non-negative integer`);
+  }
+  const payload: Record<string, unknown> = {
+    pool_id: fields.poolId,
+    amount_in: fields.amountIn,
+    min_amount_out: fields.minAmountOut,
+    public_key: fields.publicKeyHex.toLowerCase(),
+  };
+  if (fields.assetIn !== null && fields.assetIn !== "") payload.asset_in = fields.assetIn;
+  return {
+    network: fields.network,
+    type: "swap",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload,
   };
 }

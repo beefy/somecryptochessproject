@@ -14,11 +14,13 @@ from typing import Any
 import httpx
 import pytest
 
+from sccp.chain.dex import NATIVE_ASSET
+from sccp.chain.dex import pool_id as derive_pool_id
 from sccp.chain.genesis import faucet_keypair
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import ProofRecord
+from sccp.chain.state import Pool, ProofRecord
 from sccp.chain.tx import txid
-from sccp.config import DEVNET, TESTNET
+from sccp.config import CHESS960_ASSET_ID, DEVNET, TESTNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import MempoolError, ProtocolError
@@ -95,6 +97,36 @@ def test_account_view_for_the_faucet() -> None:
     assert payload["assets"] == {}
     assert payload["immature_assets"] == {}
     assert invalid.status_code == 400
+
+
+def test_pool_routes_report_reserves_and_positions() -> None:
+    service = _node()
+    pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    service.chain.state.pools[pool_id] = Pool(
+        pool_id=pool_id,
+        asset_a=NATIVE_ASSET,
+        asset_b=CHESS960_ASSET_ID,
+        reserve_a=10_000,
+        reserve_b=20_000,
+        total_shares=1_000,
+        shares={FAUCET_ADDRESS: 1_000},
+    )
+    with _client(service) as client:
+        pools = client.get("/v1/pools").json()
+        one = client.get(f"/v1/pools/{pool_id}").json()
+        missing = client.get(f"/v1/pools/{'ab' * 32}")
+    assert pools["network"] == "devnet"
+    assert len(pools["pools"]) == 1
+    assert pools["pools"][0]["pool_id"] == pool_id
+    assert one["asset_a"] is None
+    assert one["asset_b"] == CHESS960_ASSET_ID
+    assert one["reserve_a"] == 10_000
+    assert one["reserve_b"] == 20_000
+    assert one["total_shares"] == 1_000
+    assert one["fee_bps"] == DEVNET.dex_fee_bps
+    assert one["shares"] == {FAUCET_ADDRESS: 1_000}
+    assert missing.status_code == 404
+    service.close()
 
 
 def test_transaction_lifecycle_through_the_api() -> None:

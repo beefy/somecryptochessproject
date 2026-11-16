@@ -1794,6 +1794,90 @@
         ],
         "type": "object"
       },
+      "PoolList": {
+        "additionalProperties": false,
+        "properties": {
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "pools": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/PoolView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "network"
+        ],
+        "type": "object"
+      },
+      "PoolView": {
+        "additionalProperties": false,
+        "properties": {
+          "asset_a": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "asset_b": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fee_bps": {
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "pool_id": {
+            "type": "string"
+          },
+          "reserve_a": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "reserve_b": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "shares": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object"
+          },
+          "total_shares": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pool_id",
+          "network",
+          "reserve_a",
+          "reserve_b",
+          "total_shares",
+          "fee_bps"
+        ],
+        "type": "object"
+      },
       "ProofAccepted": {
         "additionalProperties": false,
         "properties": {
@@ -2280,7 +2364,11 @@
           "reveal",
           "timeout_claim",
           "timeout_dispute",
-          "slash_evidence"
+          "slash_evidence",
+          "create_pool",
+          "add_liquidity",
+          "remove_liquidity",
+          "swap"
         ],
         "type": "string"
       },
@@ -3045,6 +3133,55 @@
                     "$ref": "#/components/schemas/PeerView"
                   },
                   "type": "array"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/pools": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolList"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/pools/{pool_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pool_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PoolView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }

@@ -36,6 +36,21 @@ not itemised here.
   variant, draws the certified Chess960 start position (including castling via
   the 960 rules), and builds a proof with the variant's start FEN, hash and
   minimum-ply rule.
+- **An on-chain DEX for SCCP and variant tokens.** `create_pool`,
+  `add_liquidity`, `remove_liquidity` and `swap` are consensus transactions;
+  pools and their LP share ledgers are committed in `state_root` and served from
+  `GET /v1/pools` and `/v1/pools/{id}`. The constant-product curve charges
+  `dex_fee_bps` (30 bp by default) to liquidity providers, while every
+  transaction still pays its ordinary SCCP fee. The web DEX quotes locally, signs
+  a minimum output into the swap, and offers swap, create-pool and add/remove
+  liquidity views with the wallet's position.
+- **Play, DEX and Bridge are separate sites.** `play.…#/play`, `dex.…#/dex` and
+  `bridge.…#/bridge` join the explorer and wallet names; Bridge is deliberately a
+  not-implemented notice. The hamburger lists all five, and Play/DEX/Bridge share
+  one wallet session. A status strip under the header shows `Wallet active` with
+  the shortened address and a Lock button, or `Wallet inactive` with a link to
+  open the wallet. Play moved out of the wallet's tab bar; `#/wallet/play`
+  remains an alias for `#/play`.
 
 ## [0.23.0] - 2026-11-15
 

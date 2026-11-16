@@ -809,9 +809,18 @@ the one scheme, not a second way to spend.
 | `timeout_claim` | `match_id`, `certificate`, `last_move`, `clock_evidence`, `bond`, `public_key`\* | opens a bonded claim (10.4) |
 | `timeout_dispute` | `claim_id`, `move`, `move_signature`, `clock_evidence`, `public_key`\* | the accused answers with a later signed move (10.4) |
 | `slash_evidence` | `evidence`, `proof_id`, `public_key`\* | burns an equivocating clock witness (10.4); `proof_id` is refused here |
+| `create_pool` | `asset_a`?, `amount_a`, `asset_b`?, `amount_b`, `public_key`\* | creates the ordered pair's first pool; both sides positive; the omitted asset key means native SCCP; shares are `isqrt(amount_a * amount_b)` |
+| `add_liquidity` | `pool_id`, `amount_a`, `amount_b`, `public_key`\* | deposits both sides; mints `min(amount_a * shares / reserve_a, amount_b * shares / reserve_b)` shares |
+| `remove_liquidity` | `pool_id`, `shares`, `public_key`\* | burns the sender's shares and pays both reserves pro rata; a full redemption deletes the pool |
+| `swap` | `pool_id`, `asset_in`?, `amount_in`, `min_amount_out`, `public_key`\* | moves `amount_in` into one reserve and the constant-product output out of the other; omitted `asset_in` means SCCP; rejects an output below `min_amount_out` |
 
 \* optional: only needed for an account whose public key the chain does not
 already know (10.1).
+
+The DEX's swap fee is `dex_fee_bps` (30 basis points by default). It is charged
+inside the curve and stays in the input reserve, so it belongs to the pool's
+liquidity providers rather than to the miner. Every DEX transaction still pays
+its ordinary fee in native SCCP.
 
 ### 10.3 Coinbase
 
@@ -936,6 +945,31 @@ hybrid signature rules against the roster's keys rather than skipping them, and
 `sccp wallet sign-result --payload <hex>` remains an alternative for a key that
 is not in a browser.
 
+### 10.6 Liquidity pools
+
+A DEX pool is consensus state, not a contract account. It has an ordered pair
+`(asset_a, asset_b)` — the empty string means native SCCP — two integer reserves
+and an LP share ledger keyed by address. `pool_id` is
+`H("sccp/v1/pool", {asset_a, asset_b})`, so both nodes derive the same id from
+either side order.
+
+The curve is `x * y = k`. A swap with `fee_bps = dex_fee_bps` pays
+
+```text
+amount_out = amount_in * (10000 - fee_bps) * reserve_out
+             / (reserve_in * 10000 + amount_in * (10000 - fee_bps))
+```
+
+rounded down. The fee remains in the input reserve. An initial deposit mints
+`isqrt(amount_a * amount_b)` shares; later deposits mint the minimum of the two
+proportional share counts, so a deliberately imbalanced deposit cannot mint value
+out of the pool. Removing shares pays each reserve pro rata, rounded down. The
+chain refuses a redemption that would pay zero of either side, and deletes the
+pool when the last share is burned.
+
+All reserves are integer base units. Fees for DEX transactions are still paid in
+native SCCP, so an account swapping a variant token needs a small SCCP balance.
+
 ## 11. Ledger state
 
 The state is a deterministic, integer-only object (`src/sccp/chain/state.py`);
@@ -956,10 +990,13 @@ alongside the proof and match registries (`game_hash -> proof_id`, match id ->
 epoch/round/seats), per-miner stats (wins, games, last opponent epoch, which is
 what the opponent cooldown reads), per-epoch records (beacon, roster, quotas,
 matchable flag), the availability commitments and reveals (by epoch), the clock
-witness registry, and open/closed timeout claims.
+witness registry, open/closed timeout claims, and the DEX pools
+(`pool_id -> {asset_a, asset_b, reserve_a, reserve_b, total_shares, shares}`).
 
 `state_root` is the merkle root (section 1) over `address -> account` leaves,
-where an account leaf commits to every field of the table above. `roster_root` is
+where an account leaf commits to every field of the table above. When the chain
+has DEX pools, it also commits one leaf per pool under the key `pool:<pool_id>`,
+so reserves and LP positions are as authenticated as balances. `roster_root` is
 the same construction over the epoch's roster, committing only
 `{public_key, max_games}` per member plus `variant` for non-standard members.
 Both are recomputed rather than trusted.
@@ -967,9 +1004,9 @@ Both are recomputed rather than trusted.
 Snapshots are JSON with the top-level keys `network`, `height`, `tip_hash`,
 `accounts`, `proofs`, `proof_ids`, `matches`, `miner_stats`, `epochs`,
 `availability`, `reveals`, `witnesses`, `timeout_claims`, `difficulty`,
-`last_k_change_height`, `timestamps` and `minted`. A snapshot is a cache: a node
-replaying blocks checks the snapshot's `state_root` against the state it
-rebuilds, so a corrupted snapshot cannot become consensus.
+`last_k_change_height`, `timestamps`, `minted` and, when non-empty, `pools`. A
+snapshot is a cache: a node replaying blocks checks the snapshot's `state_root`
+against the state it rebuilds, so a corrupted snapshot cannot become consensus.
 
 ## 12. Blocks, difficulty and fork choice
 
@@ -1178,6 +1215,8 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |
 | POST | `/v1/blocks` | `BlockView`, or 202 when the parent is unknown |
 | GET | `/v1/accounts/{address}` | `AccountView`: network, native and per-asset balances, immature queues, bonded, nonce, registration variant, endpoint, engine, key, ban height |
+| GET | `/v1/pools` | `PoolList`: every DEX pool with reserves, total shares, fee, and each LP address's shares |
+| GET | `/v1/pools/{pool_id}` | `PoolView`: one DEX pool (404 when the chain has not created it) |
 | GET | `/v1/epochs/{epoch}` | `EpochView`: beacon, roster, availability, quotas, matchable flag |
 | GET | `/v1/epochs/{epoch}/beacon` | `Beacon` (404 when the chain has none) |
 | GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |

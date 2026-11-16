@@ -161,8 +161,11 @@ rules, its DNS record and its rollback are in
 | `SCCP_NODE` | `npm run dev`, `npm run preview` | `http://127.0.0.1:8645` | proxy target for `/v1` |
 | `VITE_SCCP_API` | the bundle, at build time | empty (same origin) | absolute API base |
 | `VITE_SCCP_RELAY` | the bundle, at build time | `http://127.0.0.1:8646` | relay base for `#/play`; a path such as `/relay` means "same origin, proxied" |
-| `VITE_EXPLORER_ORIGIN` | the bundle, at build time | `https://explorer.chessproofofwork.com` | where the hamburger sends people for the explorer on a hosted build |
-| `VITE_WALLET_ORIGIN` | the bundle, at build time | `https://wallet.chessproofofwork.com` | where the hamburger sends people for the wallet on a hosted build |
+| `VITE_EXPLORER_ORIGIN` | the bundle, at build time | `https://explorer.chessproofofwork.com` | direct subdomain link for the explorer |
+| `VITE_WALLET_ORIGIN` | the bundle, at build time | `https://wallet.chessproofofwork.com` | direct subdomain link for the wallet |
+| `VITE_PLAY_ORIGIN` | the bundle, at build time | `https://play.chessproofofwork.com` | direct subdomain link for Play |
+| `VITE_DEX_ORIGIN` | the bundle, at build time | `https://dex.chessproofofwork.com` | direct subdomain link for the DEX |
+| `VITE_BRIDGE_ORIGIN` | the bundle, at build time | `https://bridge.chessproofofwork.com` | direct subdomain link for Bridge |
 | `SCCP_WEB_DIST` | `sccp node run --web` | `src/web/dist` | directory to mount |
 
 ## Routes
@@ -178,7 +181,10 @@ rules, its DNS record and its rollback are in
 | `#/ratings` | miner Elo: the top ten, their record and deviation, and the distribution |
 | `#/miners/<address>` | one miner: current rating, a line chart per epoch, its games |
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
-| `#/wallet/play` | a seat in a real match, signed with the unlocked wallet key (`#/play` is an alias); standard or Chess960 |
+| `#/wallet/play` | legacy alias for `#/play`; the table now has its own page |
+| `#/play` | a seat in a real match, signed with the unlocked wallet key; standard or Chess960 |
+| `#/dex` | swap SCCP and variant tokens, create pools, add/remove liquidity, view LP positions |
+| `#/bridge` | reserved route; deliberately a not-implemented notice, still wallet-gated |
 | `#/wallet` | the wallet: unlock or create a keyfile, SCCP and variant-token balances, nickname, pending transfers |
 | `#/wallet/send` | build, review and sign an SCCP or C960 transfer, with an optional recipient nickname |
 | `#/wallet/receive` | the address, every token it can receive, a copy button and its public-key fingerprint |
@@ -189,14 +195,24 @@ rules, its DNS record and its rollback are in
 Routing lives in the hash, so the bundle works from any static path with no
 server-side rewrite rule.
 
-`#/` is the explorer's overview on `explorer.chessproofofwork.com` and the
-wallet's overview on `wallet.chessproofofwork.com`: the two names serve the same
-release, and the hostname picks the landing view (`lib/site.ts`). Opening any
-wallet route swaps the tab bar for the wallet's own (Overview, Play, Send,
-Receive, Faucet, History, Settings), even when it was reached from the explorer
-hostname. The hamburger menu in the top-left corner does exactly one thing:
-switches between the explorer and the wallet — an absolute link on a hosted build,
-a hash locally so a dev server can exercise both sides.
+`#/` is the explorer's overview on `explorer.chessproofofwork.com`, the wallet's
+overview on `wallet.chessproofofwork.com`, the table on `play.…`, the DEX on
+`dex.…` and the bridge notice on `bridge.…`: all five names serve the same
+release, and the hostname picks the landing view (`lib/site.ts`). The hamburger
+offers exactly Explorer, Wallet, Play, DEX and Bridge. It switches with a hash
+rather than a cross-origin navigation because the unlocked keypair is memory-only;
+each subdomain is still a direct, bookmarkable entry point.
+
+Play, DEX and Bridge are gated by the shared wallet session. The strip under the
+header says `Wallet active` with the shortened address and a Lock button, or
+`Wallet inactive` with a link to open the wallet. Locking there clears the key for
+the whole tab.
+
+Browser storage is per origin, so a direct visit to another subdomain starts with
+that origin's own IndexedDB: the in-app hamburger therefore stays on the current
+origin, where the unlocked keypair is in memory. If one of the other names is
+opened directly, it still works, but the encrypted keyfile has to exist on that
+origin (open it from the wallet, or create/import one there).
 
 The tab icon is [`public/favicon.svg`](public/favicon.svg): the four centre
 squares of the `#/play` board (d4, d5, e4, e5) cropped into a circle, in that

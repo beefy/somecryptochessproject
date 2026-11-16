@@ -9,6 +9,7 @@ Modules:
 - :mod:`sccp.chain.chain` -- append, fork choice, reorg and orphan handling.
 - :mod:`sccp.chain.mempool` -- tx/proof pools, nonces, fees, expiry, rebroadcast.
 - :mod:`sccp.chain.difficulty` -- ``k`` and ``seal_bits`` retargeting.
+- :mod:`sccp.chain.dex` -- constant-product pool arithmetic and pool ids.
 - :mod:`sccp.chain.storage` -- SQLite persistence, WAL mode and snapshots.
 - :mod:`sccp.chain.timeout` -- bonded timeout claims, disputes and finalisation.
 
@@ -22,6 +23,7 @@ from __future__ import annotations
 __all__ = [
     "block",
     "chain",
+    "dex",
     "difficulty",
     "mempool",
     "state",

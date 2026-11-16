@@ -94,6 +94,10 @@ class TxType(StrEnum):
     TIMEOUT_CLAIM = "timeout_claim"
     TIMEOUT_DISPUTE = "timeout_dispute"
     SLASH_EVIDENCE = "slash_evidence"
+    CREATE_POOL = "create_pool"
+    ADD_LIQUIDITY = "add_liquidity"
+    REMOVE_LIQUIDITY = "remove_liquidity"
+    SWAP = "swap"
 
 
 class Transaction(ProtocolModel):

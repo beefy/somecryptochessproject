@@ -306,6 +306,32 @@ class GameList(ProtocolModel):
     games: tuple[GameSummary, ...] = ()
 
 
+class PoolView(ProtocolModel):
+    """One DEX pool as ``GET /v1/pools`` reports it.
+
+    ``asset_a``/``asset_b`` are ``null`` for native SCCP and a 64-hex asset id
+    otherwise. ``shares`` maps every LP address to its pool shares, which is what
+    lets a wallet show its own position without a second request.
+    """
+
+    pool_id: str
+    network: str = Field(min_length=1)
+    asset_a: str | None = None
+    asset_b: str | None = None
+    reserve_a: int = Field(ge=0)
+    reserve_b: int = Field(ge=0)
+    total_shares: int = Field(ge=0)
+    fee_bps: int = Field(ge=0, le=1_000)
+    shares: dict[str, int] = Field(default_factory=dict)
+
+
+class PoolList(ProtocolModel):
+    """``GET /v1/pools``: every pool on the adopted branch."""
+
+    network: str = Field(min_length=1)
+    pools: tuple[PoolView, ...] = ()
+
+
 __all__ = [
     "AccountView",
     "BlockIngest",
@@ -328,6 +354,8 @@ __all__ = [
     "MinerRatingView",
     "NodeStatus",
     "PeerView",
+    "PoolList",
+    "PoolView",
     "ProofAccepted",
     "RatingBucketView",
     "RatingDistribution",

@@ -1,22 +1,24 @@
 /**
- * Which of the two sites this build is showing, and how to reach the other one.
+ * Which named site this build is showing, and how to reach the others.
  *
- * `explorer.chessproofofwork.com` and `wallet.chessproofofwork.com` serve the
- * same bundle from the same origin: two Caddy site blocks, one nginx root, one
- * release directory. The hostname is therefore the only thing that decides
- * whether `#/` is the block explorer or the wallet, and the hamburger menu links
- * across by absolute URL -- a hash change cannot cross a subdomain.
+ * `explorer`, `wallet`, `play`, `dex` and `bridge` subdomains serve the same
+ * bundle from the same origin: Caddy site blocks, one nginx root and one release
+ * directory. The hostname decides what `#/` means. The hamburger switches with a
+ * hash rather than a cross-origin navigation so the unlocked in-memory key stays
+ * in this tab; each name is still a direct, bookmarkable entry point.
  *
- * On `localhost` the absolute links would send a developer to production, so a
- * local build switches in-app with a hash instead. Point `VITE_EXPLORER_ORIGIN`
- * and `VITE_WALLET_ORIGIN` at something else to test a staging pair.
+ * On `localhost` the same hash switch is the only sensible option. Point a
+ * `VITE_*_ORIGIN` variable at something else to test a staging group.
  */
 
-export type Site = "explorer" | "wallet";
+export type Site = "explorer" | "wallet" | "play" | "dex" | "bridge";
 
 export const SITE_LABELS: Readonly<Record<Site, string>> = {
   explorer: "Explorer",
   wallet: "Wallet",
+  play: "Play",
+  dex: "DEX",
+  bridge: "Bridge",
 };
 
 /** Where each site lives in production, unless the build overrides it. */
@@ -29,6 +31,18 @@ export const SITE_ORIGINS: Readonly<Record<Site, string>> = {
     /\/+$/,
     "",
   ),
+  play: (import.meta.env.VITE_PLAY_ORIGIN ?? "https://play.chessproofofwork.com").replace(
+    /\/+$/,
+    "",
+  ),
+  dex: (import.meta.env.VITE_DEX_ORIGIN ?? "https://dex.chessproofofwork.com").replace(
+    /\/+$/,
+    "",
+  ),
+  bridge: (import.meta.env.VITE_BRIDGE_ORIGIN ?? "https://bridge.chessproofofwork.com").replace(
+    /\/+$/,
+    "",
+  ),
 };
 
 /** Hostnames that mean "this is a development server". */
@@ -36,12 +50,27 @@ const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "0.0.0.0"]);
 
 /** The hash that opens `site`'s landing page. */
 export function siteHash(site: Site): string {
-  return site === "wallet" ? "#/wallet" : "#/";
+  switch (site) {
+    case "wallet":
+      return "#/wallet";
+    case "play":
+      return "#/play";
+    case "dex":
+      return "#/dex";
+    case "bridge":
+      return "#/bridge";
+    case "explorer":
+      return "#/";
+  }
 }
 
-/** Which site a hostname serves; anything not `wallet.*` is the explorer. */
+/** Which site a hostname serves; anything unrecognised is the explorer. */
 export function siteForHostname(hostname: string): Site {
-  return hostname === "wallet" || hostname.startsWith("wallet.") ? "wallet" : "explorer";
+  const host = hostname.toLowerCase();
+  for (const site of ["wallet", "play", "dex", "bridge"] as const) {
+    if (host === site || host.startsWith(`${site}.`)) return site;
+  }
+  return "explorer";
 }
 
 /** The site this tab is on. */
@@ -55,12 +84,11 @@ export function isLocalDevelopment(hostname: string | undefined = globalThis.loc
 }
 
 /**
- * Where the "open the other site" link points.
+ * Where a direct link to `site` points.
  *
- * In production that is the other subdomain's origin, so the wallet really is at
- * `wallet.chessproofofwork.com` and a bookmark of it stays a bookmark. In a local
- * build it is the other site's hash on the current server, which is the only way
- * to exercise the switch without publishing anything.
+ * The app menu does not use this: leaving the origin would drop the unlocked
+ * keypair, which is deliberately memory-only. It stays for documentation links
+ * and for anyone who wants a real subdomain URL.
  */
 export function crossSiteHref(
   site: Site,

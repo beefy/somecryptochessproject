@@ -29,6 +29,7 @@ export const DOMAINS = {
   MOVE: "sccp/v1/move",
   OPENING: "sccp/v1/opening",
   PAIR: "sccp/v1/pair",
+  POOL: "sccp/v1/pool",
   PROOF: "sccp/v1/proof",
   RESULT: "sccp/v1/result",
   TX: "sccp/v1/tx",

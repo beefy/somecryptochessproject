@@ -24,6 +24,8 @@ import type {
   MinerRatingDetail,
   NetworkParams,
   NodeStatus,
+  PoolList,
+  PoolView,
   ProofAccepted,
   RatingsView,
   TransactionRecord,
@@ -193,6 +195,16 @@ export function fetchTransaction(
 /** `GET /v1/accounts/{address}`: balances, nonce and registration. */
 export function fetchAccount(address: string, signal?: AbortSignal): Promise<AccountView> {
   return request<AccountView>(`/v1/accounts/${encodeURIComponent(address)}`, { signal });
+}
+
+/** `GET /v1/pools`: every DEX pool and its LP share ledger. */
+export function fetchPools(signal?: AbortSignal): Promise<PoolList> {
+  return request<PoolList>("/v1/pools", { signal });
+}
+
+/** `GET /v1/pools/{pool_id}`: one DEX pool. */
+export function fetchPool(poolId: string, signal?: AbortSignal): Promise<PoolView> {
+  return request<PoolView>(`/v1/pools/${encodeURIComponent(poolId)}`, { signal });
 }
 
 /** `GET /v1/difficulty`: the current target and its retarget history. */

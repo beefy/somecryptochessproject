@@ -17,9 +17,10 @@
  * epoch beacon — including both hybrid signature rules, verified against the
  * roster's keys.
  *
- * The page lives under the wallet's Play tab, not in the explorer: a seat is a
- * funded account, and the wallet is where the key and the funds already are.
- * `#/play` still resolves here so an old link does not break.
+ * The page lives at `play.chessproofofwork.com/#/play`, not in the explorer: a
+ * seat is a funded account, and the wallet is where the key and the funds already
+ * are. `#/play` resolves there; the old `#/wallet/play` URL is an alias, so a
+ * bookmark does not break.
  *
  * Two honest limits are shown, not hidden:
  *
@@ -253,8 +254,8 @@ function pickMatch(
  *
  * There is no seed field and no separate "sit down" key: the key that registers,
  * commits availability and signs every move is the wallet's, so a seat is the
- * same account that holds the funds. The wallet renders this under its Play tab;
- * `#/play` is an alias for that page.
+ * same account that holds the funds. The Play page renders this once the shared
+ * wallet session is unlocked.
  */
 export function Play({
   keypair,

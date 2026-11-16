@@ -23,7 +23,7 @@ import {
   Section,
   StatusPill,
 } from "../components/Chrome";
-import { formatInteger, formatTokenAmount, prettyJson } from "../lib/format";
+import { formatInteger, formatTokenAmount, prettyJson, shortHash } from "../lib/format";
 import { tokenForAsset, tokensFor } from "../lib/assets";
 import { txId as computeTxId, type TxType } from "../lib/tx";
 import { useNode } from "../node";
@@ -153,6 +153,43 @@ export function TransactionDetail({ txid }: { txid: string }): ReactNode {
                     token?.symbol ?? (asset === null ? "SCCP" : "asset"),
                     token?.decimals ?? 8,
                   );
+                })()}
+              </KeyValue>
+            )}
+            {body.data.type === "create_pool" && (
+              <KeyValue label="Create pool" mono>
+                {(() => {
+                  const payload = body.data.payload;
+                  const assetA = typeof payload.asset_a === "string" ? payload.asset_a : null;
+                  const assetB = typeof payload.asset_b === "string" ? payload.asset_b : null;
+                  const tokenA = tokenForAsset(tokens, assetA);
+                  const tokenB = tokenForAsset(tokens, assetB);
+                  return `${formatTokenAmount(Number(payload.amount_a), tokenA?.symbol ?? "SCCP", tokenA?.decimals ?? 8)} + ${formatTokenAmount(Number(payload.amount_b), tokenB?.symbol ?? "asset", tokenB?.decimals ?? 8)}`;
+                })()}
+              </KeyValue>
+            )}
+            {body.data.type === "add_liquidity" && (
+              <KeyValue label="Add liquidity" mono>
+                {`${formatInteger(Number(body.data.payload.amount_a))} + ${formatInteger(
+                  Number(body.data.payload.amount_b),
+                )} to pool ${shortHash(String(body.data.payload.pool_id), 8)}`}
+              </KeyValue>
+            )}
+            {body.data.type === "remove_liquidity" && (
+              <KeyValue label="Remove liquidity" mono>
+                {`${formatInteger(Number(body.data.payload.shares))} shares from pool ${shortHash(
+                  String(body.data.payload.pool_id),
+                  8,
+                )}`}
+              </KeyValue>
+            )}
+            {body.data.type === "swap" && (
+              <KeyValue label="Swap" mono>
+                {(() => {
+                  const payload = body.data.payload;
+                  const assetIn = typeof payload.asset_in === "string" ? payload.asset_in : null;
+                  const token = tokenForAsset(tokens, assetIn);
+                  return `${formatTokenAmount(Number(payload.amount_in), token?.symbol ?? "SCCP", token?.decimals ?? 8)} in pool ${shortHash(String(payload.pool_id), 8)}`;
                 })()}
               </KeyValue>
             )}

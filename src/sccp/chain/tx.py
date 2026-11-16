@@ -20,7 +20,8 @@ from collections.abc import Mapping
 from enum import StrEnum
 from typing import NoReturn
 
-from sccp.chain.state import State, epoch_of, first_matchable_epoch
+from sccp.chain import dex
+from sccp.chain.state import Pool, State, epoch_of, first_matchable_epoch
 from sccp.config import NetworkParams
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import (
@@ -243,6 +244,59 @@ def _require_balance(state: State, address: str, amount: int, what: str) -> None
         )
 
 
+def _require_trade_funds(
+    state: State,
+    address: str,
+    asset: str,
+    amount: int,
+    fee: int,
+    what: str,
+) -> None:
+    """Require the fee in SCCP and ``amount`` of ``asset``, native or token."""
+    _require_balance(state, address, fee, "the fee")
+    if asset == dex.NATIVE_ASSET:
+        _require_balance(state, address, amount + fee, what)
+        return
+    available = state.asset_balance(address, asset)
+    if available < amount:
+        _fail(
+            TxFailure.BALANCE,
+            f"{address} has {available} of {asset}, cannot cover {what} of {amount}",
+        )
+
+
+def _field_trade_asset(payload: Mapping[str, object], key: str, params: NetworkParams) -> str:
+    """Read a pool side: an omitted key is native SCCP, a value is an asset id."""
+    value = payload.get(key)
+    if value is None:
+        if key in payload:
+            _fail(TxFailure.SCHEMA, f"native SCCP must omit payload field {key!r}")
+        return dex.NATIVE_ASSET
+    if not isinstance(value, str) or not value:
+        _fail(TxFailure.SCHEMA, f"payload field {key!r} must be an asset id")
+    try:
+        variant = params.variant_for_asset(value)
+    except ConfigError as exc:
+        _fail(TxFailure.TYPE, str(exc))
+    if variant.native:
+        _fail(TxFailure.TYPE, f"native SCCP must omit payload field {key!r}")
+    return value
+
+
+def _debit_trade_asset(state: State, address: str, asset: str, amount: int) -> None:
+    if asset == dex.NATIVE_ASSET:
+        state.ensure(address).balance -= amount
+        return
+    state.debit_asset(address, asset, amount)
+
+
+def _credit_trade_asset(state: State, address: str, asset: str, amount: int) -> None:
+    if asset == dex.NATIVE_ASSET:
+        state.ensure(address).balance += amount
+        return
+    state.credit_asset(address, asset, amount)
+
+
 # -- per-type validation ------------------------------------------------------
 
 ALLOWED: dict[TxType, frozenset[str]] = {
@@ -263,6 +317,10 @@ ALLOWED: dict[TxType, frozenset[str]] = {
         {"claim_id", "move", "move_signature", "clock_evidence", "public_key"}
     ),
     TxType.SLASH_EVIDENCE: frozenset({"proof_id", "evidence", "public_key"}),
+    TxType.CREATE_POOL: frozenset({"asset_a", "amount_a", "asset_b", "amount_b", "public_key"}),
+    TxType.ADD_LIQUIDITY: frozenset({"pool_id", "amount_a", "amount_b", "public_key"}),
+    TxType.REMOVE_LIQUIDITY: frozenset({"pool_id", "shares", "public_key"}),
+    TxType.SWAP: frozenset({"pool_id", "asset_in", "amount_in", "min_amount_out", "public_key"}),
 }
 """Exactly which payload keys each type may carry."""
 
@@ -438,6 +496,87 @@ def _validate_reveal(params: NetworkParams, state: State, tx: Transaction, heigh
         _fail(TxFailure.DUPLICATE, f"{tx.sender} already revealed a different nonce")
 
 
+def _validate_create_pool(
+    params: NetworkParams, state: State, tx: Transaction, height: int
+) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.CREATE_POOL])
+    asset_a = _field_trade_asset(tx.payload, "asset_a", params)
+    asset_b = _field_trade_asset(tx.payload, "asset_b", params)
+    amount_a = _field_int(tx.payload, "amount_a", minimum=1)
+    amount_b = _field_int(tx.payload, "amount_b", minimum=1)
+    if asset_a == asset_b:
+        _fail(TxFailure.TYPE, "a pool needs two different assets")
+    asset_a, amount_a, asset_b, amount_b = dex.normalize_pair(asset_a, amount_a, asset_b, amount_b)
+    pool_id = dex.pool_id(asset_a, asset_b)
+    if pool_id in state.pools:
+        _fail(TxFailure.DUPLICATE, f"pool {pool_id} already exists")
+    if dex.initial_shares(amount_a, amount_b) <= 0:
+        _fail(TxFailure.TYPE, "the initial deposit is too small to mint a share")
+    _require_trade_funds(state, tx.sender, asset_a, amount_a, tx.fee, "the first side")
+    _require_trade_funds(state, tx.sender, asset_b, amount_b, tx.fee, "the second side")
+
+
+def _validate_add_liquidity(
+    params: NetworkParams, state: State, tx: Transaction, height: int
+) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.ADD_LIQUIDITY])
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools.get(pool_id)
+    if pool is None:
+        _fail(TxFailure.TYPE, f"unknown pool {pool_id}")
+    amount_a = _field_int(tx.payload, "amount_a", minimum=1)
+    amount_b = _field_int(tx.payload, "amount_b", minimum=1)
+    if dex.added_shares(pool.reserve_a, pool.reserve_b, pool.total_shares, amount_a, amount_b) <= 0:
+        _fail(TxFailure.TYPE, "the deposit is too small to mint a share")
+    _require_trade_funds(state, tx.sender, pool.asset_a, amount_a, tx.fee, "the deposit")
+    _require_trade_funds(state, tx.sender, pool.asset_b, amount_b, tx.fee, "the deposit")
+
+
+def _validate_remove_liquidity(
+    params: NetworkParams, state: State, tx: Transaction, height: int
+) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.REMOVE_LIQUIDITY])
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools.get(pool_id)
+    if pool is None:
+        _fail(TxFailure.TYPE, f"unknown pool {pool_id}")
+    shares = _field_int(tx.payload, "shares", minimum=1)
+    owned = pool.shares.get(tx.sender, 0)
+    if shares > owned:
+        _fail(TxFailure.BALANCE, f"{tx.sender} has {owned} pool shares, cannot remove {shares}")
+    amount_a, amount_b = dex.removed_amounts(
+        pool.reserve_a, pool.reserve_b, pool.total_shares, shares
+    )
+    if amount_a <= 0 or amount_b <= 0:
+        _fail(TxFailure.TYPE, "the redemption is too small to pay both sides")
+
+
+def _validate_swap(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.SWAP])
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools.get(pool_id)
+    if pool is None:
+        _fail(TxFailure.TYPE, f"unknown pool {pool_id}")
+    asset_in = _field_trade_asset(tx.payload, "asset_in", params)
+    if asset_in not in (pool.asset_a, pool.asset_b):
+        _fail(TxFailure.TYPE, f"{asset_in or 'SCCP'} is not a side of pool {pool_id}")
+    amount_in = _field_int(tx.payload, "amount_in", minimum=1)
+    minimum_out = _field_int(tx.payload, "min_amount_out")
+    if asset_in == pool.asset_a:
+        reserve_in, reserve_out = pool.reserve_a, pool.reserve_b
+    else:
+        reserve_in, reserve_out = pool.reserve_b, pool.reserve_a
+    amount_out = dex.swap_output(reserve_in, reserve_out, amount_in, params.dex_fee_bps)
+    if amount_out <= 0:
+        _fail(TxFailure.TYPE, "the swap output is zero")
+    if amount_out < minimum_out:
+        _fail(
+            TxFailure.TYPE,
+            f"the swap pays {amount_out}, below the requested minimum of {minimum_out}",
+        )
+    _require_trade_funds(state, tx.sender, asset_in, amount_in, tx.fee, "the swap input")
+
+
 VALIDATORS = {
     TxType.TRANSFER: _validate_transfer,
     TxType.REGISTER: _validate_register,
@@ -447,6 +586,10 @@ VALIDATORS = {
     TxType.WITHDRAW_BOND: _validate_withdraw_bond,
     TxType.AVAILABILITY: _validate_availability,
     TxType.REVEAL: _validate_reveal,
+    TxType.CREATE_POOL: _validate_create_pool,
+    TxType.ADD_LIQUIDITY: _validate_add_liquidity,
+    TxType.REMOVE_LIQUIDITY: _validate_remove_liquidity,
+    TxType.SWAP: _validate_swap,
 }
 """Handlers for every type that :func:`validate_transaction` owns outright."""
 
@@ -572,6 +715,83 @@ def _apply_slash_evidence(state: State, tx: Transaction, height: int) -> None:
     timeout.apply_slash(state, tx, height)
 
 
+def _apply_create_pool(state: State, tx: Transaction, height: int) -> None:
+    asset_a = _field_trade_asset(tx.payload, "asset_a", state.params)
+    asset_b = _field_trade_asset(tx.payload, "asset_b", state.params)
+    amount_a = _field_int(tx.payload, "amount_a", minimum=1)
+    amount_b = _field_int(tx.payload, "amount_b", minimum=1)
+    asset_a, amount_a, asset_b, amount_b = dex.normalize_pair(asset_a, amount_a, asset_b, amount_b)
+    pool_id = dex.pool_id(asset_a, asset_b)
+    shares = dex.initial_shares(amount_a, amount_b)
+    _debit_trade_asset(state, tx.sender, asset_a, amount_a)
+    _debit_trade_asset(state, tx.sender, asset_b, amount_b)
+    state.pools[pool_id] = Pool(
+        pool_id=pool_id,
+        asset_a=asset_a,
+        asset_b=asset_b,
+        reserve_a=amount_a,
+        reserve_b=amount_b,
+        total_shares=shares,
+        shares={tx.sender: shares},
+    )
+
+
+def _apply_add_liquidity(state: State, tx: Transaction, height: int) -> None:
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools[pool_id]
+    amount_a = _field_int(tx.payload, "amount_a", minimum=1)
+    amount_b = _field_int(tx.payload, "amount_b", minimum=1)
+    shares = dex.added_shares(pool.reserve_a, pool.reserve_b, pool.total_shares, amount_a, amount_b)
+    _debit_trade_asset(state, tx.sender, pool.asset_a, amount_a)
+    _debit_trade_asset(state, tx.sender, pool.asset_b, amount_b)
+    pool.reserve_a += amount_a
+    pool.reserve_b += amount_b
+    pool.total_shares += shares
+    pool.shares[tx.sender] = pool.shares.get(tx.sender, 0) + shares
+
+
+def _apply_remove_liquidity(state: State, tx: Transaction, height: int) -> None:
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools[pool_id]
+    shares = _field_int(tx.payload, "shares", minimum=1)
+    amount_a, amount_b = dex.removed_amounts(
+        pool.reserve_a, pool.reserve_b, pool.total_shares, shares
+    )
+    remaining = pool.shares[tx.sender] - shares
+    if remaining:
+        pool.shares[tx.sender] = remaining
+    else:
+        pool.shares.pop(tx.sender, None)
+    pool.reserve_a -= amount_a
+    pool.reserve_b -= amount_b
+    pool.total_shares -= shares
+    _credit_trade_asset(state, tx.sender, pool.asset_a, amount_a)
+    _credit_trade_asset(state, tx.sender, pool.asset_b, amount_b)
+    if pool.total_shares == 0:
+        del state.pools[pool_id]
+
+
+def _apply_swap(state: State, tx: Transaction, height: int) -> None:
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools[pool_id]
+    asset_in = _field_trade_asset(tx.payload, "asset_in", state.params)
+    amount_in = _field_int(tx.payload, "amount_in", minimum=1)
+    if asset_in == pool.asset_a:
+        reserve_in, reserve_out = pool.reserve_a, pool.reserve_b
+        amount_out = dex.swap_output(reserve_in, reserve_out, amount_in, state.params.dex_fee_bps)
+        _debit_trade_asset(state, tx.sender, pool.asset_a, amount_in)
+        pool.reserve_a += amount_in
+        pool.reserve_b -= amount_out
+        _credit_trade_asset(state, tx.sender, pool.asset_b, amount_out)
+        return
+    reserve_in, reserve_out = pool.reserve_b, pool.reserve_a
+    amount_out = dex.swap_output(reserve_in, reserve_out, amount_in, state.params.dex_fee_bps)
+    _debit_trade_asset(state, tx.sender, pool.asset_b, amount_in)
+    pool.reserve_b += amount_in
+    pool.reserve_a -= amount_out
+    _credit_trade_asset(state, tx.sender, pool.asset_a, amount_out)
+
+
 APPLIERS = {
     TxType.TRANSFER: _apply_transfer,
     TxType.REGISTER: _apply_register,
@@ -584,6 +804,10 @@ APPLIERS = {
     TxType.TIMEOUT_CLAIM: _apply_timeout_claim,
     TxType.TIMEOUT_DISPUTE: _apply_timeout_dispute,
     TxType.SLASH_EVIDENCE: _apply_slash_evidence,
+    TxType.CREATE_POOL: _apply_create_pool,
+    TxType.ADD_LIQUIDITY: _apply_add_liquidity,
+    TxType.REMOVE_LIQUIDITY: _apply_remove_liquidity,
+    TxType.SWAP: _apply_swap,
 }
 """State transitions for every accepted transaction type."""
 

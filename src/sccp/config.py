@@ -164,6 +164,8 @@ class NetworkParams(BaseModel):
     registration_epochs: int = Field(ge=1)
     unbond_delay: int = Field(ge=0)
     min_fee: int = Field(gt=0)
+    dex_fee_bps: int = Field(default=30, ge=0, le=1_000)
+    """Constant-product swap fee, in basis points, paid to liquidity providers."""
 
     # Clocks and timeout settlement
     lag_grace_ms: int = Field(default=250, ge=0, le=1_000)

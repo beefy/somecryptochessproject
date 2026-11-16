@@ -66,6 +66,8 @@ from sccp.node.models import (
     MinerRatingView,
     NodeStatus,
     PeerView,
+    PoolList,
+    PoolView,
     ProofAccepted,
     RatingBucketView,
     RatingDistribution,
@@ -450,6 +452,34 @@ class NodeService:
             public_key=account.public_key,
             banned_until=account.banned_until,
         )
+
+    def _pool_view(self, pool_id: str) -> PoolView:
+        """Project one ledger pool onto the API's nullable-asset shape."""
+        pool = self.chain.state.pools[pool_id]
+        return PoolView(
+            pool_id=pool.pool_id,
+            network=self.params.network_id,
+            asset_a=pool.asset_a or None,
+            asset_b=pool.asset_b or None,
+            reserve_a=pool.reserve_a,
+            reserve_b=pool.reserve_b,
+            total_shares=pool.total_shares,
+            fee_bps=self.params.dex_fee_bps,
+            shares=dict(sorted(pool.shares.items())),
+        )
+
+    def pools(self) -> PoolList:
+        """Every DEX pool, ordered by pool id."""
+        return PoolList(
+            network=self.params.network_id,
+            pools=tuple(self._pool_view(pool_id) for pool_id in sorted(self.chain.state.pools)),
+        )
+
+    def pool(self, pool_id: str) -> PoolView:
+        """One pool by id, or 404 when the chain has not created it."""
+        if pool_id not in self.chain.state.pools:
+            raise NotFoundError(f"unknown pool {pool_id!r}")
+        return self._pool_view(pool_id)
 
     def epoch(self, epoch: int) -> EpochView:
         """The beacon, roster and reveals the chain recorded for ``epoch``.

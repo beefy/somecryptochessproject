@@ -10,9 +10,13 @@ import {
 import {
   LEDGER_SIGNATURE_HEX_LENGTH,
   availabilityCommitment,
+  buildAddLiquidity,
   buildAvailability,
+  buildCreatePool,
   buildRegister,
+  buildRemoveLiquidity,
   buildReveal,
+  buildSwap,
   buildTransfer,
   isLedgerSignatureHex,
   signTransaction,
@@ -211,6 +215,95 @@ describe("ledger transactions", () => {
       epoch: 6,
       nonce: entry.nonce,
     });
+  });
+});
+
+describe("DEX transactions", () => {
+  const network = ledger.transfer.transaction.network;
+  const sender = ledger.transfer.transaction.from;
+  const publicKeyHex = ledger.transfer.transaction.payload.public_key;
+  const asset = "a".repeat(64);
+  const poolId = "b".repeat(64);
+
+  it("orders a create-pool deposit and omits the native asset key", () => {
+    const tx = buildCreatePool({
+      network,
+      sender,
+      nonce: 0,
+      fee: 1_000,
+      assetA: asset,
+      amountA: 200,
+      assetB: null,
+      amountB: 100,
+      publicKeyHex,
+    });
+    expect(tx.type).toBe("create_pool");
+    expect(tx.payload).toStrictEqual({
+      amount_a: 100,
+      amount_b: 200,
+      asset_b: asset,
+      public_key: publicKeyHex,
+    });
+  });
+
+  it("builds add and remove payloads with the pool id", () => {
+    const add = buildAddLiquidity({
+      network,
+      sender,
+      nonce: 1,
+      fee: 1_000,
+      poolId,
+      amountA: 10,
+      amountB: 20,
+      publicKeyHex,
+    });
+    expect(add.payload).toStrictEqual({
+      pool_id: poolId,
+      amount_a: 10,
+      amount_b: 20,
+      public_key: publicKeyHex,
+    });
+    const remove = buildRemoveLiquidity({
+      network,
+      sender,
+      nonce: 2,
+      fee: 1_000,
+      poolId,
+      shares: 5,
+      publicKeyHex,
+    });
+    expect(remove.payload).toStrictEqual({
+      pool_id: poolId,
+      shares: 5,
+      public_key: publicKeyHex,
+    });
+  });
+
+  it("omits asset_in for a native swap and names it for a token swap", () => {
+    const native = buildSwap({
+      network,
+      sender,
+      nonce: 3,
+      fee: 1_000,
+      poolId,
+      assetIn: null,
+      amountIn: 100,
+      minAmountOut: 90,
+      publicKeyHex,
+    });
+    expect(native.payload).not.toHaveProperty("asset_in");
+    const token = buildSwap({
+      network,
+      sender,
+      nonce: 3,
+      fee: 1_000,
+      poolId,
+      assetIn: asset,
+      amountIn: 100,
+      minAmountOut: 90,
+      publicKeyHex,
+    });
+    expect(token.payload.asset_in).toBe(asset);
   });
 });
 

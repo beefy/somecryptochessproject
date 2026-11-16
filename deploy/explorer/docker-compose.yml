@@ -3,8 +3,8 @@
 # that terminates TLS.
 #
 # It answers whatever Host arrives, so the same release directory and the same
-# container serve `explorer.chessproofofwork.com` and
-# `wallet.chessproofofwork.com`; only Caddy's site blocks name them.
+# container serve `explorer`, `wallet`, `play`, `dex` and
+# `bridge.chessproofofwork.com`; only Caddy's site blocks name them.
 #
 # Both proxies exist because the node sends no CORS headers: a page served from
 # one origin cannot read /v1 on another, and `#/play` signs payloads for both.

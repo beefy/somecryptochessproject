@@ -40,6 +40,8 @@ from sccp.node.models import (
     MinerRatingDetail,
     NodeStatus,
     PeerView,
+    PoolList,
+    PoolView,
     ProofAccepted,
     RatingsView,
     TransactionRecord,
@@ -175,6 +177,14 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     @app.get("/v1/accounts/{address}", response_model=AccountView)
     def account(address: str) -> AccountView:
         return service.account(address)
+
+    @app.get("/v1/pools", response_model=PoolList)
+    def pools() -> PoolList:
+        return service.pools()
+
+    @app.get("/v1/pools/{pool_id}", response_model=PoolView)
+    def pool(pool_id: str) -> PoolView:
+        return service.pool(pool_id)
 
     @app.get("/v1/epochs/{epoch}", response_model=EpochView)
     def epoch(epoch: int) -> EpochView:

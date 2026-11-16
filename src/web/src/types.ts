@@ -74,6 +74,8 @@ export interface NetworkParams {
   coinbase_maturity: number;
   min_bond: number;
   min_fee: number;
+  /** Constant-product swap fee in basis points, paid to liquidity providers. */
+  dex_fee_bps: number;
   min_plies: number;
   max_plies: number;
   nodes_per_move: number;
@@ -328,6 +330,28 @@ export interface AccountView {
   public_key: string | null;
   banned_until: number;
 }
+
+/** One constant-product liquidity pool (`GET /v1/pools`). */
+export interface PoolView {
+  pool_id: string;
+  network: string;
+  /** `null` for native SCCP; a 64-hex asset id otherwise. */
+  asset_a: string | null;
+  asset_b: string | null;
+  reserve_a: number;
+  reserve_b: number;
+  total_shares: number;
+  /** Swap fee in basis points, paid to liquidity providers. */
+  fee_bps: number;
+  /** LP address -> pool shares. */
+  shares: Record<string, number>;
+}
+
+export interface PoolList {
+  network: string;
+  pools: PoolView[];
+}
+
 
 export interface DifficultyPoint {
   height: number;

@@ -31,7 +31,7 @@ the browser with an opaque network error even though `curl` works. The page has
 to be same-origin with the API, which is why the workflow builds with
 `VITE_SCCP_API` empty and lets nginx proxy the path.
 
-The relay is proxied for the same reason, one step further: `#/wallet/play` talks to it
+The relay is proxied for the same reason, one step further: `#/play` talks to it
 directly (`VITE_SCCP_RELAY`), so a hosted build would need a second origin, an
 `--origin` allowlist on `sccp matchmaker run` and a port open to browsers. Built
 with `VITE_SCCP_RELAY=/relay`, the page calls `/relay/v1/...` on its own origin,
@@ -96,13 +96,22 @@ curl -sSI http://explorer.chessproofofwork.com/ | head -1   # 308 -> https
 curl -sSI https://wallet.chessproofofwork.com/ | head -3
 curl -sSI http://wallet.chessproofofwork.com/ | head -1    # 308 -> https
 curl -sS https://wallet.chessproofofwork.com/v1/status | jq '{network, height}'
+
+# Play, the DEX and the bridge placeholder are the same origin under three more
+# names, each with its own certificate.
+for host in play dex bridge; do
+  curl -sSI "https://$host.chessproofofwork.com/" | head -3
+  curl -sSI "http://$host.chessproofofwork.com/" | head -1    # 308 -> https
+done
 ```
 
 The first two answer because of the proxy; the third and fifth are the bundle; the
 fourth and sixth are Caddy sending the plain-HTTP names to the secure ones. Open
 `https://explorer.chessproofofwork.com/` in a browser for the explorer,
-`https://wallet.chessproofofwork.com/` for the wallet, or `#/wallet/play` on either for
-the table. The hamburger in the top-left corner switches between the two names.
+`https://wallet.chessproofofwork.com/` for the wallet, `https://play.…/#/play` for
+the table, `https://dex.…/#/dex` for the DEX, or `https://bridge.…/#/bridge` for
+the placeholder. The hamburger switches between all five in-app so the unlocked
+wallet session survives; each subdomain is still a direct entry point.
 
 ## Layout on the host
 
@@ -142,6 +151,9 @@ only issue once the name resolves.
 ```bash
 export EXPLORER_HOST="explorer.chessproofofwork.com"
 export WALLET_HOST="wallet.chessproofofwork.com"
+export PLAY_HOST="play.chessproofofwork.com"
+export DEX_HOST="dex.chessproofofwork.com"
+export BRIDGE_HOST="bridge.chessproofofwork.com"
 
 gcloud compute firewall-rules create sccp-testnet-explorer-web \
     --network="$NETWORK" \
@@ -164,37 +176,33 @@ gcloud compute firewall-rules update sccp-testnet-explorer-web \
     --rules=tcp:80,tcp:443 --project="$PROJECT_ID"
 ```
 
-Then point both names at the same address the node uses:
+Then point all five names at the same address the node uses:
 
 ```bash
-gcloud dns record-sets create "$EXPLORER_HOST." \
-    --zone="$DNS_ZONE" \
-    --type=A \
-    --ttl=60 \
-    --rrdatas="$STATIC_IP" \
-    --project="$PROJECT_ID"
-
-gcloud dns record-sets create "$WALLET_HOST." \
-    --zone="$DNS_ZONE" \
-    --type=A \
-    --ttl=60 \
-    --rrdatas="$STATIC_IP" \
-    --project="$PROJECT_ID"
+for host in "$EXPLORER_HOST" "$WALLET_HOST" "$PLAY_HOST" "$DEX_HOST" "$BRIDGE_HOST"; do
+  gcloud dns record-sets create "$host." \
+      --zone="$DNS_ZONE" \
+      --type=A \
+      --ttl=60 \
+      --rrdatas="$STATIC_IP" \
+      --project="$PROJECT_ID"
+done
 ```
 
 If a record already exists, use `gcloud dns record-sets update` with the same
 arguments. Verify from your workstation before wiring GitHub:
 
 ```bash
-dig +short "$EXPLORER_HOST" A
-dig +short "$WALLET_HOST" A
+for host in "$EXPLORER_HOST" "$WALLET_HOST" "$PLAY_HOST" "$DEX_HOST" "$BRIDGE_HOST"; do
+  dig +short "$host" A
+done
 ```
 
-Both names must resolve before the first deploy: Caddy asks for one certificate
-per name over HTTP-01, and a name that does not resolve yet leaves that site
-serving a TLS error while the other one works. The wallet name is not a redirect
-to the explorer and does not need its own release directory; it is the same
-origin answering a second name.
+All five names must resolve before the first deploy: Caddy asks for one
+certificate per name over HTTP-01, and a name that does not resolve yet leaves
+that site serving a TLS error while the others work. None of these names is a
+redirect to the explorer and none needs its own release directory; they are the
+same origin answering five names.
 
 A CNAME pointing at another *name* that resolves to the same VM also works, but
 the deployment expects `A` records on the instance's address: `/v1` and `/relay`
@@ -341,14 +349,14 @@ an old bundle may show errors instead of data; the fix is a forward deploy, or a
 
 The one visible overlap is timing: while the chain deploy restarts the node, the
 page shows its "cannot reach the node at this origin" state for a few seconds,
-and `#/wallet/play` may lose an in-flight move. Reload when the deploy goes green. The
+and `#/play` may lose an in-flight move. Reload when the deploy goes green. The
 chain is also reset on every chain deploy, so the explorer will show a freshly
 bootstrapped chain afterwards — that is the reset, not a broken page.
 
 The explorer is also unaffected by 8646 being firewalled off. Browsers only ever
 reach the relay through `/relay` on port 80, so the relay rule in
 [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md) can stay closed to the internet
-even though `#/wallet/play` plays real matches.
+even though `#/play` plays real matches.
 
 ## Troubleshooting
 
@@ -371,7 +379,7 @@ even though `#/wallet/play` plays real matches.
 | `curl -I http://…` returns `308`, not the page | Working as designed: Caddy redirects to `https://` | Follow the `location:` header, or use `https://` |
 | `docker compose ps` shows `tls` restarting | Port `443` (or `80`) is already bound on the host | `sudo ss -ltnp 'sport = :443'`; move that service |
 | Workflow deploy job skipped | No host configured | `gh variable list \| grep -i deploy_host` |
-| `#/wallet/play` says "the relay at … is on devnet" | The relay follows a different chain than the node | The **Two networks** panel names both; restart the relay with the node's `--network`, see [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) |
+| `#/play` says "the relay at … is on devnet" | The relay follows a different chain than the node | The **Two networks** panel names both; restart the relay with the node's `--network`, see [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) |
 | `wallet.chessproofofwork.com` serves a TLS error while the explorer is fine | The wallet record is missing, or its challenge has not completed yet | `dig +short wallet.chessproofofwork.com`; `docker compose logs tls \| grep wallet`; both names need port 80 open |
 | The wallet name shows the explorer dashboard | The page was opened under `explorer.` (the landing view follows the hostname) | Use `https://wallet.chessproofofwork.com/`, or the hamburger menu |
 | "this browser will not store wallets" | IndexedDB is disabled, or another tab holds an older database version | Leave private mode, close the other tab and reload; `Open a keyfile` works without storage |
