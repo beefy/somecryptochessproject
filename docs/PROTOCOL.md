@@ -813,9 +813,19 @@ the one scheme, not a second way to spend.
 | `add_liquidity` | `pool_id`, `amount_a`, `amount_b`, `public_key`\* | deposits both sides; mints `min(amount_a * shares / reserve_a, amount_b * shares / reserve_b)` shares |
 | `remove_liquidity` | `pool_id`, `shares`, `public_key`\* | burns the sender's shares and pays both reserves pro rata; a full redemption deletes the pool |
 | `swap` | `pool_id`, `asset_in`?, `amount_in`, `min_amount_out`, `public_key`\* | moves `amount_in` into one reserve and the constant-product output out of the other; omitted `asset_in` means SCCP; rejects an output below `min_amount_out` |
+| `htlc_lock` | `hashlock`, `timelock_height`, `beneficiary`, `amount`, `asset`?, `public_key`\* | moves `amount` into consensus escrow under `sha256(preimage) == hashlock`; `timelock_height > height`; omitted `asset` means native SCCP |
+| `htlc_claim` | `htlc_id`, `preimage`, `public_key`\* | signed by `beneficiary`, valid only before `timelock_height`, checks the preimage, pays the escrow and records the revealed secret |
+| `htlc_refund` | `htlc_id`, `public_key`\* | signed by the original locker, valid only at or after `timelock_height`; mutually exclusive with a claim |
 
 \* optional: only needed for an account whose public key the chain does not
 already know (10.1).
+
+`htlc_id = H("sccp/v1/htlc", {from, nonce})`. A claimed or refunded record stays
+in state (and in `state_root`) so an explorer and the counterparty can read the
+preimage; a lock has no preimage until a claim reveals it. A native claim or
+refund may pay its network fee out of the amount being released, which lets a
+bridge taker who holds no SCCP claim the first leg. The hash is plain SHA-256,
+not a domain hash, because the Ethereum contract checks the same 32 bytes.
 
 The DEX's swap fee is `dex_fee_bps` (30 basis points by default). It is charged
 inside the curve and stays in the input reserve, so it belongs to the pool's
@@ -1217,6 +1227,13 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/accounts/{address}` | `AccountView`: network, native and per-asset balances, immature queues, bonded, nonce, registration variant, endpoint, engine, key, ban height |
 | GET | `/v1/pools` | `PoolList`: every DEX pool with reserves, total shares, fee, and each LP address's shares |
 | GET | `/v1/pools/{pool_id}` | `PoolView`: one DEX pool (404 when the chain has not created it) |
+| GET | `/v1/bridge` | `BridgeView`: the Ethereum chain id/name, HTLC contract, confirmation depth and SCCP margin for this network |
+| GET | `/v1/htlcs` | `HtlcList`: SCCP hash locks filtered by `?address=` or `?hashlock=` |
+| GET | `/v1/htlcs/{htlc_id}` | `HtlcView`: one lock, its status and the preimage once claimed |
+| GET | `/v1/orders` | `OrderList`: open signed sell-SCCP orders (`?maker_sccp=` filter) |
+| GET | `/v1/orders/{order_id}` | `OrderDetail`: one order and its take, if any |
+| POST | `/v1/orders` | `OrderAccepted`: publish a signed order in the off-consensus book |
+| POST | `/v1/orders/{order_id}/takes` | `TakeAccepted`: attach a signed take after the ETH leg is locked |
 | GET | `/v1/epochs/{epoch}` | `EpochView`: beacon, roster, availability, quotas, matchable flag |
 | GET | `/v1/epochs/{epoch}/beacon` | `Beacon` (404 when the chain has none) |
 | GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |

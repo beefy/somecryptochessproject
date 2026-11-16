@@ -35,7 +35,10 @@ export type TxType =
   | "create_pool"
   | "add_liquidity"
   | "remove_liquidity"
-  | "swap";
+  | "swap"
+  | "htlc_lock"
+  | "htlc_claim"
+  | "htlc_refund";
 
 /** A signed ledger transaction, in wire order (`from` is the sender field). */
 export interface Transaction {
@@ -402,5 +405,100 @@ export function buildSwap(fields: SwapFields): Transaction {
     nonce: fields.nonce,
     fee: fields.fee,
     payload,
+  };
+}
+
+/** The id an `htlc_lock` creates: `H("sccp/v1/htlc", {from, nonce})`. */
+export function htlcId(sender: string, nonce: number): string {
+  return domainHex(DOMAINS.HTLC, { from: sender, nonce });
+}
+
+function requireDigest(name: string, value: string): void {
+  if (!/^[0-9a-f]{64}$/.test(value)) {
+    throw new TxError(`${name} must be 32-byte lowercase hex`);
+  }
+}
+
+export interface HtlcLockFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  hashlock: string;
+  timelockHeight: number;
+  beneficiary: string;
+  amount: number;
+  publicKeyHex: string;
+  /** A non-native asset id; omit for native SCCP. */
+  asset?: string | null;
+}
+
+/** `htlc_lock`: move tokens out of a balance into consensus escrow. */
+export function buildHtlcLock(fields: HtlcLockFields): Transaction {
+  requirePositive("amount", fields.amount);
+  requireDigest("hashlock", fields.hashlock);
+  if (!Number.isSafeInteger(fields.timelockHeight) || fields.timelockHeight < 0) {
+    throw new TxError("timelock_height must be a non-negative integer");
+  }
+  const payload: Record<string, unknown> = {
+    hashlock: fields.hashlock,
+    timelock_height: fields.timelockHeight,
+    beneficiary: fields.beneficiary,
+    amount: fields.amount,
+    public_key: fields.publicKeyHex.toLowerCase(),
+  };
+  if (fields.asset !== undefined && fields.asset !== null && fields.asset !== "") {
+    payload.asset = fields.asset;
+  }
+  return {
+    network: fields.network,
+    type: "htlc_lock",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload,
+  };
+}
+
+export interface HtlcCloseFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  htlcId: string;
+  publicKeyHex: string;
+}
+
+/** `htlc_claim`: reveal the 32-byte preimage and receive the escrow. */
+export function buildHtlcClaim(fields: HtlcCloseFields & { preimage: string }): Transaction {
+  requireDigest("htlc_id", fields.htlcId);
+  requireDigest("preimage", fields.preimage);
+  return {
+    network: fields.network,
+    type: "htlc_claim",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload: {
+      htlc_id: fields.htlcId,
+      preimage: fields.preimage,
+      public_key: fields.publicKeyHex.toLowerCase(),
+    },
+  };
+}
+
+/** `htlc_refund`: return an expired escrow to the account that locked it. */
+export function buildHtlcRefund(fields: HtlcCloseFields): Transaction {
+  requireDigest("htlc_id", fields.htlcId);
+  return {
+    network: fields.network,
+    type: "htlc_refund",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload: {
+      htlc_id: fields.htlcId,
+      public_key: fields.publicKeyHex.toLowerCase(),
+    },
   };
 }

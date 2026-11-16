@@ -51,6 +51,120 @@ class NodeStatus(ProtocolModel):
     minted_assets: dict[str, int] = Field(default_factory=dict)
 
 
+class HtlcView(ProtocolModel):
+    """One SCCP-side hash time-locked contract.
+
+    ``asset`` is ``null`` for native SCCP and a 64-hex asset id for a variant
+    token. ``status`` is the only mutable field: the id, hashlock, timelock and
+    beneficiary are fixed when the lock is mined, and closing records the height
+    that claimed or refunded it.
+    """
+
+    htlc_id: str
+    network: str = Field(min_length=1)
+    sender: str = Field(min_length=1)
+    beneficiary: str = Field(min_length=1)
+    hashlock: str
+    timelock_height: int = Field(ge=0)
+    amount: int = Field(gt=0)
+    created_at_height: int = Field(ge=0)
+    asset: str | None = None
+    status: Literal["locked", "claimed", "refunded"] = "locked"
+    closed_at_height: int | None = Field(default=None, ge=0)
+    preimage: str | None = None
+
+
+class HtlcList(ProtocolModel):
+    """``GET /v1/htlcs``: the locks involving one account or one hashlock."""
+
+    network: str = Field(min_length=1)
+    htlcs: tuple[HtlcView, ...] = ()
+
+
+class BridgeView(ProtocolModel):
+    """``GET /v1/bridge``: the Ethereum environment this node is paired with.
+
+    The document is advisory. A wallet still checks the chain id reported by its
+    Ethereum provider and refuses to sign a lock when the two disagree.
+    """
+
+    network: str = Field(min_length=1)
+    eth_chain_id: int = Field(ge=1)
+    eth_chain_name: str = Field(min_length=1)
+    eth_explorer_url: str | None = None
+    eth_rpc_url: str | None = None
+    eth_htlc_contract: str | None = None
+    eth_confirmations: int = Field(ge=1)
+    sccp_margin: int = Field(ge=1)
+    configured: bool
+
+
+class OrderView(ProtocolModel):
+    """One open sell-SCCP order from ``GET /v1/orders``."""
+
+    order_id: str
+    network: str = Field(min_length=1)
+    maker_sccp: str = Field(min_length=1)
+    maker_eth: str = Field(min_length=1)
+    give_asset: Literal["SCCP"] = "SCCP"
+    give_amount: int = Field(gt=0)
+    want_asset: Literal["ETH"] = "ETH"
+    want_amount: str = Field(pattern=r"^[1-9][0-9]*$", max_length=78)
+    min_sccp_timelock: int = Field(ge=0)
+    expiry: int = Field(ge=0)
+    nonce: int = Field(ge=0)
+    public_key: str = Field(min_length=1)
+    signature: str = Field(min_length=1)
+
+
+class TakeView(ProtocolModel):
+    """A taker's signed announcement that its ETH leg is locked."""
+
+    take_id: str
+    network: str = Field(min_length=1)
+    order_id: str = Field(min_length=1)
+    taker_sccp: str = Field(min_length=1)
+    taker_eth: str = Field(min_length=1)
+    hashlock: str
+    eth_timelock: int = Field(ge=0)
+    sccp_timelock_height: int = Field(ge=0)
+    eth_tx_hash: str = Field(min_length=1)
+    nonce: int = Field(ge=0)
+    public_key: str = Field(min_length=1)
+    signature: str = Field(min_length=1)
+
+
+class OrderList(ProtocolModel):
+    """``GET /v1/orders``: open orders, best price first."""
+
+    network: str = Field(min_length=1)
+    orders: tuple[OrderView, ...] = ()
+
+
+class OrderDetail(ProtocolModel):
+    """``GET /v1/orders/{order_id}``: an order and its single take, if any."""
+
+    network: str = Field(min_length=1)
+    order: OrderView
+    take: TakeView | None = None
+
+
+class OrderAccepted(ProtocolModel):
+    """``POST /v1/orders``: the id of the admitted signed order."""
+
+    network: str = Field(min_length=1)
+    order_id: str
+    accepted: bool = True
+
+
+class TakeAccepted(ProtocolModel):
+    """``POST /v1/orders/{order_id}/takes``: the id of the admitted take."""
+
+    network: str = Field(min_length=1)
+    take_id: str
+    accepted: bool = True
+
+
 class AccountView(ProtocolModel):
     """``GET /v1/accounts/{address}``: everything the ledger knows."""
 
@@ -69,6 +183,7 @@ class AccountView(ProtocolModel):
     immature_assets: dict[str, int] = Field(default_factory=dict)
     public_key: str | None = None
     banned_until: int = Field(default=0, ge=0)
+    htlcs: tuple[HtlcView, ...] = ()
 
 
 class EpochView(ProtocolModel):
@@ -338,6 +453,7 @@ __all__ = [
     "BlockList",
     "BlockSummary",
     "BlockView",
+    "BridgeView",
     "DifficultyPoint",
     "DifficultyView",
     "EpochView",
@@ -347,12 +463,18 @@ __all__ = [
     "GameSummary",
     "GameView",
     "GossipResult",
+    "HtlcList",
+    "HtlcView",
     "MatchInfo",
     "MempoolStatus",
     "MempoolView",
     "MinerRatingDetail",
     "MinerRatingView",
     "NodeStatus",
+    "OrderAccepted",
+    "OrderDetail",
+    "OrderList",
+    "OrderView",
     "PeerView",
     "PoolList",
     "PoolView",
@@ -362,6 +484,8 @@ __all__ = [
     "RatingPointView",
     "RatingsView",
     "SyncReport",
+    "TakeAccepted",
+    "TakeView",
     "TransactionRecord",
     "TxAccepted",
 ]

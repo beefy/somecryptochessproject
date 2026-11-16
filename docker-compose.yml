@@ -72,6 +72,14 @@ services:
       # neutral.
       - --mine-interval-seconds
       - "60"
+    # The bridge environment is testnet -> Sepolia. Leave these unset to keep
+    # the bridge visible but disabled in the web UI; set them in the deploy
+    # host's environment after deploying `contracts/EthHtlc.sol`.
+    environment:
+      SCCP_ETH_RPC_URL: ${SCCP_ETH_RPC_URL:-}
+      SCCP_ETH_HTLC_CONTRACT: ${SCCP_ETH_HTLC_CONTRACT:-}
+      SCCP_ETH_CONFIRMATIONS: ${SCCP_ETH_CONFIRMATIONS:-}
+      SCCP_ETH_SCCP_MARGIN: ${SCCP_ETH_SCCP_MARGIN:-}
     ports:
       - "8645:8645"
     volumes:

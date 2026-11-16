@@ -44,9 +44,20 @@ not itemised here.
   transaction still pays its ordinary SCCP fee. The web DEX quotes locally, signs
   a minimum output into the swap, and offers swap, create-pool and add/remove
   liquidity views with the wallet's position.
+- **A trustless ETH↔SCCP bridge.** `htlc_lock`, `htlc_claim` and `htlc_refund`
+  are consensus transactions; open and closed locks, including the revealed
+  preimage, are committed in `state_root` and served from `GET /v1/htlcs` and the
+  account view. `contracts/EthHtlc.sol` is the Ethereum leg: no owner, proxy or
+  upgrade path, SHA-256 hashlock, and mutually exclusive claim/refund timelocks.
+  Signed off-consensus orders (`GET/POST /v1/orders`, `POST
+  /v1/orders/{id}/takes`) let a maker sell SCCP for ETH without a custodian, and
+  the web Bridge page runs the four-step flow with a browser Ethereum wallet.
+  The environment mapping is fixed: devnet→Anvil `31337`, testnet→Sepolia
+  `11155111`, mainnet→Ethereum `1`; `GET /v1/bridge` reports it and the deploy
+  script refuses a chain-id mismatch.
 - **Play, DEX and Bridge are separate sites.** `play.…#/play`, `dex.…#/dex` and
-  `bridge.…#/bridge` join the explorer and wallet names; Bridge is deliberately a
-  not-implemented notice. The hamburger lists all five, and Play/DEX/Bridge share
+  `bridge.…#/bridge` join the explorer and wallet names. The hamburger lists all
+  five, and Play/DEX/Bridge share
   one wallet session. A status strip under the header shows `Wallet active` with
   the shortened address and a Lock button, or `Wallet inactive` with a link to
   open the wallet. Play moved out of the wallet's tab bar; `#/wallet/play`

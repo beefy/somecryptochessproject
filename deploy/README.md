@@ -26,6 +26,45 @@ docker compose logs -f bootstrap drip miner-1
 docker compose down -v                   # resets the chain and relay state
 ```
 
+## The ETH bridge environment
+
+The SCCP node never holds an Ethereum key. It only publishes which Ethereum
+environment belongs to its network, and the browser wallet signs the ETH leg
+through an EIP-1193 provider. The mapping is fixed in `sccp.bridge.config`:
+
+| SCCP network | Ethereum | Chain id | Default RPC |
+| --- | --- | --- | --- |
+| `devnet` | Anvil | `31337` | `http://127.0.0.1:8545` |
+| `testnet` | Sepolia | `11155111` | set `SCCP_ETH_RPC_URL` |
+| `mainnet` | Ethereum | `1` | set `SCCP_ETH_RPC_URL` |
+
+Deploy the contract once for the environment, then give the node the address:
+
+```console
+# contracts/ has the Foundry project and its tests
+$ export SCCP_ETH_RPC_URL=https://sepolia.example/rpc
+$ cd contracts && forge install foundry-rs/forge-std
+$ SCCP_NETWORK=testnet forge script script/Deploy.s.sol:Deploy \
+    --rpc-url "$SCCP_ETH_RPC_URL" --private-key "$DEPLOYER_PRIVATE_KEY" --broadcast
+
+$ export SCCP_ETH_HTLC_CONTRACT=0x...
+$ docker compose up -d node
+$ curl http://127.0.0.1:8645/v1/bridge
+```
+
+The deploy script rejects a chain-id mismatch before broadcasting, so a stale
+RPC URL cannot put a testnet contract on mainnet. `SCCP_ETH_CONFIRMATIONS` and
+`SCCP_ETH_SCCP_MARGIN` are optional overrides of the per-network defaults; setting
+either one to zero is an error, and a margin at or below the SCCP `reorg_depth` is
+refused because the maker needs the finality window plus time to claim ETH.
+Leaving `SCCP_ETH_HTLC_CONTRACT` unset is supported: the bridge page still shows
+the SCCP locks and clearly disables every ETH action.
+
+For the hosted testnet workflow, set repository variables
+`SCCP_ETH_RPC_URL` (Sepolia) and `SCCP_ETH_HTLC_CONTRACT`; the deploy job passes
+them into the node container. No private key is stored in GitHub.
+
+
 The first run takes a minute or two: the bootstrap writes 19 blocks, then the
 relay opens round 0 and the miners play. When a game is decisive, a settled
 proof appears as `mined height 20: 1 proof(s) ...` in the node log; a draw has no

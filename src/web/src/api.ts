@@ -13,21 +13,30 @@ import type {
   AccountView,
   BlockList,
   BlockView,
+  BridgeView,
   DifficultyView,
   EpochView,
   FaucetView,
   GameList,
   GamePgn,
   GameView,
+  HtlcList,
+  HtlcView,
   MatchInfo,
   MempoolView,
   MinerRatingDetail,
   NetworkParams,
   NodeStatus,
+  OrderAccepted,
+  OrderDetail,
+  OrderList,
+  OrderView,
   PoolList,
   PoolView,
   ProofAccepted,
   RatingsView,
+  TakeAccepted,
+  TakeView,
   TransactionRecord,
   Transcript,
   TxAccepted,
@@ -205,6 +214,65 @@ export function fetchPools(signal?: AbortSignal): Promise<PoolList> {
 /** `GET /v1/pools/{pool_id}`: one DEX pool. */
 export function fetchPool(poolId: string, signal?: AbortSignal): Promise<PoolView> {
   return request<PoolView>(`/v1/pools/${encodeURIComponent(poolId)}`, { signal });
+}
+
+/** `GET /v1/bridge`: the Ethereum environment paired with this SCCP network. */
+export function fetchBridge(signal?: AbortSignal): Promise<BridgeView> {
+  return request<BridgeView>("/v1/bridge", { signal });
+}
+
+/** `GET /v1/htlcs`: SCCP HTLCs by participant or hashlock. */
+export function fetchHtlcs(
+  filters: { address?: string; hashlock?: string } = {},
+  signal?: AbortSignal,
+): Promise<HtlcList> {
+  const query = new URLSearchParams();
+  if (filters.address) query.set("address", filters.address);
+  if (filters.hashlock) query.set("hashlock", filters.hashlock);
+  const encoded = query.toString();
+  return request<HtlcList>(`/v1/htlcs${encoded === "" ? "" : `?${encoded}`}`, { signal });
+}
+
+/** `GET /v1/htlcs/{htlc_id}`: one SCCP lock. */
+export function fetchHtlc(htlcId: string, signal?: AbortSignal): Promise<HtlcView> {
+  return request<HtlcView>(`/v1/htlcs/${encodeURIComponent(htlcId)}`, { signal });
+}
+
+/** `GET /v1/orders`: open sell-SCCP orders. */
+export function fetchOrders(
+  filters: { makerSccp?: string } = {},
+  signal?: AbortSignal,
+): Promise<OrderList> {
+  const query = new URLSearchParams();
+  if (filters.makerSccp) query.set("maker_sccp", filters.makerSccp);
+  const encoded = query.toString();
+  return request<OrderList>(`/v1/orders${encoded === "" ? "" : `?${encoded}`}`, { signal });
+}
+
+/** `GET /v1/orders/{order_id}`: an order and its take, if one exists. */
+export function fetchOrder(orderId: string, signal?: AbortSignal): Promise<OrderDetail> {
+  return request<OrderDetail>(`/v1/orders/${encodeURIComponent(orderId)}`, { signal });
+}
+
+/** `POST /v1/orders`: publish a signed sell-SCCP order. */
+export function submitOrder(
+  order: Omit<OrderView, "order_id">,
+  signal?: AbortSignal,
+): Promise<OrderAccepted> {
+  return request<OrderAccepted>("/v1/orders", { method: "POST", body: order, signal });
+}
+
+/** `POST /v1/orders/{order_id}/takes`: announce a locked ETH leg. */
+export function submitTake(
+  orderId: string,
+  take: Omit<TakeView, "take_id">,
+  signal?: AbortSignal,
+): Promise<TakeAccepted> {
+  return request<TakeAccepted>(`/v1/orders/${encodeURIComponent(orderId)}/takes`, {
+    method: "POST",
+    body: take,
+    signal,
+  });
 }
 
 /** `GET /v1/difficulty`: the current target and its retarget history. */

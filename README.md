@@ -254,6 +254,11 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 `devnet` (in-process, mock engines, zero seal difficulty) exists for tests and CI.
 All values above are provisional and live in `src/sccp/config.py`.
 
+The ETH bridge is pinned to one Ethereum environment per SCCP network: devnet to
+Anvil (chain id `31337`), testnet to Sepolia (`11155111`) and mainnet to Ethereum
+(`1`). `GET /v1/bridge` publishes that mapping; see
+[`contracts/README.md`](contracts/README.md) and [`deploy/README.md`](deploy/README.md).
+
 ---
 
 ## 5. Repository layout
@@ -274,7 +279,7 @@ responsibility rather than a construction phase.
 ├── .github/workflows/deploy-explorer.yml        # hosted explorer (explorer.*)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
-│   ├── BIG_PICTURE.md            # wallet, bridge, DEX and variant tokens (plan)
+│   ├── BIG_PICTURE.md            # wallet, bridge, DEX and variant-token design
 │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
 │   ├── DOMAIN_MIGRATION.md       # move the deployment to a new project/domain
 │   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
@@ -291,6 +296,10 @@ responsibility rather than a construction phase.
 ├── data/
 │   ├── openings.json             # curated opening lines, shipped in the wheel
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
+├── contracts/
+│   ├── EthHtlc.sol               # the Ethereum leg: lock / claim / refund
+│   ├── test/EthHtlc.t.sol        # Foundry adversarial suite
+│   └── script/Deploy.s.sol       # chain-id-checked deployment
 ├── deploy/
 │   ├── README.md                 # what the compose stack does and does not do
 │   ├── explorer/                 # Caddy + nginx + compose for the hosted page
@@ -470,9 +479,10 @@ The wallet and miner guides are separate:
 - [`docs/EXPLORE_THE_CHAIN.md`](docs/EXPLORE_THE_CHAIN.md) — build the web
   explorer, serve it from `sccp node run --web`, and play a signed table.
 
-The roadmap for the browser wallet, the ETH↔SCCP bridge, the native DEX and the
-variant tokens is [`docs/BIG_PICTURE.md`](docs/BIG_PICTURE.md); it is a plan, not
-a description of what the chain does today.
+The browser wallet, native DEX and trustless ETH↔SCCP HTLC bridge are implemented;
+[`docs/BIG_PICTURE.md`](docs/BIG_PICTURE.md) records the design and the remaining
+work (the optional federated `wETH` asset, more bridge chains and an external
+audit of `contracts/EthHtlc.sol`).
 
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
 [`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current

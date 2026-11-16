@@ -1,16 +1,19 @@
 # The big picture: a wallet, a bridge and a DEX
 
-> **Status.** Forward-looking design. The Chess960 groundwork from section 5 is
-> implemented: variant-aware registration and pairing, a C960 asset minted by
-> Chess960 proofs, per-asset balances and transfers, and a four-miner testnet
-> with two seats per variant. The DEX, bridge and rest of the multi-variant
-> catalog remain planned. The document plans three additions on top of the
-> protocol v1 ledger described in
-> [`PROTOCOL.md`](PROTOCOL.md) -- a browser wallet, a trustless ETH<->SCCP
-> bridge and a native DEX -- and the variant-token model they exist to serve.
-> Consensus-visible work lands as protocol **v2**; the wallet and the Ethereum
-> side of the bridge need no fork. The prioritized work on the chain as it
-> stands today stays in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
+> **Status.** Implemented except for the optional `wETH` federation. The
+> Chess960 groundwork from section 5, the browser wallet, the native DEX
+> (section 6) and the trustless ETH<->SCCP HTLC bridge (section 7) are in the
+> tree. The bridge contract is `contracts/EthHtlc.sol`; the SCCP side is
+> `htlc_lock`/`htlc_claim`/`htlc_refund` with `HtlcRecord` in state, and signed
+> orders live in the off-consensus `OrderBook`. The section still describes the
+> intended protocol; where it says `sccp/v2`, the shipped implementation uses the
+> same `sccp/v1` domain prefix as the rest of the current protocol, and the
+> Ethereum-side environment mapping is fixed per SCCP network
+> (`sccp.bridge.config`). The HTLC path and the signed manual order book are
+> implemented; the automated `sccp mm` quoter, the optional federated `wETH` asset
+> (section 7.7), more bridge chains and an external audit remain future work. The
+> prioritized work on the chain as it stands today stays in
+> [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
 
 ## 1. The goal
 
@@ -475,7 +478,7 @@ htlc_claim  {htlc_id, preimage}
 htlc_refund {htlc_id}
 ```
 
-- `htlc_id = H("sccp/v2/htlc", {from, nonce})`; the locked funds move out of the
+- `htlc_id = H("sccp/v1/htlc", {from, nonce})`; the locked funds move out of the
   sender's `balance` into a consensus-held HTLC record. No new key type, no new
   signature scheme, no contract VM, no new address space.
 - `htlc_claim` checks `sha256(preimage) == hashlock` -- the plain hash, with no
@@ -524,12 +527,19 @@ live.
 ### 7.4 Swap protocol
 
 Let `T_eth` be the Ethereum unlock time and `T_sccp` the SCCP timelock height. The
-rule is always: **the second leg carries the longer timelock.**
+rule is always: **the second leg expires first, leaving the party that locked it
+time to claim the first leg.** A second leg that outlives the first lets the
+first party wait out the ETH timelock, claim SCCP at its last valid height and
+then refund the ETH.
 
 ```text
-T_sccp >= T_eth + margin      margin = 20 blocks on mainnet (~200 min)
-                              margin =  4 blocks on devnet/testnet
+T_sccp <= T_eth - margin      margin = 20 blocks on mainnet (~200 min)
+                              margin = 24 blocks on devnet/testnet
 ```
+
+`T_sccp` is converted to a wall-clock estimate with the SCCP
+`target_block_seconds`; the taker picks the height and the maker refuses a take
+whose height leaves less than the margin.
 
 Direction A -- an ETH holder buys SCCP from a miner:
 
@@ -537,7 +547,7 @@ Direction A -- an ETH holder buys SCCP from a miner:
 2. The taker locks ETH in `EthHtlc` with hashlock `H = sha256(s)`,
    timelock `T_eth`, beneficiary = maker's ETH address.
 3. The maker verifies the Ethereum lock, then locks SCCP with the same `H`,
-   timelock `T_sccp > T_eth + margin`, beneficiary = taker's SCCP address.
+   timelock `T_sccp <= T_eth - margin`, beneficiary = taker's SCCP address.
 4. The taker claims SCCP, revealing `s` in the SCCP transaction; the maker reads
    `s` from the chain and claims the ETH with it.
 
@@ -569,13 +579,13 @@ Operational rules that keep it safe:
 {
   "maker_sccp": "sccpt1...", "maker_eth": "0x...",
   "give_asset": "SCCP", "give_amount": 2500000000,
-  "want_asset": "ETH",  "want_amount": 1000000000000000,
+  "want_asset": "ETH",  "want_amount": "1000000000000000",
   "min_sccp_timelock": 3620, "expiry": 1790000000,
   "nonce": 7, "signature": "01..."
 }
 ```
 
-The maker signs `H("sccp/v2/order", body)` with the hybrid key, so an order is
+The maker signs `H("sccp/v1/order", body)` with the hybrid key, so an order is
 verified with the same code path as a transfer and cannot be forged or
 tampered with. The node exposes `POST /v1/orders`, `GET /v1/orders` (filter by
 pair), and `DELETE /v1/orders/{id}` (a signed cancel). The order book is **not
@@ -584,7 +594,9 @@ costs nothing but a re-post.
 
 Amounts are integers in each chain's smallest unit -- 8 decimals on SCCP, 18 on
 Ethereum -- and the price is implicit in the pair, so there is no oracle and no
-rounding rule to argue about. `expiry` is Unix seconds and `min_sccp_timelock` is
+rounding rule to argue about. The ETH amount is carried as a decimal string
+because 18 decimals exceed JavaScript's safe integer range; SCCP amounts stay
+JSON integers. `expiry` is Unix seconds and `min_sccp_timelock` is
 an SCCP block height, because the two chains share no clock. Orders are
 whole-order in 0.23; a maker bot re-quotes rather than tracking partial fills.
 
@@ -722,7 +734,7 @@ receipts for producing them.
 | 5 | LP positions | non-transferable shares / an LP token asset | non-transferable in 0.22 |
 | 6 | Swap privacy | batch only / batch plus commit-reveal | batch default, commit-reveal above a size threshold |
 | 7 | First bridge chains | Ethereum mainnet / an L2 | mainnet plus one L2 (Base), because claim gas dominates small trades |
-| 8 | Timelock margin | 10 / 20 blocks on mainnet | 20 blocks (~200 min), 4 on devnet |
+| 8 | Timelock margin | 10 / 20 blocks on mainnet | 20 blocks (~200 min), 24 on devnet/testnet |
 | 9 | Order transport | node REST / gossip | REST first, gossip later, same signed body |
 | 10 | Symbols | ticker collision handling | symbol is display only; the verified list is keyed by asset id |
 

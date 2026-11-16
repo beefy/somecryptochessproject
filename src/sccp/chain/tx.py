@@ -16,12 +16,13 @@ spendable balance and never from a bond.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from enum import StrEnum
 from typing import NoReturn
 
 from sccp.chain import dex
-from sccp.chain.state import Pool, State, epoch_of, first_matchable_epoch
+from sccp.chain.state import HtlcRecord, HtlcStatus, Pool, State, epoch_of, first_matchable_epoch
 from sccp.config import NetworkParams
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import (
@@ -229,6 +230,27 @@ def _field_digest(payload: Mapping[str, object], key: str) -> str:
     return value
 
 
+def htlc_id(sender: str, nonce: int) -> str:
+    """``H("sccp/v1/htlc", {from, nonce})``: the id an HTLC lock creates.
+
+    The id is derived from the sender and nonce, not from the transaction id, so
+    a wallet can show the id before the transaction is signed and both sides of a
+    swap can name the same record. A nonce is used once, so the id is unique.
+    """
+    return domain_hex(Domain.HTLC, {"from": sender, "nonce": nonce})
+
+
+def _field_preimage(payload: Mapping[str, object], key: str) -> str:
+    """Read a 32-byte preimage.
+
+    Ethereum's ``bytes32`` and SCCP's ``sha256`` check take the same 32 bytes;
+    allowing variable-length input would create two spellings of one secret and a
+    way to claim an HTLC with a value the other chain cannot represent.
+    """
+    value = _field_digest(payload, key)
+    return value
+
+
 def _check_unknown_keys(payload: Mapping[str, object], allowed: frozenset[str]) -> None:
     unknown = sorted(set(payload) - allowed)
     if unknown:
@@ -321,6 +343,11 @@ ALLOWED: dict[TxType, frozenset[str]] = {
     TxType.ADD_LIQUIDITY: frozenset({"pool_id", "amount_a", "amount_b", "public_key"}),
     TxType.REMOVE_LIQUIDITY: frozenset({"pool_id", "shares", "public_key"}),
     TxType.SWAP: frozenset({"pool_id", "asset_in", "amount_in", "min_amount_out", "public_key"}),
+    TxType.HTLC_LOCK: frozenset(
+        {"hashlock", "timelock_height", "beneficiary", "amount", "asset", "public_key"}
+    ),
+    TxType.HTLC_CLAIM: frozenset({"htlc_id", "preimage", "public_key"}),
+    TxType.HTLC_REFUND: frozenset({"htlc_id", "public_key"}),
 }
 """Exactly which payload keys each type may carry."""
 
@@ -577,6 +604,85 @@ def _validate_swap(params: NetworkParams, state: State, tx: Transaction, height:
     _require_trade_funds(state, tx.sender, asset_in, amount_in, tx.fee, "the swap input")
 
 
+def _require_htlc_close_fee(state: State, address: str, record: HtlcRecord, fee: int) -> None:
+    """Require a fee, allowing a native HTLC's proceeds to pay it.
+
+    A bridge taker may hold no SCCP at all: the whole point is to buy some with
+    ETH. Requiring a pre-existing native balance would make the first swap
+    impossible, so a native claim or refund may pay the network fee out of the
+    amount being released. A token HTLC still needs SCCP for the fee, exactly as
+    every other token transaction does.
+    """
+    available = state.spendable(address)
+    if record.asset == dex.NATIVE_ASSET:
+        if available + record.amount < fee:
+            _fail(
+                TxFailure.BALANCE,
+                f"{address} needs {fee} for the fee and the htlc pays only {record.amount}",
+            )
+        return
+    if available < fee:
+        _fail(TxFailure.BALANCE, f"{address} cannot cover the {fee}-unit fee")
+
+
+def _validate_htlc_lock(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.HTLC_LOCK])
+    _field_digest(tx.payload, "hashlock")
+    timelock = _field_int(tx.payload, "timelock_height")
+    if timelock <= height:
+        _fail(
+            TxFailure.WINDOW,
+            f"an htlc timelock of {timelock} is not after the current height {height}",
+        )
+    _field_address(tx.payload, "beneficiary", params)
+    amount = _field_int(tx.payload, "amount", minimum=1)
+    asset = _field_trade_asset(tx.payload, "asset", params)
+    _require_trade_funds(state, tx.sender, asset, amount, tx.fee, "the htlc lock")
+
+
+def _validate_htlc_claim(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.HTLC_CLAIM])
+    record = state.htlcs.get(_field_digest(tx.payload, "htlc_id"))
+    if record is None:
+        _fail(TxFailure.TYPE, "unknown htlc")
+    if record.status is not HtlcStatus.LOCKED:
+        _fail(TxFailure.WINDOW, f"the htlc is already {record.status.value}")
+    if tx.sender != record.beneficiary:
+        _fail(
+            TxFailure.SIGNATURE,
+            f"the htlc pays {record.beneficiary}, not the claim's sender {tx.sender}",
+        )
+    if height >= record.timelock_height:
+        _fail(
+            TxFailure.WINDOW,
+            f"the htlc expired at height {record.timelock_height}; only a refund is valid",
+        )
+    preimage = _field_preimage(tx.payload, "preimage")
+    actual = hashlib.sha256(bytes.fromhex(preimage)).hexdigest()
+    if actual != record.hashlock:
+        _fail(TxFailure.TYPE, "the preimage does not open the htlc hashlock")
+    _require_htlc_close_fee(state, tx.sender, record, tx.fee)
+
+
+def _validate_htlc_refund(
+    params: NetworkParams, state: State, tx: Transaction, height: int
+) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.HTLC_REFUND])
+    record = state.htlcs.get(_field_digest(tx.payload, "htlc_id"))
+    if record is None:
+        _fail(TxFailure.TYPE, "unknown htlc")
+    if record.status is not HtlcStatus.LOCKED:
+        _fail(TxFailure.WINDOW, f"the htlc is already {record.status.value}")
+    if tx.sender != record.sender:
+        _fail(TxFailure.SIGNATURE, f"only {record.sender} may refund this htlc")
+    if height < record.timelock_height:
+        _fail(
+            TxFailure.WINDOW,
+            f"the htlc cannot be refunded before height {record.timelock_height}",
+        )
+    _require_htlc_close_fee(state, tx.sender, record, tx.fee)
+
+
 VALIDATORS = {
     TxType.TRANSFER: _validate_transfer,
     TxType.REGISTER: _validate_register,
@@ -590,6 +696,9 @@ VALIDATORS = {
     TxType.ADD_LIQUIDITY: _validate_add_liquidity,
     TxType.REMOVE_LIQUIDITY: _validate_remove_liquidity,
     TxType.SWAP: _validate_swap,
+    TxType.HTLC_LOCK: _validate_htlc_lock,
+    TxType.HTLC_CLAIM: _validate_htlc_claim,
+    TxType.HTLC_REFUND: _validate_htlc_refund,
 }
 """Handlers for every type that :func:`validate_transaction` owns outright."""
 
@@ -792,6 +901,40 @@ def _apply_swap(state: State, tx: Transaction, height: int) -> None:
     _credit_trade_asset(state, tx.sender, pool.asset_a, amount_out)
 
 
+def _apply_htlc_lock(state: State, tx: Transaction, height: int) -> None:
+    lock_id = htlc_id(tx.sender, tx.nonce)
+    asset = _field_trade_asset(tx.payload, "asset", state.params)
+    amount = _field_int(tx.payload, "amount", minimum=1)
+    _debit_trade_asset(state, tx.sender, asset, amount)
+    state.htlcs[lock_id] = HtlcRecord(
+        htlc_id=lock_id,
+        sender=tx.sender,
+        beneficiary=_field_address(tx.payload, "beneficiary", state.params),
+        hashlock=_field_digest(tx.payload, "hashlock"),
+        timelock_height=_field_int(tx.payload, "timelock_height"),
+        amount=amount,
+        created_at_height=height,
+        asset=asset,
+    )
+
+
+def _apply_htlc_claim(state: State, tx: Transaction, height: int) -> None:
+    record = state.htlcs[_field_digest(tx.payload, "htlc_id")]
+    _credit_trade_asset(state, tx.sender, record.asset, record.amount)
+    state.ensure(tx.sender).balance -= tx.fee
+    record.status = HtlcStatus.CLAIMED
+    record.closed_at_height = height
+    record.preimage = _field_preimage(tx.payload, "preimage")
+
+
+def _apply_htlc_refund(state: State, tx: Transaction, height: int) -> None:
+    record = state.htlcs[_field_digest(tx.payload, "htlc_id")]
+    _credit_trade_asset(state, tx.sender, record.asset, record.amount)
+    state.ensure(tx.sender).balance -= tx.fee
+    record.status = HtlcStatus.REFUNDED
+    record.closed_at_height = height
+
+
 APPLIERS = {
     TxType.TRANSFER: _apply_transfer,
     TxType.REGISTER: _apply_register,
@@ -808,6 +951,9 @@ APPLIERS = {
     TxType.ADD_LIQUIDITY: _apply_add_liquidity,
     TxType.REMOVE_LIQUIDITY: _apply_remove_liquidity,
     TxType.SWAP: _apply_swap,
+    TxType.HTLC_LOCK: _apply_htlc_lock,
+    TxType.HTLC_CLAIM: _apply_htlc_claim,
+    TxType.HTLC_REFUND: _apply_htlc_refund,
 }
 """State transitions for every accepted transaction type."""
 
@@ -892,7 +1038,12 @@ def apply_transaction(state: State, tx: Transaction, *, height: int) -> None:
     height; this function assumes every check passed and only mutates.
     """
     account = state.ensure(tx.sender)
-    account.balance -= tx.fee
+    closes_htlc = tx.type in (TxType.HTLC_CLAIM, TxType.HTLC_REFUND)
+    if not closes_htlc:
+        # An HTLC close may pay its fee from the native amount it releases; the
+        # applier debits it after crediting the escrow, so a taker who started
+        # with no SCCP can still claim. Every other type pays the fee up front.
+        account.balance -= tx.fee
     account.nonce += 1
     if account.public_key is None:
         account.public_key = resolve_public_key(state, tx)
@@ -916,6 +1067,7 @@ __all__ = [
     "apply_transaction",
     "check_sender_key",
     "coinbase_id",
+    "htlc_id",
     "make_coinbase",
     "resolve_public_key",
     "sign_transaction",

@@ -13,11 +13,15 @@ import {
   buildAddLiquidity,
   buildAvailability,
   buildCreatePool,
+  buildHtlcClaim,
+  buildHtlcLock,
+  buildHtlcRefund,
   buildRegister,
   buildRemoveLiquidity,
   buildReveal,
   buildSwap,
   buildTransfer,
+  htlcId,
   isLedgerSignatureHex,
   signTransaction,
   txId,
@@ -304,6 +308,74 @@ describe("DEX transactions", () => {
       publicKeyHex,
     });
     expect(token.payload.asset_in).toBe(asset);
+  });
+});
+
+describe("HTLC transactions", () => {
+  const sender = wire.from;
+  const hashlock = "ab".repeat(32);
+  const preimage = "cd".repeat(32);
+
+  it("builds a lock with the exact payload the chain validates", () => {
+    const tx = buildHtlcLock({
+      network: wire.network,
+      sender,
+      nonce: 7,
+      fee: 1_000,
+      hashlock,
+      timelockHeight: 120,
+      beneficiary: sender,
+      amount: 50_000,
+      publicKeyHex: wire.payload.public_key as string,
+    });
+    expect(tx.type).toBe("htlc_lock");
+    expect(tx.payload).toEqual({
+      hashlock,
+      timelock_height: 120,
+      beneficiary: sender,
+      amount: 50_000,
+      public_key: String(wire.payload.public_key).toLowerCase(),
+    });
+    expect(htlcId(sender, 7)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("names the asset only for a non-native lock", () => {
+    const tx = buildHtlcLock({
+      network: wire.network,
+      sender,
+      nonce: 7,
+      fee: 1_000,
+      hashlock,
+      timelockHeight: 120,
+      beneficiary: sender,
+      amount: 50_000,
+      asset: "a".repeat(64),
+      publicKeyHex: wire.payload.public_key as string,
+    });
+    expect(tx.payload.asset).toBe("a".repeat(64));
+  });
+
+  it("builds claim and refund payloads", () => {
+    const claim = buildHtlcClaim({
+      network: wire.network,
+      sender,
+      nonce: 8,
+      fee: 1_000,
+      htlcId: hashlock,
+      preimage,
+      publicKeyHex: wire.payload.public_key as string,
+    });
+    expect(claim.payload).toMatchObject({ htlc_id: hashlock, preimage });
+    const refund = buildHtlcRefund({
+      network: wire.network,
+      sender,
+      nonce: 9,
+      fee: 1_000,
+      htlcId: hashlock,
+      publicKeyHex: wire.payload.public_key as string,
+    });
+    expect(refund.payload).toMatchObject({ htlc_id: hashlock });
+    expect(refund.payload).not.toHaveProperty("preimage");
   });
 });
 

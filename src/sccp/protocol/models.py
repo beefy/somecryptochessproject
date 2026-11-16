@@ -98,6 +98,9 @@ class TxType(StrEnum):
     ADD_LIQUIDITY = "add_liquidity"
     REMOVE_LIQUIDITY = "remove_liquidity"
     SWAP = "swap"
+    HTLC_LOCK = "htlc_lock"
+    HTLC_CLAIM = "htlc_claim"
+    HTLC_REFUND = "htlc_refund"
 
 
 class Transaction(ProtocolModel):

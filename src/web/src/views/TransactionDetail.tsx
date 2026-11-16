@@ -193,6 +193,33 @@ export function TransactionDetail({ txid }: { txid: string }): ReactNode {
                 })()}
               </KeyValue>
             )}
+            {body.data.type === "htlc_lock" && (
+              <KeyValue label="HTLC lock" mono>
+                {(() => {
+                  const payload = body.data.payload;
+                  const asset = typeof payload.asset === "string" ? payload.asset : null;
+                  const token = tokenForAsset(tokens, asset);
+                  return `${formatTokenAmount(
+                    Number(payload.amount),
+                    token?.symbol ?? "SCCP",
+                    token?.decimals ?? 8,
+                  )} until height ${formatInteger(Number(payload.timelock_height))} for ${String(payload.beneficiary)}`;
+                })()}
+              </KeyValue>
+            )}
+            {body.data.type === "htlc_claim" && (
+              <KeyValue label="HTLC claim" mono>
+                {`${shortHash(String(body.data.payload.htlc_id), 12)} with preimage ${shortHash(
+                  String(body.data.payload.preimage),
+                  12,
+                )}`}
+              </KeyValue>
+            )}
+            {body.data.type === "htlc_refund" && (
+              <KeyValue label="HTLC refund" mono>
+                {shortHash(String(body.data.payload.htlc_id), 12)}
+              </KeyValue>
+            )}
             <KeyValue label="Payload">
               {Object.keys(body.data.payload).length === 0 ? (
                 "empty"

@@ -78,6 +78,7 @@ include = [
   "tests",
   "data",
   "deploy",
+  "contracts",
   "genesis",
   "Dockerfile",
   "docker-compose.yml",

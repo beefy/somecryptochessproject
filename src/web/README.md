@@ -184,7 +184,7 @@ rules, its DNS record and its rollback are in
 | `#/wallet/play` | legacy alias for `#/play`; the table now has its own page |
 | `#/play` | a seat in a real match, signed with the unlocked wallet key; standard or Chess960 |
 | `#/dex` | swap SCCP and variant tokens, create pools, add/remove liquidity, view LP positions |
-| `#/bridge` | reserved route; deliberately a not-implemented notice, still wallet-gated |
+| `#/bridge` | buy SCCP with ETH, publish signed sell orders, and follow/refund both HTLC legs |
 | `#/wallet` | the wallet: unlock or create a keyfile, SCCP and variant-token balances, nickname, pending transfers |
 | `#/wallet/send` | build, review and sign an SCCP or C960 transfer, with an optional recipient nickname |
 | `#/wallet/receive` | the address, every token it can receive, a copy button and its public-key fingerprint |
@@ -197,7 +197,7 @@ server-side rewrite rule.
 
 `#/` is the explorer's overview on `explorer.chessproofofwork.com`, the wallet's
 overview on `wallet.chessproofofwork.com`, the table on `play.…`, the DEX on
-`dex.…` and the bridge notice on `bridge.…`: all five names serve the same
+`dex.…` and the bridge on `bridge.…`: all five names serve the same
 release, and the hostname picks the landing view (`lib/site.ts`). The hamburger
 offers exactly Explorer, Wallet, Play, DEX and Bridge. It switches with a hash
 rather than a cross-origin navigation because the unlocked keypair is memory-only;
@@ -220,6 +220,38 @@ board's own `squareLight`/`squareDark` colours. Vite copies `public/` into
 `dist/` untouched and `base: "./"` rewrites the `index.html` link to
 `./favicon.svg`, so the one build serves the icon from `/` (node `--web`) and
 from a subdirectory on a static host.
+
+## The bridge
+
+`#/bridge` is a trustless ETH↔SCCP atomic swap, not a custodian. A maker signs a
+sell-SCCP order with the wallet's hybrid key and binds an Ethereum address; a
+taker locks ETH in `contracts/EthHtlc.sol` under `sha256(secret)`, then the maker
+verifies that transaction and locks SCCP with the same hash under a timelock that
+expires before the ETH leg by the network's margin. The taker claims SCCP
+(revealing the secret) and the maker claims ETH with it. Both legs have
+independent refunds, so a stalled counterparty costs time, not funds.
+
+The page reads the node's `GET /v1/bridge` document. Its chain id is fixed by the
+SCCP network and cannot be overridden:
+
+| SCCP network | Ethereum environment | Chain id |
+| --- | --- | --- |
+| `devnet` | Anvil | `31337` |
+| `testnet` | Sepolia | `11155111` |
+| `mainnet` | Ethereum | `1` |
+
+An EIP-1193 wallet (MetaMask) signs the Ethereum leg. The page refuses to sign
+when the wallet's `eth_chainId` differs, and a maker refuses to lock SCCP until
+it has verified the ETH transaction's depositor, contract, value, hashlock,
+timelock and beneficiary. The node operator sets `SCCP_ETH_RPC_URL` and
+`SCCP_ETH_HTLC_CONTRACT`; see [`deploy/README.md`](../../deploy/README.md) and
+[`contracts/README.md`](../../contracts/README.md). A taker's preimage is kept in
+this origin's `localStorage` (keyed by order id) only until the claim reveals it,
+so a reload can resume the swap; it is not a wallet seed and it opens exactly one
+hashlock. The order book is deliberately off-consensus and in memory: a node
+restart drops open orders, which can be re-posted; a taken swap's SCCP leg is
+still in consensus state and remains visible at `#/accounts/<address>`.
+
 
 ## The wallet
 

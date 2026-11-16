@@ -18,8 +18,8 @@ wallet.chessproofofwork.com {
 	reverse_proxy 127.0.0.1:8080
 }
 
-# Play, the DEX and the bridge placeholder. The bridge is intentionally a notice;
-# the route and its wallet gate exist so the URL does not have to move later.
+# Play, the DEX and the bridge. The bridge is the same bundle and wallet gate;
+# its Ethereum environment comes from the SCCP node's `GET /v1/bridge`.
 play.chessproofofwork.com {
 	reverse_proxy 127.0.0.1:8080
 }

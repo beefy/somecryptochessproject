@@ -13,7 +13,7 @@ import { Text } from "react-native-paper";
 import { fetchAccount, fetchGames } from "../api";
 import { FailureNotice, KeyValue, Link, Loading, Mono, Section, StatusPill } from "../components/Chrome";
 import { GameTable } from "../components/GameTable";
-import { tokenImmature, tokensFor, tokenBalance, variantLabel } from "../lib/assets";
+import { tokenForAsset, tokenImmature, tokensFor, tokenBalance, variantLabel } from "../lib/assets";
 import { formatAmount, formatInteger, formatTokenAmount, shortAddress } from "../lib/format";
 import { useNode } from "../node";
 import { useResource } from "../useResource";
@@ -108,6 +108,38 @@ export function AccountView({ address }: { address: string }): ReactNode {
           <KeyValue label="Minimum bond" mono>
             {formatAmount(params.data.min_bond)}
           </KeyValue>
+        )}
+      </Section>
+
+      <Section title="Bridge locks" subtitle="SCCP hash-time-locked contracts involving this account">
+        {view.htlcs.length === 0 ? (
+          <Text variant="bodyMedium" style={styles.muted}>
+            No open or closed HTLC names this account.
+          </Text>
+        ) : (
+          view.htlcs.map((htlc) => {
+            const token = tokenForAsset(tokens, htlc.asset);
+            return (
+              <View key={htlc.htlc_id} style={styles.tokenBlock}>
+                <Text variant="titleSmall">
+                  {formatTokenAmount(htlc.amount, token?.symbol ?? "asset", token?.decimals ?? 8)} ·{" "}
+                  {htlc.status}
+                </Text>
+                <KeyValue label="Lock id">
+                  <Mono copy>{htlc.htlc_id}</Mono>
+                </KeyValue>
+                <KeyValue label="Counterparty" mono>
+                  {htlc.sender === address ? `to ${htlc.beneficiary}` : `from ${htlc.sender}`}
+                </KeyValue>
+                <KeyValue label="Timelock">height {formatInteger(htlc.timelock_height)}</KeyValue>
+                {htlc.preimage !== null && (
+                  <KeyValue label="Preimage">
+                    <Mono copy>{htlc.preimage}</Mono>
+                  </KeyValue>
+                )}
+              </View>
+            );
+          })
         )}
       </Section>
 

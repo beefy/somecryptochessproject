@@ -47,6 +47,13 @@
               }
             ]
           },
+          "htlcs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/HtlcView"
+            },
+            "type": "array"
+          },
           "immature": {
             "minimum": 0.0,
             "type": "integer"
@@ -439,6 +446,73 @@
           "chain_work",
           "main_chain",
           "block"
+        ],
+        "type": "object"
+      },
+      "BridgeView": {
+        "additionalProperties": false,
+        "properties": {
+          "configured": {
+            "type": "boolean"
+          },
+          "eth_chain_id": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "eth_chain_name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "eth_confirmations": {
+            "minimum": 1.0,
+            "type": "integer"
+          },
+          "eth_explorer_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "eth_htlc_contract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "eth_rpc_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "sccp_margin": {
+            "minimum": 1.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "network",
+          "eth_chain_id",
+          "eth_chain_name",
+          "eth_confirmations",
+          "sccp_margin",
+          "configured"
         ],
         "type": "object"
       },
@@ -1190,6 +1264,112 @@
         },
         "type": "object"
       },
+      "HtlcList": {
+        "additionalProperties": false,
+        "properties": {
+          "htlcs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/HtlcView"
+            },
+            "type": "array"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "network"
+        ],
+        "type": "object"
+      },
+      "HtlcView": {
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "exclusiveMinimum": 0.0,
+            "type": "integer"
+          },
+          "asset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "beneficiary": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "closed_at_height": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "created_at_height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "hashlock": {
+            "type": "string"
+          },
+          "htlc_id": {
+            "type": "string"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "preimage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "sender": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "default": "locked",
+            "enum": [
+              "locked",
+              "claimed",
+              "refunded"
+            ],
+            "type": "string"
+          },
+          "timelock_height": {
+            "minimum": 0.0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "htlc_id",
+          "network",
+          "sender",
+          "beneficiary",
+          "hashlock",
+          "timelock_height",
+          "amount",
+          "created_at_height"
+        ],
+        "type": "object"
+      },
       "MatchCertificate": {
         "additionalProperties": false,
         "properties": {
@@ -1746,6 +1926,207 @@
         ],
         "type": "object"
       },
+      "Order": {
+        "additionalProperties": false,
+        "properties": {
+          "expiry": {
+            "type": "integer"
+          },
+          "give_amount": {
+            "type": "integer"
+          },
+          "give_asset": {
+            "const": "SCCP",
+            "default": "SCCP",
+            "type": "string"
+          },
+          "maker_eth": {
+            "type": "string"
+          },
+          "maker_sccp": {
+            "type": "string"
+          },
+          "min_sccp_timelock": {
+            "type": "integer"
+          },
+          "network": {
+            "type": "string"
+          },
+          "nonce": {
+            "type": "integer"
+          },
+          "public_key": {
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "want_amount": {
+            "maxLength": 78,
+            "minLength": 1,
+            "type": "string"
+          },
+          "want_asset": {
+            "const": "ETH",
+            "default": "ETH",
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "maker_sccp",
+          "maker_eth",
+          "give_amount",
+          "want_amount",
+          "min_sccp_timelock",
+          "expiry",
+          "nonce",
+          "public_key",
+          "signature"
+        ],
+        "type": "object"
+      },
+      "OrderAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "default": true,
+            "type": "boolean"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "order_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "order_id"
+        ],
+        "type": "object"
+      },
+      "OrderDetail": {
+        "additionalProperties": false,
+        "properties": {
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "order": {
+            "$ref": "#/components/schemas/OrderView"
+          },
+          "take": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TakeView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "network",
+          "order"
+        ],
+        "type": "object"
+      },
+      "OrderList": {
+        "additionalProperties": false,
+        "properties": {
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "orders": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/OrderView"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "network"
+        ],
+        "type": "object"
+      },
+      "OrderView": {
+        "additionalProperties": false,
+        "properties": {
+          "expiry": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "give_amount": {
+            "exclusiveMinimum": 0.0,
+            "type": "integer"
+          },
+          "give_asset": {
+            "const": "SCCP",
+            "default": "SCCP",
+            "type": "string"
+          },
+          "maker_eth": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "maker_sccp": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "min_sccp_timelock": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "nonce": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "public_key": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "signature": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "want_amount": {
+            "maxLength": 78,
+            "pattern": "^[1-9][0-9]*$",
+            "type": "string"
+          },
+          "want_asset": {
+            "const": "ETH",
+            "default": "ETH",
+            "type": "string"
+          }
+        },
+        "required": [
+          "order_id",
+          "network",
+          "maker_sccp",
+          "maker_eth",
+          "give_amount",
+          "want_amount",
+          "min_sccp_timelock",
+          "expiry",
+          "nonce",
+          "public_key",
+          "signature"
+        ],
+        "type": "object"
+      },
       "PeerView": {
         "additionalProperties": false,
         "properties": {
@@ -2193,6 +2574,145 @@
         ],
         "type": "object"
       },
+      "Take": {
+        "additionalProperties": false,
+        "properties": {
+          "eth_timelock": {
+            "type": "integer"
+          },
+          "eth_tx_hash": {
+            "type": "string"
+          },
+          "hashlock": {
+            "type": "string"
+          },
+          "network": {
+            "type": "string"
+          },
+          "nonce": {
+            "type": "integer"
+          },
+          "order_id": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string"
+          },
+          "sccp_timelock_height": {
+            "type": "integer"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "taker_eth": {
+            "type": "string"
+          },
+          "taker_sccp": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "order_id",
+          "taker_sccp",
+          "taker_eth",
+          "hashlock",
+          "eth_timelock",
+          "sccp_timelock_height",
+          "eth_tx_hash",
+          "nonce",
+          "public_key",
+          "signature"
+        ],
+        "type": "object"
+      },
+      "TakeAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "default": true,
+            "type": "boolean"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "take_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "network",
+          "take_id"
+        ],
+        "type": "object"
+      },
+      "TakeView": {
+        "additionalProperties": false,
+        "properties": {
+          "eth_timelock": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "eth_tx_hash": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "hashlock": {
+            "type": "string"
+          },
+          "network": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "nonce": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "order_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "public_key": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "sccp_timelock_height": {
+            "minimum": 0.0,
+            "type": "integer"
+          },
+          "signature": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "take_id": {
+            "type": "string"
+          },
+          "taker_eth": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "taker_sccp": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "take_id",
+          "network",
+          "order_id",
+          "taker_sccp",
+          "taker_eth",
+          "hashlock",
+          "eth_timelock",
+          "sccp_timelock_height",
+          "eth_tx_hash",
+          "nonce",
+          "public_key",
+          "signature"
+        ],
+        "type": "object"
+      },
       "TimeControl": {
         "additionalProperties": false,
         "properties": {
@@ -2368,7 +2888,10 @@
           "create_pool",
           "add_liquidity",
           "remove_liquidity",
-          "swap"
+          "swap",
+          "htlc_lock",
+          "htlc_claim",
+          "htlc_refund"
         ],
         "type": "string"
       },
@@ -2721,6 +3244,21 @@
         }
       }
     },
+    "/v1/bridge": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BridgeView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/difficulty": {
       "get": {
         "responses": {
@@ -3023,6 +3561,97 @@
         }
       }
     },
+    "/v1/htlcs": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "address",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "hashlock",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HtlcList"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/htlcs/{htlc_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "htlc_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HtlcView"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/matches/{match_id}": {
       "get": {
         "parameters": [
@@ -3099,6 +3728,187 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/MempoolView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "maker_sccp",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "give_asset",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "want_asset",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderList"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Order"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{order_id}": {
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderDetail"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orders/{order_id}/takes": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "order_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Take"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakeAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }

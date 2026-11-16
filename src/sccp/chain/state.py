@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Final
 
 from sccp.chain.difficulty import Difficulty, initial_difficulty
@@ -349,6 +350,150 @@ class Pool:
         )
 
 
+class HtlcStatus(StrEnum):
+    """The three states an HTLC can be in.
+
+    A record is never deleted: a closed HTLC is what lets an explorer show the
+    preimage that settled an atomic swap, and it is part of the state root just
+    like a pool. ``locked`` funds live in consensus escrow, not in an account.
+    """
+
+    LOCKED = "locked"
+    CLAIMED = "claimed"
+    REFUNDED = "refunded"
+
+
+@dataclass(slots=True)
+class HtlcRecord:
+    """One hash time-locked contract held by consensus (PROTOCOL.md section 10).
+
+    ``asset`` is the empty string for native SCCP and a 64-hex asset id for a
+    variant token. Native and token amounts are mutually exclusive by keeping one
+    ``amount`` beside one ``asset`` name, exactly as the DEX pool sides do.
+    """
+
+    htlc_id: str
+    sender: str
+    beneficiary: str
+    hashlock: str
+    timelock_height: int
+    amount: int
+    created_at_height: int
+    asset: str = ""
+    status: HtlcStatus = HtlcStatus.LOCKED
+    closed_at_height: int | None = None
+    preimage: str | None = None
+    """The 32-byte secret a claim revealed; ``None`` until claimed.
+
+    This is public by construction: the claim transaction carries it, and the
+    maker needs it to claim the Ethereum leg. A refund never has one.
+    """
+
+    def __post_init__(self) -> None:
+        if len(self.htlc_id) != 64 or self.htlc_id != self.htlc_id.lower():
+            raise StateError("htlc id must be a 32-byte lowercase hex digest")
+        try:
+            bytes.fromhex(self.htlc_id)
+            bytes.fromhex(self.hashlock)
+        except ValueError:
+            raise StateError("htlc id and hashlock must be hex") from None
+        if len(self.hashlock) != 64 or self.hashlock != self.hashlock.lower():
+            raise StateError("htlc hashlock must be a 32-byte lowercase hex digest")
+        if not self.sender or not self.beneficiary:
+            raise StateError("an htlc needs a sender and a beneficiary")
+        if not isinstance(self.timelock_height, int) or self.timelock_height < 0:
+            raise StateError("an htlc timelock must be a non-negative height")
+        if not isinstance(self.amount, int) or isinstance(self.amount, bool) or self.amount <= 0:
+            raise StateError("an htlc amount must be a positive integer")
+        if not isinstance(self.created_at_height, int) or self.created_at_height < 0:
+            raise StateError("an htlc creation height must be non-negative")
+        if self.asset and (len(self.asset) != 64 or self.asset != self.asset.lower()):
+            raise StateError("an htlc asset must be empty or a 32-byte hex asset id")
+        if not isinstance(self.status, HtlcStatus):
+            raise StateError("an htlc status must be locked, claimed or refunded")
+        if self.preimage is not None:
+            if len(self.preimage) != 64 or self.preimage != self.preimage.lower():
+                raise StateError("an htlc preimage must be 32-byte lowercase hex")
+            try:
+                bytes.fromhex(self.preimage)
+            except ValueError:
+                raise StateError("an htlc preimage must be hex") from None
+        if self.status is HtlcStatus.LOCKED:
+            if self.closed_at_height is not None:
+                raise StateError("a locked htlc cannot have a closing height")
+            if self.preimage is not None:
+                raise StateError("a locked htlc has no revealed preimage")
+        elif self.closed_at_height is None or self.closed_at_height < self.created_at_height:
+            raise StateError("a closed htlc needs a closing height at or after creation")
+        if self.status is HtlcStatus.REFUNDED and self.preimage is not None:
+            raise StateError("a refunded htlc has no revealed preimage")
+        if self.status is HtlcStatus.CLAIMED and self.preimage is None:
+            raise StateError("a claimed htlc must record the revealed preimage")
+
+    def as_dict(self) -> dict[str, object]:
+        """Canonical mapping committed by ``state_root`` and snapshots."""
+        return {
+            "sender": self.sender,
+            "beneficiary": self.beneficiary,
+            "hashlock": self.hashlock,
+            "timelock_height": self.timelock_height,
+            "amount": self.amount,
+            "created_at_height": self.created_at_height,
+            "asset": self.asset or None,
+            "status": self.status.value,
+            "closed_at_height": self.closed_at_height,
+            "preimage": self.preimage,
+        }
+
+    @classmethod
+    def from_dict(cls, htlc_id: str, document: Mapping[str, object]) -> HtlcRecord:
+        """Rebuild an HTLC from :meth:`as_dict` output."""
+
+        def _int(key: str) -> int:
+            value = document.get(key)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise StateError(f"htlc field {key!r} must be an integer")
+            return value
+
+        def _text(key: str) -> str:
+            value = document.get(key)
+            if not isinstance(value, str):
+                raise StateError(f"htlc field {key!r} must be text")
+            return value
+
+        asset = document.get("asset")
+        if asset is None:
+            asset = ""
+        if not isinstance(asset, str):
+            raise StateError("htlc field 'asset' must be text or null")
+        status_raw = document.get("status", HtlcStatus.LOCKED.value)
+        if not isinstance(status_raw, str):
+            raise StateError("htlc field 'status' must be text")
+        try:
+            status = HtlcStatus(status_raw)
+        except ValueError:
+            raise StateError(f"unknown htlc status {status_raw!r}") from None
+        closed = document.get("closed_at_height")
+        if closed is not None and (not isinstance(closed, int) or isinstance(closed, bool)):
+            raise StateError("htlc field 'closed_at_height' must be an integer or null")
+        preimage = document.get("preimage")
+        if preimage is not None and not isinstance(preimage, str):
+            raise StateError("htlc field 'preimage' must be text or null")
+        return cls(
+            htlc_id=htlc_id,
+            sender=_text("sender"),
+            beneficiary=_text("beneficiary"),
+            hashlock=_text("hashlock"),
+            timelock_height=_int("timelock_height"),
+            amount=_int("amount"),
+            created_at_height=_int("created_at_height"),
+            asset=asset,
+            status=status,
+            closed_at_height=closed,
+            preimage=preimage,
+        )
+
+
 @dataclass(slots=True)
 class ProofRecord:
     """A proof accepted into the chain, keyed by its game hash."""
@@ -591,6 +736,8 @@ class State:
     """Total variant-token supply ever created, keyed by asset id."""
     pools: dict[str, Pool] = field(default_factory=dict)
     """``pool_id -> Pool`` for every DEX pair the chain has created."""
+    htlcs: dict[str, HtlcRecord] = field(default_factory=dict)
+    """``htlc_id -> HtlcRecord`` for every hash lock, open or closed."""
 
     def __post_init__(self) -> None:
         if self.difficulty is None:
@@ -607,6 +754,9 @@ class State:
         for pool_id, pool in self.pools.items():
             if not isinstance(pool_id, str) or pool_id != pool.pool_id:
                 raise StateError("pools must be keyed by their pool id")
+        for htlc_id, htlc in self.htlcs.items():
+            if not isinstance(htlc_id, str) or htlc_id != htlc.htlc_id:
+                raise StateError("htlcs must be keyed by their htlc id")
 
     # -- accessors ----------------------------------------------------------
 
@@ -690,17 +840,20 @@ class State:
     # -- commitments --------------------------------------------------------
 
     def state_root(self) -> str:
-        """Merkle root over account and DEX-pool leaves (PROTOCOL.md section 11).
+        """Merkle root over account, DEX-pool and HTLC leaves.
 
-        Account keys are bech32 addresses; pool keys are prefixed with ``pool:``
-        so the two namespaces cannot collide. A chain with no pools produces the
-        same all-account root as before pools existed.
+        Account keys are bech32 addresses; pools and hash locks are prefixed with
+        ``pool:`` and ``htlc:`` so the namespaces cannot collide. A chain with no
+        pools or locks produces the same all-account root as before either
+        existed.
         """
         leaves: dict[str, object] = {
             address: account.as_dict() for address, account in self.accounts.items()
         }
         for pool_id, pool in self.pools.items():
             leaves[f"pool:{pool_id}"] = pool.as_dict()
+        for htlc_id, htlc in self.htlcs.items():
+            leaves[f"htlc:{htlc_id}"] = htlc.as_dict()
         return merkle_root_hex(leaves)
 
     @staticmethod
@@ -940,6 +1093,11 @@ class State:
                 if self.pools
                 else {}
             ),
+            **(
+                {"htlcs": {htlc_id: htlc.as_dict() for htlc_id, htlc in sorted(self.htlcs.items())}}
+                if self.htlcs
+                else {}
+            ),
         }
 
     @classmethod
@@ -961,6 +1119,7 @@ class State:
         witnesses_raw = _as_mapping(document.get("witnesses"), "witnesses")
         claims_raw = _as_mapping(document.get("timeout_claims"), "timeout_claims")
         pools_raw = _as_mapping(document.get("pools", {}), "pools")
+        htlcs_raw = _as_mapping(document.get("htlcs", {}), "htlcs")
 
         accounts = {
             str(address): Account.from_dict(_as_mapping(entry, "account"))
@@ -1037,6 +1196,10 @@ class State:
             str(pool_id): Pool.from_dict(str(pool_id), _as_mapping(entry, "pool"))
             for pool_id, entry in pools_raw.items()
         }
+        htlcs = {
+            str(htlc_id): HtlcRecord.from_dict(str(htlc_id), _as_mapping(entry, "htlc"))
+            for htlc_id, entry in htlcs_raw.items()
+        }
         difficulty = None
         if document.get("difficulty") is not None:
             item = _as_mapping(document.get("difficulty"), "difficulty")
@@ -1071,6 +1234,7 @@ class State:
             minted=_as_int(document.get("minted"), "minted"),
             minted_assets=_asset_totals(document.get("minted_assets")),
             pools=pools,
+            htlcs=htlcs,
         )
 
     def copy(self) -> State:
@@ -1106,6 +1270,8 @@ __all__ = [
     "ZERO_HASH",
     "Account",
     "EpochRecord",
+    "HtlcRecord",
+    "HtlcStatus",
     "MatchRecord",
     "MinerStats",
     "Pool",

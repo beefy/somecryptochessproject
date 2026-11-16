@@ -329,6 +329,101 @@ export interface AccountView {
   immature_assets: Record<string, number>;
   public_key: string | null;
   banned_until: number;
+  /** SCCP HTLCs this account sent or may claim (`GET /v1/accounts/{address}`). */
+  htlcs: HtlcView[];
+}
+
+/** One SCCP-side hash time-locked contract. */
+export interface HtlcView {
+  htlc_id: string;
+  network: string;
+  sender: string;
+  beneficiary: string;
+  hashlock: string;
+  timelock_height: number;
+  amount: number;
+  created_at_height: number;
+  /** `null` for native SCCP; a 64-hex asset id otherwise. */
+  asset: string | null;
+  status: "locked" | "claimed" | "refunded";
+  closed_at_height: number | null;
+  /** The secret a claim revealed; this is public and opens the Ethereum leg. */
+  preimage: string | null;
+}
+
+export interface HtlcList {
+  network: string;
+  htlcs: HtlcView[];
+}
+
+/** `GET /v1/bridge`: the Ethereum environment paired with this SCCP network. */
+export interface BridgeView {
+  network: string;
+  eth_chain_id: number;
+  eth_chain_name: string;
+  eth_explorer_url: string | null;
+  eth_rpc_url: string | null;
+  eth_htlc_contract: string | null;
+  eth_confirmations: number;
+  sccp_margin: number;
+  configured: boolean;
+}
+
+/** One open sell-SCCP order; fields are signed by the maker's hybrid key. */
+export interface OrderView {
+  order_id: string;
+  network: string;
+  maker_sccp: string;
+  maker_eth: string;
+  give_asset: "SCCP";
+  give_amount: number;
+  want_asset: "ETH";
+  /** Wei as a decimal string: 18 decimals exceed JavaScript's safe integers. */
+  want_amount: string;
+  min_sccp_timelock: number;
+  expiry: number;
+  nonce: number;
+  public_key: string;
+  signature: string;
+}
+
+/** A taker's signed announcement that the ETH leg is locked. */
+export interface TakeView {
+  take_id: string;
+  network: string;
+  order_id: string;
+  taker_sccp: string;
+  taker_eth: string;
+  hashlock: string;
+  eth_timelock: number;
+  sccp_timelock_height: number;
+  eth_tx_hash: string;
+  nonce: number;
+  public_key: string;
+  signature: string;
+}
+
+export interface OrderList {
+  network: string;
+  orders: OrderView[];
+}
+
+export interface OrderDetail {
+  network: string;
+  order: OrderView;
+  take: TakeView | null;
+}
+
+export interface OrderAccepted {
+  network: string;
+  order_id: string;
+  accepted: boolean;
+}
+
+export interface TakeAccepted {
+  network: string;
+  take_id: string;
+  accepted: boolean;
 }
 
 /** One constant-product liquidity pool (`GET /v1/pools`). */

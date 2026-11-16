@@ -97,8 +97,8 @@ curl -sSI https://wallet.chessproofofwork.com/ | head -3
 curl -sSI http://wallet.chessproofofwork.com/ | head -1    # 308 -> https
 curl -sS https://wallet.chessproofofwork.com/v1/status | jq '{network, height}'
 
-# Play, the DEX and the bridge placeholder are the same origin under three more
-# names, each with its own certificate.
+# Play, the DEX and the bridge are the same origin under three more names, each
+# with its own certificate.
 for host in play dex bridge; do
   curl -sSI "https://$host.chessproofofwork.com/" | head -3
   curl -sSI "http://$host.chessproofofwork.com/" | head -1    # 308 -> https
@@ -110,7 +110,7 @@ fourth and sixth are Caddy sending the plain-HTTP names to the secure ones. Open
 `https://explorer.chessproofofwork.com/` in a browser for the explorer,
 `https://wallet.chessproofofwork.com/` for the wallet, `https://play.…/#/play` for
 the table, `https://dex.…/#/dex` for the DEX, or `https://bridge.…/#/bridge` for
-the placeholder. The hamburger switches between all five in-app so the unlocked
+the ETH↔SCCP bridge. The hamburger switches between all five in-app so the unlocked
 wallet session survives; each subdomain is still a direct entry point.
 
 ## Layout on the host

@@ -4,6 +4,12 @@ games/
 .devnet
 *.mnemonic
 
+# Foundry build and broadcast artefacts.
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+contracts/lib/
+
 # The analysis notebook caches its API snapshots here; they are reproducible.
 analysis/cache/
 

@@ -18,11 +18,12 @@ whose chain it has never synced.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 
 from sccp.chain.chain import Chain
-from sccp.chain.state import Account, State, epoch_of
+from sccp.chain.state import Account, HtlcRecord, State, epoch_of
 from sccp.chain.tx import sign_transaction, txid
 from sccp.config import NetworkParams, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
@@ -273,6 +274,156 @@ class WalletService:
             nonce=self._resolve_nonce(sender, nonce),
             fee=resolved_fee,
             payload=payload,
+        )
+        return sign_transaction(keypair, tx)
+
+    def _resolve_asset_name(self, asset: str | None) -> str | None:
+        """Resolve an asset id, variant name or symbol to an id (native is None)."""
+        if asset is None:
+            return None
+        for variant in self.params.variants:
+            if asset in (variant.asset, variant.name, variant.symbol):
+                return variant.asset
+        raise WalletServiceError(f"unknown asset {asset!r}")
+
+    def build_htlc_lock(
+        self,
+        keypair: HybridKeypair,
+        *,
+        hashlock: str,
+        timelock_height: int,
+        beneficiary: str,
+        amount: int,
+        fee: int | None = None,
+        nonce: int | None = None,
+        asset: str | None = None,
+    ) -> Transaction:
+        """Build and sign an ``htlc_lock`` transaction.
+
+        ``hashlock`` is the SHA-256 of a 32-byte preimage, the same bytes the
+        Ethereum contract checks. ``timelock_height`` is an absolute SCCP height;
+        the transaction is invalid once the chain reaches it.
+        """
+        sender = self.address_for(keypair)
+        self._require_address(beneficiary)
+        if amount <= 0:
+            raise WalletServiceError("an htlc amount must be positive")
+        if len(hashlock) != 64 or hashlock != hashlock.lower():
+            raise WalletServiceError("an htlc hashlock must be 32-byte lowercase hex")
+        try:
+            bytes.fromhex(hashlock)
+        except ValueError:
+            raise WalletServiceError("an htlc hashlock must be hexadecimal") from None
+        if timelock_height <= self.state.height:
+            raise WalletServiceError(
+                f"the timelock {timelock_height} is not after the wallet's height "
+                f"{self.state.height}"
+            )
+        selected = self._resolve_asset_name(asset)
+        resolved_fee = self.required_fee(fee)
+        if selected is None:
+            if self.state.spendable(sender) < amount + resolved_fee:
+                raise WalletServiceError(f"{sender} cannot lock {amount} plus a {resolved_fee} fee")
+        else:
+            if self.state.asset_balance(sender, selected) < amount:
+                raise WalletServiceError(f"{sender} does not hold {amount} of {selected}")
+            if self.state.spendable(sender) < resolved_fee:
+                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} SCCP fee")
+        payload: dict[str, object] = {
+            "public_key": keypair.public_key_hex,
+            "hashlock": hashlock,
+            "timelock_height": timelock_height,
+            "beneficiary": beneficiary,
+            "amount": amount,
+        }
+        if selected is not None:
+            payload["asset"] = selected
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.HTLC_LOCK,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload=payload,
+        )
+        return sign_transaction(keypair, tx)
+
+    def _htlc_for(self, htlc_id: str) -> HtlcRecord:
+        record = self.state.htlcs.get(htlc_id)
+        if record is None:
+            raise WalletServiceError(f"unknown htlc {htlc_id!r}")
+        return record
+
+    def build_htlc_claim(
+        self,
+        keypair: HybridKeypair,
+        *,
+        htlc_id: str,
+        preimage: str,
+        fee: int | None = None,
+        nonce: int | None = None,
+    ) -> Transaction:
+        """Build and sign an ``htlc_claim`` that reveals ``preimage``."""
+        sender = self.address_for(keypair)
+        record = self._htlc_for(htlc_id)
+        if sender != record.beneficiary:
+            raise WalletServiceError(f"the htlc pays {record.beneficiary}, not {sender}")
+        if len(preimage) != 64 or preimage != preimage.lower():
+            raise WalletServiceError("an htlc preimage must be 32-byte lowercase hex")
+        try:
+            preimage_bytes = bytes.fromhex(preimage)
+        except ValueError:
+            raise WalletServiceError("an htlc preimage must be hexadecimal") from None
+        if hashlib.sha256(preimage_bytes).hexdigest() != record.hashlock:
+            raise WalletServiceError("the preimage does not open this htlc")
+        resolved_fee = self.required_fee(fee)
+        spendable = self.state.spendable(sender)
+        if record.asset:
+            if spendable < resolved_fee:
+                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} SCCP fee")
+        elif spendable + record.amount < resolved_fee:
+            raise WalletServiceError("the htlc amount cannot cover the network fee")
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.HTLC_CLAIM,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload={
+                "public_key": keypair.public_key_hex,
+                "htlc_id": htlc_id,
+                "preimage": preimage,
+            },
+        )
+        return sign_transaction(keypair, tx)
+
+    def build_htlc_refund(
+        self,
+        keypair: HybridKeypair,
+        *,
+        htlc_id: str,
+        fee: int | None = None,
+        nonce: int | None = None,
+    ) -> Transaction:
+        """Build and sign an ``htlc_refund``; valid only at/after the timelock."""
+        sender = self.address_for(keypair)
+        record = self._htlc_for(htlc_id)
+        if sender != record.sender:
+            raise WalletServiceError(f"only {record.sender} may refund this htlc")
+        resolved_fee = self.required_fee(fee)
+        spendable = self.state.spendable(sender)
+        if record.asset:
+            if spendable < resolved_fee:
+                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} SCCP fee")
+        elif spendable + record.amount < resolved_fee:
+            raise WalletServiceError("the htlc amount cannot cover the network fee")
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.HTLC_REFUND,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload={"public_key": keypair.public_key_hex, "htlc_id": htlc_id},
         )
         return sign_transaction(keypair, tx)
 

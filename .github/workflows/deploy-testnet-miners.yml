@@ -11,6 +11,11 @@ name: deploy-testnet-miners
 #   vars.TESTNET_DEPLOY_DIR      optional; defaults to /opt/sccp-testnet
 #   vars.TESTNET_DEPLOY_PORT     optional; defaults to 22
 #   vars.TESTNET_PUBLIC_URL      optional; defaults to the current testnet URL
+#   vars.SCCP_ETH_RPC_URL        optional Sepolia RPC used by the node's bridge
+#                                document (and the web UI's chain metadata)
+#   vars.SCCP_ETH_HTLC_CONTRACT  optional deployed EthHtlc address on Sepolia
+#   vars.SCCP_ETH_CONFIRMATIONS  optional confirmation-depth override
+#   vars.SCCP_ETH_SCCP_MARGIN    optional SCCP timelock-margin override (blocks)
 #   secrets.TESTNET_KNOWN_HOSTS  optional pinned host key; without it the
 #                                workflow learns the key with ssh-keyscan
 #
@@ -132,7 +137,12 @@ jobs:
           ssh testnet "cd '$DEPLOY_DIR' \
             && SCCP_IMAGE='$IMAGE' docker compose down -v --remove-orphans \
             && SCCP_IMAGE='$IMAGE' docker compose pull \
-            && SCCP_IMAGE='$IMAGE' docker compose up -d --no-build --remove-orphans"
+            && SCCP_IMAGE='$IMAGE' \
+               SCCP_ETH_RPC_URL='${{ vars.SCCP_ETH_RPC_URL }}' \
+               SCCP_ETH_HTLC_CONTRACT='${{ vars.SCCP_ETH_HTLC_CONTRACT }}' \
+               SCCP_ETH_CONFIRMATIONS='${{ vars.SCCP_ETH_CONFIRMATIONS }}' \
+               SCCP_ETH_SCCP_MARGIN='${{ vars.SCCP_ETH_SCCP_MARGIN }}' \
+               docker compose up -d --no-build --remove-orphans"
 
       - name: Wait for the bootstrap chain and relay
         run: |

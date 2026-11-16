@@ -23,11 +23,13 @@ from pathlib import Path
 
 import httpx
 
+from sccp.bridge.config import EthEnvironment, bridge_environment
+from sccp.bridge.orders import Order, OrderBook, Take, take_id
 from sccp.chain.block import block_hash
 from sccp.chain.chain import Chain, StoredBlock
 from sccp.chain.genesis import load_genesis
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import ProofRecord
+from sccp.chain.state import HtlcRecord, ProofRecord
 from sccp.chain.storage import Storage, restore_chain
 from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
@@ -50,6 +52,7 @@ from sccp.node.models import (
     BlockList,
     BlockSummary,
     BlockView,
+    BridgeView,
     DifficultyPoint,
     DifficultyView,
     EpochView,
@@ -59,12 +62,18 @@ from sccp.node.models import (
     GameSummary,
     GameView,
     GossipResult,
+    HtlcList,
+    HtlcView,
     MatchInfo,
     MempoolStatus,
     MempoolView,
     MinerRatingDetail,
     MinerRatingView,
     NodeStatus,
+    OrderAccepted,
+    OrderDetail,
+    OrderList,
+    OrderView,
     PeerView,
     PoolList,
     PoolView,
@@ -74,6 +83,8 @@ from sccp.node.models import (
     RatingPointView,
     RatingsView,
     SyncReport,
+    TakeAccepted,
+    TakeView,
     TransactionRecord,
     TxAccepted,
 )
@@ -268,6 +279,10 @@ class NodeService:
     gossip: GossipCache = field(default_factory=GossipCache)
     rng: random.Random = field(default_factory=random.Random)
     faucet: Faucet | None = None
+    bridge: EthEnvironment | None = None
+    """The Ethereum environment this node advertises; resolved from the process env."""
+    orders: OrderBook = field(default_factory=OrderBook)
+    """The off-consensus ETH/SCCP order book and pending takes."""
     write_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
     fanout: int = MAX_FANOUT
     max_sync_blocks: int = 512
@@ -290,6 +305,8 @@ class NodeService:
             )
         if self.storage is not None:
             self.storage.bind_network(self.params)
+        if self.bridge is None:
+            self.bridge = bridge_environment(self.params)
         if self.faucet is None and self.params.network_id in ("testnet", "devnet"):
             self.faucet = Faucet(
                 params=self.params,
@@ -430,6 +447,136 @@ class NodeService:
             blocks=tuple(_block_summary(stored) for stored in reversed(window)),
         )
 
+    def _htlc_view(self, record: HtlcRecord) -> HtlcView:
+        """Project one consensus HTLC onto the API's nullable-asset shape."""
+        return HtlcView(
+            htlc_id=record.htlc_id,
+            network=self.params.network_id,
+            sender=record.sender,
+            beneficiary=record.beneficiary,
+            hashlock=record.hashlock,
+            timelock_height=record.timelock_height,
+            amount=record.amount,
+            created_at_height=record.created_at_height,
+            asset=record.asset or None,
+            status=record.status.value,
+            closed_at_height=record.closed_at_height,
+            preimage=record.preimage,
+        )
+
+    def bridge_view(self) -> BridgeView:
+        """The Ethereum environment paired with this SCCP network."""
+        assert self.bridge is not None  # set in __post_init__
+        return BridgeView(
+            network=self.bridge.network,
+            eth_chain_id=self.bridge.chain_id,
+            eth_chain_name=self.bridge.chain_name,
+            eth_explorer_url=self.bridge.explorer_url,
+            eth_rpc_url=self.bridge.rpc_url,
+            eth_htlc_contract=self.bridge.contract,
+            eth_confirmations=self.bridge.confirmations,
+            sccp_margin=self.bridge.sccp_margin,
+            configured=self.bridge.configured,
+        )
+
+    @staticmethod
+    def _order_view(digest: str, order: Order) -> OrderView:
+        return OrderView(order_id=digest, **order.model_dump(mode="json"))
+
+    @staticmethod
+    def _take_view(digest: str, take: Take) -> TakeView:
+        return TakeView(take_id=digest, **take.model_dump(mode="json"))
+
+    def order_list(
+        self,
+        *,
+        maker_sccp: str | None = None,
+        give_asset: str | None = None,
+        want_asset: str | None = None,
+    ) -> OrderList:
+        """Open orders, best SCCP price first; expired orders are pruned."""
+        rows = self.orders.list(
+            self.clock(),
+            maker_sccp=maker_sccp,
+            give_asset=give_asset,
+            want_asset=want_asset,
+        )
+        return OrderList(
+            network=self.params.network_id,
+            orders=tuple(self._order_view(digest, order) for digest, order in rows),
+        )
+
+    def order_detail(self, digest: str) -> OrderDetail:
+        """One order and its take, or 404 when it is unknown or expired."""
+        order = self.orders.get(digest, self.clock())
+        if order is None:
+            raise NotFoundError(f"unknown or expired order {digest!r}")
+        take = self.orders.take_for(digest)
+        return OrderDetail(
+            network=self.params.network_id,
+            order=self._order_view(digest, order),
+            take=None if take is None else self._take_view(take_id(take), take),
+        )
+
+    def submit_order(self, order: Order) -> OrderAccepted:
+        """Verify and publish a signed order in the in-memory book."""
+        digest = self.orders.add(order, self.params, self.clock())
+        return OrderAccepted(network=self.params.network_id, order_id=digest)
+
+    def submit_take(self, digest: str, take: Take) -> TakeAccepted:
+        """Attach a signed take to an open order.
+
+        The node also applies the wall-clock safety rule: the SCCP leg must
+        expire before the ETH leg with the environment's margin. The maker checks
+        this again before locking SCCP, but rejecting an obviously unsafe take at
+        admission keeps a malicious taker from filling the book with traps.
+        """
+        if take.order_id != digest:
+            raise ProtocolError(f"take names order {take.order_id!r}, not the route's {digest!r}")
+        assert self.bridge is not None  # set in __post_init__
+        now = self.clock()
+        blocks_until_eth = max(0, (take.eth_timelock - now) // self.params.target_block_seconds)
+        if take.sccp_timelock_height <= self.height:
+            raise ProtocolError(
+                f"SCCP timelock {take.sccp_timelock_height} is not after the tip {self.height}"
+            )
+        safe_max = self.height + blocks_until_eth - self.bridge.sccp_margin
+        if take.sccp_timelock_height > safe_max:
+            raise ProtocolError(
+                f"SCCP timelock {take.sccp_timelock_height} is not before the ETH timelock; "
+                f"the safe maximum is {safe_max}"
+            )
+        admitted = self.orders.take(take, self.params, now)
+        return TakeAccepted(network=self.params.network_id, take_id=admitted)
+
+    def htlc(self, htlc_id: str) -> HtlcView:
+        """One HTLC by id, whether locked, claimed or refunded."""
+        record = self.chain.state.htlcs.get(htlc_id)
+        if record is None:
+            raise NotFoundError(f"unknown htlc {htlc_id!r}")
+        return self._htlc_view(record)
+
+    def htlcs(self, address: str | None = None, hashlock: str | None = None) -> HtlcList:
+        """HTLCs filtered by participant or hashlock, newest first.
+
+        The wallet uses the account form after reload to find the lock a maker
+        created for it; the order book uses the hashlock form to recognise the
+        second leg of a take. Both are read-only projections of consensus state.
+        """
+        if address is not None and not validate_address(address, self.params):
+            raise AddressError(f"{address!r} is not a {self.params.network_id} address")
+        records = [
+            record
+            for record in self.chain.state.htlcs.values()
+            if (address is None or address in (record.sender, record.beneficiary))
+            and (hashlock is None or record.hashlock == hashlock)
+        ]
+        records.sort(key=lambda record: (record.created_at_height, record.htlc_id), reverse=True)
+        return HtlcList(
+            network=self.params.network_id,
+            htlcs=tuple(self._htlc_view(record) for record in records),
+        )
+
     def account(self, address: str) -> AccountView:
         """Balance, bond, nonce and registration for ``address``."""
         if not validate_address(address, self.params):
@@ -451,6 +598,7 @@ class NodeService:
             immature_assets=dict(sorted(account.immature_assets.items())),
             public_key=account.public_key,
             banned_until=account.banned_until,
+            htlcs=self.htlcs(address).htlcs,
         )
 
     def _pool_view(self, pool_id: str) -> PoolView:

@@ -6,7 +6,7 @@ PYTEST_ARGS ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help venv install test test-all adversarial cov cov-gate lint format typecheck check lock dist dist-check release-check devnet stack clean
+.PHONY: help venv install test test-all adversarial cov cov-gate lint format typecheck check lock dist dist-check release-check devnet stack contracts-test clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -87,6 +87,9 @@ stack: venv  ## Write the deterministic stack keys into .stack
 	else \
 		echo "docker not installed; skipped compose validation"; \
 	fi
+
+contracts-test:  ## Run the Foundry suite for the Ethereum HTLC (needs forge)
+	cd contracts && forge test
 
 clean:  ## Remove caches and build artefacts
 	rm -rf .mypy_cache .pytest_cache .ruff_cache .hypothesis htmlcov build dist

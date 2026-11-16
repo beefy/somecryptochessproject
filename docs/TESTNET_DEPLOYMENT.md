@@ -68,6 +68,10 @@ Create a GitHub Environment named `testnet` and set:
 | variable | `TESTNET_DEPLOY_DIR` | optional checkout directory; default `/opt/sccp-testnet` |
 | variable | `TESTNET_DEPLOY_PORT` | optional SSH port; default `22` |
 | variable | `TESTNET_PUBLIC_URL` | optional public node URL; default `http://testnet.chessproofofwork.com:8645` |
+| variable | `SCCP_ETH_RPC_URL` | optional Sepolia RPC for the node's `GET /v1/bridge` document |
+| variable | `SCCP_ETH_HTLC_CONTRACT` | optional deployed `EthHtlc` address on Sepolia |
+| variable | `SCCP_ETH_CONFIRMATIONS` | optional testnet confirmation-depth override (default `6`) |
+| variable | `SCCP_ETH_SCCP_MARGIN` | optional SCCP timelock margin in blocks (default `24`) |
 | secret | `TESTNET_SSH_KEY` | private key for that user (ed25519, no passphrase) |
 | secret | `TESTNET_KNOWN_HOSTS` | optional pinned host key; without it the workflow runs `ssh-keyscan` |
 
