@@ -61,7 +61,12 @@ exercises the paths a user takes:
   that. It creates its whole pool of ten wallets on startup and funds them in the
   first cycle. Each later cycle picks a random 2-10 of them, tops up the ones that
   are short, waits for its grants to be mined, sends 1-10 transfers between the
-  pool's wallets, waits for those to be mined, then idles for 1-5 minutes.
+  pool's wallets, then bridges an HTLC and exercises the DEX when the wallets hold
+  what those paths need, and finally idles for 1-5 minutes. Both side paths are
+  best-effort: a chain with no C960 holder logs a DEX skip rather than failing the
+  cycle, and `--no-bridge` / `--no-dex` turn either off. `--bridge-coins` and
+  `--dex-coins` size those transactions, while `--dex-asset` pins the variant a
+  newly created pool pairs with SCCP.
 
 Because `drip` refills the pool as soon as it drains, the generator never waits for
 an empty mempool: it tracks the txids it submitted and waits for those to leave.
@@ -81,9 +86,15 @@ One more segment can appear on that same line, and it is on by default in
 `docker-compose.yml`:
 
 ```
-cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | miners: started extra-miner-1; online: extra-miner-1
+cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | bridge: locked 1.00000000 SCCP and claimed htlc 1a2b3c4d5e6f | dex: swapped 1.00000000 SCCP for 0.99003187 C960 in pool 693fa9c228d7 | miners: started extra-miner-1; online: extra-miner-1
 ```
 
+- `| bridge: ...` is an HTLC lock plus either a claim (odd cycles, revealing the
+  preimage) or a refund (even cycles, after the timelock). A cycle that cannot
+  fund the lock reports the skip instead.
+- `| dex: ...` is a pool creation or a swap/add/remove against an existing pool.
+  The generator needs a variant asset to seed the first pool, so an early chain
+  with no C960 reports `dex: skipped (...)` without failing the cycle.
 - `| miners: ...` comes from `deploy/synthetic_miner_creation.py`. The generator
   keeps up to `--extra-miners` (2) extra miners derived from published seeds under
   `/data/synthetic-miners`, and starts or stops one per cycle so the roster keeps
