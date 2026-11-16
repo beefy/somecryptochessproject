@@ -11,6 +11,9 @@ from sccp.chain.dex import (
     NATIVE_ASSET,
     added_shares,
     initial_shares,
+    normalize_pair,
+    proportional_amount,
+    removed_amounts,
     swap_output,
 )
 from sccp.chain.dex import (
@@ -288,3 +291,31 @@ def test_a_create_pool_transaction_survives_a_real_block(
     pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
     assert pool_id in devnet_chain.state.pools
     assert devnet_chain.state.pools[pool_id].reserve_b == 20 * COINS
+
+
+def test_the_pure_dex_helpers_cover_zero_and_invalid_inputs() -> None:
+    assert normalize_pair("b", 2, "a", 1) == ("a", 1, "b", 2)
+    assert normalize_pair("a", 1, "b", 2) == ("a", 1, "b", 2)
+    with pytest.raises(ValueError, match="two different assets"):
+        normalize_pair("a", 1, "a", 2)
+    with pytest.raises(ValueError, match="two different assets"):
+        derive_pool_id("a", "a")
+
+    assert initial_shares(0, 5) == 0
+    assert added_shares(0, 1, 1, 1, 1) == 0
+    assert added_shares(1, 0, 1, 1, 1) == 0
+    assert added_shares(0, 0, 1, 1, 1) == 0
+    assert added_shares(1, 1, 0, 1, 1) == 0
+    assert added_shares(10, 10, 10, 2, 2) == 2
+    assert removed_amounts(10, 20, 10, 2) == (2, 4)
+    assert removed_amounts(10, 20, 10, 0) == (0, 0)
+    assert removed_amounts(10, 20, 0, 1) == (0, 0)
+
+    assert swap_output(0, 1, 1, 30) == 0
+    assert swap_output(1, 0, 1, 30) == 0
+    assert swap_output(1, 1, 0, 30) == 0
+    with pytest.raises(ValueError, match="outside"):
+        swap_output(1, 1, 1, 10_000)
+    assert proportional_amount(0, 1, 1) == 0
+    assert proportional_amount(1, 0, 1) == 0
+    assert proportional_amount(3, 10, 4) == 2

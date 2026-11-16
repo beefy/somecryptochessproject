@@ -8,10 +8,12 @@ from sccp.bridge.orders import (
     OrderBook,
     OrderError,
     order_id,
+    sccp_timelock_height,
     sign_order,
     sign_take,
     take_id,
     verify_order,
+    verify_take,
 )
 from sccp.config import DEVNET
 from sccp.crypto.address import encode_address
@@ -199,3 +201,82 @@ def test_the_node_refuses_an_sccp_timelock_that_outlives_the_eth_leg() -> None:
             service.submit_take(accepted.order_id, unsafe)
     finally:
         service.close()
+
+
+def test_order_validation_rejects_every_malformed_field() -> None:
+    order = _order()
+    cases: list[tuple[dict[str, object], str]] = [
+        ({"network": "mainnet"}, "this node"),
+        ({"maker_sccp": "sccpt1nope"}, "not an address"),
+        ({"maker_eth": "0x1234"}, "20-byte address"),
+        ({"maker_eth": "0x" + "00" * 20}, "zero address"),
+        ({"give_amount": 0}, "amounts must be positive"),
+        ({"want_amount": "0"}, "decimal string"),
+        ({"min_sccp_timelock": -1}, "non-negative"),
+        ({"public_key": "zz"}, "hybrid key"),
+        ({"signature": "zz"}, "not hex"),
+        ({"public_key": BOB.public_key_hex}, "does not derive"),
+    ]
+    for updates, message in cases:
+        with pytest.raises(OrderError, match=message):
+            verify_order(order.model_copy(update=updates), DEVNET, NOW)
+
+
+def test_take_validation_rejects_every_malformed_field() -> None:
+    take = _take("ab" * 32)
+    body = take.body()
+    assert domain_hex(Domain.TAKE, body) == take_id(take)
+    assert "signature" not in body and "public_key" not in body
+    assert verify_take(take, DEVNET, NOW) == take_id(take)
+    cases: list[tuple[dict[str, object], str]] = [
+        ({"network": "mainnet"}, "this node"),
+        ({"taker_sccp": "sccpt1nope"}, "not an address"),
+        ({"taker_eth": "0x1234"}, "20-byte address"),
+        ({"taker_eth": "0x" + "00" * 20}, "zero address"),
+        ({"order_id": "AB" * 32}, "lowercase hex"),
+        ({"hashlock": "zz" * 32}, "lowercase hex"),
+        ({"eth_tx_hash": "0x12"}, "0x-prefixed"),
+        ({"eth_timelock": NOW}, "past"),
+        ({"sccp_timelock_height": -1}, "non-negative"),
+        ({"nonce": -1}, "non-negative"),
+        ({"public_key": "zz"}, "hybrid key"),
+        ({"signature": "zz"}, "not hex"),
+        ({"public_key": ALICE.public_key_hex}, "does not derive"),
+    ]
+    for updates, message in cases:
+        with pytest.raises(OrderError, match=message):
+            verify_take(take.model_copy(update=updates), DEVNET, NOW)
+
+
+def test_the_book_prunes_and_enforces_its_caps(monkeypatch: pytest.MonkeyPatch) -> None:
+    book = OrderBook()
+    digest = book.add(_order(expiry=NOW + 10), DEVNET, NOW)
+    assert book.add(_order(expiry=NOW + 10), DEVNET, NOW) == digest
+    assert book.take_for("ab" * 32) is None
+    assert book.get(digest, NOW + 20) is None
+
+    monkeypatch.setattr("sccp.bridge.orders.MAX_ORDERS", 1)
+    full = OrderBook()
+    full.add(_order(), DEVNET, NOW)
+    with pytest.raises(OrderError, match="book is full"):
+        full.add(_order(keypair=BOB, nonce=1), DEVNET, NOW)
+
+    monkeypatch.setattr("sccp.bridge.orders.MAX_ORDERS", 1_000)
+    monkeypatch.setattr("sccp.bridge.orders.MAX_ORDERS_PER_MAKER", 1)
+    crowded = OrderBook()
+    crowded.add(_order(), DEVNET, NOW)
+    with pytest.raises(OrderError, match="open orders"):
+        crowded.add(_order(nonce=1), DEVNET, NOW)
+
+    monkeypatch.setattr("sccp.bridge.orders.MAX_TAKES", 0)
+    pending = OrderBook()
+    pending_id = pending.add(_order(), DEVNET, NOW)
+    with pytest.raises(OrderError, match="too many takes"):
+        pending.take(_take(pending_id), DEVNET, NOW)
+
+
+def test_timelock_conversion_rejects_bad_constants() -> None:
+    with pytest.raises(OrderError, match="target_block_seconds"):
+        sccp_timelock_height(1_000, 1_700_007_200, 1_700_000_000, 0, 24, 0)
+    with pytest.raises(OrderError, match="sccp_margin"):
+        sccp_timelock_height(1_000, 1_700_007_200, 1_700_000_000, 60, -1, 0)
