@@ -1,11 +1,10 @@
 /**
- * The hamburger in the top-left corner: the switch between the five sites.
+ * The hamburger in the top-left corner: the switch between the five views.
  *
- * Explorer, Wallet, Play, DEX and Bridge are separate names serving the same
- * bundle, but the menu switches with a hash instead of a cross-origin navigation.
- * The unlocked keypair lives only in this tab's memory, and leaving the origin
- * would silently lock it. Each public name remains a direct entry point; inside
- * the app, the menu is one session.
+ * Explorer, Wallet, Play, DEX and Bridge are hash routes on the one origin,
+ * `https://proofofchess.com`. The menu switches in place so the unlocked keypair,
+ * which lives only in this tab's memory, is not lost. Each view is still a
+ * direct, bookmarkable entry point; inside the app, the menu is one session.
  *
  * The glyph is three `View`s rather than `IconButton icon="menu"`: react-native-paper
  * renders icons through an icon library, and this bundle has none installed, so an

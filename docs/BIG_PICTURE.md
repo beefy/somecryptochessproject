@@ -144,7 +144,7 @@ way to sign in a browser.
 **Status (0.22.0).** Shipped: the keystore port (§4.1), `buildTransfer` (§4.2),
 the review screen and local nonce tracking (§4.3), the create/restore/open,
 receive, send, history and settings views (§4.4), deployed at
-`wallet.chessproofofwork.com` with the explorer. History is implemented as the
+`proofofchess.com/#/wallet` with the explorer. History is implemented as the
 bounded block scan described in §4.3, not as a full index: the tab names the
 heights it covered and caches that window in IndexedDB. The table moved in too:
 `#/wallet/play` registers and signs with the wallet's unlocked key instead of a

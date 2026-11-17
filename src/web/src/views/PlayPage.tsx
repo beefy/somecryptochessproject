@@ -2,9 +2,9 @@
  * The Play page, with its own URL and enough room for the board.
  *
  * The table was a wallet tab when the wallet was the only page that held a key.
- * It is now a top-level site (`play.chessproofofwork.com/#/play`), gated by the
- * shared wallet session, and the page owns the title so the board can use the full
- * column instead of sharing it with a wallet header.
+ * It is now a top-level view (`https://proofofchess.com/#/play`), gated by the
+ * shared wallet session, and the page owns the title so the board can use the
+ * full column instead of sharing it with a wallet header.
  */
 
 import type { ReactNode } from "react";

@@ -19,12 +19,16 @@ docker compose ps
 docker compose logs --tail=100 node bootstrap relay miner-1 miner-2 drip traffic
 ```
 
-From anywhere, check the public node endpoint:
+From anywhere, check the public node endpoint and the page:
 
 ```bash
-curl -fsS http://testnet.chessproofofwork.com:8645/v1/status
-curl -fsS http://testnet.chessproofofwork.com:8646/v1/status
+curl -fsS http://proofofchess.com:8645/v1/status
+curl -fsS http://proofofchess.com:8646/v1/status
+curl -fsSI https://proofofchess.com/ | head -1   # Caddy TLS + bundle
 ```
+
+The hash routes (`#/wallet`, `#/play`, `#/dex`, `#/bridge`) are client-side, so
+open them in a browser; `curl` always returns the same document.
 
 Healthy after a deploy means:
 

@@ -1,21 +1,22 @@
-# Deploying the explorer and the wallet
+# Deploying the web application
 
 Every merge that touches `src/web` or `deploy/explorer` runs
 [`deploy-explorer.yml`](../.github/workflows/deploy-explorer.yml), which publishes
-the built bundle to both public names:
+the built bundle to the one public origin:
 
 ```text
-https://explorer.chessproofofwork.com
-https://wallet.chessproofofwork.com
+https://proofofchess.com
 ```
 
-They are one bundle and one release directory. Caddy holds a certificate per
-name, nginx answers whichever Host arrives, and the page decides what `#/` means
-from the hostname: the dashboard on `explorer.`, the wallet on `wallet.`. Each
-host serves three things on one origin: the bundle at `/`, the node API under
-`/v1` and the matchmaking relay under `/relay`. It is two containers, not a
-bucket, for the reason in the next section: a Caddy terminator, which owns the
-certificates, in front of an nginx origin.
+One domain, one bundle and one release directory. Caddy holds one certificate,
+nginx serves the bundle and proxies the API paths, and the page selects its view
+from the hash route: `#/` is the explorer and dashboard, and `#/wallet`, `#/play`,
+`#/dex` and `#/bridge` are the other four. Every view is a direct, bookmarkable
+URL on the same origin, and the hamburger switches in place so the unlocked
+wallet session survives. The origin serves three things: the bundle at `/`, the
+node API under `/v1` and the matchmaking relay under `/relay`. It is two
+containers, not a bucket, for the reason in the next section: a Caddy terminator,
+which owns the certificate, in front of an nginx origin.
 
 The deploy never touches the chain. It uploads a new release directory, moves one
 symlink and leaves the node, the relay and the SQLite file alone — unlike
@@ -66,9 +67,9 @@ need no Docker network in common with the chain's stack and no credentials.
    recreates a container only when its configuration changed, and the certificate
    lives in the `caddy_data` volume, so a deploy never re-issues it.
 4. **reload** — `caddy reload` in the `tls` container. A bind-mounted Caddyfile is
-   not part of compose's config hash and Caddy does not watch it, so a new site
-   block (the wallet name) would otherwise wait for a restart. On a first run the
-   admin endpoint may not be listening yet; the step falls back to
+   not part of compose's config hash and Caddy does not watch it, so a changed
+   site block would otherwise wait for a restart. On a first run the admin
+   endpoint may not be listening yet; the step falls back to
    `docker compose restart tls`, which loads the same file.
 5. **switch** — `ln -sfn` a `current.next` link and `mv -T` it over `current`.
    That rename is the deploy: nginx resolves the symlink per request, so no
@@ -85,33 +86,29 @@ site is legitimately not answerable.
 ## Public endpoint
 
 ```bash
-curl -sS https://explorer.chessproofofwork.com/v1/status \
+curl -sS https://proofofchess.com/v1/status \
   | jq '{network, height, tip_hash}'
-curl -sS https://explorer.chessproofofwork.com/relay/v1/status \
+curl -sS https://proofofchess.com/relay/v1/status \
   | jq '{network, epoch, matches}'
-curl -sSI https://explorer.chessproofofwork.com/ | head -3
-curl -sSI http://explorer.chessproofofwork.com/ | head -1   # 308 -> https
-
-# The wallet is the same origin under a second name; it has its own certificate.
-curl -sSI https://wallet.chessproofofwork.com/ | head -3
-curl -sSI http://wallet.chessproofofwork.com/ | head -1    # 308 -> https
-curl -sS https://wallet.chessproofofwork.com/v1/status | jq '{network, height}'
-
-# Play, the DEX and the bridge are the same origin under three more names, each
-# with its own certificate.
-for host in play dex bridge; do
-  curl -sSI "https://$host.chessproofofwork.com/" | head -3
-  curl -sSI "http://$host.chessproofofwork.com/" | head -1    # 308 -> https
-done
+curl -sSI https://proofofchess.com/ | head -3
+curl -sSI http://proofofchess.com/ | head -1   # 308 -> https
 ```
 
-The first two answer because of the proxy; the third and fifth are the bundle; the
-fourth and sixth are Caddy sending the plain-HTTP names to the secure ones. Open
-`https://explorer.chessproofofwork.com/` in a browser for the explorer,
-`https://wallet.chessproofofwork.com/` for the wallet, `https://play.…/#/play` for
-the table, `https://dex.…/#/dex` for the DEX, or `https://bridge.…/#/bridge` for
-the ETH↔SCCP bridge. The hamburger switches between all five in-app so the unlocked
-wallet session survives; each subdomain is still a direct entry point.
+The first two answer because of the proxy; the third is the bundle; the fourth is
+Caddy sending plain HTTP to the secure origin. Open these in a browser:
+
+| View | URL |
+| --- | --- |
+| Explorer / dashboard | `https://proofofchess.com/#/` |
+| Wallet | `https://proofofchess.com/#/wallet` |
+| Play | `https://proofofchess.com/#/play` |
+| DEX | `https://proofofchess.com/#/dex` |
+| Bridge | `https://proofofchess.com/#/bridge` |
+
+Every route is the same document, so a `curl` of `/` cannot tell them apart; the
+hash is read by the browser. The hamburger switches between all five in-app so the
+unlocked wallet session survives, and each URL above is still a direct entry
+point.
 
 ## Layout on the host
 
@@ -141,19 +138,14 @@ node and relay it proxies, so the GCP work is a firewall rule and a DNS record o
 an environment that already exists. If the VM does not exist yet, build it first
 with [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md); the commands below assume
 its variables (`$PROJECT_ID`, `$NETWORK`, `$NODE_TAG`, `$STATIC_IP`,
-`$DNS_ZONE`). If the whole environment is moving to a new project or domain --
-as it did when it became `chessproofofwork.com` -- do that first, in the order
+`$DNS_ZONE`). If the name or the project is moving, do that first, in the order
 [`DOMAIN_MIGRATION.md`](DOMAIN_MIGRATION.md) gives: the certificate below can
 only issue once the name resolves.
 
 ### GCP: firewall and DNS
 
 ```bash
-export EXPLORER_HOST="explorer.chessproofofwork.com"
-export WALLET_HOST="wallet.chessproofofwork.com"
-export PLAY_HOST="play.chessproofofwork.com"
-export DEX_HOST="dex.chessproofofwork.com"
-export BRIDGE_HOST="bridge.chessproofofwork.com"
+export WEB_HOST="proofofchess.com"
 
 gcloud compute firewall-rules create sccp-testnet-explorer-web \
     --network="$NETWORK" \
@@ -176,39 +168,34 @@ gcloud compute firewall-rules update sccp-testnet-explorer-web \
     --rules=tcp:80,tcp:443 --project="$PROJECT_ID"
 ```
 
-Then point all five names at the same address the node uses:
+Then point the one name at the same address the node uses:
 
 ```bash
-for host in "$EXPLORER_HOST" "$WALLET_HOST" "$PLAY_HOST" "$DEX_HOST" "$BRIDGE_HOST"; do
-  gcloud dns record-sets create "$host." \
-      --zone="$DNS_ZONE" \
-      --type=A \
-      --ttl=60 \
-      --rrdatas="$STATIC_IP" \
-      --project="$PROJECT_ID"
-done
+gcloud dns record-sets create "$WEB_HOST." \
+    --zone="$DNS_ZONE" \
+    --type=A \
+    --ttl=60 \
+    --rrdatas="$STATIC_IP" \
+    --project="$PROJECT_ID"
 ```
 
-If a record already exists, use `gcloud dns record-sets update` with the same
+If the record already exists, use `gcloud dns record-sets update` with the same
 arguments. Verify from your workstation before wiring GitHub:
 
 ```bash
-for host in "$EXPLORER_HOST" "$WALLET_HOST" "$PLAY_HOST" "$DEX_HOST" "$BRIDGE_HOST"; do
-  dig +short "$host" A
-done
+dig +short "$WEB_HOST" A
 ```
 
-All five names must resolve before the first deploy: Caddy asks for one
-certificate per name over HTTP-01, and a name that does not resolve yet leaves
-that site serving a TLS error while the others work. None of these names is a
-redirect to the explorer and none needs its own release directory; they are the
-same origin answering five names.
+The name must resolve before the first deploy: Caddy asks Let's Encrypt for one
+certificate over HTTP-01, and a name that does not resolve yet leaves the origin
+serving a TLS error. There is no redirect and no second release directory: the
+one certificate covers every hash route on the one origin.
 
-A CNAME pointing at another *name* that resolves to the same VM also works, but
-the deployment expects `A` records on the instance's address: `/v1` and `/relay`
+Do not use a `CNAME` at the apex: it is not valid there, and `/v1` and `/relay`
 are paths on the origin that served the page, so the name has to land on the host
-running the proxy rather than on a redirect. TLS is a separate decision; see
-[TLS](#tls).
+running the proxy rather than on a redirect. A subdomain could use an `ALIAS` or
+`ANAME` to the VM, but this deployment uses one apex `A` record. TLS is a
+separate decision; see [TLS](#tls).
 
 ### GCP: the deploy directory
 
@@ -224,11 +211,11 @@ gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT_ID" --command \
   "sudo install -d -m 755 -o sccp -g sccp /opt/sccp-explorer"
 ```
 
-Use the user from `EXPLORER_DEPLOY_HOST` (`sccp` in the example) as both owner and
-group. The step also re-checks writability after creating the directory, so a
-`/opt/sccp-explorer` that exists but belongs to someone else fails there with the
-`chown` to run, instead of a `mkdir: Permission denied` in the middle of the
-upload.
+Use the user from the deploy host variable (`EXPLORER_DEPLOY_HOST`, or the
+`TESTNET_DEPLOY_HOST` fallback) as both owner and group. The step also re-checks
+writability after creating the directory, so a `/opt/sccp-explorer` that exists
+but belongs to someone else fails there with the `chown` to run, instead of a
+`mkdir: Permission denied` in the middle of the upload.
 
 The VM needs nothing else. Docker Engine and the Compose v2 plugin are already
 installed for the chain's deploy, the `nginx:1.27-alpine` image is pulled on first
@@ -257,7 +244,7 @@ needs **no new configuration at all**.
 Set them explicitly only when the explorer is somewhere else:
 
 ```bash
-gh variable set EXPLORER_DEPLOY_HOST --body "sccp@$EXPLORER_HOST"
+gh variable set EXPLORER_DEPLOY_HOST --body "sccp@$WEB_HOST"
 gh secret   set EXPLORER_SSH_KEY < ~/.ssh/sccp_explorer_deploy
 ```
 
@@ -271,6 +258,52 @@ gh run watch
 The deploy job is skipped while neither host variable is set: the bundle still
 builds, so a repository without a VM keeps a useful check.
 
+### SSH access to the VM
+
+Both workflows authenticate as `sccp` with an ed25519 key and must never need a
+password. The VM is configured that way, but the setting belongs in every rebuild,
+not only in the original build. A drop-in file survives package updates that
+rewrite `/etc/ssh/sshd_config`. The `00-` prefix matters: sshd keeps the **first**
+value it reads, so this file has to sort before the image's `50-`/`60-` drop-ins.
+
+```bash
+gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT_ID" --command '
+  sudo install -d -m 755 /etc/ssh/sshd_config.d
+  sudo tee /etc/ssh/sshd_config.d/00-sccp-hardening.conf >/dev/null <<"EOF"
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+X11Forwarding no
+EOF
+  sudo sshd -t && sudo systemctl reload ssh
+'
+```
+
+Check the effective configuration, not just the file:
+
+```bash
+gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT_ID" --command \
+  "sudo sshd -T | grep -E '^(passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication|permitrootlogin|x11forwarding) '"
+```
+
+Expected: `passwordauthentication no`, `kbdinteractiveauthentication no`,
+`pubkeyauthentication yes`, `permitrootlogin no`, `x11forwarding no`. Then prove
+that a key still works and that a password is refused:
+
+```bash
+ssh -o BatchMode=yes sccp@proofofchess.com true
+ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no \
+    sccp@proofofchess.com true   # Permission denied (publickey)
+```
+
+The current firewall admits `tcp:22` from `0.0.0.0/0` because GitHub-hosted
+runners SSH in from rotating addresses; key-only authentication is what makes
+that acceptable. If you move the deploy to a self-hosted runner inside the VPC,
+restrict the rule to that subnet (or to the IAP range `35.235.240.0/20` and use
+`gcloud compute ssh --tunnel-through-iap` for interactive access). Do not add a
+password fallback to make an old client work.
+
 ---
 
 ## TLS
@@ -279,9 +312,9 @@ TLS is part of the deployment, not an option. The `tls` service in
 [`deploy/explorer/docker-compose.yml`](../deploy/explorer/docker-compose.yml) runs
 Caddy with
 [`deploy/explorer/Caddyfile`](../deploy/explorer/Caddyfile), which on first start
-asks Let's Encrypt for a certificate for **each** name in the file (the explorer
-and the wallet), renews them in the background, redirects `http://` to `https://`,
-and proxies to the nginx origin on `127.0.0.1:8080`.
+asks Let's Encrypt for a certificate for **the one** name in the file
+(`proofofchess.com`), renews it in the background, redirects `http://` to
+`https://`, and proxies to the nginx origin on `127.0.0.1:8080`.
 
 The certificate matters here more than for a JSON endpoint: the wallet takes a
 passphrase and decrypts a keyfile **in the page**, and the table signs moves with
@@ -296,7 +329,7 @@ everywhere, and Caddy can reach Let's Encrypt outbound (GCP's default egress rul
 allows it). If one is missing, the container logs the challenge failure:
 
 ```bash
-ssh sccp@explorer.chessproofofwork.com \
+ssh sccp@proofofchess.com \
   "cd /opt/sccp-explorer && docker compose logs --tail 20 tls"
 ```
 
@@ -315,9 +348,9 @@ brings back the CORS problem this design removes.
 The last five releases stay on disk. List them and move the symlink:
 
 ```bash
-ssh sccp@explorer.chessproofofwork.com \
+ssh sccp@proofofchess.com \
   "ls -1t /opt/sccp-explorer/www/releases | head -5"
-ssh sccp@explorer.chessproofofwork.com \
+ssh sccp@proofofchess.com \
   "cd /opt/sccp-explorer/www \
    && ln -sfn releases/<release> current.next && mv -T current.next current \
    && readlink -f current"
@@ -354,7 +387,7 @@ chain is also reset on every chain deploy, so the explorer will show a freshly
 bootstrapped chain afterwards — that is the reset, not a broken page.
 
 The explorer is also unaffected by 8646 being firewalled off. Browsers only ever
-reach the relay through `/relay` on port 80, so the relay rule in
+reach the relay through `/relay` on port 443, so the relay rule in
 [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md) can stay closed to the internet
 even though `#/play` plays real matches.
 
@@ -380,8 +413,8 @@ even though `#/play` plays real matches.
 | `docker compose ps` shows `tls` restarting | Port `443` (or `80`) is already bound on the host | `sudo ss -ltnp 'sport = :443'`; move that service |
 | Workflow deploy job skipped | No host configured | `gh variable list \| grep -i deploy_host` |
 | `#/play` says "the relay at … is on devnet" | The relay follows a different chain than the node | The **Two networks** panel names both; restart the relay with the node's `--network`, see [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) |
-| `wallet.chessproofofwork.com` serves a TLS error while the explorer is fine | The wallet record is missing, or its challenge has not completed yet | `dig +short wallet.chessproofofwork.com`; `docker compose logs tls \| grep wallet`; both names need port 80 open |
-| The wallet name shows the explorer dashboard | The page was opened under `explorer.` (the landing view follows the hostname) | Use `https://wallet.chessproofofwork.com/`, or the hamburger menu |
+| A hash route shows the explorer instead of the view | The `#/wallet` (or `#/play`, `#/dex`, `#/bridge`) part was dropped by a link or a redirect | Use the full URL, e.g. `https://proofofchess.com/#/wallet`; the path `/` alone is always the dashboard |
+| `ssh` asks for a password | The VM is not using the hardened sshd configuration above, or the key is not in `sccp`'s `authorized_keys` | `sudo sshd -T \| grep passwordauthentication`; reinstall the public key, not a password |
 | "this browser will not store wallets" | IndexedDB is disabled, or another tab holds an older database version | Leave private mode, close the other tab and reload; `Open a keyfile` works without storage |
 | The wallet says "wrong passphrase or corrupted ciphertext" | The passphrase is wrong, or the header was edited after encryption | Re-check the phrase; a keyfile from `sccp wallet new` opens with the passphrase it was written with |
 

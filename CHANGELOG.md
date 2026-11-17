@@ -7,6 +7,17 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The hosted deployment moved to one origin, `https://proofofchess.com`.**
+  The explorer, wallet, Play, DEX and bridge are now hash routes
+  (`#/`, `#/wallet`, `#/play`, `#/dex`, `#/bridge`) of one bundle instead of
+  five subdomains of `chessproofofwork.com`. The node API and relay are still on
+  ports 8645 and 8646, and the page proxies them as `/v1` and `/relay` on the new
+  origin. One Caddy site block and one certificate replace the five name-based
+  blocks. Old subdomain URLs are not redirected; the cutover and rollback are in
+  `docs/DOMAIN_MIGRATION.md`.
+
 ## [0.25.0] - 2026-11-16
 
 ### Added

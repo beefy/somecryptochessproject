@@ -11,10 +11,10 @@ multi-process, HTTP and SQLite path. The merge-to-deploy workflow and its monthl
 cost are in [`docs/TESTNET_DEPLOYMENT.md`](../docs/TESTNET_DEPLOYMENT.md).
 
 The current hosted deployment is at
-`http://testnet.chessproofofwork.com:8645`; the commands below use
-`127.0.0.1` because they are for a local Compose stack. The page that reads it is
-a separate deploy, in `explorer/`, published at
-`https://explorer.chessproofofwork.com`; see
+`http://proofofchess.com:8645`; the commands below use
+`127.0.0.1` because they are for a local Compose stack. The web page is a
+separate Compose deploy, in `explorer/`, published at the same name,
+`https://proofofchess.com`; see
 [`docs/EXPLORER_DEPLOYMENT.md`](../docs/EXPLORER_DEPLOYMENT.md).
 
 ```bash

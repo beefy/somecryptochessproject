@@ -9,10 +9,10 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
- - [Block explorer](https://explorer.chessproofofwork.com/)
- - [Web wallet](https://wallet.chessproofofwork.com/)
+ - [Block explorer](https://proofofchess.com/)
+ - [Web wallet](https://proofofchess.com/#/wallet)
  - [Living Whitepaper](https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/WHITEPAPER.md)
- - [Public testnet](http://testnet.chessproofofwork.com:8645/v1/status)
+ - [Public testnet](http://proofofchess.com:8645/v1/status)
  - [Reddit](https://www.reddit.com/r/chessproofofwork/)
 
 > **Status: protocol v1 is implemented and deployed on testnet.** The repository
@@ -27,7 +27,7 @@ reward.
 > parameters exist, but no mainnet has launched or been audited; testnet and
 > devnet coins have no value.
 
-> **Public testnet:** <http://testnet.chessproofofwork.com:8645>. The
+> **Public testnet:** <http://proofofchess.com:8645>. The
 > `GET /v1/status` endpoint is the health check. The chain is reset on every
 > deployment, so wallets, balances and faucet grants do not survive a redeploy.
 > This endpoint is plain HTTP and carries worthless test coins only.
@@ -355,7 +355,7 @@ Every step below is a thin wrapper over a library call, so the CLI, tests and
 services exercise the same code path.
 
 The hosted two-miner testnet is available at
-`http://testnet.chessproofofwork.com:8645`. The quickstart below starts
+`http://proofofchess.com:8645`. The quickstart below starts
 local processes so you can change code without depending on it; use the hosted
 URL as `--node` or `SCCP_NODE` when you want the shared deployment instead.
 
@@ -494,18 +494,18 @@ audit of `contracts/EthHtlc.sol`).
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
 [`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current
 deployment is published at
-`http://testnet.chessproofofwork.com:8645`; the workflow connects to the
-same name over SSH (`sccp@testnet.chessproofofwork.com`). Moving a deployment to
+`http://proofofchess.com:8645`; the workflow connects to the
+same name over SSH (`sccp@proofofchess.com`). Moving a deployment to
 a new project or domain -- the cutover that produced those names -- is
 [`docs/DOMAIN_MIGRATION.md`](docs/DOMAIN_MIGRATION.md).
 
-The explorer has its own deploy and its own name:
-`https://explorer.chessproofofwork.com` serves the built bundle with `/v1`
-and `/relay` proxied onto that origin, because the node sends no CORS headers. A
-Caddy terminator in front holds the certificate. The wallet is the same bundle
-under a second name, `https://wallet.chessproofofwork.com`, with its own
-certificate from the same Caddy; the hamburger menu in the top-left corner
-switches between the two. See
+The explorer and the wallet are one deploy on one name:
+`https://proofofchess.com` serves the built bundle with `/v1` and `/relay`
+proxied onto that origin, because the node sends no CORS headers. A Caddy
+terminator in front holds the single certificate. The hamburger menu in the
+top-left corner switches between the explorer, the wallet, Play, the DEX and the
+bridge by hash route (`#/`, `#/wallet`, `#/play`, `#/dex`, `#/bridge`), so the
+unlocked key stays in the tab. See
 [`docs/EXPLORER_DEPLOYMENT.md`](docs/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws

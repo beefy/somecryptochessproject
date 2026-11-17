@@ -57,25 +57,26 @@ which the SCCP node deliberately does not hold. Set `SCCP_ETH_RPC_URL` and
 The current deployment is published at:
 
 ```text
-http://testnet.chessproofofwork.com:8645
+http://proofofchess.com:8645
 ```
 
 Check it from any host:
 
 ```bash
-curl -sS http://testnet.chessproofofwork.com:8645/v1/status \
+curl -sS http://proofofchess.com:8645/v1/status \
   | jq '{network, height, tip_hash, mempool}'
 ```
 
 The endpoint is plain HTTP and the chain is reset on every deploy. Do not use it
 for anything of value. The deploy workflow connects to the same name over SSH
-(`sccp@testnet.chessproofofwork.com`); clients only need the node port.
+(`sccp@proofofchess.com`); clients only need the node port.
 
-The browser client is a second, independent deploy:
+The browser client is a separate deploy:
 [`deploy-explorer.yml`](../.github/workflows/deploy-explorer.yml) publishes
-`src/web/dist` at `https://explorer.chessproofofwork.com`, on the same VM,
-behind Caddy (TLS) and an nginx proxy that puts `/v1` and `/relay` on the page's
-own origin.
+`src/web/dist` at `https://proofofchess.com`, on the same VM, behind Caddy (TLS)
+and an nginx proxy that puts `/v1` and `/relay` on the page's own origin. The
+explorer, wallet, Play, DEX and bridge are hash routes (`#/`, `#/wallet`,
+`#/play`, `#/dex`, `#/bridge`) of that one page.
 This document covers the chain; the page is in
 [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md).
 
@@ -88,10 +89,10 @@ Create a GitHub Environment named `testnet` and set:
 
 | Kind | Name | Meaning |
 | --- | --- | --- |
-| variable | `TESTNET_DEPLOY_HOST` | `user@host`, for example `sccp@testnet.chessproofofwork.com` |
+| variable | `TESTNET_DEPLOY_HOST` | `user@host`, for example `sccp@proofofchess.com` |
 | variable | `TESTNET_DEPLOY_DIR` | optional checkout directory; default `/opt/sccp-testnet` |
 | variable | `TESTNET_DEPLOY_PORT` | optional SSH port; default `22` |
-| variable | `TESTNET_PUBLIC_URL` | optional public node URL; default `http://testnet.chessproofofwork.com:8645` |
+| variable | `TESTNET_PUBLIC_URL` | optional public node URL; default `http://proofofchess.com:8645` |
 | variable | `SCCP_ETH_RPC_URL` | optional Sepolia RPC for the node's `GET /v1/bridge` document |
 | variable | `SCCP_ETH_HTLC_CONTRACT` | optional deployed `EthHtlc` address on Sepolia |
 | variable | `SCCP_ETH_CONFIRMATIONS` | optional testnet confirmation-depth override (default `6`) |
@@ -101,7 +102,7 @@ Create a GitHub Environment named `testnet` and set:
 
 The host needs Docker Engine with the Compose plugin and ports 8645/8646
 reachable from wherever clients will connect. For the current deployment those
-are exposed through `testnet.chessproofofwork.com`; port 8645 is the node
+are exposed through `proofofchess.com`; port 8645 is the node
 API and 8646 is the relay. The workflow authenticates to GHCR with its
 job-scoped `GITHUB_TOKEN`; either make the package visible to the VM or keep the
 package private and let that token pull it (the job requests `packages: read`).
@@ -136,8 +137,9 @@ seats.
 That is the mainstream-cloud estimate. A budget VPS with equivalent resources
 (Hetzner, OVH, a small provider) is commonly **$10–$20/month**, and a
 reserved/committed instance can cut the compute line by 30–40%. The current
-deployment uses a Cloud DNS `A` record for
-`testnet.chessproofofwork.com`; managed TLS is not included.
+deployment uses a Cloud DNS `A` record for `proofofchess.com`; the page's
+Let's Encrypt certificate through Caddy is free, and no managed TLS or load
+balancer is included.
 
 What is not included: a public RPC/load balancer, DDoS protection, a managed
 database, or long-term log storage. The node uses one SQLite file and the relay a

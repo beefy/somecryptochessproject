@@ -1,33 +1,13 @@
-# The public application names. They are one bundle, one nginx origin and one
-# release directory; the browser's hostname only picks the landing view. Each
-# name gets its own certificate, so each needs an A record pointing at this VM
-# and port 80 open, or the challenge fails and Caddy serves a TLS error instead.
+# The public application origin. One domain serves one bundle, one nginx origin
+# and one release directory; the browser's hash route (`#/`, `#/wallet`, `#/play`,
+# `#/dex`, `#/bridge`) picks the view. One certificate covers the name, so one A
+# record pointing at this VM and port 80 open is all the HTTP-01 challenge needs.
 # Add an `email` in the global block if you want expiry notices from Let's Encrypt.
 {
 	# No DNS provider token here, so HTTP-01 is the challenge in use.
 	# auto_https is on by default: :80 answers the challenge and redirects.
 }
 
-explorer.chessproofofwork.com {
-	reverse_proxy 127.0.0.1:8080
-}
-
-# The wallet. Same release directory, same nginx: `wallet.chessproofofwork.com/#/`
-# is the wallet's landing page.
-wallet.chessproofofwork.com {
-	reverse_proxy 127.0.0.1:8080
-}
-
-# Play, the DEX and the bridge. The bridge is the same bundle and wallet gate;
-# its Ethereum environment comes from the SCCP node's `GET /v1/bridge`.
-play.chessproofofwork.com {
-	reverse_proxy 127.0.0.1:8080
-}
-
-dex.chessproofofwork.com {
-	reverse_proxy 127.0.0.1:8080
-}
-
-bridge.chessproofofwork.com {
+proofofchess.com {
 	reverse_proxy 127.0.0.1:8080
 }

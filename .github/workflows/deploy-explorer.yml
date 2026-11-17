@@ -1,13 +1,11 @@
 name: deploy-explorer
 
-# Publishes the built web app (src/web) to explorer.chessproofofwork.com and
-# wallet.chessproofofwork.com.
+# Publishes the built web app (src/web) to https://proofofchess.com.
 #
-# Both names are one bundle and one release directory: the page decides whether
-# `#/` is the block explorer or the wallet from the hostname it was served under,
-# and the hamburger menu links between them by absolute URL. Caddy holds one
-# certificate per name (deploy/explorer/Caddyfile), so both A records must exist
-# before the first deploy.
+# One name, one bundle and one release directory: every view is a hash route
+# (`#/`, `#/wallet`, `#/play`, `#/dex`, `#/bridge`) and the hamburger switches
+# between them in place. Caddy holds one certificate (deploy/explorer/Caddyfile),
+# so the A record must exist before the first deploy.
 #
 # The page has to be same-origin with the node: the node sends no CORS headers,
 # so a browser will not let a bundle served from one origin read `/v1` on
@@ -188,8 +186,8 @@ jobs:
 
       # `docker compose up -d` does not restart a container whose bind-mounted
       # config changed, and Caddy does not watch the file, so an edited Caddyfile
-      # (a new site block, a second certificate) would sit unused until something
-      # restarted the container. Reload asks the running Caddy to re-read it; the
+      # (a changed site block) would sit unused until something restarted the
+      # container. Reload asks the running Caddy to re-read it; the
       # admin API the healthcheck already polls is the endpoint.
       - name: Reload the TLS terminator
         run: |

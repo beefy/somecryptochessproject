@@ -69,8 +69,8 @@ at startup:
 
 ```bash
 sccp --network testnet --data-dir data node run \
-  --peer http://testnet.chessproofofwork.com:8645
-# synced http://testnet.chessproofofwork.com:8645: +121 blocks to height 121
+  --peer http://proofofchess.com:8645
+# synced http://proofofchess.com:8645: +121 blocks to height 121
 ```
 
 The dev server proxies `/v1` to `SCCP_NODE` (default `http://127.0.0.1:8645`), so
@@ -127,17 +127,17 @@ Two things to know before doing that:
   Without that flag the relay answers no preflights at all, which keeps a
   relay-only deployment from advertising itself to browsers.
 
-The hosted chain (`http://testnet.chessproofofwork.com:8645`) answers `/v1`
+The hosted chain (`http://proofofchess.com:8645`) answers `/v1`
 and nothing else: `http://…:8645/` is a `{"detail":"Not Found"}`, because that
 node was deployed without `dist/` behind `--web`. Point a local dev server at it
 instead of expecting a page there:
 
 ```bash
-SCCP_NODE=http://testnet.chessproofofwork.com:8645 npm run dev
+SCCP_NODE=http://proofofchess.com:8645 npm run dev
 ```
 
-The published page lives on an origin of its own,
-`https://explorer.chessproofofwork.com`, where nginx serves the bundle and
+The published page is the same origin as its API:
+`https://proofofchess.com`, where nginx serves the bundle and
 proxies `/v1` and `/relay`, behind a Caddy terminator that holds the certificate.
 That is the shape a hosted build always needs: the
 API on the page's own origin, the relay on a path of it. The deploy, its firewall
@@ -161,12 +161,10 @@ rules, its DNS record and its rollback are in
 | `SCCP_NODE` | `npm run dev`, `npm run preview` | `http://127.0.0.1:8645` | proxy target for `/v1` |
 | `VITE_SCCP_API` | the bundle, at build time | empty (same origin) | absolute API base |
 | `VITE_SCCP_RELAY` | the bundle, at build time | `http://127.0.0.1:8646` | relay base for `#/play`; a path such as `/relay` means "same origin, proxied" |
-| `VITE_EXPLORER_ORIGIN` | the bundle, at build time | `https://explorer.chessproofofwork.com` | direct subdomain link for the explorer |
-| `VITE_WALLET_ORIGIN` | the bundle, at build time | `https://wallet.chessproofofwork.com` | direct subdomain link for the wallet |
-| `VITE_PLAY_ORIGIN` | the bundle, at build time | `https://play.chessproofofwork.com` | direct subdomain link for Play |
-| `VITE_DEX_ORIGIN` | the bundle, at build time | `https://dex.chessproofofwork.com` | direct subdomain link for the DEX |
-| `VITE_BRIDGE_ORIGIN` | the bundle, at build time | `https://bridge.chessproofofwork.com` | direct subdomain link for Bridge |
 | `SCCP_WEB_DIST` | `sccp node run --web` | `src/web/dist` | directory to mount |
+
+There are no per-view origin variables: Explorer, Wallet, Play, DEX and Bridge are
+hash routes on `https://proofofchess.com`, served by the same bundle.
 
 ## Routes
 
@@ -199,24 +197,23 @@ rules, its DNS record and its rollback are in
 Routing lives in the hash, so the bundle works from any static path with no
 server-side rewrite rule.
 
-`#/` is the explorer's overview on `explorer.chessproofofwork.com`, the wallet's
-overview on `wallet.chessproofofwork.com`, the table on `play.…`, the DEX on
-`dex.…` and the bridge on `bridge.…`: all five names serve the same
-release, and the hostname picks the landing view (`lib/site.ts`). The hamburger
-offers exactly Explorer, Wallet, Play, DEX and Bridge. It switches with a hash
-rather than a cross-origin navigation because the unlocked keypair is memory-only;
-each subdomain is still a direct, bookmarkable entry point.
+`#/` is the explorer overview, and `#/wallet`, `#/play`, `#/dex` and `#/bridge`
+are the other four landing views: one origin, one bundle, no hostnames. The
+hamburger offers exactly Explorer, Wallet, Play, DEX and Bridge, and switches by
+hash so the unlocked keypair (memory-only) stays in the tab. Each view is a
+direct, bookmarkable URL (`lib/site.ts` maps the views to their hashes).
 
 Play, DEX and Bridge are gated by the shared wallet session. The strip under the
 header says `Wallet active` with the shortened address and a Lock button, or
 `Wallet inactive` with a link to open the wallet. Locking there clears the key for
 the whole tab.
 
-Browser storage is per origin, so a direct visit to another subdomain starts with
-that origin's own IndexedDB: the in-app hamburger therefore stays on the current
-origin, where the unlocked keypair is in memory. If one of the other names is
-opened directly, it still works, but the encrypted keyfile has to exist on that
-origin (open it from the wallet, or create/import one there).
+Browser storage is per origin, and every view now shares one origin, so the
+encrypted keyfile, the unlocked keypair and the wallet settings are available in
+the explorer, Play, the DEX and the bridge without an import. The hamburger stays
+on that origin, which is what keeps the in-memory key in the tab. Opening
+`https://proofofchess.com` on another device still needs its own keyfile in that
+browser.
 
 The tab icon is [`public/favicon.svg`](public/favicon.svg): the four centre
 squares of the `#/play` board (d4, d5, e4, e5) cropped into a circle, in that
@@ -259,7 +256,7 @@ still in consensus state and remains visible at `#/accounts/<address>`.
 
 ## The wallet
 
-`#/wallet` (and `#/` on `wallet.chessproofofwork.com`) opens the same keyfile the
+`#/wallet` opens the same keyfile the
 CLI writes — not a second format. `lib/keystore.ts` is a port of
 `sccp/crypto/wallet.py`:
 
@@ -462,7 +459,7 @@ src/
   fresh `--data-dir` is a genesis-only chain, so there is nothing to show. The
   page is innocent here — it prints `/v1/status` verbatim. Nothing mines testnet
   for you either: make blocks (`--mine`, one a minute) or sync once from the
-  hosted node (`--peer http://testnet.chessproofofwork.com:8645`, which
+  hosted node (`--peer http://proofofchess.com:8645`, which
   prints `synced …: +121 blocks to height 121`). A dir that "went back to 0" is a
   different `--data-dir`, not a lost chain — the SQLite file is bound to one path.
 - **`no built explorer found`** (exit 2) — `sccp node run --web` found no

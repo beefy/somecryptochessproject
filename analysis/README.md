@@ -38,7 +38,7 @@ Make sure you are using python3 with your venv.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `SCCP_NODE_URL` | `http://testnet.chessproofofwork.com:8645` | node to read |
+| `SCCP_NODE_URL` | `http://proofofchess.com:8645` | node to read |
 | `SCCP_ANALYSIS_REFRESH` | unset | ignore `cache/` and refetch |
 | `SCCP_ANALYSIS_MAX_BLOCKS` | `400` | blocks in the sample |
 | `SCCP_ANALYSIS_MAX_BODIES` | `80` | blocks fetched in full for their transactions |
