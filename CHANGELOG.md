@@ -9,14 +9,21 @@ not itemised here.
 
 ### Added
 
-- **A seeded testnet bridge and DEX.** `deploy/seed_testnet_demo.py` runs as the
-  `seed` compose service after the bootstrap. It funds two deterministic demo
-  wallets, locks and claims one SCCP HTLC so the Bridge activity list is not
-  empty, then waits for the first mature C960 coinbase on a Chess960 miner and
-  creates the SCCP/C960 pool with equal sides. The bridge leg is immediate; the
-  pool appears after the first Chess960 proof and its 20-block coinbase maturity.
-  Every transaction is signed and admitted normally, and the Ethereum leg stays
-  an operator deployment because the node holds no Ethereum key.
+- **A 10% SCCP and 5%-per-variant genesis premine.** Mainnet genesis now
+  allocates 2,100,000 SCCP and 1,050,000 C960. The public tranche addresses and
+  basis-point split live in `genesis/mainnet-premine.json`; private keys are not
+  committed. Genesis documents are version 2 and allocations can name a variant
+  asset, with each asset clamped by its own cap and tracked in `minted_assets`.
+  Adding a variant requires its own 500-basis-point tranche before
+  `scripts/make_genesis.py` will generate a document. The pinned mainnet and
+  testnet hashes changed.
+- **Genesis-seeded testnet DEX and bridge state.** Testnet genesis now creates
+  the SCCP/C960 pool (5 coins per side) and a completed 1-SCCP HTLC before height
+  0 is committed, so `GET /v1/pools` and `GET /v1/htlcs` are useful on a fresh
+  deployment. `deploy/seed_testnet_demo.py` remains idempotent and reports the
+  existing records; it is the fallback creator for a custom chain whose genesis
+  does not seed them. The Ethereum leg stays an operator deployment because the
+  node holds no Ethereum key.
 
 ## [0.24.0] - 2026-11-15
 

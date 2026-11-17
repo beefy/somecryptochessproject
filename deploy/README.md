@@ -77,7 +77,7 @@ proof to settle.
 | `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the four keyfiles, their availability secrets, the passphrase file and `stack.json` |
 | `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 60 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers all four miners for their variants, commits and reveals availability, writes `relay.json` from epoch 3 |
-| `seed` | `python -m deploy.seed_testnet_demo --stack /stack --node http://node:8645` | funds two deterministic demo wallets, creates and claims an SCCP HTLC, then waits for the first mature C960 coinbase and creates the SCCP/C960 pool |
+| `seed` | `python -m deploy.seed_testnet_demo --stack /stack --node http://node:8645` | verifies the genesis-seeded SCCP/C960 pool and completed SCCP HTLC; falls back to creating them on a custom chain whose genesis does not |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
 | `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 0` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; the extra-miner churn is off because the VM holds the four fixed miners |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, pairs within each variant, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
@@ -97,20 +97,16 @@ a roster slot or builds a block. `traffic` keeps its coins inside its own wallet
 pool, so it circulates them instead of draining the faucet; the
 [runbook](../docs/RUNBOOK.md#synthetic-traffic) has the arithmetic.
 
-`seed` is not a generator: it makes a fresh deploy look used. It signs with the
-published stack keys and two deterministic demo wallets, and every transaction
-goes through the node's normal admission path. The bridge leg is immediate: one
-SCCP HTLC is locked and claimed, so `GET /v1/htlcs` and the Bridge **Activity**
-tab have a completed swap. The DEX pool cannot be immediate, because consensus
-mints C960 only when a Chess960 proof settles and the coinbase must then mature
-for `coinbase_maturity` blocks (20 on testnet). `seed` waits in the background for
-that first spendable C960, moves enough of it to the demo liquidity wallet, and
-creates the SCCP/C960 pool. On a normal stack the pool therefore appears roughly
-20-25 minutes after `docker compose up`, depending on when the first Chess960 game
-finishes. `docker compose logs -f seed` shows whether it is waiting for C960 or
-has created the pool. The Ethereum leg remains an operator deployment: the node
-holds no Ethereum key by design, so deploying `EthHtlc` for Sepolia still needs a
-funded deployer key and `SCCP_ETH_HTLC_CONTRACT`.
+`seed` is now an idempotent check rather than the source of the demo state.
+Testnet genesis already creates the SCCP/C960 pool (5 coins per side) and a
+completed 1-SCCP HTLC, so `GET /v1/pools`, `GET /v1/htlcs` and the Bridge
+**Activity** tab are populated at height 0. The service detects those records and
+reports them; it can still create the bridge leg and pool for a custom network
+whose genesis does not seed them. It signs with the published stack keys and two
+deterministic demo wallets, and every transaction it does send goes through the
+node's normal admission path. The Ethereum leg remains an operator deployment:
+the node holds no Ethereum key by design, so deploying `EthHtlc` for Sepolia
+still needs a funded deployer key and `SCCP_ETH_HTLC_CONTRACT`.
 
 The `traffic` container can also churn extra miners
 (`deploy/synthetic_miner_creation.py`), but the Compose deployment disables it
@@ -205,13 +201,13 @@ new coinbase value. The containers only talk to the node;
 the assertions run in the host process, so the test covers the artefact the
 deploy workflow ships rather than the Python packages in place.
 
-C960 is only minted when a Chess960 proof settles, and neither genesis nor the
-faucet creates it. The DEX case therefore uses a dedicated devnet node whose
-fixture credits the published traffic wallets with C960 before serving; every
-transaction after that seed goes through normal admission, block building and
-validation. This smoke test does not play a Chess960 match, so C960 issuance
-itself remains covered by `test_chess960.py`, and the DEX transitions by
-`test_dex.py`.
+C960 is minted when a Chess960 proof settles, plus the fixed genesis allocation
+on testnet and mainnet. The devnet genesis used by this smoke test has no C960
+allocation, so the DEX case uses a dedicated devnet node whose fixture credits
+the published traffic wallets with C960 before serving; every transaction after
+that seed goes through normal admission, block building and validation. This
+smoke test does not play a Chess960 match, so C960 issuance itself remains
+covered by `test_chess960.py`, and the DEX transitions by `test_dex.py`.
 
 It is opt-in and deselects itself otherwise:
 

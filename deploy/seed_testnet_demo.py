@@ -1,13 +1,12 @@
-"""Seed a fresh testnet deploy with a demo bridge leg and an SCCP/C960 pool.
+"""Verify (or create) the testnet demo bridge leg and SCCP/C960 pool.
 
-A newly bootstrapped testnet has no C960. The faucet funds native SCCP only, and
-consensus mints C960 only when a Chess960 proof settles; that coinbase then has
-to mature for ``coinbase_maturity`` blocks before a wallet can spend it. The
-synthetic traffic generator therefore has nothing to pair with SCCP on a fresh
-chain and skips its DEX action.
+Testnet genesis now seeds both records at height 0: the pool is backed by 5 SCCP
+and 5 C960 allocations and the HTLC was locked and claimed with the published
+demo preimage. On a normal deployment this helper therefore finds the existing
+records and reports them without sending a transaction.
 
-This one-shot deployment helper makes the testnet usable without a manual CLI
-step. It:
+It remains a fallback for a custom chain whose genesis does not seed them. In
+that case it:
 
 1. funds two deterministic demo wallets from the published testnet faucet;
 2. locks one SCCP in an HTLC and claims it, leaving a completed bridge leg in
@@ -32,7 +31,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import hashlib
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
@@ -50,6 +48,11 @@ from deploy.bootstrap_testnet_stack import (
     load_stack,
 )
 from sccp.chain import dex
+from sccp.chain.genesis import (
+    testnet_bridge_hashlock,
+    testnet_bridge_preimage,
+    testnet_demo_keypair,
+)
 from sccp.chain.tx import htlc_id, sign_transaction
 from sccp.config import (
     CHESS960_ASSET_ID,
@@ -59,14 +62,7 @@ from sccp.config import (
     format_coins,
 )
 from sccp.crypto.address import encode_address
-from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.protocol.models import Transaction, TxType
-
-DEMO_SEED_NAMESPACE: Final = b"sccp/testnet/deploy-demo-wallet/"
-"""Published seed namespace for the two wallets the seeder funds and signs for."""
-
-BRIDGE_SECRET: Final = b"sccp/testnet/deploy-demo-bridge/"
-"""Published preimage source for the demo HTLC: testnet only, never valuable."""
 
 GRANT_COINS: Final = 20
 """SCCP granted to each demo wallet; enough for the bridge and the pool deposit."""
@@ -116,8 +112,7 @@ def demo_wallet(index: int, params: NetworkParams = TESTNET) -> traffic.Wallet:
     """Derive one deterministic demo wallet from the published seed namespace."""
     if index < 0:
         raise ValueError("a demo wallet index must be non-negative")
-    seed = hashlib.sha256(DEMO_SEED_NAMESPACE + index.to_bytes(4, "big")).digest()
-    keypair = hybrid_keypair_from_seed(seed)
+    keypair = testnet_demo_keypair(index)
     return traffic.Wallet(
         index=-1 - index,
         keypair=keypair,
@@ -302,8 +297,8 @@ def seed_bridge(
         return "bridge: demo leg already on chain"
     tip = _height(client)
     timelock = tip + 1 + options.bridge_claim_blocks
-    preimage = hashlib.sha256(BRIDGE_SECRET).hexdigest()
-    hashlock = hashlib.sha256(bytes.fromhex(preimage)).hexdigest()
+    preimage = testnet_bridge_preimage()
+    hashlock = testnet_bridge_hashlock()
     amount = coins_to_units(options.bridge_coins)
 
     lock_digest, lock_tx = _submit(
@@ -482,6 +477,12 @@ def seed_once(
     options = SeedOptions() if options is None else options
     liquidity = demo_wallet(0, params)
     beneficiary = demo_wallet(1, params)
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    if _has_bridge_lock(client, liquidity.address) and _pool_exists(client, pool_id):
+        return SeedReport(
+            bridge="bridge: demo leg already on chain",
+            dex=f"dex: SCCP/C960 pool {pool_id[:12]} already exists",
+        )
     _fund_demo_wallets(client, (liquidity, beneficiary), options, params)
     bridge = seed_bridge(
         client,

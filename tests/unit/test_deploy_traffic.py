@@ -876,6 +876,10 @@ def test_a_cycle_without_a_pool_creates_one_from_the_variant_asset(node: NodeSer
     """The first cycle seeds the network's SCCP/C960 market when none exists."""
     pool = [traffic.wallet(index) for index in range(2)]
     _seed_accounts(node, [item.address for item in pool], native_coins=50, variant_coins=5)
+    # The testnet genesis now seeds this pair; remove it to exercise the
+    # fallback a network without a genesis pool still needs.
+    node.chain.state.pools.clear()
+    node.mempool.projection.pools.clear()
     with httpx.Client(transport=_transport(node), base_url="http://node") as client:
         report = traffic.run_cycle(
             client,
@@ -909,7 +913,8 @@ def test_side_traffic_that_cannot_find_coins_is_reported_as_a_skip(node: NodeSer
             options=_quiet_options(bridge=False, dex=True, min_balance_coins=0),
         )
 
-    assert report.dex == "dex: skipped (no wallet held SCCP fees and C960)"
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    assert report.dex == f"dex: skipped (no wallet held both sides of pool {pool_id[:12]})"
     assert (report.transfers, report.side_unconfirmed) == (0, 0)
     assert not [tx for tx in _admitted(node) if tx.type is TxType.CREATE_POOL]
 

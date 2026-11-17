@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from collections.abc import Iterator
 
@@ -12,6 +11,7 @@ from deploy import seed_testnet_demo as seed
 from deploy.bootstrap_testnet_stack import BootstrapMiner
 
 from sccp.chain import dex
+from sccp.chain.genesis import testnet_bridge_preimage as bridge_preimage
 from sccp.chain.state import HtlcStatus
 from sccp.config import CHESS960_ASSET_ID, TESTNET, coins_to_units
 from sccp.crypto.address import encode_address
@@ -172,11 +172,10 @@ def test_demo_wallets_are_deterministic_and_distinct() -> None:
         seed.demo_wallet(-1)
 
 
-def test_a_fresh_deploy_gets_a_bridge_leg_and_an_sccp_c960_pool(
+def test_a_fresh_deploy_already_has_the_genesis_bridge_and_pool(
     node: NodeService,
-    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """The first mature C960 coinbase funds a real pool; the bridge leg closes."""
+    """The testnet genesis itself carries the demo pool and completed bridge."""
     miner = _miner()
     _seed_account(
         node,
@@ -190,9 +189,9 @@ def test_a_fresh_deploy_gets_a_bridge_leg_and_an_sccp_c960_pool(
     with httpx.Client(transport=_transport(node), base_url="http://node") as client:
         report = seed.seed_once(client, miners=(miner,), options=options)
 
-    assert report.bridge.startswith("bridge: locked 1 SCCP and claimed htlc ")
-    assert report.dex.startswith("dex: created SCCP/C960 pool ")
-    assert "moved 5.00000000 C960 from miner-3" in capsys.readouterr().out
+    assert report.bridge == "bridge: demo leg already on chain"
+    assert report.dex.startswith("dex: SCCP/C960 pool ")
+    assert report.dex.endswith("already exists")
 
     liquidity = seed.demo_wallet(0)
     pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
@@ -203,14 +202,14 @@ def test_a_fresh_deploy_gets_a_bridge_leg_and_an_sccp_c960_pool(
     assert pool.shares == {liquidity.address: pool.total_shares}
 
     miner_account = node.mempool.projection.account(miner.address)
-    assert miner_account.assets[CHESS960_ASSET_ID] == coins_to_units(45)
+    assert miner_account.assets[CHESS960_ASSET_ID] == coins_to_units(50)
 
     htlcs = list(node.mempool.projection.htlcs.values())
     assert len(htlcs) == 1
     assert htlcs[0].status is HtlcStatus.CLAIMED
     assert htlcs[0].sender == liquidity.address
     assert htlcs[0].beneficiary == seed.demo_wallet(1).address
-    assert htlcs[0].preimage == hashlib.sha256(seed.BRIDGE_SECRET).hexdigest()
+    assert htlcs[0].preimage == bridge_preimage()
 
 
 def test_the_bridge_leg_is_not_duplicated_when_the_seeder_restarts(
@@ -236,8 +235,8 @@ def test_the_bridge_leg_is_not_duplicated_when_the_seeder_restarts(
     assert len(node.mempool.projection.htlcs) == 1
 
 
-def test_the_dex_seed_times_out_before_any_c960_exists(node: NodeService) -> None:
-    """A chain whose Chess960 games have not settled reports the wait, not a crash."""
+def test_the_dex_seed_times_out_when_no_pool_or_c960_exists(node: NodeService) -> None:
+    """Without the genesis pool, a chain with no Chess960 games reports the wait."""
     miner = _miner()
     _seed_account(
         node,
@@ -245,6 +244,8 @@ def test_the_dex_seed_times_out_before_any_c960_exists(node: NodeService) -> Non
         native_coins=100,
         public_key=miner.keypair.public_key_hex,
     )
+    node.chain.state.pools.clear()
+    node.mempool.projection.pools.clear()
     with (
         httpx.Client(transport=_transport(node), base_url="http://node") as client,
         pytest.raises(seed.SeedError, match="no mature C960 arrived"),

@@ -71,9 +71,11 @@ What is missing, and is the subject of the rest of this document:
   210,000 blocks, 8 decimals (`UNITS_PER_COIN = 100_000_000`). None of this
   changes; standard chess is not one variant among many but the chain's own
   unit of account.
-- **A variant asset is minted only by the coinbase of that variant's proofs.**
-  There is no premine, no sale, and no administrative mint. If nobody settles
-  Crazyhouse games, no CZH exists.
+- **A variant asset is minted by the coinbase of that variant's proofs.** The
+  one exception is a fixed genesis allocation: 5% of each variant's cap, public
+  and auditable, for liquidity and ecosystem incentives. There is no sale and no
+  administrative mint after genesis. If nobody settles Crazyhouse games, no CZH
+  is mined.
 - **Assets are consensus objects, not contracts.** An asset has an id, a supply
   counter and a minting rule. It has no bytecode, no issuer privileges and no
   upgrade path, so there is nothing for an issuer to rug and nothing for a
@@ -106,6 +108,11 @@ Each variant carries its own cap so SCCP's schedule is untouched. Giving every
 variant the same cap and halving interval makes "one variant is one chain's worth
 of scarcity" legible at launch; both are `VariantParams` fields and can diverge
 later only by a fork.
+
+Mainnet genesis pre-allocates 10% of the SCCP cap (2,100,000 SCCP) and 5% of each
+variant's cap (1,050,000 C960 today) for bootstrap grants, liquidity and
+ecosystem incentives. The split is public in `genesis/mainnet-premine.json`; see
+[`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 
 ### 3.3 The token is the games
 
@@ -711,8 +718,10 @@ receipts for producing them.
 - **EVM compatibility.** No `eth_*` endpoints, no chain-id registration, no
   ERC-20 or Solidity on the SCCP node, no MetaMask network switch. The one
   Solidity file is the counterparty HTLC contract and it runs on Ethereum.
-- **Permissionless asset issuance.** No `create_asset`, no ICO, no premine, no
-  token sale. Assets are protocol-defined and mined.
+- **Permissionless asset issuance.** No `create_asset`, no ICO and no token
+  sale. Assets are protocol-defined; the only pre-issued supply is the fixed,
+  public genesis allocation described in
+  [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 - **A custodial bridge or deposit addresses.** The HTLC path needs neither. An
   exchange that wants to list SCCP integrates against the same transactions.
 - **An AMM over external assets before `wETH`.** No oracle, no wrapped assets in

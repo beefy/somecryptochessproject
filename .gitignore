@@ -241,6 +241,7 @@ __marimo__/
 /bin/
 /chaindata/
 /data-play/
+/.secrets/
 *.key
 !tests/fixtures/*.key
 

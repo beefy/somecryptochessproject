@@ -327,7 +327,7 @@ TESTNET: Final = NetworkParams(
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
     max_tx_bytes=131_072,
-    genesis_hash="f90293abcf8dded21516bea747659098191599d7facd22ee625619b0c446db16",
+    genesis_hash="df754cb036e2f5488ed7d3a3b81a9e09f940a4c50feeddbbab6e6912243eedc7",
 )
 
 MAINNET: Final = NetworkParams(
@@ -369,7 +369,7 @@ MAINNET: Final = NetworkParams(
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
     max_tx_bytes=131_072,
-    genesis_hash="22ab56fb013c1c46452e735a7d2aa5b1cbbee2ca9a26af406ae38fc04445a631",
+    genesis_hash="8e28f57cae3a417de7751d9bd7eddc5feb7ae9b698c81e1a49c20b0ca2da20e7",
 )
 
 DEVNET: Final = NetworkParams.model_validate(

@@ -7,9 +7,9 @@ Every merge to `main` runs
    `ghcr.io/<owner>/<repo>:testnet`;
 2. over SSH, copy `docker-compose.yml` to the deployment host;
 3. run `docker compose down -v` (fresh chain), pull the new image and start the
-   node, bootstrap, demo seeder (`seed`), relay, four miners (two standard, two
-   Chess960) and the two traffic generators (`drip` and `traffic`, with
-   extra-miner churn disabled);
+   node, bootstrap, genesis demo check (`seed`), relay, four miners (two
+   standard, two Chess960) and the two traffic generators (`drip` and `traffic`,
+   with extra-miner churn disabled);
 4. run `deploy/check_testnet_stack.py` inside the node container and fail the
    workflow if the node has not reached the bootstrap height or the relay has no
    match;
@@ -17,9 +17,8 @@ Every merge to `main` runs
    `testnet` through DNS;
 6. print the `traffic` and `seed` container logs so the deploy record shows both
    starting up. It is informational: the pool never drains on a chain that also
-   runs `drip`, the generator paces itself in minutes, and the seed can wait 20+
-   minutes for C960, so gating the deploy on either would fail on timing rather
-   than on a broken stack.
+   runs `drip`, and the generator paces itself in minutes, so gating the deploy
+   on either would fail on timing rather than on a broken stack.
 
 The traffic generators add no new port, host, firewall rule or DNS record: they
 talk to the node over the Compose network and run beside the miners on the same
@@ -30,31 +29,27 @@ loop and why it cannot drain the faucet.
 The deploy job is skipped until a host is configured, so the image build is
 still useful on a repository without a testnet VM.
 
-## The demo seed
+## The demo pool and bridge
 
-Every deploy starts with an empty DEX and an empty bridge activity list, which
-makes a working chain look broken. The `seed` service fixes that without a manual
-CLI step:
+Testnet genesis already contains the demo DEX and bridge activity, so a fresh
+deploy opens with a useful `GET /v1/pools` and `GET /v1/htlcs` without waiting
+for a Chess960 proof:
 
-- it funds two deterministic demo wallets from the published testnet faucet;
-- it locks 1 SCCP in an HTLC and claims it with the published demo preimage, so
-  the Bridge **Activity** tab and `GET /v1/htlcs` show a completed SCCP leg;
-- it waits for the first **mature** C960 coinbase on one of the Chess960 miners,
-  transfers 5 C960 to the demo liquidity wallet, and creates the SCCP/C960 pool
-  with 5 SCCP on the other side.
+- genesis allocates 5 SCCP and 5 C960 to a published demo liquidity wallet and
+  creates the SCCP/C960 pool from them, with the LP shares held by that wallet;
+- genesis also records a completed 1-SCCP HTLC between two published demo
+  wallets, using the published demo preimage, so the Bridge **Activity** tab is
+  populated at height 0;
+- the `seed` service is now an idempotent check: it detects the existing pool and
+  HTLC and reports them instead of creating duplicates. It can still create both
+  if an operator removes the genesis records from a custom test network.
 
-The bridge leg is immediate. The pool is not: C960 exists only after a Chess960
-proof settles, and the winning miner's coinbase then has to mature for 20 blocks.
-At the testnet's one-minute blocks that is roughly 20-25 minutes after a deploy,
-depending on when the first Chess960 game finishes. The service waits in the
-background rather than delaying the deploy workflow; `docker compose logs -f seed`
-reports either the wait or the created pool.
-
-`seed` signs with the published stack keyfiles, which is safe for testnet and
-never acceptable on mainnet. Every transaction still goes through
-`POST /v1/tx` and normal consensus validation. It creates only the **SCCP** leg of
-the bridge. Deploying `EthHtlc` on Sepolia needs a funded Ethereum deployer key,
-which the SCCP node deliberately does not hold; set `SCCP_ETH_RPC_URL` and
+The genesis allocations and records are ordinary consensus state: the pool is in
+`state_root`, the HTLC has a derived `htlc_id`, and both are served by the
+production node. `seed` still signs with published stack keys, which is safe for
+testnet and never acceptable on mainnet. The Ethereum leg remains an operator
+deployment: deploying `EthHtlc` on Sepolia needs a funded Ethereum deployer key,
+which the SCCP node deliberately does not hold. Set `SCCP_ETH_RPC_URL` and
 `SCCP_ETH_HTLC_CONTRACT` after that one-time contract deploy.
 
 ## Public endpoint
