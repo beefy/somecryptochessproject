@@ -1,6 +1,7 @@
 """The extra testnet miners the traffic generator starts and stops.
 
-``docker-compose.yml`` runs two miners and their roster never changes.
+``docker-compose.yml`` runs four fixed miners (two per variant); the churn is
+disabled there but remains available for larger hosts.
 ``synthetic_miner_creation`` adds a deterministic pool on top: it writes a keyfile
 and an availability secret, registers the account, and runs a real
 ``sccp miner run`` child that the traffic generator later stops. These tests pin

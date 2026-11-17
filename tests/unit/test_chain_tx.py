@@ -105,6 +105,33 @@ def test_transfer_requires_funds(ledger: State, protocol_accounts: Mapping[str, 
     assert _reason(huge, ledger) is TxFailure.BALANCE
 
 
+def test_immature_coinbase_is_unspendable_until_its_exact_maturity(
+    ledger: State, protocol_accounts: Mapping[str, Any]
+) -> None:
+    """Mined value cannot pay a transfer until the maturity block releases it."""
+    alice, bob = protocol_accounts["alice"], protocol_accounts["bob"]
+    tx = _wallet(ledger).build_transfer(alice.keypair, bob.address, 100)
+    reward = 100 + tx.fee
+    ledger.accounts[alice.address].balance = 0
+    ledger.credit_coinbase(alice.address, reward, HEIGHT)
+    assert ledger.account(alice.address).immature == reward
+    assert ledger.spendable(alice.address) == 0
+    assert _reason(tx, ledger) is TxFailure.BALANCE
+
+    maturity = ledger.params.coinbase_maturity
+    assert ledger.release_matured(HEIGHT + maturity - 1) == 0
+    assert _reason(tx, ledger) is TxFailure.BALANCE
+
+    assert ledger.release_matured(HEIGHT + maturity) == reward
+    assert ledger.spendable(alice.address) == reward
+    _check(tx, ledger, height=HEIGHT + maturity)
+    apply_transaction(ledger, tx, height=HEIGHT + maturity)
+    account = ledger.account(alice.address)
+    assert account.balance == 0
+    assert account.immature == 0
+    assert account.coinbase_queue == []
+
+
 def test_transfer_rejects_self_payment(ledger: State, protocol_accounts: Mapping[str, Any]) -> None:
     alice = protocol_accounts["alice"]
     tx = _wallet(ledger).build_transfer(alice.keypair, protocol_accounts["bob"].address, 1)

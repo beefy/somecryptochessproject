@@ -1,16 +1,18 @@
-"""Build and publish the bootstrap chain for the two-miner testnet stack.
+"""Build and publish the bootstrap chain for the four-miner testnet stack.
 
 A fresh testnet cannot mine its first proof: availability is committed two epochs
-ahead, so somebody has to build the empty bootstrap blocks, fund two miners,
-register them, and commit/reveal availability before a relay has a matchable
-epoch. This script does exactly that once, deterministically, against a running
-node, and then writes the relay config from the epoch the chain opened.
+ahead, so somebody has to build the empty bootstrap blocks, fund the miners,
+register them for their variants, and commit/reveal availability before a relay
+has a matchable epoch. This script does exactly that once, deterministically,
+against a running node, and then writes the relay config from the epoch the
+chain opened. The stack has two standard miners and two Chess960 miners, which
+is one match per variant per round.
 
 It is a testnet convenience, not a miner and not a consensus shortcut. Every
 block is built with the same :class:`~sccp.miner.block_builder.BlockBuilder` a
 miner uses, submitted through the node's public ``POST /v1/blocks``, and
 validated by the node like any other block. The only special input is the
-published genesis faucet key, which funds the two stack miners.
+published genesis faucet key, which funds the four stack miners.
 
 Usage::
 
@@ -75,6 +77,7 @@ class BootstrapMiner:
     """One stack identity, loaded from the keyfile ``init`` wrote."""
 
     name: str
+    variant: str
     address: str
     keypair: HybridKeypair
     nonce_secret: str
@@ -96,8 +99,8 @@ def load_stack(directory: Path) -> tuple[BootstrapMiner, ...]:
     if document.get("network") != TESTNET.network_id:
         raise BootstrapError(f"{summary_path} is not a {TESTNET.network_id} stack")
     raw_miners = document.get("miners")
-    if not isinstance(raw_miners, list) or len(raw_miners) != 2:
-        raise BootstrapError("the stack must contain exactly two miners")
+    if not isinstance(raw_miners, list) or len(raw_miners) != 4:
+        raise BootstrapError("the stack must contain exactly four miners")
     if not passphrase:
         raise BootstrapError(f"{passphrase_path} is empty")
 
@@ -106,16 +109,24 @@ def load_stack(directory: Path) -> tuple[BootstrapMiner, ...]:
         if not isinstance(raw, Mapping):
             raise BootstrapError("each stack miner must be an object")
         name = raw.get("name")
+        variant = raw.get("variant", "standard")
         address = raw.get("address")
         keyfile = raw.get("keyfile")
         nonce_secret = raw.get("nonce_secret")
-        fields = (name, address, keyfile, nonce_secret)
+        fields = (name, variant, address, keyfile, nonce_secret)
         if not all(isinstance(item, str) and item for item in fields):
-            raise BootstrapError("each stack miner needs a name, address, keyfile and nonce")
+            raise BootstrapError(
+                "each stack miner needs a name, variant, address, keyfile and nonce"
+            )
         assert isinstance(name, str)
+        assert isinstance(variant, str)
         assert isinstance(address, str)
         assert isinstance(keyfile, str)
         assert isinstance(nonce_secret, str)
+        try:
+            TESTNET.variant(variant)
+        except SccpError as exc:
+            raise BootstrapError(f"{name}: {exc}") from exc
         try:
             wallet = load_wallet(Path(keyfile), passphrase)
         except SccpError as exc:
@@ -125,6 +136,7 @@ def load_stack(directory: Path) -> tuple[BootstrapMiner, ...]:
         miners.append(
             BootstrapMiner(
                 name=name,
+                variant=variant,
                 address=address,
                 keypair=wallet.signer,
                 nonce_secret=nonce_secret,
@@ -188,6 +200,7 @@ def _transactions_for(
                 endpoint=f"http://{miner.name}:8647",
                 engine=engine,
                 bond=params.min_bond,
+                variant=miner.variant,
             )
             _add(pool, tx)
             transactions.append(tx)
@@ -268,6 +281,7 @@ def build_chain(
         roster[address] = {
             "public_key": member.public_key,
             "engine": member.engine,
+            "variant": member.variant,
             "max_games": member.max_games,
         }
     if len(roster) != len(miners):

@@ -13,6 +13,7 @@ import { Divider, Text, useTheme } from "react-native-paper";
 import { fetchRatings } from "../api";
 import { StatCard } from "../components/BlockTable";
 import { EmptyState, FailureNotice, Link, Loading, Section } from "../components/Chrome";
+import { variantShort } from "../lib/assets";
 import { formatInteger, formatRating, shortAddress } from "../lib/format";
 import type { MinerRating } from "../types";
 import { useResource } from "../useResource";
@@ -88,6 +89,9 @@ export function Ratings(): ReactNode {
               </Text>
               <Text variant="labelSmall" style={[styles.colMiner, styles.muted]}>
                 MINER
+              </Text>
+              <Text variant="labelSmall" style={[styles.colVariant, styles.muted]}>
+                VARIANT
               </Text>
               <Text variant="labelSmall" style={[styles.colRating, styles.muted]}>
                 RATING
@@ -168,6 +172,9 @@ function RatingRow({ miner, wide }: { miner: MinerRating; wide: boolean }): Reac
           {shortAddress(miner.address)}
         </Link>
       </View>
+      <Text variant="bodySmall" style={[styles.colVariant, styles.muted]}>
+        {variantShort(miner.variant)}
+      </Text>
       <Text variant="bodyMedium" style={[styles.colRating, styles.numeric]}>
         {formatRating(miner.rating)}
       </Text>
@@ -211,6 +218,7 @@ const styles = StyleSheet.create({
   },
   colRank: { width: 44 },
   colMiner: { flexGrow: 1, flexShrink: 1, minWidth: 140 },
+  colVariant: { width: 58 },
   colRating: { width: 82, textAlign: "right" },
   colDeviation: { width: 64, textAlign: "right" },
   colRecord: { width: 84 },

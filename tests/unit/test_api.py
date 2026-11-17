@@ -14,11 +14,13 @@ from typing import Any
 import httpx
 import pytest
 
+from sccp.chain.dex import NATIVE_ASSET
+from sccp.chain.dex import pool_id as derive_pool_id
 from sccp.chain.genesis import faucet_keypair
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import ProofRecord
+from sccp.chain.state import Pool, ProofRecord
 from sccp.chain.tx import txid
-from sccp.config import DEVNET, TESTNET
+from sccp.config import CHESS960_ASSET_ID, DEVNET, TESTNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import MempoolError, ProtocolError
@@ -54,6 +56,8 @@ def test_status_describes_the_chain() -> None:
     assert payload["tip_hash"] == service.genesis_hash
     assert payload["peers"] == 0
     assert payload["mempool"] == {"transactions": 0, "proofs": 0}
+    assert payload["minted"] >= 0
+    assert isinstance(payload["minted_assets"], dict)
     service.close()
 
 
@@ -89,7 +93,40 @@ def test_account_view_for_the_faucet() -> None:
     assert payload["balance"] > 0
     assert payload["public_key"] == FAUCET.public_key_hex
     assert payload["registered_until_epoch"] is None
+    assert payload["variant"] == "standard"
+    assert payload["assets"] == {}
+    assert payload["immature_assets"] == {}
     assert invalid.status_code == 400
+
+
+def test_pool_routes_report_reserves_and_positions() -> None:
+    service = _node()
+    pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
+    service.chain.state.pools[pool_id] = Pool(
+        pool_id=pool_id,
+        asset_a=NATIVE_ASSET,
+        asset_b=CHESS960_ASSET_ID,
+        reserve_a=10_000,
+        reserve_b=20_000,
+        total_shares=1_000,
+        shares={FAUCET_ADDRESS: 1_000},
+    )
+    with _client(service) as client:
+        pools = client.get("/v1/pools").json()
+        one = client.get(f"/v1/pools/{pool_id}").json()
+        missing = client.get(f"/v1/pools/{'ab' * 32}")
+    assert pools["network"] == "devnet"
+    assert len(pools["pools"]) == 1
+    assert pools["pools"][0]["pool_id"] == pool_id
+    assert one["asset_a"] is None
+    assert one["asset_b"] == CHESS960_ASSET_ID
+    assert one["reserve_a"] == 10_000
+    assert one["reserve_b"] == 20_000
+    assert one["total_shares"] == 1_000
+    assert one["fee_bps"] == DEVNET.dex_fee_bps
+    assert one["shares"] == {FAUCET_ADDRESS: 1_000}
+    assert missing.status_code == 404
+    service.close()
 
 
 def test_transaction_lifecycle_through_the_api() -> None:
@@ -212,6 +249,7 @@ def test_block_list_walks_back_from_the_tip(devnet_chain: Any, mine_block: Any) 
     assert [row["height"] for row in older["blocks"]] == [1, 0]
     assert page["blocks"][0]["miner"] == MINER_ADDRESS
     assert page["blocks"][0]["parent_hash"] == page["blocks"][1]["hash"]
+    assert isinstance(page["blocks"][0]["variants"], dict)
     assert too_many.status_code == 422
     service.close()
 
@@ -230,10 +268,13 @@ def test_game_list_shows_pending_then_settled_results(
     service.mempool.add_proof(match.proof)
     with _client(service) as client:
         pending = client.get("/v1/games").json()["games"]
+        pending_view = client.get(f"/v1/games/{match.proof.game_hash}").json()
     assert [row["game_hash"] for row in pending] == [match.proof.game_hash]
+    assert pending_view["variant"] == match.proof.variant
     assert pending[0]["in_mempool"] is True
     assert pending[0]["height"] is None
     assert pending[0]["result"] == match.proof.result
+    assert pending[0]["variant"] == match.proof.variant
 
     mine_block(chain, miner_keys[match.proof.winner], proofs=(match.proof,))
     service.mempool = Mempool(params=chain.params, tip_state=chain.state, book=chain.book)
@@ -251,6 +292,7 @@ def test_game_list_shows_pending_then_settled_results(
     assert row["plies"] == match.proof.plies
     assert row["epoch"] == match.proof.epoch
     assert row["match_id"] == match.proof.match_id
+    assert row["variant"] == match.proof.variant
     assert older == []
     service.close()
 
@@ -363,6 +405,8 @@ def test_ratings_routes_are_derived_from_settled_proofs(
     assert detail["wins"] == 1 and detail["losses"] == 0
     assert detail["history"][-1]["games"] == 1
     assert detail["history"][-1]["rating"] == detail["rating"]
+    assert detail["variant"] == "standard"
+    assert all(row["variant"] == "standard" for row in board["miners"])
     assert prior.status_code == 200
     assert prior.json()["rating"] == 1500.0
     assert prior.json()["rank"] is None

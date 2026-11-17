@@ -22,6 +22,7 @@ from sccp.chain.block import (
     epoch_beacon,
     merkle_root_of,
     minted_subsidy,
+    minted_variant_rewards,
     proofless_allowed,
     required_proofs,
 )
@@ -203,9 +204,22 @@ class BlockBuilder:
             work, params, provisional, transactions, proofs, book=self.chain.book
         )
         subsidy = minted_subsidy(params, height, proofs=proofs, minted=self.chain.state.minted)
+        rewards = minted_variant_rewards(
+            params,
+            height,
+            proofs=proofs,
+            minted_assets=self.chain.state.minted_assets,
+        )
         value = subsidy + fees
-        coinbase = make_coinbase(miner, value, params.network_id)
+        coinbase = make_coinbase(
+            miner,
+            value,
+            params.network_id,
+            variant_rewards=rewards,
+        )
         work.credit_coinbase(miner, value, height)
+        for asset, amount in rewards.items():
+            work.credit_asset_coinbase(miner, asset, amount, height)
 
         draft = Block(
             header=provisional,

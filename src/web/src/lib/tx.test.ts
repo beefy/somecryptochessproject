@@ -10,10 +10,18 @@ import {
 import {
   LEDGER_SIGNATURE_HEX_LENGTH,
   availabilityCommitment,
+  buildAddLiquidity,
   buildAvailability,
+  buildCreatePool,
+  buildHtlcClaim,
+  buildHtlcLock,
+  buildHtlcRefund,
   buildRegister,
+  buildRemoveLiquidity,
   buildReveal,
+  buildSwap,
   buildTransfer,
+  htlcId,
   isLedgerSignatureHex,
   signTransaction,
   txId,
@@ -50,6 +58,37 @@ describe("ledger transactions", () => {
     expect(txId(tx)).toBe(ledger.transfer.txid);
     expect(tx.payload).toEqual(wire.payload);
   });
+
+  it("adds the asset field only for a non-native transfer", () => {
+    const wire = ledger.transfer.transaction;
+    const base = {
+      network: wire.network,
+      sender: wire.from,
+      nonce: wire.nonce,
+      fee: wire.fee,
+      to: wire.payload.to,
+      amount: wire.payload.amount,
+      publicKeyHex: wire.payload.public_key,
+    };
+    expect(buildTransfer(base).payload).not.toHaveProperty("asset");
+    expect(buildTransfer({ ...base, asset: "a".repeat(64) }).payload.asset).toBe("a".repeat(64));
+  });
+
+  it("names a non-standard variant in the register payload", () => {
+    const built = buildRegister({
+      network: wire.network,
+      sender: wire.from,
+      nonce: wire.nonce,
+      fee: wire.fee,
+      bond: 0,
+      endpoint: String(wire.payload.endpoint),
+      engine: String(wire.payload.engine),
+      variant: "chess960",
+      publicKeyHex: ledger.public_key_hex,
+    });
+    expect(built.payload.variant).toBe("chess960");
+  });
+
 
   it("refuses a non-positive transfer amount", () => {
     const wire = ledger.transfer.transaction;
@@ -180,6 +219,163 @@ describe("ledger transactions", () => {
       epoch: 6,
       nonce: entry.nonce,
     });
+  });
+});
+
+describe("DEX transactions", () => {
+  const network = ledger.transfer.transaction.network;
+  const sender = ledger.transfer.transaction.from;
+  const publicKeyHex = ledger.transfer.transaction.payload.public_key;
+  const asset = "a".repeat(64);
+  const poolId = "b".repeat(64);
+
+  it("orders a create-pool deposit and omits the native asset key", () => {
+    const tx = buildCreatePool({
+      network,
+      sender,
+      nonce: 0,
+      fee: 1_000,
+      assetA: asset,
+      amountA: 200,
+      assetB: null,
+      amountB: 100,
+      publicKeyHex,
+    });
+    expect(tx.type).toBe("create_pool");
+    expect(tx.payload).toStrictEqual({
+      amount_a: 100,
+      amount_b: 200,
+      asset_b: asset,
+      public_key: publicKeyHex,
+    });
+  });
+
+  it("builds add and remove payloads with the pool id", () => {
+    const add = buildAddLiquidity({
+      network,
+      sender,
+      nonce: 1,
+      fee: 1_000,
+      poolId,
+      amountA: 10,
+      amountB: 20,
+      publicKeyHex,
+    });
+    expect(add.payload).toStrictEqual({
+      pool_id: poolId,
+      amount_a: 10,
+      amount_b: 20,
+      public_key: publicKeyHex,
+    });
+    const remove = buildRemoveLiquidity({
+      network,
+      sender,
+      nonce: 2,
+      fee: 1_000,
+      poolId,
+      shares: 5,
+      publicKeyHex,
+    });
+    expect(remove.payload).toStrictEqual({
+      pool_id: poolId,
+      shares: 5,
+      public_key: publicKeyHex,
+    });
+  });
+
+  it("omits asset_in for a native swap and names it for a token swap", () => {
+    const native = buildSwap({
+      network,
+      sender,
+      nonce: 3,
+      fee: 1_000,
+      poolId,
+      assetIn: null,
+      amountIn: 100,
+      minAmountOut: 90,
+      publicKeyHex,
+    });
+    expect(native.payload).not.toHaveProperty("asset_in");
+    const token = buildSwap({
+      network,
+      sender,
+      nonce: 3,
+      fee: 1_000,
+      poolId,
+      assetIn: asset,
+      amountIn: 100,
+      minAmountOut: 90,
+      publicKeyHex,
+    });
+    expect(token.payload.asset_in).toBe(asset);
+  });
+});
+
+describe("HTLC transactions", () => {
+  const sender = wire.from;
+  const hashlock = "ab".repeat(32);
+  const preimage = "cd".repeat(32);
+
+  it("builds a lock with the exact payload the chain validates", () => {
+    const tx = buildHtlcLock({
+      network: wire.network,
+      sender,
+      nonce: 7,
+      fee: 1_000,
+      hashlock,
+      timelockHeight: 120,
+      beneficiary: sender,
+      amount: 50_000,
+      publicKeyHex: wire.payload.public_key as string,
+    });
+    expect(tx.type).toBe("htlc_lock");
+    expect(tx.payload).toEqual({
+      hashlock,
+      timelock_height: 120,
+      beneficiary: sender,
+      amount: 50_000,
+      public_key: String(wire.payload.public_key).toLowerCase(),
+    });
+    expect(htlcId(sender, 7)).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("names the asset only for a non-native lock", () => {
+    const tx = buildHtlcLock({
+      network: wire.network,
+      sender,
+      nonce: 7,
+      fee: 1_000,
+      hashlock,
+      timelockHeight: 120,
+      beneficiary: sender,
+      amount: 50_000,
+      asset: "a".repeat(64),
+      publicKeyHex: wire.payload.public_key as string,
+    });
+    expect(tx.payload.asset).toBe("a".repeat(64));
+  });
+
+  it("builds claim and refund payloads", () => {
+    const claim = buildHtlcClaim({
+      network: wire.network,
+      sender,
+      nonce: 8,
+      fee: 1_000,
+      htlcId: hashlock,
+      preimage,
+      publicKeyHex: wire.payload.public_key as string,
+    });
+    expect(claim.payload).toMatchObject({ htlc_id: hashlock, preimage });
+    const refund = buildHtlcRefund({
+      network: wire.network,
+      sender,
+      nonce: 9,
+      fee: 1_000,
+      htlcId: hashlock,
+      publicKeyHex: wire.payload.public_key as string,
+    });
+    expect(refund.payload).toMatchObject({ htlc_id: hashlock });
+    expect(refund.payload).not.toHaveProperty("preimage");
   });
 });
 

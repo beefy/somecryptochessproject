@@ -161,8 +161,11 @@ rules, its DNS record and its rollback are in
 | `SCCP_NODE` | `npm run dev`, `npm run preview` | `http://127.0.0.1:8645` | proxy target for `/v1` |
 | `VITE_SCCP_API` | the bundle, at build time | empty (same origin) | absolute API base |
 | `VITE_SCCP_RELAY` | the bundle, at build time | `http://127.0.0.1:8646` | relay base for `#/play`; a path such as `/relay` means "same origin, proxied" |
-| `VITE_EXPLORER_ORIGIN` | the bundle, at build time | `https://explorer.chessproofofwork.com` | where the hamburger sends people for the explorer on a hosted build |
-| `VITE_WALLET_ORIGIN` | the bundle, at build time | `https://wallet.chessproofofwork.com` | where the hamburger sends people for the wallet on a hosted build |
+| `VITE_EXPLORER_ORIGIN` | the bundle, at build time | `https://explorer.chessproofofwork.com` | direct subdomain link for the explorer |
+| `VITE_WALLET_ORIGIN` | the bundle, at build time | `https://wallet.chessproofofwork.com` | direct subdomain link for the wallet |
+| `VITE_PLAY_ORIGIN` | the bundle, at build time | `https://play.chessproofofwork.com` | direct subdomain link for Play |
+| `VITE_DEX_ORIGIN` | the bundle, at build time | `https://dex.chessproofofwork.com` | direct subdomain link for the DEX |
+| `VITE_BRIDGE_ORIGIN` | the bundle, at build time | `https://bridge.chessproofofwork.com` | direct subdomain link for Bridge |
 | `SCCP_WEB_DIST` | `sccp node run --web` | `src/web/dist` | directory to mount |
 
 ## Routes
@@ -178,10 +181,17 @@ rules, its DNS record and its rollback are in
 | `#/ratings` | miner Elo: the top ten, their record and deviation, and the distribution |
 | `#/miners/<address>` | one miner: current rating, a line chart per epoch, its games |
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
-| `#/wallet/play` | a seat in a real match, signed with the unlocked wallet key (`#/play` is an alias) |
-| `#/wallet` | the wallet: unlock or create a keyfile, balances, nickname, pending transfers |
-| `#/wallet/send` | build, review and sign a transfer, with an optional recipient nickname |
-| `#/wallet/receive` | the address, a copy button and its public-key fingerprint |
+| `#/wallet/play` | legacy alias for `#/play`; the table now has its own page |
+| `#/play` | a seat in a real match, signed with the unlocked wallet key; standard or Chess960 |
+| `#/dex` | swap SCCP and variant tokens (the DEX's default tab) |
+| `#/dex/liquidity` | add/remove liquidity and view LP positions |
+| `#/dex/create` | create a new constant-product pool |
+| `#/bridge` | buy SCCP with ETH (the bridge's default tab) |
+| `#/bridge/sell` | publish signed sell orders and follow/refund their HTLC legs |
+| `#/bridge/activity` | SCCP hash locks involving the connected wallet |
+| `#/wallet` | the wallet: unlock or create a keyfile, SCCP and variant-token balances, nickname, pending transfers |
+| `#/wallet/send` | build, review and sign an SCCP or C960 transfer, with an optional recipient nickname |
+| `#/wallet/receive` | the address, every token it can receive, a copy button and its public-key fingerprint |
 | `#/wallet/faucet` | ask the testnet faucet for funds, with the request's progress |
 | `#/wallet/history` | transactions touching the account, scanned from blocks, plus pending rows |
 | `#/wallet/settings` | nickname, keyfile export, auto-lock, forget-this-browser |
@@ -189,14 +199,24 @@ rules, its DNS record and its rollback are in
 Routing lives in the hash, so the bundle works from any static path with no
 server-side rewrite rule.
 
-`#/` is the explorer's overview on `explorer.chessproofofwork.com` and the
-wallet's overview on `wallet.chessproofofwork.com`: the two names serve the same
-release, and the hostname picks the landing view (`lib/site.ts`). Opening any
-wallet route swaps the tab bar for the wallet's own (Overview, Play, Send,
-Receive, Faucet, History, Settings), even when it was reached from the explorer
-hostname. The hamburger menu in the top-left corner does exactly one thing:
-switches between the explorer and the wallet — an absolute link on a hosted build,
-a hash locally so a dev server can exercise both sides.
+`#/` is the explorer's overview on `explorer.chessproofofwork.com`, the wallet's
+overview on `wallet.chessproofofwork.com`, the table on `play.…`, the DEX on
+`dex.…` and the bridge on `bridge.…`: all five names serve the same
+release, and the hostname picks the landing view (`lib/site.ts`). The hamburger
+offers exactly Explorer, Wallet, Play, DEX and Bridge. It switches with a hash
+rather than a cross-origin navigation because the unlocked keypair is memory-only;
+each subdomain is still a direct, bookmarkable entry point.
+
+Play, DEX and Bridge are gated by the shared wallet session. The strip under the
+header says `Wallet active` with the shortened address and a Lock button, or
+`Wallet inactive` with a link to open the wallet. Locking there clears the key for
+the whole tab.
+
+Browser storage is per origin, so a direct visit to another subdomain starts with
+that origin's own IndexedDB: the in-app hamburger therefore stays on the current
+origin, where the unlocked keypair is in memory. If one of the other names is
+opened directly, it still works, but the encrypted keyfile has to exist on that
+origin (open it from the wallet, or create/import one there).
 
 The tab icon is [`public/favicon.svg`](public/favicon.svg): the four centre
 squares of the `#/play` board (d4, d5, e4, e5) cropped into a circle, in that
@@ -204,6 +224,38 @@ board's own `squareLight`/`squareDark` colours. Vite copies `public/` into
 `dist/` untouched and `base: "./"` rewrites the `index.html` link to
 `./favicon.svg`, so the one build serves the icon from `/` (node `--web`) and
 from a subdirectory on a static host.
+
+## The bridge
+
+`#/bridge` is a trustless ETH↔SCCP atomic swap, not a custodian. A maker signs a
+sell-SCCP order with the wallet's hybrid key and binds an Ethereum address; a
+taker locks ETH in `contracts/EthHtlc.sol` under `sha256(secret)`, then the maker
+verifies that transaction and locks SCCP with the same hash under a timelock that
+expires before the ETH leg by the network's margin. The taker claims SCCP
+(revealing the secret) and the maker claims ETH with it. Both legs have
+independent refunds, so a stalled counterparty costs time, not funds.
+
+The page reads the node's `GET /v1/bridge` document. Its chain id is fixed by the
+SCCP network and cannot be overridden:
+
+| SCCP network | Ethereum environment | Chain id |
+| --- | --- | --- |
+| `devnet` | Anvil | `31337` |
+| `testnet` | Sepolia | `11155111` |
+| `mainnet` | Ethereum | `1` |
+
+An EIP-1193 wallet (MetaMask) signs the Ethereum leg. The page refuses to sign
+when the wallet's `eth_chainId` differs, and a maker refuses to lock SCCP until
+it has verified the ETH transaction's depositor, contract, value, hashlock,
+timelock and beneficiary. The node operator sets `SCCP_ETH_RPC_URL` and
+`SCCP_ETH_HTLC_CONTRACT`; see [`deploy/README.md`](../../deploy/README.md) and
+[`contracts/README.md`](../../contracts/README.md). A taker's preimage is kept in
+this origin's `localStorage` (keyed by order id) only until the claim reveals it,
+so a reload can resume the swap; it is not a wallet seed and it opens exactly one
+hashlock. The order book is deliberately off-consensus and in memory: a node
+restart drops open orders, which can be re-posted; a taken swap's SCCP leg is
+still in consensus state and remains visible at `#/accounts/<address>`.
+
 
 ## The wallet
 
@@ -245,11 +297,12 @@ What the page does:
   page: `POST /v1/faucet` on testnet and devnet, with a visible in-progress bar
   until the node answers and the grant's txid afterwards. On mainnet the tab says
   the service does not exist rather than hiding a button.
-- **Send** — amount and fee as decimal SCCP, an optional nickname for the
-  recipient (saved in this browser, never in the keyfile), a review screen showing
-  every signed field plus the txid, then a hybrid signature and `POST /v1/tx`. The
-  next nonce is kept locally because the account view reports the *committed* one;
-  an accepted transfer is remembered as pending and a notice confirms it.
+- **Send** — choose native SCCP or a variant token such as C960, then an amount
+  and fee (the fee is always SCCP), an optional nickname for the recipient (saved
+  in this browser, never in the keyfile), a review screen showing every signed
+  field plus the txid, then a hybrid signature and `POST /v1/tx`. The next nonce
+  is kept locally because the account view reports the *committed* one; an
+  accepted transfer is remembered as pending and a notice confirms it.
 - **History** — the node has no history endpoint, so the tab scans `/v1/blocks`
   backwards from the tip (200 blocks to start), keeps the transactions that touch
   the address, and caches the window in IndexedDB. It names the heights it covered
@@ -267,9 +320,13 @@ that matter for safety and they are in.
 ## The table is a miner seat
 
 `#/wallet/play` is not a demo board: it is the wallet's own account, put on the
-roster. The key it signs with goes through the same four steps a Stockfish miner
-goes through, as signed ledger transactions (`#/play` still resolves here, so an
-older link does not break):
+roster. Before registering, the seat chooses the network's standard or Chess960
+variant; the choice is locked by the `register` transaction. Chess960 boards start
+from the certificate's Shredder-FEN, and the page applies the 960 castling rules
+itself because `chess.js` only models the standard king/rook squares. The key it
+signs with goes through the same four steps a Stockfish miner goes through, as
+signed ledger transactions (`#/play` still resolves here, so an older link does
+not break):
 
 | Step | Transaction | Why |
 | --- | --- | --- |

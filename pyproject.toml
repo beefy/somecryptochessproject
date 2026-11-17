@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sccp"
-version = "0.23.0"
+version = "0.24.0"
 description = "Some Crypto Chess Project: a cryptocurrency whose proof of work is winning chess games"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -78,6 +78,7 @@ include = [
   "tests",
   "data",
   "deploy",
+  "contracts",
   "genesis",
   "Dockerfile",
   "docker-compose.yml",
@@ -91,7 +92,7 @@ minversion = "9.0"
 testpaths = ["tests"]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
-addopts = "-ra -q -m 'not engine and not adversarial and not slow and not network'"
+addopts = "-ra -q -m 'not engine and not adversarial and not slow and not network and not container'"
 # CI invokes the `pytest` console script rather than `python -m pytest`, which
 # does not add the repository root to sys.path. The tests import root-level
 # helper packages such as `deploy`.
@@ -101,6 +102,7 @@ markers = [
   "adversarial: cheat/self-play/tamper suites (deselected by default)",
   "slow: long-running (deselected by default)",
   "network: needs real sockets or the internet (deselected by default)",
+  "container: builds the Docker image and runs containers (deselected by default)",
 ]
 
 [tool.coverage.run]

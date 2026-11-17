@@ -17,9 +17,10 @@
  * epoch beacon — including both hybrid signature rules, verified against the
  * roster's keys.
  *
- * The page lives under the wallet's Play tab, not in the explorer: a seat is a
- * funded account, and the wallet is where the key and the funds already are.
- * `#/play` still resolves here so an old link does not break.
+ * The page lives at `play.chessproofofwork.com/#/play`, not in the explorer: a
+ * seat is a funded account, and the wallet is where the key and the funds already
+ * are. `#/play` resolves there; the old `#/wallet/play` URL is an alias, so a
+ * bookmark does not break.
  *
  * Two honest limits are shown, not hidden:
  *
@@ -30,9 +31,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Chess, type PieceSymbol, type Square } from "chess.js";
+import { type PieceSymbol, type Square } from "chess.js";
 import { Pressable, StyleSheet, useWindowDimensions, View } from "react-native";
-import { Button, Divider, HelperText, ProgressBar, Text } from "react-native-paper";
+import { Button, Divider, HelperText, ProgressBar, SegmentedButtons, Text } from "react-native-paper";
 
 import {
   fetchAccount,
@@ -53,9 +54,17 @@ import {
   StatusPill,
 } from "../components/Chrome";
 import { useNotice } from "../components/Notices";
-import { certificatePayload, signCertificate } from "../lib/certificate";
+import { tokenBalance, tokenForVariant, tokensFor, variantLabel } from "../lib/assets";
+import { signCertificate } from "../lib/certificate";
 import { DOMAINS } from "../lib/canonical";
-import { formatAmount, formatClock, formatCoins, formatInteger, shortAddress } from "../lib/format";
+import {
+  formatAmount,
+  formatClock,
+  formatCoins,
+  formatInteger,
+  formatTokenAmount,
+  shortAddress,
+} from "../lib/format";
 import {
   addressFor,
   hybridPublicKeyHex,
@@ -65,6 +74,7 @@ import {
   type HybridKeypair,
 } from "../lib/keys";
 import { movePayload, resultPayload } from "../lib/protocol";
+import { STARTING_FEN } from "../lib/protocol";
 import { buildWinProof } from "../lib/proof";
 import {
   relayJoin,
@@ -85,6 +95,7 @@ import {
   toWireTransaction,
 } from "../lib/tx";
 import { type CheckResult, verifyProof } from "../lib/verify";
+import { VariantGame } from "../lib/variantGame";
 import { useNode } from "../node";
 import type {
   AccountView,
@@ -243,8 +254,8 @@ function pickMatch(
  *
  * There is no seed field and no separate "sit down" key: the key that registers,
  * commits availability and signs every move is the wallet's, so a seat is the
- * same account that holds the funds. The wallet renders this under its Play tab;
- * `#/play` is an alias for that page.
+ * same account that holds the funds. The Play page renders this once the shared
+ * wallet session is unlocked.
  */
 export function Play({
   keypair,
@@ -306,6 +317,7 @@ function Table({
     loadCommitment(address),
   );
   const [selected, setSelected] = useState<string | null>(null);
+  const [selectedVariant, setSelectedVariant] = useState<string | null>(null);
   const [proof, setProof] = useState<WinProof | null>(null);
   const [checks, setChecks] = useState<CheckResult[] | null>(null);
   const signedResults = useRef<Set<string>>(new Set());
@@ -327,18 +339,26 @@ function Table({
     match === null ? null : colour === "white" ? match.certificate.black : match.certificate.white;
 
   const board = useMemo(() => {
-    const chess = new Chess();
+    const game = new VariantGame(
+      match?.certificate.variant ?? match?.matchup.variant ?? "standard",
+      match?.certificate.opening.start_fen ?? STARTING_FEN,
+    );
     for (const san of match?.san_moves ?? []) {
       try {
-        chess.move(san);
+        if (!game.move(san)) break;
       } catch {
         // A relay that published an unparseable SAN leaves the board at the last
         // move it could replay; the verifier later refuses the proof outright.
         break;
       }
     }
-    return chess;
-  }, [match?.san_moves]);
+    return game;
+  }, [
+    match?.san_moves,
+    match?.certificate.variant,
+    match?.certificate.opening.start_fen,
+    match?.matchup.variant,
+  ]);
 
   const live = match !== null && match.status === "active" && match.result === null;
   const ourTurn = live && match.turn === colour;
@@ -356,6 +376,15 @@ function Table({
   const reloadAccount = account.reload;
   const accountData = account.data;
   const epochData = epochView.data;
+  const tokens = tokensFor(params);
+  const registeredVariant =
+    accountData !== undefined && accountData.registered_until_epoch !== null
+      ? (accountData.variant ?? "standard")
+      : null;
+  const variant = registeredVariant ?? selectedVariant ?? tokens[0]?.variant ?? "standard";
+  const variantParams = params?.variants?.find((candidate) => candidate.name === variant);
+  const minPlies = variantParams?.min_plies ?? params?.min_plies ?? 1;
+  const prizeToken = tokenForVariant(tokens, variant);
 
   const reloadStatus = status.reload;
   const act = useCallback(
@@ -426,6 +455,7 @@ function Table({
           bond: params.min_bond,
           endpoint: window.location.origin,
           engine: ENGINE,
+          variant,
           publicKeyHex: hybridPublicKeyHex(keypair),
         }),
       );
@@ -528,15 +558,8 @@ function Table({
     });
   };
 
-  const playMove = (from: string, to: string): void => {
+  const sendSan = (san: string): void => {
     if (match === null || colour === null) return;
-    const next = new Chess(board.fen());
-    let san: string;
-    try {
-      san = next.move({ from, to, promotion: "q" }).san;
-    } catch {
-      return;
-    }
     const ply = match.san_moves.length;
     // Moves are Ed25519: `docs/PROTOCOL.md` section 8.5 keeps the high-volume
     // streams classical and anchors them with a hybrid signature over the move
@@ -560,6 +583,13 @@ function Table({
       relay.reload();
       return `${san} at ply ${ply}`;
     });
+  };
+
+  const playMove = (from: string, to: string): void => {
+    if (match === null || colour === null) return;
+    const san = board.sanFor(from as Square, to as Square);
+    if (san === null) return;
+    sendSan(san);
   };
 
   const coSign = useCallback(
@@ -597,7 +627,7 @@ function Table({
       const proofParams = {
         network_id: network,
         rounds_per_epoch: params.rounds_per_epoch,
-        min_plies: params.min_plies,
+        min_plies: minPlies,
       };
       const built = buildWinProof({
         certificate: transcript.certificate,
@@ -668,9 +698,7 @@ function Table({
       : stageOf(accountData, params, epochData, match, address, commitment);
 
   const legal =
-    selected === null
-      ? []
-      : board.moves({ square: selected as Square, verbose: true }).map((move) => move.to);
+    selected === null ? [] : board.targets(selected as Square);
 
   const press = (square: Square): void => {
     if (!ourTurn) return;
@@ -679,7 +707,7 @@ function Table({
       return;
     }
     const piece = board.get(square);
-    setSelected(piece !== undefined && piece.color === board.turn() ? square : null);
+    setSelected(piece !== undefined && piece.color === board.turn ? square : null);
   };
 
   if (status.data === undefined && status.error !== undefined) {
@@ -738,9 +766,34 @@ function Table({
         <KeyValue label="Address">
           <Mono copy>{address}</Mono>
         </KeyValue>
-        <KeyValue label="Balance">
+        <KeyValue label="Variant">
+          {`${variantLabel(variant)} · ${variant}`}
+          {registeredVariant !== null ? " (locked by registration)" : ""}
+        </KeyValue>
+        {registeredVariant === null && tokens.length > 1 && (
+          <SegmentedButtons
+            value={variant}
+            onValueChange={setSelectedVariant}
+            buttons={tokens.map((token) => ({
+              value: token.variant,
+              label: token.symbol,
+            }))}
+          />
+        )}
+        <KeyValue label="SCCP balance">
           {`${formatAmount(accountData.balance)} spendable · ${formatAmount(accountData.bonded)} bonded`}
         </KeyValue>
+        {tokens
+          .filter((token) => !token.native)
+          .map((token) => (
+            <KeyValue key={token.asset ?? token.symbol} label={`${token.symbol} balance`} mono>
+              {formatTokenAmount(
+                tokenBalance(accountData, token),
+                token.symbol,
+                token.decimals,
+              )}
+            </KeyValue>
+          ))}
         <KeyValue label="Nonce">{formatInteger(accountData.nonce)}</KeyValue>
         <KeyValue label="Registration">
           {accountData.registered_until_epoch === null
@@ -754,8 +807,15 @@ function Table({
 
       <Section title="Registration" subtitle="signed transactions, then two epochs of patience">
         <Text variant="bodyMedium" style={styles.muted}>
-          {`Register with a bond, commit availability for epoch ${nextTarget} during this epoch, reveal the nonce in epoch ${nextTarget - 1}. The chain then opens epoch ${nextTarget}'s roster with this address on it, and the relay pairs that roster from the epoch's beacon.`}
+          {`Register for ${variantLabel(variant)} with a bond, commit availability for epoch ${nextTarget} during this epoch, reveal the nonce in epoch ${nextTarget - 1}. The chain then opens epoch ${nextTarget}'s roster with this address on it, and the relay pairs that roster from the epoch's beacon.`}
         </Text>
+        <HelperText type="info" visible>
+          {prizeToken === undefined
+            ? "This network has no token metadata loaded yet."
+            : prizeToken.native
+              ? "Winning standard proofs mint native SCCP; the bond and every fee are SCCP too."
+              : `Winning ${variantLabel(variant)} proofs mint ${prizeToken.symbol}; the bond and every fee are still paid in SCCP.`}
+        </HelperText>
         <View style={styles.actions}>
           <Button
             mode="outlined"
@@ -863,6 +923,12 @@ function Table({
               <Mono copy>{opponent ?? ""}</Mono>
             </KeyValue>
             <KeyValue label="Your colour">{colour ?? ""}</KeyValue>
+            <KeyValue label="Variant" mono>
+              {`${variantLabel(match.certificate.variant)} · ${match.certificate.variant}`}
+            </KeyValue>
+            <KeyValue label="Start position">
+              <Mono copy>{match.certificate.opening.start_fen}</Mono>
+            </KeyValue>
             <KeyValue label="Opening">
               {`${match.certificate.opening.book_version} #${match.certificate.opening.line_id}: ${match.certificate.opening.moves.join(" ")}`}
             </KeyValue>
@@ -985,6 +1051,21 @@ function Table({
                 {`your clock ${formatClock(ourMs)}`}
               </Text>
             </View>
+            {live && ourTurn && board.castleSans().length > 0 && (
+              <View style={styles.actions}>
+                {board.castleSans().map((san) => (
+                  <Button
+                    key={san}
+                    mode="outlined"
+                    compact
+                    onPress={() => sendSan(san)}
+                    disabled={busy !== null}
+                  >
+                    {san === "O-O" ? "Castle kingside" : "Castle queenside"}
+                  </Button>
+                ))}
+              </View>
+            )}
             <View style={styles.log}>
               {(match?.san_moves ?? []).map((san, index) => (
                 <View key={`${index}-${san}`} style={styles.logRow}>
@@ -1078,8 +1159,11 @@ function Table({
             <KeyValue label="Winner">
               {`${shortAddress(proof.winner)} · ${proof.winner_seat}`}
             </KeyValue>
+            <KeyValue label="Variant" mono>
+              {`${variantLabel(proof.variant)} · ${proof.variant}`}
+            </KeyValue>
             <KeyValue label="Low ply">
-              {proof.low_ply ? `yes (${proof.plies} < ${params.min_plies})` : "no"}
+              {proof.low_ply ? `yes (${proof.plies} < ${minPlies})` : "no"}
             </KeyValue>
             <KeyValue label="Settlement">
               {settlementData === null || settlementData === undefined
@@ -1108,7 +1192,7 @@ function stageText(stage: Stage | null): string {
     case "fund":
       return "Fund the seat. A bond and a fee have to be on chain before it can register.";
     case "register":
-      return "Register. The bond, the endpoint and the engine fingerprint are what the certificate will commit to.";
+      return "Register for the selected variant. The bond, endpoint, engine fingerprint and variant are what the certificate will commit to.";
     case "commit":
       return "Commit availability for the epoch two ahead. The reveal comes in the epoch before it opens.";
     case "wait-for-reveal":

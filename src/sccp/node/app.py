@@ -22,11 +22,13 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from sccp.bridge.orders import Order, Take
 from sccp.errors import NotFoundError, RateLimitError, SccpError
 from sccp.node.models import (
     AccountView,
     BlockList,
     BlockView,
+    BridgeView,
     DifficultyView,
     EpochView,
     FaucetRequest,
@@ -35,13 +37,21 @@ from sccp.node.models import (
     GamePgn,
     GameView,
     GossipResult,
+    HtlcList,
+    HtlcView,
     MatchInfo,
     MempoolView,
     MinerRatingDetail,
     NodeStatus,
+    OrderAccepted,
+    OrderDetail,
+    OrderList,
     PeerView,
+    PoolList,
+    PoolView,
     ProofAccepted,
     RatingsView,
+    TakeAccepted,
     TransactionRecord,
     TxAccepted,
 )
@@ -154,6 +164,43 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     def params() -> dict[str, object]:
         return service.params.model_dump(mode="json")
 
+    @app.get("/v1/bridge", response_model=BridgeView)
+    def bridge() -> BridgeView:
+        return service.bridge_view()
+
+    @app.get("/v1/orders", response_model=OrderList)
+    def orders(
+        maker_sccp: str | None = Query(default=None),
+        give_asset: str | None = Query(default=None),
+        want_asset: str | None = Query(default=None),
+    ) -> OrderList:
+        return service.order_list(
+            maker_sccp=maker_sccp, give_asset=give_asset, want_asset=want_asset
+        )
+
+    @app.get("/v1/orders/{order_id}", response_model=OrderDetail)
+    def order(order_id: str) -> OrderDetail:
+        return service.order_detail(order_id)
+
+    @app.post("/v1/orders", response_model=OrderAccepted)
+    def submit_order(order: Order) -> OrderAccepted:
+        return service.submit_order(order)
+
+    @app.post("/v1/orders/{order_id}/takes", response_model=TakeAccepted)
+    def submit_take(order_id: str, take: Take) -> TakeAccepted:
+        return service.submit_take(order_id, take)
+
+    @app.get("/v1/htlcs", response_model=HtlcList)
+    def htlcs(
+        address: str | None = Query(default=None),
+        hashlock: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
+    ) -> HtlcList:
+        return service.htlcs(address=address, hashlock=hashlock)
+
+    @app.get("/v1/htlcs/{htlc_id}", response_model=HtlcView)
+    def htlc(htlc_id: str) -> HtlcView:
+        return service.htlc(htlc_id)
+
     @app.get("/v1/blocks", response_model=BlockList)
     def blocks(
         limit: int = Query(default=25, ge=1, le=200),
@@ -175,6 +222,14 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     @app.get("/v1/accounts/{address}", response_model=AccountView)
     def account(address: str) -> AccountView:
         return service.account(address)
+
+    @app.get("/v1/pools", response_model=PoolList)
+    def pools() -> PoolList:
+        return service.pools()
+
+    @app.get("/v1/pools/{pool_id}", response_model=PoolView)
+    def pool(pool_id: str) -> PoolView:
+        return service.pool(pool_id)
 
     @app.get("/v1/epochs/{epoch}", response_model=EpochView)
     def epoch(epoch: int) -> EpochView:

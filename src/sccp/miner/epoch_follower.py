@@ -149,6 +149,7 @@ def _roster_entries(
             subnet=member.subnet,
             asn=member.asn,
             recent_opponents=tuple(member.recent_opponents),
+            variant=member.variant,
         )
         public_keys[address] = member.public_key
         engines[address] = member.engine

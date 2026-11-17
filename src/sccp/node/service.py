@@ -23,11 +23,13 @@ from pathlib import Path
 
 import httpx
 
+from sccp.bridge.config import EthEnvironment, bridge_environment
+from sccp.bridge.orders import Order, OrderBook, Take, take_id
 from sccp.chain.block import block_hash
 from sccp.chain.chain import Chain, StoredBlock
 from sccp.chain.genesis import load_genesis
 from sccp.chain.mempool import Mempool
-from sccp.chain.state import ProofRecord
+from sccp.chain.state import HtlcRecord, ProofRecord
 from sccp.chain.storage import Storage, restore_chain
 from sccp.chain.tx import txid
 from sccp.chess.openings import OpeningBook
@@ -50,6 +52,7 @@ from sccp.node.models import (
     BlockList,
     BlockSummary,
     BlockView,
+    BridgeView,
     DifficultyPoint,
     DifficultyView,
     EpochView,
@@ -59,19 +62,29 @@ from sccp.node.models import (
     GameSummary,
     GameView,
     GossipResult,
+    HtlcList,
+    HtlcView,
     MatchInfo,
     MempoolStatus,
     MempoolView,
     MinerRatingDetail,
     MinerRatingView,
     NodeStatus,
+    OrderAccepted,
+    OrderDetail,
+    OrderList,
+    OrderView,
     PeerView,
+    PoolList,
+    PoolView,
     ProofAccepted,
     RatingBucketView,
     RatingDistribution,
     RatingPointView,
     RatingsView,
     SyncReport,
+    TakeAccepted,
+    TakeView,
     TransactionRecord,
     TxAccepted,
 )
@@ -150,6 +163,9 @@ def _rounded_volatility(value: float) -> float:
 def _block_summary(stored: StoredBlock) -> BlockSummary:
     """Project one stored block onto its list row."""
     header = stored.header
+    variants: dict[str, int] = {}
+    for proof in stored.block.proofs:
+        variants[proof.variant] = variants.get(proof.variant, 0) + 1
     return BlockSummary(
         hash=stored.block_hash,
         parent_hash=stored.parent_hash,
@@ -159,6 +175,7 @@ def _block_summary(stored: StoredBlock) -> BlockSummary:
         miner=header.miner,
         transactions=len(stored.block.transactions),
         proofs=len(stored.block.proofs),
+        variants=dict(sorted(variants.items())),
         wins_required=header.wins_required,
         seal_bits=header.seal_bits,
     )
@@ -208,6 +225,7 @@ def _pending_summary(proof: WinProof) -> GameSummary:
         result=proof.result,
         termination=proof.termination,
         plies=proof.plies,
+        variant=proof.variant,
         in_mempool=True,
         low_ply=proof.low_ply,
     )
@@ -225,6 +243,7 @@ def _settled_summary(record: ProofRecord, proof: WinProof | None) -> GameSummary
             game_hash=record.game_hash,
             proof_id=record.proof_id,
             winner=record.winner,
+            variant=record.variant,
             height=record.height,
         )
     return GameSummary(
@@ -239,6 +258,7 @@ def _settled_summary(record: ProofRecord, proof: WinProof | None) -> GameSummary
         result=proof.result,
         termination=proof.termination,
         plies=proof.plies,
+        variant=proof.variant,
         height=record.height,
         low_ply=proof.low_ply,
     )
@@ -259,6 +279,10 @@ class NodeService:
     gossip: GossipCache = field(default_factory=GossipCache)
     rng: random.Random = field(default_factory=random.Random)
     faucet: Faucet | None = None
+    bridge: EthEnvironment | None = None
+    """The Ethereum environment this node advertises; resolved from the process env."""
+    orders: OrderBook = field(default_factory=OrderBook)
+    """The off-consensus ETH/SCCP order book and pending takes."""
     write_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
     fanout: int = MAX_FANOUT
     max_sync_blocks: int = 512
@@ -281,6 +305,8 @@ class NodeService:
             )
         if self.storage is not None:
             self.storage.bind_network(self.params)
+        if self.bridge is None:
+            self.bridge = bridge_environment(self.params)
         if self.faucet is None and self.params.network_id in ("testnet", "devnet"):
             self.faucet = Faucet(
                 params=self.params,
@@ -382,6 +408,8 @@ class NodeService:
                 transactions=len(self.mempool.transactions),
                 proofs=len(self.mempool.proofs),
             ),
+            minted=self.chain.state.minted,
+            minted_assets=dict(sorted(self.chain.state.minted_assets.items())),
         )
 
     def block(self, reference: str) -> BlockView:
@@ -419,6 +447,136 @@ class NodeService:
             blocks=tuple(_block_summary(stored) for stored in reversed(window)),
         )
 
+    def _htlc_view(self, record: HtlcRecord) -> HtlcView:
+        """Project one consensus HTLC onto the API's nullable-asset shape."""
+        return HtlcView(
+            htlc_id=record.htlc_id,
+            network=self.params.network_id,
+            sender=record.sender,
+            beneficiary=record.beneficiary,
+            hashlock=record.hashlock,
+            timelock_height=record.timelock_height,
+            amount=record.amount,
+            created_at_height=record.created_at_height,
+            asset=record.asset or None,
+            status=record.status.value,
+            closed_at_height=record.closed_at_height,
+            preimage=record.preimage,
+        )
+
+    def bridge_view(self) -> BridgeView:
+        """The Ethereum environment paired with this SCCP network."""
+        assert self.bridge is not None  # set in __post_init__
+        return BridgeView(
+            network=self.bridge.network,
+            eth_chain_id=self.bridge.chain_id,
+            eth_chain_name=self.bridge.chain_name,
+            eth_explorer_url=self.bridge.explorer_url,
+            eth_rpc_url=self.bridge.rpc_url,
+            eth_htlc_contract=self.bridge.contract,
+            eth_confirmations=self.bridge.confirmations,
+            sccp_margin=self.bridge.sccp_margin,
+            configured=self.bridge.configured,
+        )
+
+    @staticmethod
+    def _order_view(digest: str, order: Order) -> OrderView:
+        return OrderView(order_id=digest, **order.model_dump(mode="json"))
+
+    @staticmethod
+    def _take_view(digest: str, take: Take) -> TakeView:
+        return TakeView(take_id=digest, **take.model_dump(mode="json"))
+
+    def order_list(
+        self,
+        *,
+        maker_sccp: str | None = None,
+        give_asset: str | None = None,
+        want_asset: str | None = None,
+    ) -> OrderList:
+        """Open orders, best SCCP price first; expired orders are pruned."""
+        rows = self.orders.list(
+            self.clock(),
+            maker_sccp=maker_sccp,
+            give_asset=give_asset,
+            want_asset=want_asset,
+        )
+        return OrderList(
+            network=self.params.network_id,
+            orders=tuple(self._order_view(digest, order) for digest, order in rows),
+        )
+
+    def order_detail(self, digest: str) -> OrderDetail:
+        """One order and its take, or 404 when it is unknown or expired."""
+        order = self.orders.get(digest, self.clock())
+        if order is None:
+            raise NotFoundError(f"unknown or expired order {digest!r}")
+        take = self.orders.take_for(digest)
+        return OrderDetail(
+            network=self.params.network_id,
+            order=self._order_view(digest, order),
+            take=None if take is None else self._take_view(take_id(take), take),
+        )
+
+    def submit_order(self, order: Order) -> OrderAccepted:
+        """Verify and publish a signed order in the in-memory book."""
+        digest = self.orders.add(order, self.params, self.clock())
+        return OrderAccepted(network=self.params.network_id, order_id=digest)
+
+    def submit_take(self, digest: str, take: Take) -> TakeAccepted:
+        """Attach a signed take to an open order.
+
+        The node also applies the wall-clock safety rule: the SCCP leg must
+        expire before the ETH leg with the environment's margin. The maker checks
+        this again before locking SCCP, but rejecting an obviously unsafe take at
+        admission keeps a malicious taker from filling the book with traps.
+        """
+        if take.order_id != digest:
+            raise ProtocolError(f"take names order {take.order_id!r}, not the route's {digest!r}")
+        assert self.bridge is not None  # set in __post_init__
+        now = self.clock()
+        blocks_until_eth = max(0, (take.eth_timelock - now) // self.params.target_block_seconds)
+        if take.sccp_timelock_height <= self.height:
+            raise ProtocolError(
+                f"SCCP timelock {take.sccp_timelock_height} is not after the tip {self.height}"
+            )
+        safe_max = self.height + blocks_until_eth - self.bridge.sccp_margin
+        if take.sccp_timelock_height > safe_max:
+            raise ProtocolError(
+                f"SCCP timelock {take.sccp_timelock_height} is not before the ETH timelock; "
+                f"the safe maximum is {safe_max}"
+            )
+        admitted = self.orders.take(take, self.params, now)
+        return TakeAccepted(network=self.params.network_id, take_id=admitted)
+
+    def htlc(self, htlc_id: str) -> HtlcView:
+        """One HTLC by id, whether locked, claimed or refunded."""
+        record = self.chain.state.htlcs.get(htlc_id)
+        if record is None:
+            raise NotFoundError(f"unknown htlc {htlc_id!r}")
+        return self._htlc_view(record)
+
+    def htlcs(self, address: str | None = None, hashlock: str | None = None) -> HtlcList:
+        """HTLCs filtered by participant or hashlock, newest first.
+
+        The wallet uses the account form after reload to find the lock a maker
+        created for it; the order book uses the hashlock form to recognise the
+        second leg of a take. Both are read-only projections of consensus state.
+        """
+        if address is not None and not validate_address(address, self.params):
+            raise AddressError(f"{address!r} is not a {self.params.network_id} address")
+        records = [
+            record
+            for record in self.chain.state.htlcs.values()
+            if (address is None or address in (record.sender, record.beneficiary))
+            and (hashlock is None or record.hashlock == hashlock)
+        ]
+        records.sort(key=lambda record: (record.created_at_height, record.htlc_id), reverse=True)
+        return HtlcList(
+            network=self.params.network_id,
+            htlcs=tuple(self._htlc_view(record) for record in records),
+        )
+
     def account(self, address: str) -> AccountView:
         """Balance, bond, nonce and registration for ``address``."""
         if not validate_address(address, self.params):
@@ -435,9 +593,41 @@ class NodeService:
             registered_until_epoch=account.registered_until_epoch,
             endpoint=account.endpoint,
             engine=account.engine,
+            variant=account.variant,
+            assets=dict(sorted(account.assets.items())),
+            immature_assets=dict(sorted(account.immature_assets.items())),
             public_key=account.public_key,
             banned_until=account.banned_until,
+            htlcs=self.htlcs(address).htlcs,
         )
+
+    def _pool_view(self, pool_id: str) -> PoolView:
+        """Project one ledger pool onto the API's nullable-asset shape."""
+        pool = self.chain.state.pools[pool_id]
+        return PoolView(
+            pool_id=pool.pool_id,
+            network=self.params.network_id,
+            asset_a=pool.asset_a or None,
+            asset_b=pool.asset_b or None,
+            reserve_a=pool.reserve_a,
+            reserve_b=pool.reserve_b,
+            total_shares=pool.total_shares,
+            fee_bps=self.params.dex_fee_bps,
+            shares=dict(sorted(pool.shares.items())),
+        )
+
+    def pools(self) -> PoolList:
+        """Every DEX pool, ordered by pool id."""
+        return PoolList(
+            network=self.params.network_id,
+            pools=tuple(self._pool_view(pool_id) for pool_id in sorted(self.chain.state.pools)),
+        )
+
+    def pool(self, pool_id: str) -> PoolView:
+        """One pool by id, or 404 when the chain has not created it."""
+        if pool_id not in self.chain.state.pools:
+            raise NotFoundError(f"unknown pool {pool_id!r}")
+        return self._pool_view(pool_id)
 
     def epoch(self, epoch: int) -> EpochView:
         """The beacon, roster and reveals the chain recorded for ``epoch``.
@@ -516,8 +706,7 @@ class NodeService:
         self._ratings = (self.chain.tip_hash, ledger)
         return ledger
 
-    @staticmethod
-    def _miner_rating_view(miner: MinerRating) -> MinerRatingView:
+    def _miner_rating_view(self, miner: MinerRating) -> MinerRatingView:
         """Project one ledger row onto the leaderboard shape."""
         return MinerRatingView(
             address=miner.address,
@@ -529,6 +718,7 @@ class NodeService:
             wins=miner.wins,
             draws=miner.draws,
             losses=miner.losses,
+            variant=self.chain.state.account(miner.address).variant,
             provisional=miner.provisional,
             last_epoch=miner.last_epoch,
             last_height=miner.last_height,
@@ -589,6 +779,7 @@ class NodeService:
                 wins=0,
                 draws=0,
                 losses=0,
+                variant=self.chain.state.account(address).variant,
                 provisional=True,
             )
         return MinerRatingDetail(
@@ -602,6 +793,7 @@ class NodeService:
             wins=found.wins,
             draws=found.draws,
             losses=found.losses,
+            variant=self.chain.state.account(found.address).variant,
             provisional=found.provisional,
             last_epoch=found.last_epoch,
             last_height=found.last_height,
@@ -640,6 +832,7 @@ class NodeService:
                 proof_id=record.proof_id,
                 match_id=transcript.certificate.match_id if transcript else None,
                 winner=record.winner,
+                variant=record.variant,
                 height=record.height,
             )
         for proof in self.mempool.proofs.values():
@@ -650,6 +843,7 @@ class NodeService:
                     proof_id=proof.proof_id,
                     match_id=proof.match_id,
                     winner=proof.winner,
+                    variant=proof.variant,
                     in_mempool=True,
                 )
         raise NotFoundError(f"unknown game {game_hash!r}")
@@ -748,6 +942,7 @@ class NodeService:
             epoch=epoch,
             round=round_number,
             seats=seats,
+            variant=certificate.variant if certificate is not None else "standard",
             certificate=certificate,
             transcript=transcript,
         )

@@ -5,6 +5,70 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [0.24.0] - 2026-11-15
+
+### Added
+
+- **Chess960 games and a C960 reward token.** A miner registers for a variant
+  (`register.variant`, standard by default) and `sccp miner run --variant
+  chess960` opens Stockfish with `UCI_Chess960=true`. The relay matches within a
+  variant, derives one of the 960 start positions from the beacon and match id,
+  and puts its Shredder-FEN in the signed certificate, so both seats replay the
+  same board. PGN validation requires `Rules "chess960"`, `SetUp`, `Variant` and
+  that FEN; a standard PGN cannot be replayed as Chess960. A settled Chess960
+  proof mints C960 instead of SCCP: accounts carry per-asset balances and
+  maturity queues, transfers can name an `asset`, and the coinbase pays C960 only
+  when the block settled that variant. The game hash, opening hash and signed
+  certificate payload add the variant only for non-standard games, so existing
+  standard hashes and signatures stay valid.
+- **Four miners on the testnet VM: two standard and two Chess960.** `init` now
+  writes `miner-1`..`miner-4`, the bootstrap registers each for its variant, and
+  the relay opens one match per variant per round. The traffic generator's extra
+  miner churn is disabled with `--extra-miners 0`, because the VM is sized for
+  the four fixed miners.
+- **Explorer and wallet are multi-token and variant-aware.** The games list,
+  game/block detail, account page, Elo leaderboard and miner page name each
+  game's or miner's variant. The dashboard reports SCCP and C960 issuance, the
+  block list summarises each block's proofs by variant, and transaction pages
+  decode an asset transfer. The wallet shows SCCP and C960 balances separately,
+  the Receive tab lists every token one address holds, and Send has a token
+  picker with the SCCP fee shown for every asset. Play can register for either
+  variant, draws the certified Chess960 start position (including castling via
+  the 960 rules), and builds a proof with the variant's start FEN, hash and
+  minimum-ply rule.
+- **An on-chain DEX for SCCP and variant tokens.** `create_pool`,
+  `add_liquidity`, `remove_liquidity` and `swap` are consensus transactions;
+  pools and their LP share ledgers are committed in `state_root` and served from
+  `GET /v1/pools` and `/v1/pools/{id}`. The constant-product curve charges
+  `dex_fee_bps` (30 bp by default) to liquidity providers, while every
+  transaction still pays its ordinary SCCP fee. The web DEX quotes locally, signs
+  a minimum output into the swap, and offers swap, create-pool and add/remove
+  liquidity views with the wallet's position.
+- **CLI coverage for the bridge and DEX.** `sccp dex` creates pools, adds and
+  removes liquidity, quotes and swaps; `sccp bridge` publishes and inspects
+  signed orders, publishes takes, and locks, claims or refunds both the SCCP
+  and ETH legs. The ETH leg uses the node's configured Anvil environment and an
+  unlocked JSON-RPC account; the browser Bridge page remains the EIP-1193 path.
+  `wallet balance` now prints every variant-token balance as well as SCCP.
+- **A trustless ETH↔SCCP bridge.** `htlc_lock`, `htlc_claim` and `htlc_refund`
+  are consensus transactions; open and closed locks, including the revealed
+  preimage, are committed in `state_root` and served from `GET /v1/htlcs` and the
+  account view. `contracts/EthHtlc.sol` is the Ethereum leg: no owner, proxy or
+  upgrade path, SHA-256 hashlock, and mutually exclusive claim/refund timelocks.
+  Signed off-consensus orders (`GET/POST /v1/orders`, `POST
+  /v1/orders/{id}/takes`) let a maker sell SCCP for ETH without a custodian, and
+  the web Bridge page runs the four-step flow with a browser Ethereum wallet.
+  The environment mapping is fixed: devnet→Anvil `31337`, testnet→Sepolia
+  `11155111`, mainnet→Ethereum `1`; `GET /v1/bridge` reports it and the deploy
+  script refuses a chain-id mismatch.
+- **Play, DEX and Bridge are separate sites.** `play.…#/play`, `dex.…#/dex` and
+  `bridge.…#/bridge` join the explorer and wallet names. The hamburger lists all
+  five, and Play/DEX/Bridge share
+  one wallet session. A status strip under the header shows `Wallet active` with
+  the shortened address and a Lock button, or `Wallet inactive` with a link to
+  open the wallet. Play moved out of the wallet's tab bar; `#/wallet/play`
+  remains an alias for `#/play`.
+
 ## [0.23.0] - 2026-11-15
 
 ### Added

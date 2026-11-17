@@ -1,16 +1,8 @@
-# The explorer's TLS terminator: Caddy in front of the nginx origin.
-#
-# It exists because a browser address bar means https://, and because `#/play`
-# generates a seat keypair in the page — a move signature should not cross the
-# network in clear text. Caddy obtains and renews the Let's Encrypt certificate
-# on its own (HTTP-01 on port 80), redirects http:// to https://, and proxies to
-# nginx on the loopback port it now listens on.
-#
-# Two names, one origin: the explorer and the wallet are the same bundle, and the
-# bundle decides what `#/` means from the hostname it was served under. Each name
-# gets its own certificate, so each needs an A record pointing at this VM and
-# port 80 open, or the challenge fails and Caddy serves a TLS error instead. Add
-# an `email` in the global block if you want expiry notices from Let's Encrypt.
+# The public application names. They are one bundle, one nginx origin and one
+# release directory; the browser's hostname only picks the landing view. Each
+# name gets its own certificate, so each needs an A record pointing at this VM
+# and port 80 open, or the challenge fails and Caddy serves a TLS error instead.
+# Add an `email` in the global block if you want expiry notices from Let's Encrypt.
 {
 	# No DNS provider token here, so HTTP-01 is the challenge in use.
 	# auto_https is on by default: :80 answers the challenge and redirects.
@@ -21,7 +13,21 @@ explorer.chessproofofwork.com {
 }
 
 # The wallet. Same release directory, same nginx: `wallet.chessproofofwork.com/#/`
-# is the wallet's landing page, and the hamburger menu links back here.
+# is the wallet's landing page.
 wallet.chessproofofwork.com {
+	reverse_proxy 127.0.0.1:8080
+}
+
+# Play, the DEX and the bridge. The bridge is the same bundle and wallet gate;
+# its Ethereum environment comes from the SCCP node's `GET /v1/bridge`.
+play.chessproofofwork.com {
+	reverse_proxy 127.0.0.1:8080
+}
+
+dex.chessproofofwork.com {
+	reverse_proxy 127.0.0.1:8080
+}
+
+bridge.chessproofofwork.com {
 	reverse_proxy 127.0.0.1:8080
 }

@@ -2,8 +2,9 @@
 
 ``docker compose up`` runs one ``init`` container with this script, then the
 bootstrap service builds the first chain blocks, followed by the node, the relay
-and two miners, all on the test network. Everything here is derived from fixed
-seeds, so the stack is reproducible: the same two addresses on every run.
+and four miners (two standard, two Chess960), all on the test network. Everything
+here is derived from fixed seeds, so the stack is reproducible: the same four
+addresses on every run.
 
 Those seeds and the passphrase are published on purpose. Testnet coins have no
 value and a predictable stack is what makes ``docker compose up`` work without a
@@ -36,8 +37,13 @@ PASSPHRASE_ENV = "SCCP_STACK_PASSPHRASE"
 DEFAULT_PASSPHRASE = "sccp-testnet-stack"
 """The published stack passphrase; see the module docstring."""
 
-MINER_COUNT = 2
-"""Two miners are the minimum for one match and match the deployment target."""
+MINER_COUNT = 4
+"""Four miners: two standard-chess seats and two Chess960 seats.
+
+Each variant needs its own pair, and matching is within a variant, so the VM
+runs exactly two matches per round. The VM is sized for four miner containers;
+the synthetic traffic generator no longer adds a churned fifth miner.
+"""
 
 AVAILABILITY_EPOCH = 2
 """First epoch for which availability can exist on a fresh testnet."""
@@ -51,6 +57,7 @@ class StackMiner:
     """One deterministic stack miner."""
 
     name: str
+    variant: str
     keypair: HybridKeypair
     address: str
     keyfile: Path
@@ -62,10 +69,18 @@ def miner_seed(index: int) -> bytes:
     return bytes([0xA0 + index]) * 32
 
 
+def _variant_for(index: int) -> str:
+    """First pair standard, second pair Chess960."""
+    return "standard" if index < 2 else "chess960"
+
+
 def _miner(index: int, directory: Path, params: NetworkParams) -> StackMiner:
     keypair = hybrid_keypair_from_seed(miner_seed(index))
+    variant = _variant_for(index)
+    params.variant(variant)
     return StackMiner(
         name=f"miner-{index + 1}",
+        variant=variant,
         keypair=keypair,
         address=encode_address(keypair.public_key_bytes, params),
         keyfile=directory / "keys" / f"miner-{index + 1}.key",
@@ -118,6 +133,7 @@ def write_stack(out: Path, *, passphrase: str) -> dict[str, object]:
         "miners": [
             {
                 "name": miner.name,
+                "variant": miner.variant,
                 "address": miner.address,
                 "keyfile": str(miner.keyfile),
                 "nonce_secret": miner.nonce_secret,

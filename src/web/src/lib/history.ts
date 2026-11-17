@@ -32,6 +32,8 @@ export interface HistoryEntry {
   to: string | null;
   /** Base units, or `null` for a transaction type that moves no coins. */
   amount: number | null;
+  /** Asset id for a token transfer; `null` means native SCCP. */
+  asset: string | null;
   fee: number;
   nonce: number;
   /** `H("sccp/v1/tx", body)`, which the explorer and the CLI both use. */
@@ -267,6 +269,7 @@ function entryFor(
     from: tx.from,
     to,
     amount: payloadAmount(tx),
+    asset: payloadText(tx, "asset"),
     fee: tx.fee,
     nonce: tx.nonce,
     txid: safeTxId(tx),

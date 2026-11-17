@@ -1,10 +1,10 @@
 /**
- * The two public names, and how a build decides which one it is on.
+ * The five public names, and how a build decides which one it is on.
  *
  * These are pure functions over a hostname, so they are the part of the
- * cross-subdomain switch that can be tested without a browser: the explorer is
- * anything that is not `wallet.*`, and a local server switches with a hash
- * instead of sending a developer to production.
+ * cross-site switch that can be tested without a browser: explorer is anything
+ * that is not one of the named subdomains, and a local server switches with a
+ * hash instead of sending a developer to production.
  */
 
 import { describe, expect, it } from "vitest";
@@ -19,9 +19,12 @@ import {
 } from "./site";
 
 describe("which site a hostname serves", () => {
-  it("treats the wallet name, and only that name, as the wallet", () => {
+  it("treats each named subdomain as its own site", () => {
     expect(siteForHostname("wallet.chessproofofwork.com")).toBe("wallet");
     expect(siteForHostname("wallet")).toBe("wallet");
+    expect(siteForHostname("play.chessproofofwork.com")).toBe("play");
+    expect(siteForHostname("dex.chessproofofwork.com")).toBe("dex");
+    expect(siteForHostname("bridge.chessproofofwork.com")).toBe("bridge");
     expect(siteForHostname("explorer.chessproofofwork.com")).toBe("explorer");
     expect(siteForHostname("testnet.chessproofofwork.com")).toBe("explorer");
     expect(siteForHostname("localhost")).toBe("explorer");
@@ -30,6 +33,9 @@ describe("which site a hostname serves", () => {
 
   it("lands each site on its own view", () => {
     expect(siteHash("wallet")).toBe("#/wallet");
+    expect(siteHash("play")).toBe("#/play");
+    expect(siteHash("dex")).toBe("#/dex");
+    expect(siteHash("bridge")).toBe("#/bridge");
     expect(siteHash("explorer")).toBe("#/");
   });
 });
@@ -42,6 +48,9 @@ describe("cross-site links", () => {
     expect(
       crossSiteHref("explorer", { hostname: "wallet.chessproofofwork.com", local: false }),
     ).toBe(`${SITE_ORIGINS.explorer}/`);
+    expect(
+      crossSiteHref("dex", { hostname: "wallet.chessproofofwork.com", local: false }),
+    ).toBe(`${SITE_ORIGINS.dex}/`);
   });
 
   it("stays on the current server during development", () => {

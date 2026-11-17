@@ -18,16 +18,18 @@ whose chain it has never synced.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from sccp.chain import dex
 from sccp.chain.chain import Chain
-from sccp.chain.state import Account, State, epoch_of
+from sccp.chain.state import Account, HtlcRecord, State, epoch_of
 from sccp.chain.tx import sign_transaction, txid
 from sccp.config import NetworkParams, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import HybridKeypair
-from sccp.errors import StateError, WalletServiceError
+from sccp.errors import ConfigError, StateError, WalletServiceError
 from sccp.protocol.models import Transaction, TxType
 
 DEFAULT_SOURCE = "the local chain in --data-dir"
@@ -212,34 +214,476 @@ class WalletService:
         *,
         fee: int | None = None,
         nonce: int | None = None,
+        asset: str | None = None,
     ) -> Transaction:
-        """Build and sign a transfer, raising if the sender cannot afford it."""
+        """Build and sign a transfer, raising if the sender cannot afford it.
+
+        ``asset`` accepts an asset id, a variant name or its symbol. Omitting it
+        (or naming SCCP) transfers the native coin and keeps the protocol-v1
+        payload byte-identical. A variant transfer still pays its fee in SCCP.
+        """
         sender = self.address_for(keypair)
         self._require_address(to)
         if amount <= 0:
             raise WalletServiceError("a transfer amount must be positive")
         if to == sender:
             raise WalletServiceError("a transfer must name a different recipient")
-        resolved_fee = self.required_fee(fee)
-        total = amount + resolved_fee
-        spendable = self.state.spendable(sender)
-        if spendable < total:
-            raise WalletServiceError(
-                f"{sender} has {format_coins(spendable)} spendable, the transfer needs "
-                f"{format_coins(total)} ({format_coins(amount)} plus a "
-                f"{format_coins(resolved_fee)} fee); this balance came from {self.source}"
+        selected = None
+        if asset is not None:
+            selected = next(
+                (
+                    variant
+                    for variant in self.params.variants
+                    if asset in (variant.asset, variant.name, variant.symbol)
+                ),
+                None,
             )
+            if selected is None:
+                raise WalletServiceError(f"unknown asset {asset!r}")
+        resolved_fee = self.required_fee(fee)
+        if selected is not None and not selected.native:
+            if self.state.asset_balance(sender, selected.asset or "") < amount:
+                raise WalletServiceError(
+                    f"{sender} has "
+                    f"{self.state.asset_balance(sender, selected.asset or '')} "
+                    f"{selected.symbol}, the transfer needs {amount}"
+                )
+            if self.state.spendable(sender) < resolved_fee:
+                raise WalletServiceError(
+                    f"{sender} cannot pay the {format_coins(resolved_fee)} SCCP fee"
+                )
+        else:
+            total = amount + resolved_fee
+            spendable = self.state.spendable(sender)
+            if spendable < total:
+                raise WalletServiceError(
+                    f"{sender} has {format_coins(spendable)} spendable, the transfer needs "
+                    f"{format_coins(total)} ({format_coins(amount)} plus a "
+                    f"{format_coins(resolved_fee)} fee); this balance came from {self.source}"
+                )
+        payload: dict[str, object] = {
+            "to": to,
+            "amount": amount,
+            "public_key": keypair.public_key_hex,
+        }
+        if selected is not None and not selected.native:
+            payload["asset"] = selected.asset
         tx = Transaction(
             network=self.params.network_id,
             type=TxType.TRANSFER,
             sender=sender,
             nonce=self._resolve_nonce(sender, nonce),
             fee=resolved_fee,
+            payload=payload,
+        )
+        return sign_transaction(keypair, tx)
+
+    def _trade_asset(self, asset: str | None) -> str:
+        """Resolve a pool side to an asset id; native SCCP is the empty string."""
+        resolved = self._resolve_asset_name(asset)
+        return dex.NATIVE_ASSET if resolved is None else resolved
+
+    def _require_trade_balance(
+        self,
+        address: str,
+        asset: str,
+        amount: int,
+        fee: int,
+        what: str,
+    ) -> None:
+        """Require ``amount`` of ``asset`` and the SCCP fee for one pool side."""
+        spendable = self.state.spendable(address)
+        if spendable < fee:
+            raise WalletServiceError(f"{address} cannot pay the {format_coins(fee)} SCCP fee")
+        if asset == dex.NATIVE_ASSET:
+            if spendable < amount + fee:
+                raise WalletServiceError(
+                    f"{address} has {format_coins(spendable)} spendable, {what} needs "
+                    f"{format_coins(amount)} plus a {format_coins(fee)} fee"
+                )
+            return
+        available = self.state.asset_balance(address, asset)
+        if available < amount:
+            raise WalletServiceError(
+                f"{address} has {available} units of {asset}, {what} needs {amount}"
+            )
+
+    def _require_pool_id(self, pool_id: str) -> None:
+        """Check a pool id has the 32-byte lowercase hex form the payload needs."""
+        if len(pool_id) != 64 or pool_id != pool_id.lower():
+            raise WalletServiceError("a pool id must be 32-byte lowercase hex")
+        try:
+            bytes.fromhex(pool_id)
+        except ValueError:
+            raise WalletServiceError("a pool id must be hexadecimal") from None
+
+    def build_create_pool(
+        self,
+        keypair: HybridKeypair,
+        *,
+        asset_a: str | None,
+        amount_a: int,
+        asset_b: str | None,
+        amount_b: int,
+        fee: int | None = None,
+        nonce: int | None = None,
+    ) -> Transaction:
+        """Build and sign a ``create_pool`` with an initial two-sided deposit.
+
+        Omit a side (or name native ``SCCP``) to pair the native coin with a
+        variant asset. Amounts are base units. The chain orders the pair by
+        asset id, and this builder does the same so the payload names the sides
+        in the order the pool will store them.
+        """
+        sender = self.address_for(keypair)
+        if amount_a <= 0 or amount_b <= 0:
+            raise WalletServiceError("both initial pool amounts must be positive")
+        resolved_a = self._trade_asset(asset_a)
+        resolved_b = self._trade_asset(asset_b)
+        if resolved_a == resolved_b:
+            raise WalletServiceError("a pool needs two different assets")
+        resolved_a, amount_a, resolved_b, amount_b = dex.normalize_pair(
+            resolved_a, amount_a, resolved_b, amount_b
+        )
+        pool_id = dex.pool_id(resolved_a, resolved_b)
+        if pool_id in self.state.pools:
+            raise WalletServiceError(f"pool {pool_id} already exists")
+        if dex.initial_shares(amount_a, amount_b) <= 0:
+            raise WalletServiceError("the initial deposit is too small to mint a share")
+        resolved_fee = self.required_fee(fee)
+        self._require_trade_balance(sender, resolved_a, amount_a, resolved_fee, "the first side")
+        self._require_trade_balance(sender, resolved_b, amount_b, resolved_fee, "the second side")
+        payload: dict[str, object] = {
+            "amount_a": amount_a,
+            "amount_b": amount_b,
+            "public_key": keypair.public_key_hex,
+        }
+        if resolved_a != dex.NATIVE_ASSET:
+            payload["asset_a"] = resolved_a
+        if resolved_b != dex.NATIVE_ASSET:
+            payload["asset_b"] = resolved_b
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.CREATE_POOL,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload=payload,
+        )
+        return sign_transaction(keypair, tx)
+
+    def build_add_liquidity(
+        self,
+        keypair: HybridKeypair,
+        *,
+        pool_id: str,
+        amount_a: int,
+        amount_b: int,
+        fee: int | None = None,
+        nonce: int | None = None,
+    ) -> Transaction:
+        """Build and sign a proportional ``add_liquidity`` deposit."""
+        sender = self.address_for(keypair)
+        self._require_pool_id(pool_id)
+        if amount_a <= 0 or amount_b <= 0:
+            raise WalletServiceError("both liquidity amounts must be positive")
+        pool = self.state.pools.get(pool_id)
+        resolved_fee = self.required_fee(fee)
+        if pool is None:
+            if self.state.spendable(sender) < resolved_fee:
+                raise WalletServiceError(
+                    f"{sender} cannot pay the {format_coins(resolved_fee)} SCCP fee"
+                )
+        else:
+            shares = dex.added_shares(
+                pool.reserve_a,
+                pool.reserve_b,
+                pool.total_shares,
+                amount_a,
+                amount_b,
+            )
+            if shares <= 0:
+                raise WalletServiceError("the deposit is too small to mint a share")
+            self._require_trade_balance(sender, pool.asset_a, amount_a, resolved_fee, "the deposit")
+            self._require_trade_balance(sender, pool.asset_b, amount_b, resolved_fee, "the deposit")
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.ADD_LIQUIDITY,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
             payload={
-                "to": to,
-                "amount": amount,
+                "pool_id": pool_id,
+                "amount_a": amount_a,
+                "amount_b": amount_b,
                 "public_key": keypair.public_key_hex,
             },
+        )
+        return sign_transaction(keypair, tx)
+
+    def build_remove_liquidity(
+        self,
+        keypair: HybridKeypair,
+        *,
+        pool_id: str,
+        shares: int,
+        fee: int | None = None,
+        nonce: int | None = None,
+    ) -> Transaction:
+        """Build and sign a ``remove_liquidity`` redemption of pool shares."""
+        sender = self.address_for(keypair)
+        self._require_pool_id(pool_id)
+        if shares <= 0:
+            raise WalletServiceError("liquidity shares must be positive")
+        pool = self.state.pools.get(pool_id)
+        if pool is not None:
+            owned = pool.shares.get(sender, 0)
+            if shares > owned:
+                raise WalletServiceError(
+                    f"{sender} has {owned} pool shares, cannot remove {shares}"
+                )
+            amount_a, amount_b = dex.removed_amounts(
+                pool.reserve_a, pool.reserve_b, pool.total_shares, shares
+            )
+            if amount_a <= 0 or amount_b <= 0:
+                raise WalletServiceError("the redemption is too small to pay both sides")
+        resolved_fee = self.required_fee(fee)
+        if self.state.spendable(sender) < resolved_fee:
+            raise WalletServiceError(
+                f"{sender} cannot pay the {format_coins(resolved_fee)} SCCP fee"
+            )
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.REMOVE_LIQUIDITY,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload={
+                "pool_id": pool_id,
+                "shares": shares,
+                "public_key": keypair.public_key_hex,
+            },
+        )
+        return sign_transaction(keypair, tx)
+
+    def build_swap(
+        self,
+        keypair: HybridKeypair,
+        *,
+        pool_id: str,
+        asset_in: str | None,
+        amount_in: int,
+        min_amount_out: int,
+        fee: int | None = None,
+        nonce: int | None = None,
+    ) -> Transaction:
+        """Build and sign a constant-product ``swap`` with a signed minimum out."""
+        sender = self.address_for(keypair)
+        self._require_pool_id(pool_id)
+        if amount_in <= 0:
+            raise WalletServiceError("a swap input must be positive")
+        if min_amount_out < 0:
+            raise WalletServiceError("a swap minimum output cannot be negative")
+        resolved_in = self._trade_asset(asset_in)
+        pool = self.state.pools.get(pool_id)
+        if pool is not None:
+            if resolved_in not in (pool.asset_a, pool.asset_b):
+                raise WalletServiceError(f"pool {pool_id} does not trade asset {resolved_in!r}")
+            native_in = resolved_in == pool.asset_a
+            reserve_in = pool.reserve_a if native_in else pool.reserve_b
+            reserve_out = pool.reserve_b if native_in else pool.reserve_a
+            amount_out = dex.swap_output(
+                reserve_in, reserve_out, amount_in, self.params.dex_fee_bps
+            )
+            if amount_out < min_amount_out:
+                raise WalletServiceError(
+                    f"the swap pays {amount_out}, below the requested minimum {min_amount_out}"
+                )
+            self._require_trade_balance(sender, resolved_in, amount_in, 0, "the swap input")
+        resolved_fee = self.required_fee(fee)
+        if self.state.spendable(sender) < resolved_fee:
+            raise WalletServiceError(
+                f"{sender} cannot pay the {format_coins(resolved_fee)} SCCP fee"
+            )
+        payload: dict[str, object] = {
+            "pool_id": pool_id,
+            "amount_in": amount_in,
+            "min_amount_out": min_amount_out,
+            "public_key": keypair.public_key_hex,
+        }
+        if resolved_in != dex.NATIVE_ASSET:
+            payload["asset_in"] = resolved_in
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.SWAP,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload=payload,
+        )
+        return sign_transaction(keypair, tx)
+
+    def _resolve_asset_name(self, asset: str | None) -> str | None:
+        """Resolve an asset id, variant name or symbol to an id (native is None)."""
+        if asset is None:
+            return None
+        for variant in self.params.variants:
+            if asset in (variant.asset, variant.name, variant.symbol):
+                return variant.asset
+        raise WalletServiceError(f"unknown asset {asset!r}")
+
+    def build_htlc_lock(
+        self,
+        keypair: HybridKeypair,
+        *,
+        hashlock: str,
+        timelock_height: int,
+        beneficiary: str,
+        amount: int,
+        fee: int | None = None,
+        nonce: int | None = None,
+        asset: str | None = None,
+    ) -> Transaction:
+        """Build and sign an ``htlc_lock`` transaction.
+
+        ``hashlock`` is the SHA-256 of a 32-byte preimage, the same bytes the
+        Ethereum contract checks. ``timelock_height`` is an absolute SCCP height;
+        the transaction is invalid once the chain reaches it.
+        """
+        sender = self.address_for(keypair)
+        self._require_address(beneficiary)
+        if amount <= 0:
+            raise WalletServiceError("an htlc amount must be positive")
+        if len(hashlock) != 64 or hashlock != hashlock.lower():
+            raise WalletServiceError("an htlc hashlock must be 32-byte lowercase hex")
+        try:
+            bytes.fromhex(hashlock)
+        except ValueError:
+            raise WalletServiceError("an htlc hashlock must be hexadecimal") from None
+        if timelock_height <= self.state.height:
+            raise WalletServiceError(
+                f"the timelock {timelock_height} is not after the wallet's height "
+                f"{self.state.height}"
+            )
+        selected = self._resolve_asset_name(asset)
+        resolved_fee = self.required_fee(fee)
+        if selected is None:
+            if self.state.spendable(sender) < amount + resolved_fee:
+                raise WalletServiceError(f"{sender} cannot lock {amount} plus a {resolved_fee} fee")
+        else:
+            if self.state.asset_balance(sender, selected) < amount:
+                raise WalletServiceError(f"{sender} does not hold {amount} of {selected}")
+            if self.state.spendable(sender) < resolved_fee:
+                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} SCCP fee")
+        payload: dict[str, object] = {
+            "public_key": keypair.public_key_hex,
+            "hashlock": hashlock,
+            "timelock_height": timelock_height,
+            "beneficiary": beneficiary,
+            "amount": amount,
+        }
+        if selected is not None:
+            payload["asset"] = selected
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.HTLC_LOCK,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload=payload,
+        )
+        return sign_transaction(keypair, tx)
+
+    def _htlc_for(self, htlc_id: str) -> HtlcRecord:
+        record = self.state.htlcs.get(htlc_id)
+        if record is None:
+            raise WalletServiceError(f"unknown htlc {htlc_id!r}")
+        return record
+
+    def build_htlc_claim(
+        self,
+        keypair: HybridKeypair,
+        *,
+        htlc_id: str,
+        preimage: str,
+        fee: int | None = None,
+        nonce: int | None = None,
+        record: HtlcRecord | None = None,
+    ) -> Transaction:
+        """Build and sign an ``htlc_claim`` that reveals ``preimage``.
+
+        ``record`` lets a caller that read the lock from a node (which does not
+        carry consensus state in an account view) supply the terms it is
+        claiming. Without it the record is read from local state.
+        """
+        sender = self.address_for(keypair)
+        stored = record if record is not None else self._htlc_for(htlc_id)
+        if stored.htlc_id != htlc_id:
+            raise WalletServiceError("the htlc record names a different lock")
+        if sender != stored.beneficiary:
+            raise WalletServiceError(f"the htlc pays {stored.beneficiary}, not {sender}")
+        if len(preimage) != 64 or preimage != preimage.lower():
+            raise WalletServiceError("an htlc preimage must be 32-byte lowercase hex")
+        try:
+            preimage_bytes = bytes.fromhex(preimage)
+        except ValueError:
+            raise WalletServiceError("an htlc preimage must be hexadecimal") from None
+        if hashlib.sha256(preimage_bytes).hexdigest() != stored.hashlock:
+            raise WalletServiceError("the preimage does not open this htlc")
+        resolved_fee = self.required_fee(fee)
+        spendable = self.state.spendable(sender)
+        if stored.asset:
+            if spendable < resolved_fee:
+                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} SCCP fee")
+        elif spendable + stored.amount < resolved_fee:
+            raise WalletServiceError("the htlc amount cannot cover the network fee")
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.HTLC_CLAIM,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload={
+                "public_key": keypair.public_key_hex,
+                "htlc_id": htlc_id,
+                "preimage": preimage,
+            },
+        )
+        return sign_transaction(keypair, tx)
+
+    def build_htlc_refund(
+        self,
+        keypair: HybridKeypair,
+        *,
+        htlc_id: str,
+        fee: int | None = None,
+        nonce: int | None = None,
+        record: HtlcRecord | None = None,
+    ) -> Transaction:
+        """Build and sign an ``htlc_refund``; valid only at/after the timelock.
+
+        ``record`` is the same node-view escape hatch as :meth:`build_htlc_claim`.
+        """
+        sender = self.address_for(keypair)
+        stored = record if record is not None else self._htlc_for(htlc_id)
+        if stored.htlc_id != htlc_id:
+            raise WalletServiceError("the htlc record names a different lock")
+        if sender != stored.sender:
+            raise WalletServiceError(f"only {stored.sender} may refund this htlc")
+        resolved_fee = self.required_fee(fee)
+        spendable = self.state.spendable(sender)
+        if stored.asset:
+            if spendable < resolved_fee:
+                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} SCCP fee")
+        elif spendable + stored.amount < resolved_fee:
+            raise WalletServiceError("the htlc amount cannot cover the network fee")
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.HTLC_REFUND,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload={"public_key": keypair.public_key_hex, "htlc_id": htlc_id},
         )
         return sign_transaction(keypair, tx)
 
@@ -252,9 +696,19 @@ class WalletService:
         bond: int | None = None,
         fee: int | None = None,
         nonce: int | None = None,
+        variant: str = "standard",
     ) -> Transaction:
-        """Build and sign a miner registration locking ``bond``."""
+        """Build and sign a miner registration locking ``bond``.
+
+        ``variant`` names the rules this miner plays. Standard is the default
+        and is omitted from the payload, so a standard registration has exactly
+        the protocol-v1 transaction id.
+        """
         sender = self.address_for(keypair)
+        try:
+            selected = self.params.variant(variant)
+        except ConfigError as exc:
+            raise WalletServiceError(str(exc)) from None
         resolved_bond = self.params.min_bond if bond is None else bond
         if resolved_bond < self.params.min_bond:
             raise WalletServiceError(
@@ -266,18 +720,21 @@ class WalletService:
                 f"{sender} cannot cover a {format_coins(resolved_bond)} bond plus a "
                 f"{format_coins(resolved_fee)} fee"
             )
+        payload: dict[str, object] = {
+            "public_key": keypair.public_key_hex,
+            "endpoint": endpoint,
+            "engine": engine,
+            "bond": resolved_bond,
+        }
+        if selected.name != "standard":
+            payload["variant"] = selected.name
         tx = Transaction(
             network=self.params.network_id,
             type=TxType.REGISTER,
             sender=sender,
             nonce=self._resolve_nonce(sender, nonce),
             fee=resolved_fee,
-            payload={
-                "public_key": keypair.public_key_hex,
-                "endpoint": endpoint,
-                "engine": engine,
-                "bond": resolved_bond,
-            },
+            payload=payload,
         )
         return sign_transaction(keypair, tx)
 

@@ -89,6 +89,32 @@ def test_credit_coinbase_matures_after_the_configured_delay() -> None:
     assert state.release_matured(10 + maturity + 1) == 0
 
 
+def test_release_matured_releases_accounts_and_entries_independently() -> None:
+    state = _state()
+    maturity = DEVNET.coinbase_maturity
+    state.credit_coinbase(ALICE, 1_000, 10)
+    state.credit_coinbase(ALICE, 2_000, 11)
+    state.credit_coinbase(BOB, 3_000, 10)
+    assert state.minted == 6_000
+
+    assert state.release_matured(10 + maturity - 1) == 0
+    assert state.release_matured(10 + maturity) == 4_000
+    alice = state.account(ALICE)
+    assert alice.balance == 1_000
+    assert alice.immature == 2_000
+    assert alice.coinbase_queue == [(11, 2_000)]
+    bob = state.account(BOB)
+    assert bob.balance == 3_000
+    assert bob.immature == 0
+    assert bob.coinbase_queue == []
+
+    assert state.release_matured(11 + maturity - 1) == 0
+    assert state.release_matured(11 + maturity) == 2_000
+    assert state.account(ALICE).balance == 3_000
+    assert state.account(ALICE).immature == 0
+    assert state.account(ALICE).coinbase_queue == []
+
+
 def test_credit_coinbase_ignores_zero_and_rejects_negative() -> None:
     state = _state()
     state.credit_coinbase(ALICE, 0, 1)

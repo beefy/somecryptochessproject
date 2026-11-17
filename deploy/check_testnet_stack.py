@@ -1,4 +1,4 @@
-"""Smoke-check a running two-miner testnet stack.
+"""Smoke-check a running four-miner testnet stack.
 
 The deploy workflow calls this inside the node container after ``docker compose
 up``: it waits for the bootstrap height, then for the relay to expose the epoch

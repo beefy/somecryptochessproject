@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Final
 
+from sccp.config import STANDARD_VARIANT
 from sccp.errors import PairingError
 from sccp.protocol.models import Matchup
 from sccp.serialization import Domain, domain_hex
@@ -41,6 +42,7 @@ class RosterEntry:
     subnet: str | None = None
     asn: int | None = None
     recent_opponents: tuple[str, ...] = ()
+    variant: str = STANDARD_VARIANT
 
 
 def _u64(value: int, name: str) -> bytes:
@@ -139,7 +141,16 @@ def _violates(a: RosterEntry, b: RosterEntry, opponent_cooldown: int) -> bool:
     return recent
 
 
-def _matchup(network: str, epoch: int, round_number: int, a: str, b: str, beacon: bytes) -> Matchup:
+def _matchup(
+    network: str,
+    epoch: int,
+    round_number: int,
+    a: str,
+    b: str,
+    beacon: bytes,
+    *,
+    variant: str,
+) -> Matchup:
     seats = tuple(sorted((a, b)))
     match = match_id(network, epoch, round_number, seats)
     white = white_seat(beacon, match, seats)
@@ -151,6 +162,7 @@ def _matchup(network: str, epoch: int, round_number: int, a: str, b: str, beacon
         round=round_number,
         white=white,
         black=black,
+        variant=variant,
     )
 
 
@@ -211,39 +223,51 @@ def pair(
         )
     )
 
+    # Matching is within a variant: a Chess960 engine is not comparable to a
+    # standard engine and the two games do not share a rule set. Grouping keeps
+    # the standard-only ordering byte-identical to v1, because one group is the
+    # same sorted list.
+    groups: dict[str, list[RosterEntry]] = {}
+    for entry in candidates:
+        groups.setdefault(entry.variant, []).append(entry)
+    order = sorted(groups, key=lambda name: (name != STANDARD_VARIANT, name))
+
     matchups: list[Matchup] = []
-    index = 0
-    while index + 1 < len(candidates):
-        first = candidates[index]
-        second = candidates[index + 1]
-        if _violates(first, second, opponent_cooldown):
-            replacement = next(
-                (
-                    position
-                    for position in range(index + 2, len(candidates))
-                    if not _violates(first, candidates[position], opponent_cooldown)
-                ),
-                None,
-            )
-            if replacement is not None:
-                candidates[index + 1], candidates[replacement] = (
-                    candidates[replacement],
-                    candidates[index + 1],
+    for variant in order:
+        group = groups[variant]
+        index = 0
+        while index + 1 < len(group):
+            first = group[index]
+            second = group[index + 1]
+            if _violates(first, second, opponent_cooldown):
+                replacement = next(
+                    (
+                        position
+                        for position in range(index + 2, len(group))
+                        if not _violates(first, group[position], opponent_cooldown)
+                    ),
+                    None,
                 )
-                second = candidates[index + 1]
-        matchups.append(
-            _matchup(
-                network,
-                epoch,
-                round_number,
-                first.address,
-                second.address,
-                beacon,
+                if replacement is not None:
+                    group[index + 1], group[replacement] = (
+                        group[replacement],
+                        group[index + 1],
+                    )
+                    second = group[index + 1]
+            matchups.append(
+                _matchup(
+                    network,
+                    epoch,
+                    round_number,
+                    first.address,
+                    second.address,
+                    beacon,
+                    variant=variant,
+                )
             )
-        )
-        remaining[first.address] -= 1
-        remaining[second.address] -= 1
-        index += 2
+            remaining[first.address] -= 1
+            remaining[second.address] -= 1
+            index += 2
 
     return matchups
 

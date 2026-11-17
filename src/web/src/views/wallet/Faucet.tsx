@@ -60,7 +60,7 @@ export function FaucetPanel({
         {address}
       </KeyValue>
       {account !== null && (
-        <KeyValue label="Spendable now" mono>
+        <KeyValue label="SCCP spendable now" mono>
           {formatAmount(account.balance)}
         </KeyValue>
       )}
@@ -73,8 +73,10 @@ export function FaucetPanel({
       ) : (
         <>
           <Text variant="bodyMedium">
-            Ask the node to fund this address. The amount is the node&apos;s choice, not this
-            page&apos;s.
+            Ask the node to fund this address with SCCP. The amount is the node&apos;s choice, not
+            this page&apos;s. SCCP pays every transaction fee; C960 is a separate proof-of-work
+            asset created when a block settles a Chess960 proof, or received by transfer, so the
+            faucet does not mint it.
           </Text>
           <View style={styles.actions}>
             <Button mode="contained" loading={busy} disabled={busy} onPress={() => void fund()}>

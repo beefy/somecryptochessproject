@@ -6,10 +6,10 @@ PYTEST_ARGS ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help venv install test test-all adversarial cov cov-gate lint format typecheck check lock dist dist-check release-check devnet stack clean
+.PHONY: help venv install test test-all adversarial cov cov-gate lint format typecheck check lock dist dist-check release-check devnet stack container-e2e contracts-test clean
 
 help:  ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) \
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*## "}; {printf "%-12s %s\n", $$1, $$2}'
 
 venv:  ## Create .venv if it does not exist
@@ -87,6 +87,13 @@ stack: venv  ## Write the deterministic stack keys into .stack
 	else \
 		echo "docker not installed; skipped compose validation"; \
 	fi
+
+container-e2e: venv  ## Build the image and run the live container smoke test
+	SCCP_RUN_CONTAINER_E2E=1 $(PYTHON) -m pytest -m container \
+		tests/e2e/test_container_smoke.py -s $(PYTEST_ARGS)
+
+contracts-test:  ## Run the Foundry suite for the Ethereum HTLC (needs forge)
+	cd contracts && forge test
 
 clean:  ## Remove caches and build artefacts
 	rm -rf .mypy_cache .pytest_cache .ruff_cache .hypothesis htmlcov build dist

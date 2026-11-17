@@ -21,7 +21,8 @@ import chess.pgn
 from sccp.chess.engines import Engine
 from sccp.chess.openings import OpeningLine
 from sccp.chess.pgn import GameResult, Termination, outcome_result
-from sccp.config import NetworkParams
+from sccp.chess.variants import board_for_variant, normalise_start_fen
+from sccp.config import STANDARD_VARIANT, NetworkParams
 from sccp.errors import GameError
 
 EVENT_TAG: Final = "sccp match"
@@ -82,9 +83,15 @@ def render_pgn(
     white: Engine,
     black: Engine,
     headers: Mapping[str, str] | None = None,
+    start_fen: str | None = None,
 ) -> str:
-    """Render a finished board as PGN, with the sccp tags filled in."""
+    """Render a finished board as PGN, with the sccp tags filled in.
+
+    A Chess960 game carries ``SetUp``, ``Variant`` and a Shredder-FEN start
+    position; standard games keep the protocol-v1 header set unchanged.
+    """
     game = chess.pgn.Game.from_board(board)
+    chess960 = board.chess960
     merged: dict[str, str] = {
         "Event": EVENT_TAG,
         "Site": "?",
@@ -92,7 +99,7 @@ def render_pgn(
         "Round": "-",
         "White": white.name,
         "Black": black.name,
-        "Rules": RULES_TAG,
+        "Rules": "chess960" if chess960 else RULES_TAG,
         "TimeControl": TIME_CONTROL_TAG,
         "Termination": termination.value,
         "EngineWhite": white.fingerprint,
@@ -101,6 +108,11 @@ def render_pgn(
     if headers is not None:
         merged.update(headers)
     merged["Result"] = result.value
+    if chess960:
+        canonical = normalise_start_fen(start_fen, "chess960")
+        merged["FEN"] = canonical
+        merged["SetUp"] = "1"
+        merged["Variant"] = "Chess960"
     for tag, value in merged.items():
         game.headers[tag] = value
     return str(game)
@@ -115,6 +127,8 @@ def play_game(
     limit: chess.engine.Limit | None = None,
     hooks: GameHooks | None = None,
     headers: Mapping[str, str] | None = None,
+    variant: str = STANDARD_VARIANT,
+    start_fen: str | None = None,
 ) -> RawGame:
     """Play one game under ``params`` and return a :class:`RawGame`.
 
@@ -123,10 +137,12 @@ def play_game(
     result, which :func:`sccp.chess.pgn.validate_pgn` refuses to call a proof).
 
     ``limit`` controls engine effort; the default is
-    ``chess.engine.Limit(nodes=params.nodes_per_move)``.
+    ``chess.engine.Limit(nodes=params.nodes_per_move)``. Chess960 games must
+    pass their ``start_fen``; the engine also needs ``UCI_Chess960`` set.
     """
     effort = limit if limit is not None else chess.engine.Limit(nodes=params.nodes_per_move)
-    board = chess.Board()
+    canonical_start = normalise_start_fen(start_fen, variant)
+    board = board_for_variant(variant, canonical_start)
     san_moves: list[str] = []
     opening_moves = opening.moves if isinstance(opening, OpeningLine) else tuple(opening or ())
 
@@ -187,8 +203,10 @@ def play_game(
             white=white,
             black=black,
             headers=headers,
+            start_fen=canonical_start,
         ),
         result=result,
         termination=termination,
         final_board=board,
+        start_fen=canonical_start,
     )

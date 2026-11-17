@@ -16,11 +16,13 @@ spendable balance and never from a bond.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from enum import StrEnum
 from typing import NoReturn
 
-from sccp.chain.state import State, epoch_of, first_matchable_epoch
+from sccp.chain import dex
+from sccp.chain.state import HtlcRecord, HtlcStatus, Pool, State, epoch_of, first_matchable_epoch
 from sccp.config import NetworkParams
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import (
@@ -30,7 +32,7 @@ from sccp.crypto.pq import (
     hybrid_verify,
     is_hybrid_public_key_hex,
 )
-from sccp.errors import AddressError, KeyEncodingError, TxValidationError
+from sccp.errors import AddressError, ConfigError, KeyEncodingError, TxValidationError
 from sccp.protocol.beacon import commitment
 from sccp.protocol.models import Availability, Transaction, TxType
 from sccp.serialization import Domain, canonical_json, domain_hex, normalize
@@ -98,28 +100,41 @@ def sign_transaction(keypair: HybridKeypair, tx: Transaction) -> Transaction:
     return unsigned.model_copy(update={"signature": signature.hex()})
 
 
-def make_coinbase(miner: str, amount: int, network: str) -> Transaction:
+def make_coinbase(
+    miner: str,
+    amount: int,
+    network: str,
+    *,
+    variant_rewards: Mapping[str, int] | None = None,
+) -> Transaction:
     """The single coinbase transaction of a block.
 
     A coinbase is an unsigned ``transfer`` from the miner to itself: its
     authorisation is the block seal, not a signature, and it is never applied as
-    an ordinary transaction (so it consumes no nonce).
+    an ordinary transaction (so it consumes no nonce). ``variant_rewards`` maps
+    asset ids to non-native tokens the same block mints; it is omitted when the
+    block settled only standard chess.
     """
     if amount < 0:
         _fail(TxFailure.TYPE, "coinbase amount must be non-negative")
+    payload: dict[str, object] = {"to": miner, "amount": amount}
+    if variant_rewards:
+        payload["variant_rewards"] = {
+            asset: total for asset, total in sorted(variant_rewards.items()) if total > 0
+        }
     return Transaction(
         network=network,
         type=TxType.TRANSFER,
         sender=miner,
         nonce=0,
         fee=0,
-        payload={"to": miner, "amount": amount},
+        payload=payload,
         signature=None,
     )
 
 
 def coinbase_id(miner: str, amount: int, network: str) -> str:
-    """The txid of a coinbase."""
+    """The txid of a native-only coinbase."""
     return txid(make_coinbase(miner, amount, network))
 
 
@@ -215,6 +230,27 @@ def _field_digest(payload: Mapping[str, object], key: str) -> str:
     return value
 
 
+def htlc_id(sender: str, nonce: int) -> str:
+    """``H("sccp/v1/htlc", {from, nonce})``: the id an HTLC lock creates.
+
+    The id is derived from the sender and nonce, not from the transaction id, so
+    a wallet can show the id before the transaction is signed and both sides of a
+    swap can name the same record. A nonce is used once, so the id is unique.
+    """
+    return domain_hex(Domain.HTLC, {"from": sender, "nonce": nonce})
+
+
+def _field_preimage(payload: Mapping[str, object], key: str) -> str:
+    """Read a 32-byte preimage.
+
+    Ethereum's ``bytes32`` and SCCP's ``sha256`` check take the same 32 bytes;
+    allowing variable-length input would create two spellings of one secret and a
+    way to claim an HTLC with a value the other chain cannot represent.
+    """
+    value = _field_digest(payload, key)
+    return value
+
+
 def _check_unknown_keys(payload: Mapping[str, object], allowed: frozenset[str]) -> None:
     unknown = sorted(set(payload) - allowed)
     if unknown:
@@ -230,11 +266,64 @@ def _require_balance(state: State, address: str, amount: int, what: str) -> None
         )
 
 
+def _require_trade_funds(
+    state: State,
+    address: str,
+    asset: str,
+    amount: int,
+    fee: int,
+    what: str,
+) -> None:
+    """Require the fee in SCCP and ``amount`` of ``asset``, native or token."""
+    _require_balance(state, address, fee, "the fee")
+    if asset == dex.NATIVE_ASSET:
+        _require_balance(state, address, amount + fee, what)
+        return
+    available = state.asset_balance(address, asset)
+    if available < amount:
+        _fail(
+            TxFailure.BALANCE,
+            f"{address} has {available} of {asset}, cannot cover {what} of {amount}",
+        )
+
+
+def _field_trade_asset(payload: Mapping[str, object], key: str, params: NetworkParams) -> str:
+    """Read a pool side: an omitted key is native SCCP, a value is an asset id."""
+    value = payload.get(key)
+    if value is None:
+        if key in payload:
+            _fail(TxFailure.SCHEMA, f"native SCCP must omit payload field {key!r}")
+        return dex.NATIVE_ASSET
+    if not isinstance(value, str) or not value:
+        _fail(TxFailure.SCHEMA, f"payload field {key!r} must be an asset id")
+    try:
+        variant = params.variant_for_asset(value)
+    except ConfigError as exc:
+        _fail(TxFailure.TYPE, str(exc))
+    if variant.native:
+        _fail(TxFailure.TYPE, f"native SCCP must omit payload field {key!r}")
+    return value
+
+
+def _debit_trade_asset(state: State, address: str, asset: str, amount: int) -> None:
+    if asset == dex.NATIVE_ASSET:
+        state.ensure(address).balance -= amount
+        return
+    state.debit_asset(address, asset, amount)
+
+
+def _credit_trade_asset(state: State, address: str, asset: str, amount: int) -> None:
+    if asset == dex.NATIVE_ASSET:
+        state.ensure(address).balance += amount
+        return
+    state.credit_asset(address, asset, amount)
+
+
 # -- per-type validation ------------------------------------------------------
 
 ALLOWED: dict[TxType, frozenset[str]] = {
-    TxType.TRANSFER: frozenset({"to", "amount", "public_key"}),
-    TxType.REGISTER: frozenset({"public_key", "endpoint", "engine", "bond"}),
+    TxType.TRANSFER: frozenset({"to", "amount", "asset", "public_key"}),
+    TxType.REGISTER: frozenset({"public_key", "endpoint", "engine", "bond", "variant"}),
     TxType.REGISTER_WITNESS: frozenset({"public_key", "endpoint", "bond"}),
     TxType.UPDATE_REGISTRATION: frozenset(
         {"endpoint", "engine", "extend_epochs", "bond", "public_key"}
@@ -250,6 +339,15 @@ ALLOWED: dict[TxType, frozenset[str]] = {
         {"claim_id", "move", "move_signature", "clock_evidence", "public_key"}
     ),
     TxType.SLASH_EVIDENCE: frozenset({"proof_id", "evidence", "public_key"}),
+    TxType.CREATE_POOL: frozenset({"asset_a", "amount_a", "asset_b", "amount_b", "public_key"}),
+    TxType.ADD_LIQUIDITY: frozenset({"pool_id", "amount_a", "amount_b", "public_key"}),
+    TxType.REMOVE_LIQUIDITY: frozenset({"pool_id", "shares", "public_key"}),
+    TxType.SWAP: frozenset({"pool_id", "asset_in", "amount_in", "min_amount_out", "public_key"}),
+    TxType.HTLC_LOCK: frozenset(
+        {"hashlock", "timelock_height", "beneficiary", "amount", "asset", "public_key"}
+    ),
+    TxType.HTLC_CLAIM: frozenset({"htlc_id", "preimage", "public_key"}),
+    TxType.HTLC_REFUND: frozenset({"htlc_id", "public_key"}),
 }
 """Exactly which payload keys each type may carry."""
 
@@ -260,7 +358,26 @@ def _validate_transfer(params: NetworkParams, state: State, tx: Transaction, hei
     to = _field_address(tx.payload, "to", params)
     if to == tx.sender:
         _fail(TxFailure.TYPE, "a transfer must name a different recipient")
-    _require_balance(state, tx.sender, amount + tx.fee, "the transfer")
+    asset = tx.payload.get("asset")
+    if asset is None:
+        _require_balance(state, tx.sender, amount + tx.fee, "the transfer")
+        return
+    if not isinstance(asset, str) or not asset:
+        _fail(TxFailure.SCHEMA, "payload field 'asset' must be an asset id")
+    try:
+        variant = params.variant_for_asset(asset)
+    except ConfigError as exc:
+        _fail(TxFailure.TYPE, str(exc))
+    if variant.native:
+        _fail(TxFailure.TYPE, "native SCCP transfers must omit the asset field")
+    # Fees stay in SCCP even when the transferred amount is a variant token.
+    _require_balance(state, tx.sender, tx.fee, "the fee")
+    if state.asset_balance(tx.sender, asset) < amount:
+        _fail(
+            TxFailure.BALANCE,
+            f"{tx.sender} has {state.asset_balance(tx.sender, asset)} of {variant.symbol}, "
+            f"cannot send {amount}",
+        )
 
 
 def _validate_register(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
@@ -268,9 +385,27 @@ def _validate_register(params: NetworkParams, state: State, tx: Transaction, hei
     bond = _field_int(tx.payload, "bond")
     endpoint = _field_text(tx.payload, "endpoint")
     engine = _field_text(tx.payload, "engine")
+    variant = tx.payload.get("variant", "standard")
+    if not isinstance(variant, str) or not variant:
+        _fail(TxFailure.SCHEMA, "payload field 'variant' must be a variant name")
+    try:
+        params.variant(variant)
+    except ConfigError as exc:
+        _fail(TxFailure.TYPE, str(exc))
     if bond < params.min_bond:
         _fail(TxFailure.BOND, f"register needs a bond of at least {params.min_bond}, got {bond}")
     account = state.account(tx.sender)
+    current = epoch_of(height, params)
+    if (
+        account.registered_until_epoch is not None
+        and account.registered_until_epoch >= current
+        and account.variant != variant
+    ):
+        _fail(
+            TxFailure.REGISTRATION,
+            f"{tx.sender} is registered for {account.variant!r}; unregister before "
+            f"switching to {variant!r}",
+        )
     if height < account.banned_until:
         _fail(TxFailure.REGISTRATION, f"{tx.sender} is banned until height {account.banned_until}")
     _require_balance(state, tx.sender, bond + tx.fee, "the registration bond")
@@ -388,6 +523,166 @@ def _validate_reveal(params: NetworkParams, state: State, tx: Transaction, heigh
         _fail(TxFailure.DUPLICATE, f"{tx.sender} already revealed a different nonce")
 
 
+def _validate_create_pool(
+    params: NetworkParams, state: State, tx: Transaction, height: int
+) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.CREATE_POOL])
+    asset_a = _field_trade_asset(tx.payload, "asset_a", params)
+    asset_b = _field_trade_asset(tx.payload, "asset_b", params)
+    amount_a = _field_int(tx.payload, "amount_a", minimum=1)
+    amount_b = _field_int(tx.payload, "amount_b", minimum=1)
+    if asset_a == asset_b:
+        _fail(TxFailure.TYPE, "a pool needs two different assets")
+    asset_a, amount_a, asset_b, amount_b = dex.normalize_pair(asset_a, amount_a, asset_b, amount_b)
+    pool_id = dex.pool_id(asset_a, asset_b)
+    if pool_id in state.pools:
+        _fail(TxFailure.DUPLICATE, f"pool {pool_id} already exists")
+    if dex.initial_shares(amount_a, amount_b) <= 0:
+        _fail(TxFailure.TYPE, "the initial deposit is too small to mint a share")
+    _require_trade_funds(state, tx.sender, asset_a, amount_a, tx.fee, "the first side")
+    _require_trade_funds(state, tx.sender, asset_b, amount_b, tx.fee, "the second side")
+
+
+def _validate_add_liquidity(
+    params: NetworkParams, state: State, tx: Transaction, height: int
+) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.ADD_LIQUIDITY])
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools.get(pool_id)
+    if pool is None:
+        _fail(TxFailure.TYPE, f"unknown pool {pool_id}")
+    amount_a = _field_int(tx.payload, "amount_a", minimum=1)
+    amount_b = _field_int(tx.payload, "amount_b", minimum=1)
+    if dex.added_shares(pool.reserve_a, pool.reserve_b, pool.total_shares, amount_a, amount_b) <= 0:
+        _fail(TxFailure.TYPE, "the deposit is too small to mint a share")
+    _require_trade_funds(state, tx.sender, pool.asset_a, amount_a, tx.fee, "the deposit")
+    _require_trade_funds(state, tx.sender, pool.asset_b, amount_b, tx.fee, "the deposit")
+
+
+def _validate_remove_liquidity(
+    params: NetworkParams, state: State, tx: Transaction, height: int
+) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.REMOVE_LIQUIDITY])
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools.get(pool_id)
+    if pool is None:
+        _fail(TxFailure.TYPE, f"unknown pool {pool_id}")
+    shares = _field_int(tx.payload, "shares", minimum=1)
+    owned = pool.shares.get(tx.sender, 0)
+    if shares > owned:
+        _fail(TxFailure.BALANCE, f"{tx.sender} has {owned} pool shares, cannot remove {shares}")
+    amount_a, amount_b = dex.removed_amounts(
+        pool.reserve_a, pool.reserve_b, pool.total_shares, shares
+    )
+    if amount_a <= 0 or amount_b <= 0:
+        _fail(TxFailure.TYPE, "the redemption is too small to pay both sides")
+
+
+def _validate_swap(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.SWAP])
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools.get(pool_id)
+    if pool is None:
+        _fail(TxFailure.TYPE, f"unknown pool {pool_id}")
+    asset_in = _field_trade_asset(tx.payload, "asset_in", params)
+    if asset_in not in (pool.asset_a, pool.asset_b):
+        _fail(TxFailure.TYPE, f"{asset_in or 'SCCP'} is not a side of pool {pool_id}")
+    amount_in = _field_int(tx.payload, "amount_in", minimum=1)
+    minimum_out = _field_int(tx.payload, "min_amount_out")
+    if asset_in == pool.asset_a:
+        reserve_in, reserve_out = pool.reserve_a, pool.reserve_b
+    else:
+        reserve_in, reserve_out = pool.reserve_b, pool.reserve_a
+    amount_out = dex.swap_output(reserve_in, reserve_out, amount_in, params.dex_fee_bps)
+    if amount_out <= 0:
+        _fail(TxFailure.TYPE, "the swap output is zero")
+    if amount_out < minimum_out:
+        _fail(
+            TxFailure.TYPE,
+            f"the swap pays {amount_out}, below the requested minimum of {minimum_out}",
+        )
+    _require_trade_funds(state, tx.sender, asset_in, amount_in, tx.fee, "the swap input")
+
+
+def _require_htlc_close_fee(state: State, address: str, record: HtlcRecord, fee: int) -> None:
+    """Require a fee, allowing a native HTLC's proceeds to pay it.
+
+    A bridge taker may hold no SCCP at all: the whole point is to buy some with
+    ETH. Requiring a pre-existing native balance would make the first swap
+    impossible, so a native claim or refund may pay the network fee out of the
+    amount being released. A token HTLC still needs SCCP for the fee, exactly as
+    every other token transaction does.
+    """
+    available = state.spendable(address)
+    if record.asset == dex.NATIVE_ASSET:
+        if available + record.amount < fee:
+            _fail(
+                TxFailure.BALANCE,
+                f"{address} needs {fee} for the fee and the htlc pays only {record.amount}",
+            )
+        return
+    if available < fee:
+        _fail(TxFailure.BALANCE, f"{address} cannot cover the {fee}-unit fee")
+
+
+def _validate_htlc_lock(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.HTLC_LOCK])
+    _field_digest(tx.payload, "hashlock")
+    timelock = _field_int(tx.payload, "timelock_height")
+    if timelock <= height:
+        _fail(
+            TxFailure.WINDOW,
+            f"an htlc timelock of {timelock} is not after the current height {height}",
+        )
+    _field_address(tx.payload, "beneficiary", params)
+    amount = _field_int(tx.payload, "amount", minimum=1)
+    asset = _field_trade_asset(tx.payload, "asset", params)
+    _require_trade_funds(state, tx.sender, asset, amount, tx.fee, "the htlc lock")
+
+
+def _validate_htlc_claim(params: NetworkParams, state: State, tx: Transaction, height: int) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.HTLC_CLAIM])
+    record = state.htlcs.get(_field_digest(tx.payload, "htlc_id"))
+    if record is None:
+        _fail(TxFailure.TYPE, "unknown htlc")
+    if record.status is not HtlcStatus.LOCKED:
+        _fail(TxFailure.WINDOW, f"the htlc is already {record.status.value}")
+    if tx.sender != record.beneficiary:
+        _fail(
+            TxFailure.SIGNATURE,
+            f"the htlc pays {record.beneficiary}, not the claim's sender {tx.sender}",
+        )
+    if height >= record.timelock_height:
+        _fail(
+            TxFailure.WINDOW,
+            f"the htlc expired at height {record.timelock_height}; only a refund is valid",
+        )
+    preimage = _field_preimage(tx.payload, "preimage")
+    actual = hashlib.sha256(bytes.fromhex(preimage)).hexdigest()
+    if actual != record.hashlock:
+        _fail(TxFailure.TYPE, "the preimage does not open the htlc hashlock")
+    _require_htlc_close_fee(state, tx.sender, record, tx.fee)
+
+
+def _validate_htlc_refund(
+    params: NetworkParams, state: State, tx: Transaction, height: int
+) -> None:
+    _check_unknown_keys(tx.payload, ALLOWED[TxType.HTLC_REFUND])
+    record = state.htlcs.get(_field_digest(tx.payload, "htlc_id"))
+    if record is None:
+        _fail(TxFailure.TYPE, "unknown htlc")
+    if record.status is not HtlcStatus.LOCKED:
+        _fail(TxFailure.WINDOW, f"the htlc is already {record.status.value}")
+    if tx.sender != record.sender:
+        _fail(TxFailure.SIGNATURE, f"only {record.sender} may refund this htlc")
+    if height < record.timelock_height:
+        _fail(
+            TxFailure.WINDOW,
+            f"the htlc cannot be refunded before height {record.timelock_height}",
+        )
+    _require_htlc_close_fee(state, tx.sender, record, tx.fee)
+
+
 VALIDATORS = {
     TxType.TRANSFER: _validate_transfer,
     TxType.REGISTER: _validate_register,
@@ -397,6 +692,13 @@ VALIDATORS = {
     TxType.WITHDRAW_BOND: _validate_withdraw_bond,
     TxType.AVAILABILITY: _validate_availability,
     TxType.REVEAL: _validate_reveal,
+    TxType.CREATE_POOL: _validate_create_pool,
+    TxType.ADD_LIQUIDITY: _validate_add_liquidity,
+    TxType.REMOVE_LIQUIDITY: _validate_remove_liquidity,
+    TxType.SWAP: _validate_swap,
+    TxType.HTLC_LOCK: _validate_htlc_lock,
+    TxType.HTLC_CLAIM: _validate_htlc_claim,
+    TxType.HTLC_REFUND: _validate_htlc_refund,
 }
 """Handlers for every type that :func:`validate_transaction` owns outright."""
 
@@ -409,8 +711,15 @@ def _apply_transfer(state: State, tx: Transaction, height: int) -> None:
     to = tx.payload.get("to")
     if not isinstance(to, str):
         _fail(TxFailure.SCHEMA, "payload field 'to' must be an address")
-    state.ensure(tx.sender).balance -= amount
-    state.ensure(to).balance += amount
+    asset = tx.payload.get("asset")
+    if asset is None:
+        state.ensure(tx.sender).balance -= amount
+        state.ensure(to).balance += amount
+        return
+    if not isinstance(asset, str):
+        _fail(TxFailure.SCHEMA, "payload field 'asset' must be an asset id")
+    state.debit_asset(tx.sender, asset, amount)
+    state.credit_asset(to, asset, amount)
 
 
 def _apply_register(state: State, tx: Transaction, height: int) -> None:
@@ -420,6 +729,8 @@ def _apply_register(state: State, tx: Transaction, height: int) -> None:
     account.bonded += bond
     account.endpoint = _field_text(tx.payload, "endpoint")
     account.engine = _field_text(tx.payload, "engine")
+    if "variant" in tx.payload:
+        account.variant = _field_text(tx.payload, "variant") or "standard"
     account.registered_until_epoch = (
         epoch_of(height, state.params) + state.params.registration_epochs
     )
@@ -513,6 +824,117 @@ def _apply_slash_evidence(state: State, tx: Transaction, height: int) -> None:
     timeout.apply_slash(state, tx, height)
 
 
+def _apply_create_pool(state: State, tx: Transaction, height: int) -> None:
+    asset_a = _field_trade_asset(tx.payload, "asset_a", state.params)
+    asset_b = _field_trade_asset(tx.payload, "asset_b", state.params)
+    amount_a = _field_int(tx.payload, "amount_a", minimum=1)
+    amount_b = _field_int(tx.payload, "amount_b", minimum=1)
+    asset_a, amount_a, asset_b, amount_b = dex.normalize_pair(asset_a, amount_a, asset_b, amount_b)
+    pool_id = dex.pool_id(asset_a, asset_b)
+    shares = dex.initial_shares(amount_a, amount_b)
+    _debit_trade_asset(state, tx.sender, asset_a, amount_a)
+    _debit_trade_asset(state, tx.sender, asset_b, amount_b)
+    state.pools[pool_id] = Pool(
+        pool_id=pool_id,
+        asset_a=asset_a,
+        asset_b=asset_b,
+        reserve_a=amount_a,
+        reserve_b=amount_b,
+        total_shares=shares,
+        shares={tx.sender: shares},
+    )
+
+
+def _apply_add_liquidity(state: State, tx: Transaction, height: int) -> None:
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools[pool_id]
+    amount_a = _field_int(tx.payload, "amount_a", minimum=1)
+    amount_b = _field_int(tx.payload, "amount_b", minimum=1)
+    shares = dex.added_shares(pool.reserve_a, pool.reserve_b, pool.total_shares, amount_a, amount_b)
+    _debit_trade_asset(state, tx.sender, pool.asset_a, amount_a)
+    _debit_trade_asset(state, tx.sender, pool.asset_b, amount_b)
+    pool.reserve_a += amount_a
+    pool.reserve_b += amount_b
+    pool.total_shares += shares
+    pool.shares[tx.sender] = pool.shares.get(tx.sender, 0) + shares
+
+
+def _apply_remove_liquidity(state: State, tx: Transaction, height: int) -> None:
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools[pool_id]
+    shares = _field_int(tx.payload, "shares", minimum=1)
+    amount_a, amount_b = dex.removed_amounts(
+        pool.reserve_a, pool.reserve_b, pool.total_shares, shares
+    )
+    remaining = pool.shares[tx.sender] - shares
+    if remaining:
+        pool.shares[tx.sender] = remaining
+    else:
+        pool.shares.pop(tx.sender, None)
+    pool.reserve_a -= amount_a
+    pool.reserve_b -= amount_b
+    pool.total_shares -= shares
+    _credit_trade_asset(state, tx.sender, pool.asset_a, amount_a)
+    _credit_trade_asset(state, tx.sender, pool.asset_b, amount_b)
+    if pool.total_shares == 0:
+        del state.pools[pool_id]
+
+
+def _apply_swap(state: State, tx: Transaction, height: int) -> None:
+    pool_id = _field_digest(tx.payload, "pool_id")
+    pool = state.pools[pool_id]
+    asset_in = _field_trade_asset(tx.payload, "asset_in", state.params)
+    amount_in = _field_int(tx.payload, "amount_in", minimum=1)
+    if asset_in == pool.asset_a:
+        reserve_in, reserve_out = pool.reserve_a, pool.reserve_b
+        amount_out = dex.swap_output(reserve_in, reserve_out, amount_in, state.params.dex_fee_bps)
+        _debit_trade_asset(state, tx.sender, pool.asset_a, amount_in)
+        pool.reserve_a += amount_in
+        pool.reserve_b -= amount_out
+        _credit_trade_asset(state, tx.sender, pool.asset_b, amount_out)
+        return
+    reserve_in, reserve_out = pool.reserve_b, pool.reserve_a
+    amount_out = dex.swap_output(reserve_in, reserve_out, amount_in, state.params.dex_fee_bps)
+    _debit_trade_asset(state, tx.sender, pool.asset_b, amount_in)
+    pool.reserve_b += amount_in
+    pool.reserve_a -= amount_out
+    _credit_trade_asset(state, tx.sender, pool.asset_a, amount_out)
+
+
+def _apply_htlc_lock(state: State, tx: Transaction, height: int) -> None:
+    lock_id = htlc_id(tx.sender, tx.nonce)
+    asset = _field_trade_asset(tx.payload, "asset", state.params)
+    amount = _field_int(tx.payload, "amount", minimum=1)
+    _debit_trade_asset(state, tx.sender, asset, amount)
+    state.htlcs[lock_id] = HtlcRecord(
+        htlc_id=lock_id,
+        sender=tx.sender,
+        beneficiary=_field_address(tx.payload, "beneficiary", state.params),
+        hashlock=_field_digest(tx.payload, "hashlock"),
+        timelock_height=_field_int(tx.payload, "timelock_height"),
+        amount=amount,
+        created_at_height=height,
+        asset=asset,
+    )
+
+
+def _apply_htlc_claim(state: State, tx: Transaction, height: int) -> None:
+    record = state.htlcs[_field_digest(tx.payload, "htlc_id")]
+    _credit_trade_asset(state, tx.sender, record.asset, record.amount)
+    state.ensure(tx.sender).balance -= tx.fee
+    record.status = HtlcStatus.CLAIMED
+    record.closed_at_height = height
+    record.preimage = _field_preimage(tx.payload, "preimage")
+
+
+def _apply_htlc_refund(state: State, tx: Transaction, height: int) -> None:
+    record = state.htlcs[_field_digest(tx.payload, "htlc_id")]
+    _credit_trade_asset(state, tx.sender, record.asset, record.amount)
+    state.ensure(tx.sender).balance -= tx.fee
+    record.status = HtlcStatus.REFUNDED
+    record.closed_at_height = height
+
+
 APPLIERS = {
     TxType.TRANSFER: _apply_transfer,
     TxType.REGISTER: _apply_register,
@@ -525,6 +947,13 @@ APPLIERS = {
     TxType.TIMEOUT_CLAIM: _apply_timeout_claim,
     TxType.TIMEOUT_DISPUTE: _apply_timeout_dispute,
     TxType.SLASH_EVIDENCE: _apply_slash_evidence,
+    TxType.CREATE_POOL: _apply_create_pool,
+    TxType.ADD_LIQUIDITY: _apply_add_liquidity,
+    TxType.REMOVE_LIQUIDITY: _apply_remove_liquidity,
+    TxType.SWAP: _apply_swap,
+    TxType.HTLC_LOCK: _apply_htlc_lock,
+    TxType.HTLC_CLAIM: _apply_htlc_claim,
+    TxType.HTLC_REFUND: _apply_htlc_refund,
 }
 """State transitions for every accepted transaction type."""
 
@@ -609,7 +1038,12 @@ def apply_transaction(state: State, tx: Transaction, *, height: int) -> None:
     height; this function assumes every check passed and only mutates.
     """
     account = state.ensure(tx.sender)
-    account.balance -= tx.fee
+    closes_htlc = tx.type in (TxType.HTLC_CLAIM, TxType.HTLC_REFUND)
+    if not closes_htlc:
+        # An HTLC close may pay its fee from the native amount it releases; the
+        # applier debits it after crediting the escrow, so a taker who started
+        # with no SCCP can still claim. Every other type pays the fee up front.
+        account.balance -= tx.fee
     account.nonce += 1
     if account.public_key is None:
         account.public_key = resolve_public_key(state, tx)
@@ -633,6 +1067,7 @@ __all__ = [
     "apply_transaction",
     "check_sender_key",
     "coinbase_id",
+    "htlc_id",
     "make_coinbase",
     "resolve_public_key",
     "sign_transaction",

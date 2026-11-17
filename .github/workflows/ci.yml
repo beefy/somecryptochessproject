@@ -101,6 +101,26 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The Ethereum leg has its own toolchain. It is deliberately a separate job:
+  # a Solidity regression must not hide behind the Python matrix, and the
+  # contract is the only code in this repository that runs on another chain.
+  contracts:
+    name: solidity
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Install forge-std
+        run: forge install foundry-rs/forge-std --no-commit
+
+      - name: Test
+        run: forge test
+
   engine:
     name: stockfish smoke
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

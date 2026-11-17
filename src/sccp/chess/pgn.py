@@ -25,13 +25,22 @@ from typing import Final
 import chess
 import chess.pgn
 
-from sccp.config import NetworkParams
-from sccp.errors import PgnValidationError
+from sccp.chess.variants import (
+    board_for_variant,
+    is_chess960,
+    normalise_start_fen,
+    variant_rules,
+)
+from sccp.config import STANDARD_VARIANT, NetworkParams
+from sccp.errors import ConfigError, PgnValidationError
 from sccp.protocol.models import MAX_CLOCK_MS, MAX_PLIES_LIMIT
 from sccp.serialization import Domain, domain_hex
 
 RULES_VALUE: Final = "chess"
-"""The only supported value of the ``Rules`` tag in protocol version 1."""
+"""The standard-chess value of the ``Rules`` tag (kept for v1 callers)."""
+
+RULES_VALUES: Final[frozenset[str]] = frozenset({"chess", "chess960"})
+"""The two rule sets a protocol PGN may name."""
 
 REQUIRED_TAGS: Final[tuple[str, ...]] = (
     "Event",
@@ -133,6 +142,8 @@ class GameExpectations:
     opening_hash: str
     opening_moves: tuple[str, ...] = ()
     time_control: str | None = None
+    variant: str = STANDARD_VARIANT
+    start_fen: str = chess.STARTING_FEN
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,22 +193,25 @@ def canonical_game_hash(
     result: GameResult | str,
     *,
     start_fen: str = chess.STARTING_FEN,
+    variant: str = STANDARD_VARIANT,
 ) -> str:
     """``H("sccp/v1/game", {network, start_fen, san_list, result})`` as hex.
 
-    Headers, comments, clocks and formatting never enter the hash; two PGNs with
-    the same moves and result on the same network hash identically.
+    The variant is added for non-standard games. Their start FEN already
+    differs, and naming the rules explicitly stops a short PGN from being
+    replayed as a different variant. Standard hashes stay byte-identical to
+    protocol v1 so existing stores remain readable.
     """
     result_value = GameResult(result).value
-    return domain_hex(
-        Domain.GAME,
-        {
-            "network": network,
-            "start_fen": start_fen,
-            "san_list": list(san_moves),
-            "result": result_value,
-        },
-    )
+    payload: dict[str, object] = {
+        "network": network,
+        "start_fen": start_fen,
+        "san_list": list(san_moves),
+        "result": result_value,
+    }
+    if variant != STANDARD_VARIANT:
+        payload["variant"] = variant
+    return domain_hex(Domain.GAME, payload)
 
 
 def _decode_text(pgn_text: object) -> str:
@@ -235,11 +249,28 @@ def _require_tags(game: chess.pgn.Game) -> dict[str, str]:
         value = tags.get(name, "")
         if not value.strip():
             raise PgnValidationError(f"missing required PGN tag: {name}")
-    if tags["Rules"] != RULES_VALUE:
+    if tags["Rules"] not in RULES_VALUES:
+        known = ", ".join(sorted(RULES_VALUES))
         raise PgnValidationError(
-            f"unsupported Rules tag {tags['Rules']!r}; expected {RULES_VALUE!r}"
+            f"unsupported Rules tag {tags['Rules']!r}; expected one of: {known}"
         )
+    variant_header = tags.get("Variant")
+    if variant_header is not None:
+        aliases = {"Chess960", "Fischerandom", "Fischer Random"}
+        if tags["Rules"] == "chess960" and variant_header not in aliases:
+            raise PgnValidationError(
+                f"Variant tag {variant_header!r} disagrees with Rules 'chess960'"
+            )
+        if tags["Rules"] != "chess960" and variant_header not in ("Standard", "Chess"):
+            raise PgnValidationError(
+                f"Variant tag {variant_header!r} disagrees with Rules {tags['Rules']!r}"
+            )
     return tags
+
+
+def _variant_for_rules(rules: str) -> str:
+    """Map a PGN ``Rules`` value back to the network's variant name."""
+    return STANDARD_VARIANT if rules == "chess" else "chess960"
 
 
 def _int_tag(tags: Mapping[str, str], name: str) -> int:
@@ -281,8 +312,19 @@ def _check_expectations(
     expected: GameExpectations,
     numbers: Mapping[str, int],
     time_control: str | None,
+    *,
+    start_fen: str,
 ) -> None:
     """Compare the PGN against the certificate it claims to belong to."""
+    if tags["Rules"] != variant_rules(expected.variant):
+        raise PgnValidationError(
+            f"tag Rules is {tags['Rules']!r}, but the certificate says "
+            f"{variant_rules(expected.variant)!r}"
+        )
+    if start_fen != expected.start_fen:
+        raise PgnValidationError(
+            f"game starts from {start_fen!r}, but the certificate says {expected.start_fen!r}"
+        )
     text_pairs = (
         ("MatchID", expected.match_id),
         ("SeatWhite", expected.seat_white),
@@ -325,13 +367,19 @@ def _has_variations(game: chess.pgn.Game) -> bool:
     return False
 
 
-def _replay(game: chess.pgn.Game, params: NetworkParams) -> tuple[list[str], chess.Board]:
+def _replay(
+    game: chess.pgn.Game,
+    params: NetworkParams,
+    *,
+    start_fen: str,
+    variant: str,
+) -> tuple[list[str], chess.Board]:
     """Replay the mainline, returning the canonical SAN list and final board.
 
     ``board.push`` happily accepts illegal moves, so legality is checked with
     ``is_legal`` before every push and SAN is generated from the live board.
     """
-    board = chess.Board()
+    board = board_for_variant(variant, start_fen)
     san_moves: list[str] = []
     try:
         for move in game.mainline_moves():
@@ -438,19 +486,37 @@ def validate_pgn(
         details = "; ".join(str(error) for error in game.errors)
         raise PgnValidationError(f"PGN parse errors: {details}")
 
-    start_fen = game.headers.get("FEN")
-    if start_fen is not None and start_fen != chess.STARTING_FEN:
-        raise PgnValidationError(
-            "custom start positions (FEN/SetUp) are not supported in protocol v1"
-        )
-
     tags = _require_tags(game)
+    variant = _variant_for_rules(tags["Rules"])
+    try:
+        params.variant(variant)
+    except ConfigError as exc:
+        raise PgnValidationError(str(exc)) from None
+    try:
+        start_fen = normalise_start_fen(game.headers.get("FEN"), variant)
+    except ConfigError as exc:
+        raise PgnValidationError(str(exc)) from None
+    if not is_chess960(variant) and game.headers.get("SetUp") is not None:
+        raise PgnValidationError("standard chess PGNs must not carry SetUp")
+    if is_chess960(variant):
+        raw_fen = game.headers.get("FEN")
+        if raw_fen is None:
+            raise PgnValidationError("a Chess960 PGN must carry FEN and SetUp")
+        if game.headers.get("SetUp") not in (None, "1"):
+            raise PgnValidationError("a Chess960 PGN must carry SetUp '1' with its FEN")
+        castling = raw_fen.split()[2] if len(raw_fen.split()) >= 3 else ""
+        if castling and any(letter in castling for letter in "KQkq"):
+            raise PgnValidationError(
+                "a Chess960 PGN must name its castling rights in Shredder-FEN "
+                "(rook files, not KQkq)"
+            )
+
     numbers = {name: _int_tag(tags, name) for name in ("Epoch", "RoundNumber", "OpeningID")}
     time_control = _time_control_tag(tags)
     if expected is not None:
         if _has_variations(game):
             raise PgnValidationError("variations are not allowed in a proof")
-        _check_expectations(tags, expected, numbers, time_control)
+        _check_expectations(tags, expected, numbers, time_control, start_fen=start_fen)
 
     result = GameResult.parse(tags["Result"])
     if result is GameResult.UNFINISHED:
@@ -466,7 +532,7 @@ def validate_pgn(
     if clock_evidence is not None and not time_forfeit:
         raise PgnValidationError("clock_evidence is only valid for termination 'time_forfeit'")
 
-    san_moves, final_board = _replay(game, params)
+    san_moves, final_board = _replay(game, params, start_fen=start_fen, variant=variant)
     if time_forfeit and not san_moves:
         raise PgnValidationError("a flag at ply 0 is a no-show, not a win")
 
@@ -489,14 +555,25 @@ def validate_pgn(
                 f"game has {len(san_moves)} plies; a proof needs at least {params.min_plies}"
             )
 
+    try:
+        params.variant(variant)
+    except ConfigError as exc:
+        raise PgnValidationError(str(exc)) from None
     return ParsedGame(
-        game_hash=canonical_game_hash(params.network_id, san_moves, result),
+        game_hash=canonical_game_hash(
+            params.network_id,
+            san_moves,
+            result,
+            start_fen=start_fen,
+            variant=variant,
+        ),
         pgn_text=text,
         san_moves=tuple(san_moves),
         final_board=final_board,
         result=result,
         termination=termination,
         tags=MappingProxyType(tags),
+        start_fen=start_fen,
         time_control=time_control,
         low_ply=low_ply,
     )

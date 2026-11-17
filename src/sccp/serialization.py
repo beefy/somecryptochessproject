@@ -87,6 +87,7 @@ class Domain(StrEnum):
     """Hash domains from docs/PROTOCOL.md section 1."""
 
     ADDRESS = "sccp/v1/address"
+    ASSET = "sccp/v1/asset"
     BEACON = "sccp/v1/beacon"
     BEACON_COMMIT = "sccp/v1/beacon-commit"
     BLOCK = "sccp/v1/block"
@@ -96,12 +97,16 @@ class Domain(StrEnum):
     GAME = "sccp/v1/game"
     GOSSIP = "sccp/v1/gossip"
     HEADER = "sccp/v1/header"
+    HTLC = "sccp/v1/htlc"
     MATCH = "sccp/v1/match"
     MOVE = "sccp/v1/move"
     OPENING = "sccp/v1/opening"
+    ORDER = "sccp/v1/order"
     PAIR = "sccp/v1/pair"
+    POOL = "sccp/v1/pool"
     PROOF = "sccp/v1/proof"
     RESULT = "sccp/v1/result"
+    TAKE = "sccp/v1/take"
     TX = "sccp/v1/tx"
 
 

@@ -21,7 +21,13 @@ def test_the_stack_publishes_an_availability_secret_per_miner(tmp_path: Path) ->
     summary = write_stack(tmp_path, passphrase="test-stack-passphrase")
     entries = summary["miners"]
     assert isinstance(entries, list)
-    assert len(entries) == 2
+    assert len(entries) == 4
+    assert [entry["variant"] for entry in entries] == [
+        "standard",
+        "standard",
+        "chess960",
+        "chess960",
+    ]
     for entry in entries:
         assert isinstance(entry, dict)
         secret = str(entry["nonce_secret"])
@@ -35,10 +41,23 @@ def test_the_stack_publishes_an_availability_secret_per_miner(tmp_path: Path) ->
 def test_the_stack_builds_a_matchable_chain_and_relay_config(tmp_path: Path) -> None:
     write_stack(tmp_path, passphrase="test-stack-passphrase")
     miners = bootstrap.load_stack(tmp_path)
-    assert [miner.name for miner in miners] == ["miner-1", "miner-2"]
+    assert [miner.name for miner in miners] == [
+        "miner-1",
+        "miner-2",
+        "miner-3",
+        "miner-4",
+    ]
+    assert [miner.variant for miner in miners] == [
+        "standard",
+        "standard",
+        "chess960",
+        "chess960",
+    ]
     assert [miner.address for miner in miners] == [
         "sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g",
         "sccpt1q9l8ptm8fmdrsmnj80lgf76k8xqrwhpdj0dq6puawdz79c6d8dtswkjp0sd",
+        "sccpt1q8samj38z8kxxfng9skcjl4hrmn9cgdknwrr6qvczyy6n20umj6j5v6yh5f",
+        "sccpt1qychc3gehqnr0vf5a2ga845tx8pulms4mtddyxplmflfxp8x4txxuqgt37c",
     ]
 
     engine = "ab" * 32
@@ -46,12 +65,18 @@ def test_the_stack_builds_a_matchable_chain_and_relay_config(tmp_path: Path) -> 
     try:
         assert service.height == bootstrap.BOOTSTRAP_HEIGHT == 19
         assert len(blocks) == bootstrap.BOOTSTRAP_HEIGHT
-        assert [len(block.transactions) for block in blocks[1:3]] == [2, 2]
+        assert [len(block.transactions) for block in blocks[1:3]] == [4, 4]
         assert all(not block.proofs for block in blocks)
 
         record = service.chain.state.epochs[bootstrap.BOOTSTRAP_EPOCH]
         assert set(record.roster) == {miner.address for miner in miners}
         assert {member.engine for member in record.roster.values()} == {engine}
+        assert [record.roster[miner.address].variant for miner in miners] == [
+            "standard",
+            "standard",
+            "chess960",
+            "chess960",
+        ]
         assert record.beacon is not None
         assert record.roster_root
 
@@ -69,15 +94,16 @@ def test_heartbeat_blocks_carry_a_proofless_epoch_across(tmp_path: Path) -> None
     """The freeze this whole change is about, in one test.
 
     Bootstrap leaves the chain at the last height of epoch 3, past the point
-    where a block may skip its proof. A two-miner roster plays fewer games per
+    where a block may skip its proof. A small roster plays fewer games per
     epoch than the epoch has blocks, so a block that waits for a proof never
     comes: no proof is produced, so no block is added, so the availability and
     reveal transactions that build the next roster are never mined.
 
     Heartbeat blocks break the deadlock. Each carries exactly one pending
-    transaction and no subsidy, so six pending transactions buy six blocks and
-    the boundary at height 24 is crossed with no proof at all. Folding those six
-    transactions into one block instead would still freeze the chain at 24.
+    transaction and no subsidy, so the five blocks up to height 24 are crossed
+    with no proof at all. Folding those transactions into one block instead
+    would still freeze the chain at 24; the epoch-bound availability and reveal
+    transactions that no longer fit are pruned at the boundary.
     """
     write_stack(tmp_path, passphrase="test-stack-passphrase")
     miners = bootstrap.load_stack(tmp_path)
@@ -108,7 +134,7 @@ def test_heartbeat_blocks_carry_a_proofless_epoch_across(tmp_path: Path) -> None
             submit(wallet().build_transfer(miners[0].keypair, miners[1].address, coins_to_units(1)))
         pending_ids = set(service.mempool.transactions)
         pending_txs = [entry.tx for entry in service.mempool.transactions.values()]
-        assert len(pending_ids) == 6
+        assert len(pending_ids) == 10
 
         # Heartbeat blocks carry one ordinary transaction each. The chain moves
         # one block per transaction until the pool is empty; a reveal whose
@@ -138,7 +164,7 @@ def test_heartbeat_blocks_carry_a_proofless_epoch_across(tmp_path: Path) -> None
         )
         assert {txid(tx) for tx in included} <= pending_ids
         missing = pending_ids - {txid(tx) for tx in included}
-        assert len(missing) <= 1, "only an expired reveal may be pruned"
+        assert len(missing) <= 5, "only epoch-bound transactions may be pruned"
         for block in blocks:
             coinbase = block.coinbase
             assert coinbase is not None
@@ -146,9 +172,11 @@ def test_heartbeat_blocks_carry_a_proofless_epoch_across(tmp_path: Path) -> None
 
         assert service.height == 19 + len(blocks)
         assert service.chain.state.current_epoch() == 4
-        assert all(tx.type is TxType.REVEAL for tx in pending_txs if txid(tx) in missing), (
-            "only epoch-bound transactions may be pruned at a boundary"
-        )
+        assert all(
+            tx.type in (TxType.AVAILABILITY, TxType.REVEAL)
+            for tx in pending_txs
+            if txid(tx) in missing
+        ), "only epoch-bound transactions may be pruned at a boundary"
         assert (
             BlockBuilder(
                 params=params,

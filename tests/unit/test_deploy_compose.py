@@ -61,6 +61,15 @@ def test_the_node_mines_to_the_address_the_stack_writes(tmp_path: Path) -> None:
     assert validate_address(arguments[0], TESTNET)
 
 
+def test_the_stack_runs_two_miners_per_variant() -> None:
+    """Four fixed miners: one standard pair and one Chess960 pair."""
+    text = COMPOSE.read_text(encoding="utf-8")
+    for index in range(1, 5):
+        assert f"miner-{index}:" in text, f"miner-{index} service is missing"
+    variants = sorted(_option_arguments(text, "--variant"))
+    assert variants == ["chess960", "chess960", "standard", "standard"]
+
+
 def test_every_address_literal_in_the_compose_file_is_a_testnet_address() -> None:
     text = COMPOSE.read_text(encoding="utf-8")
     literals = ADDRESS.findall(text)
@@ -108,7 +117,7 @@ def test_the_traffic_command_speaks_the_flags_the_generator_accepts(
     options = captured["options"]
     assert isinstance(options, traffic.Options)
     assert (options.node, options.relay) == ("http://node:8645", "http://relay:8646")
-    # The churn is the default, so the command only says where to
-    # play; naming it here would freeze a pool size the deployment must measure.
-    assert options.extra_miners == traffic.EXTRA_MINERS >= 1
+    # Four fixed miners fill the VM, so the compose stack disables the extra
+    # miner churn explicitly rather than relying on host capacity measurement.
+    assert options.extra_miners == 0
     assert options.max_extra_online == traffic.MAX_EXTRA_ONLINE >= 1

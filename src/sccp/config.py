@@ -13,9 +13,31 @@ from typing import Final, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from sccp.errors import ConfigError, NetworkError
+from sccp.serialization import Domain, domain_hex
 
 UNITS_PER_COIN: Final = 100_000_000
 """Base units per coin. All consensus amounts are integers of this unit."""
+
+STANDARD_VARIANT: Final = "standard"
+"""The native SCCP variant. It is first in every network's variant list."""
+
+CHESS960_VARIANT: Final = "chess960"
+"""Fischer Random: the same pieces, a shuffled back rank and 960 start positions."""
+
+CHESS960_ASSET_ID: Final = domain_hex(
+    Domain.ASSET,
+    {
+        "symbol": "C960",
+        "name": "Chess960",
+        "decimals": 8,
+        "variant": CHESS960_VARIANT,
+    },
+)
+"""The immutable asset id of the Chess960 token (PROTOCOL.md section 5.4).
+
+The id is derived from the asset's parameters rather than assigned by an issuer,
+so two nodes cannot disagree about which asset a C960 transfer names.
+"""
 
 MAX_PLIES_LIMIT: Final = 1000
 """Hard upper bound for ``max_plies``; longer games are never consensus-valid."""
@@ -48,6 +70,63 @@ def format_coins(units: int) -> str:
     whole, fraction = divmod(abs(units), UNITS_PER_COIN)
     sign = "-" if units < 0 else ""
     return f"{sign}{whole}.{fraction:08d}"
+
+
+class VariantParams(BaseModel):
+    """One chess variant and the asset its settled proofs mint.
+
+    Standard chess is the network's native asset: ``asset`` is ``None`` and the
+    reward is SCCP. Every other variant names a derived asset id (see
+    :data:`CHESS960_ASSET_ID`) and mints only that asset.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=1, max_length=32)
+    rules: str = Field(min_length=1, max_length=32)
+    asset: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    symbol: str = Field(min_length=1, max_length=16)
+    display_name: str = Field(min_length=1, max_length=64)
+    decimals: int = Field(default=8, ge=0, le=18)
+    subsidy: int = Field(gt=0)
+    halving_interval: int | None = Field(default=None, ge=1)
+    max_supply: int | None = Field(default=None, ge=1)
+    min_plies: int = Field(ge=1)
+    max_games_per_block: int = Field(default=1, ge=1)
+    opening_book: str = Field(default="standard", min_length=1, max_length=64)
+
+    @property
+    def native(self) -> bool:
+        """True when proofs of this variant mint the network's native coin."""
+        return self.asset is None
+
+    @model_validator(mode="after")
+    def _check_invariants(self) -> Self:
+        if self.rules not in ("chess", "chess960"):
+            raise ValueError(f"unsupported variant rules {self.rules!r}")
+        if self.name == STANDARD_VARIANT and (self.asset is not None or self.rules != "chess"):
+            raise ValueError("the standard variant is native SCCP with standard chess rules")
+        if self.name != STANDARD_VARIANT and self.asset is None:
+            raise ValueError(f"variant {self.name!r} needs a derived asset id")
+        if (self.max_supply is None) != (self.halving_interval is None):
+            raise ValueError("a variant sets max_supply and halving_interval together")
+        return self
+
+
+CHESS960: Final = VariantParams(
+    name=CHESS960_VARIANT,
+    rules="chess960",
+    asset=CHESS960_ASSET_ID,
+    symbol="C960",
+    display_name="Chess960",
+    subsidy=coins_to_units(50),
+    halving_interval=210_000,
+    max_supply=21_000_000,
+    min_plies=20,
+    max_games_per_block=1,
+    opening_book="none",
+)
+"""Fischer Random with the same issuance schedule as SCCP, in its own asset."""
 
 
 class NetworkParams(BaseModel):
@@ -85,6 +164,8 @@ class NetworkParams(BaseModel):
     registration_epochs: int = Field(ge=1)
     unbond_delay: int = Field(ge=0)
     min_fee: int = Field(gt=0)
+    dex_fee_bps: int = Field(default=30, ge=0, le=1_000)
+    """Constant-product swap fee, in basis points, paid to liquidity providers."""
 
     # Clocks and timeout settlement
     lag_grace_ms: int = Field(default=250, ge=0, le=1_000)
@@ -98,6 +179,10 @@ class NetworkParams(BaseModel):
     max_plies: int = Field(ge=1, le=MAX_PLIES_LIMIT)
     nodes_per_move: int = Field(gt=0)
     book_version: str = Field(min_length=1)
+
+    # Variants and their assets. The validator always prepends standard chess,
+    # so an empty tuple means "native standard chess only".
+    variants: tuple[VariantParams, ...] = ()
 
     # Beacon
     beacon_grace_blocks: int = Field(ge=0)
@@ -122,6 +207,27 @@ class NetworkParams(BaseModel):
         if self.max_supply is None:
             return None
         return self.max_supply * UNITS_PER_COIN
+
+    def variant(self, name: str) -> VariantParams:
+        """Resolve a variant by name, or raise :class:`ConfigError`."""
+        for candidate in self.variants:
+            if candidate.name == name:
+                return candidate
+        known = ", ".join(candidate.name for candidate in self.variants)
+        raise ConfigError(f"unknown variant {name!r}; this network has: {known}")
+
+    def variant_names(self) -> tuple[str, ...]:
+        """Every variant this network settles, standard first."""
+        return tuple(candidate.name for candidate in self.variants)
+
+    def variant_for_asset(self, asset: str) -> VariantParams:
+        """Resolve the variant that mints ``asset`` (native SCCP is standard)."""
+        if asset == "SCCP":
+            return self.variant(STANDARD_VARIANT)
+        for candidate in self.variants:
+            if candidate.asset == asset:
+                return candidate
+        raise ConfigError(f"unknown asset id {asset!r}")
 
     @model_validator(mode="after")
     def _check_invariants(self) -> Self:
@@ -152,6 +258,35 @@ class NetworkParams(BaseModel):
             ):
                 if amount > max_money:
                     raise ValueError(f"{name} exceeds MAX_MONEY ({max_money})")
+
+        # Standard chess is the network's own unit of account. It is always
+        # first and always mirrors the network's own schedule, even when a
+        # caller only lists the optional variants or overrides min_plies.
+        supplied = tuple(self.variants)
+        standard = VariantParams(
+            name=STANDARD_VARIANT,
+            rules="chess",
+            asset=None,
+            symbol="SCCP",
+            display_name="SCCP",
+            subsidy=self.subsidy,
+            halving_interval=self.halving_interval,
+            max_supply=self.max_supply,
+            min_plies=self.min_plies,
+            max_games_per_block=1,
+            opening_book=self.book_version,
+        )
+        variants = (
+            standard,
+            *(item for item in supplied if item.name != STANDARD_VARIANT),
+        )
+        names = [variant.name for variant in variants]
+        if len(set(names)) != len(names):
+            raise ValueError("variant names must be unique")
+        assets = [variant.asset for variant in variants if variant.asset is not None]
+        if len(set(assets)) != len(assets):
+            raise ValueError("two variants cannot mint the same asset")
+        object.__setattr__(self, "variants", variants)
         return self
 
 
@@ -187,6 +322,7 @@ TESTNET: Final = NetworkParams(
     max_plies=300,
     nodes_per_move=50_000,
     book_version="dev-1",
+    variants=(CHESS960,),
     beacon_grace_blocks=2,
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
@@ -225,6 +361,7 @@ MAINNET: Final = NetworkParams(
     max_plies=400,
     nodes_per_move=250_000,
     book_version="v1",
+    variants=(CHESS960,),
     beacon_grace_blocks=6,
     drand_chain="quicknet",
     drand_period_seconds=3,

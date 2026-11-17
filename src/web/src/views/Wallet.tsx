@@ -13,18 +13,20 @@
  * every signed field), and exports the keyfile the CLI can open. The BIP-39
  * phrase shown at creation is the backup, and it is shown exactly once.
  *
- * The tabs are the wallet's own: Overview, Play, Send, Receive, Faucet, History
- * and Settings. A nickname is a local label -- the wallet's own in the vault, and
- * one per address it sends to -- so every screen can name an account without
- * pretending the name is on chain. Transfers the node accepted but no block has
- * carried yet are remembered here and listed on Overview and History until the
- * committed nonce passes them.
+ * The tabs are the wallet's own: Overview, Send, Receive, Faucet, History and
+ * Settings. Play lives on its own page now; the shared session provider keeps the
+ * unlocked key available there without putting the chessboard in every wallet
+ * load. A nickname is a local label -- the wallet's own in the vault, and one per
+ * address it sends to -- so every screen can name an account without pretending
+ * the name is on chain. Transfers the node accepted but no block has carried yet
+ * are remembered here and listed on Overview and History until the committed
+ * nonce passes them.
  *
  * `#/` is this page when served from `wallet.chessproofofwork.com`; the same
  * routes work from the explorer, where the hamburger menu sends people here.
  */
 
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
 import { Button, HelperText, Text, TextInput } from "react-native-paper";
 
@@ -40,11 +42,19 @@ import {
   StatusPill,
 } from "../components/Chrome";
 import { useNotice } from "../components/Notices";
+import { useWalletSession } from "../components/WalletSession";
 import { labelFor, readContacts } from "../lib/contacts";
+import { tokenImmature, tokensFor, tokenBalance } from "../lib/assets";
 import { downloadText, keyfileName } from "../lib/download";
-import { formatAmount, formatDuration, formatInteger, shortAddress, shortHash } from "../lib/format";
-import type { HybridKeypair } from "../lib/keys";
-import { keyfileText, unlockKeyfile, type KeyfileDocument } from "../lib/keystore";
+import {
+  formatAmount,
+  formatDuration,
+  formatInteger,
+  formatTokenAmount,
+  shortAddress,
+  shortHash,
+} from "../lib/format";
+import { keyfileText } from "../lib/keystore";
 import {
   addPending,
   prunePending,
@@ -52,20 +62,7 @@ import {
   writePending,
   type PendingTransaction,
 } from "../lib/pending";
-import {
-  AUTO_LOCK_CHOICES,
-  readAutoLockSeconds,
-  readLastAddress,
-  writeAutoLockSeconds,
-  writeLastAddress,
-} from "../lib/settings";
-import {
-  deleteKeyfile,
-  listKeyfiles,
-  renameKeyfile,
-  saveKeyfile,
-  type StoredKeyfile,
-} from "../lib/vault";
+import { AUTO_LOCK_CHOICES } from "../lib/settings";
 import { useNode } from "../node";
 import { useResource } from "../useResource";
 import { FaucetPanel } from "./wallet/Faucet";
@@ -73,45 +70,34 @@ import { HistoryPanel } from "./wallet/History";
 import { SendPanel } from "./wallet/Send";
 import { WalletSetup } from "./wallet/Setup";
 
-interface Session {
-  record: StoredKeyfile;
-  keypair: HybridKeypair;
-}
-
-/**
- * The table draws a chessboard and pulls in `chess.js`; the wallet's other tabs
- * never need it, so it loads when the Play tab is first opened.
- */
-const Play = lazy(async () => {
-  const module = await import("./Play");
-  return { default: module.Play };
-});
-
 /** How often the unlocked wallet re-reads the account. */
 const ACCOUNT_POLL_MS = 8000;
-
-/** How often the idle timer checks whether the tab has been left alone. */
-const AUTO_LOCK_TICK_MS = 5000;
-
-function describe(failure: unknown): Error {
-  return failure instanceof Error ? failure : new Error(String(failure));
-}
 
 export function Wallet({
   view,
 }: {
-  view: "overview" | "play" | "send" | "receive" | "faucet" | "history" | "settings";
+  view: "overview" | "send" | "receive" | "faucet" | "history" | "settings";
 }): ReactNode {
   const { status, params, network } = useNode();
   const notify = useNotice();
-  const [stored, setStored] = useState<StoredKeyfile[] | null>(null);
-  const [storeError, setStoreError] = useState<Error | null>(null);
-  const [selected, setSelected] = useState<string | null>(readLastAddress);
-  const [session, setSession] = useState<Session | null>(null);
-  const [pendingNonce, setPendingNonce] = useState<number | null>(null);
+  const {
+    session,
+    stored,
+    storeError,
+    selected,
+    select,
+    unlock,
+    save,
+    forget: forgetKeyfile,
+    rename,
+    lock: lockSession,
+    pendingNonce,
+    setPendingNonce,
+    autoLockSeconds,
+    setAutoLockSeconds,
+  } = useWalletSession();
   const [pending, setPending] = useState<PendingTransaction[]>([]);
   const [nickname, setNickname] = useState("");
-  const [autoLockSeconds, setAutoLockSeconds] = useState(readAutoLockSeconds);
   const [forgetting, setForgetting] = useState<string | null>(null);
 
   const address = session?.record.address ?? null;
@@ -122,92 +108,26 @@ export function Wallet({
   );
   const accountView = account.data ?? null;
 
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      setStored(await listKeyfiles());
-      setStoreError(null);
-    } catch (failure) {
-      setStoreError(describe(failure));
-      setStored([]);
-    }
-  }, []);
-
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    setNickname(session?.record.label ?? "");
+  }, [session?.record.address, session?.record.label]);
 
   const lock = useCallback(
     (reason?: string): void => {
-      setSession((current) => {
-        if (current !== null) {
-          current.keypair.seed.fill(0);
-          current.keypair.ed25519.seed.fill(0);
-        }
-        return null;
-      });
-      setPendingNonce(null);
       setPending([]);
       setForgetting(null);
-      if (reason !== undefined) notify(reason);
+      lockSession(reason);
     },
-    [notify],
-  );
-
-  const adopt = useCallback(
-    (record: StoredKeyfile, keypair: HybridKeypair): void => {
-      setSession({ record, keypair });
-      setSelected(record.address);
-      setNickname(record.label);
-      writeLastAddress(record.address);
-      notify(`unlocked ${shortAddress(record.address)}`);
-    },
-    [notify],
-  );
-
-  const unlock = useCallback(
-    async (record: StoredKeyfile, passphrase: string): Promise<void> => {
-      adopt(record, await unlockKeyfile(record.document, passphrase));
-    },
-    [adopt],
-  );
-
-  const store = useCallback(
-    async (document: KeyfileDocument, keypair: HybridKeypair): Promise<void> => {
-      adopt(await saveKeyfile(document), keypair);
-      await refresh();
-    },
-    [adopt, refresh],
+    [lockSession],
   );
 
   const forget = useCallback(
     async (target: string): Promise<void> => {
-      await deleteKeyfile(target);
-      if (session?.record.address === target) lock();
-      if (selected === target) {
-        setSelected(null);
-        writeLastAddress(null);
-      }
-      await refresh();
+      await forgetKeyfile(target);
+      setPending([]);
       setForgetting(null);
-      notify(`forgot ${shortAddress(target)}`);
     },
-    [lock, notify, refresh, selected, session],
-  );
-
-  const rename = useCallback(
-    async (label: string): Promise<void> => {
-      if (session === null) return;
-      try {
-        const record = await renameKeyfile(session.record.address, label);
-        setSession((current) => (current === null ? current : { ...current, record }));
-        setNickname(record.label);
-        await refresh();
-        notify(record.label === "" ? "nickname cleared" : `nickname set to ${record.label}`);
-      } catch (failure) {
-        notify(describe(failure).message);
-      }
-    },
-    [notify, refresh, session],
+    [forgetKeyfile],
   );
 
   // Pending rows belong to one key: read them when a wallet is adopted, and let
@@ -221,30 +141,6 @@ export function Wallet({
     }
     setPending(readPending(sessionAddress, sessionNetwork));
   }, [sessionAddress, sessionNetwork]);
-
-  // Auto-lock: any pointer or key in the tab counts as activity; silence for the
-  // chosen window locks. A timer, not one `setTimeout`, so a sleeping tab wakes up
-  // hours later and still notices that the window has passed.
-  const lastActivity = useRef(Date.now());
-  useEffect(() => {
-    if (session === null) return undefined;
-    lastActivity.current = Date.now();
-    const bump = (): void => {
-      lastActivity.current = Date.now();
-    };
-    globalThis.addEventListener("pointerdown", bump);
-    globalThis.addEventListener("keydown", bump);
-    const timer = setInterval(() => {
-      if (Date.now() - lastActivity.current >= autoLockSeconds * 1000) {
-        lock(`locked after ${formatDuration(autoLockSeconds)} idle`);
-      }
-    }, AUTO_LOCK_TICK_MS);
-    return () => {
-      globalThis.removeEventListener("pointerdown", bump);
-      globalThis.removeEventListener("keydown", bump);
-      clearInterval(timer);
-    };
-  }, [autoLockSeconds, lock, session]);
 
   // The chain is the truth about the nonce; once it reaches the optimistic one,
   // the local override has nothing left to say. The same comparison retires a
@@ -285,7 +181,7 @@ export function Wallet({
       setPending(next);
       const name = labelFor(readContacts(), tx.to) ?? shortAddress(tx.to);
       notify(
-        `sent ${formatAmount(tx.amount)} to ${name} · pending at nonce ${formatInteger(tx.nonce)}`,
+        `sent ${formatTokenAmount(tx.amount, tx.symbol ?? "SCCP")} to ${name} · pending at nonce ${formatInteger(tx.nonce)}`,
       );
     },
     [notify, session],
@@ -326,27 +222,17 @@ export function Wallet({
           stored={stored ?? []}
           storeError={storeError}
           selected={selected}
-          onSelect={setSelected}
+          onSelect={select}
           onUnlock={unlock}
-          onImport={store}
-          onCreated={store}
+          onImport={save}
+          onCreated={save}
           onForget={forget}
         />
       );
     }
 
     const { record, keypair } = session;
-
-    if (view === "play") {
-      return (
-        <>
-          {title}
-          <Suspense fallback={<Loading />}>
-            <Play keypair={keypair} network={record.network} />
-          </Suspense>
-        </>
-      );
-    }
+    const tokens = tokensFor(params.data);
 
     if (view === "send") {
       if (accountView === null || params.data === undefined) {
@@ -370,6 +256,7 @@ export function Wallet({
             network={record.network}
             account={accountView}
             minFee={params.data.min_fee}
+            tokens={tokens}
             pendingNonce={pendingNonce}
             onAccepted={accepted}
             onPendingNonce={setPendingNonce}
@@ -407,9 +294,24 @@ export function Wallet({
               {record.network}
             </KeyValue>
             {accountView !== null && (
-              <KeyValue label="Spendable now" mono>
-                {formatAmount(accountView.balance)}
-              </KeyValue>
+              <View style={styles.tokenBlock}>
+                <Text variant="titleSmall">Balances at this address</Text>
+                {tokens.map((token) => (
+                  <KeyValue key={token.asset ?? "native"} label={token.symbol} mono>
+                    {formatTokenAmount(
+                      tokenBalance(accountView, token),
+                      token.symbol,
+                      token.decimals,
+                    )}
+                  </KeyValue>
+                ))}
+                <HelperText type="info" visible>
+                  One address can receive every token this network settles: SCCP and assets such
+                  as C960. The sender&apos;s transaction names the asset; this address needs no
+                  separate token account. Holding C960 does not pay fees, though -- the same
+                  account needs a little SCCP to move it.
+                </HelperText>
+              </View>
             )}
             {account.error !== undefined && <FailureNotice error={account.error} />}
           </Section>
@@ -503,7 +405,6 @@ export function Wallet({
                   mode={autoLockSeconds === seconds ? "contained-tonal" : "outlined"}
                   onPress={() => {
                     setAutoLockSeconds(seconds);
-                    writeAutoLockSeconds(seconds);
                   }}
                 >
                   {formatDuration(seconds)}
@@ -558,32 +459,49 @@ export function Wallet({
           <Loading />
         ) : (
           <Section
-            title="Balance"
-            subtitle="as the node reports it, refreshed every few seconds"
+            title="Balances"
+            subtitle="as the node reports them, refreshed every few seconds"
             action={
               <Button compact mode="outlined" onPress={() => account.reload()}>
                 Refresh
               </Button>
             }
           >
-            <KeyValue label="Spendable" mono>
-              {formatAmount(accountView.balance)}
-            </KeyValue>
-            <KeyValue label="Immature" mono>
-              {formatAmount(accountView.immature)}
-            </KeyValue>
-            <KeyValue label="Bonded" mono>
-              {formatAmount(accountView.bonded)}
-            </KeyValue>
-            <KeyValue label="Total" mono>
-              {formatAmount(accountView.total)}
-            </KeyValue>
+            {tokens.map((token) => {
+              const spendable = tokenBalance(accountView, token);
+              const immature = tokenImmature(accountView, token);
+              return (
+                <View key={token.asset ?? "native"} style={styles.tokenBlock}>
+                  <Text variant="titleSmall">
+                    {token.name} · {token.symbol}
+                  </Text>
+                  <KeyValue label="Spendable" mono>
+                    {formatTokenAmount(spendable, token.symbol, token.decimals)}
+                  </KeyValue>
+                  {immature > 0 && (
+                    <KeyValue label="Immature" mono>
+                      {formatTokenAmount(immature, token.symbol, token.decimals)}
+                    </KeyValue>
+                  )}
+                  {token.native && (
+                    <>
+                      <KeyValue label="Bonded" mono>
+                        {formatAmount(accountView.bonded)}
+                      </KeyValue>
+                      <KeyValue label="Total SCCP" mono>
+                        {formatAmount(accountView.total)}
+                      </KeyValue>
+                    </>
+                  )}
+                </View>
+              );
+            })}
             <KeyValue label="Next nonce" mono>
               {formatInteger(pendingNonce ?? accountView.nonce)}
             </KeyValue>
             {pending.map((entry) => (
               <KeyValue key={entry.txid} label="Pending">
-                {formatAmount(entry.amount)} to{" "}
+                {formatTokenAmount(entry.amount, entry.symbol ?? "SCCP")} to{" "}
                 {labelFor(readContacts(), entry.to) ?? shortAddress(entry.to)} · nonce{" "}
                 {formatInteger(entry.nonce)}
               </KeyValue>
@@ -626,5 +544,11 @@ const styles = StyleSheet.create({
   titleBlock: { gap: 4, flexShrink: 1 },
   titleActions: { flexDirection: "row", alignItems: "center", gap: 10, flexWrap: "wrap" },
   actions: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  tokenBlock: {
+    gap: 2,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: "rgba(128,128,128,0.24)",
+  },
   muted: { opacity: 0.66 },
 });

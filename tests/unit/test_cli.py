@@ -1916,3 +1916,98 @@ def test_devnet_up_accepts_only_mock_engines() -> None:
     rejected = runner.invoke(app, ["devnet", "up", "--engines", "stockfish-19"])
     assert rejected.exit_code == 2
     assert "only supports --engines mock" in rejected.output
+
+
+def test_dex_and_bridge_series_are_available_from_the_cli() -> None:
+    dex = runner.invoke(app, ["dex", "--help"])
+    assert dex.exit_code == 0, dex.output
+    for command in ("create-pool", "add-liquidity", "remove-liquidity", "swap", "quote"):
+        assert command in dex.stdout
+
+    bridge = runner.invoke(app, ["bridge", "--help"])
+    assert bridge.exit_code == 0, bridge.output
+    for command in ("sell", "take", "lock", "claim", "refund", "eth-lock", "eth-claim"):
+        assert command in bridge.stdout
+
+
+def test_sccp_network_env_selects_the_network_when_no_flag_is_given(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
+    created = _new(tmp_path, env, "--network", "devnet")
+    assert created.exit_code == 0, created.output
+    key = tmp_path / "wallet.key"
+
+    ok = runner.invoke(
+        app, ["wallet", "address", "--key", str(key)], env={**env, "SCCP_NETWORK": "devnet"}
+    )
+    assert ok.exit_code == 0, ok.output
+
+    wrong = runner.invoke(
+        app, ["wallet", "address", "--key", str(key)], env={**env, "SCCP_NETWORK": "testnet"}
+    )
+    assert wrong.exit_code == 1
+    assert "belongs to network 'devnet'" in wrong.stderr
+
+
+def test_dex_create_pool_builds_a_signed_transaction_from_the_node_account(
+    tmp_path: Path,
+    env: dict[str, str],
+    recorded_node: list[Any],
+    node_accounts: dict[str, dict[str, object]],
+) -> None:
+    from sccp.config import CHESS960_ASSET_ID
+
+    key = tmp_path / "lp.key"
+    created = runner.invoke(
+        app, ["wallet", "new", "--out", str(key), "--network", "devnet", *FAST], env=env
+    )
+    assert created.exit_code == 0, created.output
+    address = created.stdout.strip()
+    node_accounts[address] = {
+        **account_document(address, spendable=200 * UNITS_PER_COIN, nonce=7),
+        "assets": {CHESS960_ASSET_ID: 50 * UNITS_PER_COIN},
+    }
+
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "--data-dir",
+            str(tmp_path / "no-chain"),
+            "dex",
+            "create-pool",
+            "--network",
+            "devnet",
+            "--key",
+            str(key),
+            "--amount-a",
+            "50",
+            "--asset-b",
+            "C960",
+            "--amount-b",
+            "50",
+            "--node",
+            "http://node.test:8645",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["type"] == "create_pool"
+    assert len(payload["pool_id"]) == 64
+    assert len(recorded_node) == 1
+    tx = recorded_node[0]
+    assert tx.nonce == 7
+    assert "asset_a" not in tx.payload
+    assert tx.payload["asset_b"] == CHESS960_ASSET_ID
+    assert tx.payload["amount_a"] == 50 * UNITS_PER_COIN
+    assert tx.payload["amount_b"] == 50 * UNITS_PER_COIN
+
+
+def test_bridge_secret_prints_a_matching_pair() -> None:
+    result = runner.invoke(app, ["--json", "bridge", "secret"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert len(payload["preimage"]) == 64
+    assert len(payload["hashlock"]) == 64
+    assert payload["hashlock"] != payload["preimage"]

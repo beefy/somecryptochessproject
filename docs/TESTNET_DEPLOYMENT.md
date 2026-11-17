@@ -1,4 +1,4 @@
-# Deploying the two-miner testnet
+# Deploying the four-miner testnet
 
 Every merge to `main` runs
 [`.github/workflows/deploy-testnet-miners.yml`](../.github/workflows/deploy-testnet-miners.yml):
@@ -7,8 +7,8 @@ Every merge to `main` runs
    `ghcr.io/<owner>/<repo>:testnet`;
 2. over SSH, copy `docker-compose.yml` to the deployment host;
 3. run `docker compose down -v` (fresh chain), pull the new image and start the
-   node, bootstrap, relay, two miners and the two traffic generators (`drip` and
-   `traffic`);
+   node, bootstrap, relay, four miners (two standard, two Chess960) and the two
+   traffic generators (`drip` and `traffic`, with extra-miner churn disabled);
 4. run `deploy/check_testnet_stack.py` inside the node container and fail the
    workflow if the node has not reached the bootstrap height or the relay has no
    match;
@@ -68,6 +68,10 @@ Create a GitHub Environment named `testnet` and set:
 | variable | `TESTNET_DEPLOY_DIR` | optional checkout directory; default `/opt/sccp-testnet` |
 | variable | `TESTNET_DEPLOY_PORT` | optional SSH port; default `22` |
 | variable | `TESTNET_PUBLIC_URL` | optional public node URL; default `http://testnet.chessproofofwork.com:8645` |
+| variable | `SCCP_ETH_RPC_URL` | optional Sepolia RPC for the node's `GET /v1/bridge` document |
+| variable | `SCCP_ETH_HTLC_CONTRACT` | optional deployed `EthHtlc` address on Sepolia |
+| variable | `SCCP_ETH_CONFIRMATIONS` | optional testnet confirmation-depth override (default `6`) |
+| variable | `SCCP_ETH_SCCP_MARGIN` | optional SCCP timelock margin in blocks (default `24`) |
 | secret | `TESTNET_SSH_KEY` | private key for that user (ed25519, no passphrase) |
 | secret | `TESTNET_KNOWN_HOSTS` | optional pinned host key; without it the workflow runs `ssh-keyscan` |
 
@@ -89,9 +93,11 @@ start at height 0. Do not point this workflow at a chain whose history matters.
 
 ## Monthly cost estimate
 
-The stack is two Stockfish miners plus one node and one relay, all small
-single-threaded processes. A 4 vCPU / 8 GB VM is comfortable; 2 vCPU / 4 GB
-works with a little less headroom.
+The stack is four Stockfish miners (two standard, two Chess960) plus one node and
+one relay, all small single-threaded processes. The existing 2 vCPU / 8 GB VM
+runs the four at 5 000 nodes per move; a 4 vCPU / 8 GB VM leaves more headroom.
+The synthetic extra-miner churn stays off so it cannot compete with the fixed
+seats.
 
 | Line item | Assumption | Monthly estimate |
 | --- | --- | ---: |

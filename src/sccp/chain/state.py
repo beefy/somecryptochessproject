@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Final
 
 from sccp.chain.difficulty import Difficulty, initial_difficulty
@@ -83,12 +84,21 @@ def reveal_deadline_tip(epoch: int, params: NetworkParams) -> int:
 
 @dataclass(slots=True)
 class Account:
-    """One account's balances, bond, nonce and registration metadata."""
+    """One account's balances, bond, nonce and registration metadata.
+
+    ``balance`` is the native SCCP coin. ``assets`` holds non-native variant
+    tokens (Chess960 first) keyed by their derived asset id; both have a matching
+    ``immature`` counter for coinbase rewards that have not matured yet.
+    """
 
     balance: int = 0
-    """Spendable balance in base units."""
+    """Spendable native balance in base units."""
     immature: int = 0
-    """Coinbase value that has not reached ``coinbase_maturity`` yet."""
+    """Native coinbase value that has not reached ``coinbase_maturity`` yet."""
+    assets: dict[str, int] = field(default_factory=dict)
+    """Spendable variant-token balances keyed by asset id."""
+    immature_assets: dict[str, int] = field(default_factory=dict)
+    """Variant-token coinbase value still waiting for maturity."""
     bonded: int = 0
     """Bonded balance: owned by the account, unspendable until unbonding."""
     unbonding_height: int | None = None
@@ -101,18 +111,28 @@ class Account:
     """Informational miner endpoint; consensus never fetches it."""
     engine: str | None = None
     """Engine fingerprint declared at registration."""
+    variant: str = "standard"
+    """Chess variant this miner registered for; standard is native SCCP."""
     public_key: str | None = None
     """Ed25519 public key (hex), set by genesis, ``register`` or first reveal."""
     banned_until: int = 0
     """Height until which the account is excluded from the roster."""
     coinbase_queue: list[tuple[int, int]] = field(default_factory=list)
-    """``(credit_height, amount)`` pairs waiting for maturity, oldest first."""
+    """Native ``(credit_height, amount)`` pairs waiting for maturity, oldest first."""
+    asset_coinbase_queue: list[tuple[int, int, str]] = field(default_factory=list)
+    """Variant ``(credit_height, amount, asset_id)`` rewards waiting for maturity."""
 
     def __post_init__(self) -> None:
         for name in ("balance", "immature", "bonded", "nonce"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise StateError(f"account {name} must be a non-negative integer")
+        for label, mapping in (("assets", self.assets), ("immature_assets", self.immature_assets)):
+            for asset, amount in mapping.items():
+                if not isinstance(asset, str) or not asset:
+                    raise StateError(f"account {label} keys must be asset ids")
+                if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+                    raise StateError(f"account {label} amounts must be non-negative integers")
 
     @property
     def total(self) -> int:
@@ -120,8 +140,13 @@ class Account:
         return self.balance + self.immature + self.bonded
 
     def as_dict(self) -> dict[str, object]:
-        """Canonical mapping used by ``state_root`` and snapshots."""
-        return {
+        """Canonical mapping used by ``state_root`` and snapshots.
+
+        Empty asset fields and the default variant are omitted, so a
+        standard-only account has exactly the protocol-v1 leaf and existing
+        state roots stay stable.
+        """
+        document: dict[str, object] = {
             "balance": self.balance,
             "immature": self.immature,
             "bonded": self.bonded,
@@ -134,6 +159,17 @@ class Account:
             "banned_until": self.banned_until,
             "coinbase_queue": [[height, amount] for height, amount in self.coinbase_queue],
         }
+        if self.variant != "standard":
+            document["variant"] = self.variant
+        if self.assets:
+            document["assets"] = dict(sorted(self.assets.items()))
+        if self.immature_assets:
+            document["immature_assets"] = dict(sorted(self.immature_assets.items()))
+        if self.asset_coinbase_queue:
+            document["asset_coinbase_queue"] = [
+                [height, amount, asset] for height, amount, asset in self.asset_coinbase_queue
+            ]
+        return document
 
     @classmethod
     def from_dict(cls, document: Mapping[str, object]) -> Account:
@@ -174,18 +210,287 @@ class Account:
                 raise StateError("coinbase_queue entries must be [height, amount] pairs")
             queue.append((item[0], item[1]))
 
+        def _assets(key: str) -> dict[str, int]:
+            raw = document.get(key, {})
+            if raw is None:
+                return {}
+            if not isinstance(raw, Mapping):
+                raise StateError(f"account field {key!r} must be an object")
+            balances: dict[str, int] = {}
+            for asset, amount in raw.items():
+                if not isinstance(asset, str) or not asset:
+                    raise StateError(f"account field {key!r} keys must be asset ids")
+                if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+                    raise StateError(f"account field {key!r} amounts must be non-negative")
+                balances[asset] = amount
+            return balances
+
+        asset_queue_raw = document.get("asset_coinbase_queue", [])
+        if not isinstance(asset_queue_raw, list):
+            raise StateError("account field 'asset_coinbase_queue' must be a list")
+        asset_queue: list[tuple[int, int, str]] = []
+        for item in asset_queue_raw:
+            if (
+                not isinstance(item, list)
+                or len(item) != 3
+                or not isinstance(item[0], int)
+                or isinstance(item[0], bool)
+                or not isinstance(item[1], int)
+                or isinstance(item[1], bool)
+                or not isinstance(item[2], str)
+            ):
+                raise StateError("asset_coinbase_queue entries must be [height, amount, asset]")
+            asset_queue.append((item[0], item[1], item[2]))
+
         return cls(
             balance=_int("balance"),
             immature=_int("immature"),
+            assets=_assets("assets"),
+            immature_assets=_assets("immature_assets"),
             bonded=_int("bonded"),
             unbonding_height=_optional_int("unbonding_height"),
             nonce=_int("nonce"),
             registered_until_epoch=_optional_int("registered_until_epoch"),
             endpoint=_optional_str("endpoint"),
             engine=_optional_str("engine"),
+            variant=_optional_str("variant") or "standard",
             public_key=_optional_str("public_key"),
             banned_until=_int("banned_until"),
             coinbase_queue=queue,
+            asset_coinbase_queue=asset_queue,
+        )
+
+
+@dataclass(slots=True)
+class Pool:
+    """One constant-product liquidity pool, including its LP share ledger.
+
+    ``asset_a`` is the empty string for native SCCP and a 64-hex asset id
+    otherwise. The pair is ordered, so a pool has exactly one representation and
+    :func:`sccp.chain.dex.pool_id` can be derived from either side order.
+    """
+
+    pool_id: str
+    asset_a: str
+    asset_b: str
+    reserve_a: int
+    reserve_b: int
+    total_shares: int
+    shares: dict[str, int] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if len(self.pool_id) != 64 or self.pool_id != self.pool_id.lower():
+            raise StateError("pool id must be a 32-byte lowercase hex digest")
+        try:
+            bytes.fromhex(self.pool_id)
+        except ValueError:
+            raise StateError("pool id must be hex") from None
+        if not self.asset_b or self.asset_a == self.asset_b:
+            raise StateError("a pool needs two different assets")
+        if self.asset_a > self.asset_b:
+            raise StateError("pool assets must be ordered")
+        for label, asset in (("asset_a", self.asset_a), ("asset_b", self.asset_b)):
+            if asset and (len(asset) != 64 or asset != asset.lower()):
+                raise StateError(f"pool {label} must be an asset id")
+        for label in ("reserve_a", "reserve_b", "total_shares"):
+            value = getattr(self, label)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                raise StateError(f"pool {label} must be a non-negative integer")
+        for address, amount in self.shares.items():
+            if not isinstance(address, str) or not address:
+                raise StateError("pool share addresses must be non-empty strings")
+            if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
+                raise StateError("pool share amounts must be positive integers")
+        if sum(self.shares.values()) != self.total_shares:
+            raise StateError("pool total_shares must equal the sum of LP shares")
+
+    def as_dict(self) -> dict[str, object]:
+        """Canonical mapping committed by ``state_root`` and written to snapshots."""
+        return {
+            "asset_a": self.asset_a,
+            "asset_b": self.asset_b,
+            "reserve_a": self.reserve_a,
+            "reserve_b": self.reserve_b,
+            "total_shares": self.total_shares,
+            "shares": dict(sorted(self.shares.items())),
+        }
+
+    @classmethod
+    def from_dict(cls, pool_id: str, document: Mapping[str, object]) -> Pool:
+        """Rebuild a pool from :meth:`as_dict` output."""
+
+        def _int(key: str) -> int:
+            value = document.get(key)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise StateError(f"pool field {key!r} must be an integer")
+            return value
+
+        raw_shares = document.get("shares", {})
+        if not isinstance(raw_shares, Mapping):
+            raise StateError("pool field 'shares' must be a mapping")
+        asset_a = document.get("asset_a", "")
+        asset_b = document.get("asset_b", "")
+        if not isinstance(asset_a, str) or not isinstance(asset_b, str):
+            raise StateError("pool assets must be strings")
+        shares: dict[str, int] = {}
+        for address, amount in raw_shares.items():
+            if not isinstance(address, str) or not address:
+                raise StateError("pool share addresses must be non-empty strings")
+            if not isinstance(amount, int) or isinstance(amount, bool):
+                raise StateError("pool share amounts must be integers")
+            shares[address] = amount
+        return cls(
+            pool_id=pool_id,
+            asset_a=asset_a,
+            asset_b=asset_b,
+            reserve_a=_int("reserve_a"),
+            reserve_b=_int("reserve_b"),
+            total_shares=_int("total_shares"),
+            shares=shares,
+        )
+
+
+class HtlcStatus(StrEnum):
+    """The three states an HTLC can be in.
+
+    A record is never deleted: a closed HTLC is what lets an explorer show the
+    preimage that settled an atomic swap, and it is part of the state root just
+    like a pool. ``locked`` funds live in consensus escrow, not in an account.
+    """
+
+    LOCKED = "locked"
+    CLAIMED = "claimed"
+    REFUNDED = "refunded"
+
+
+@dataclass(slots=True)
+class HtlcRecord:
+    """One hash time-locked contract held by consensus (PROTOCOL.md section 10).
+
+    ``asset`` is the empty string for native SCCP and a 64-hex asset id for a
+    variant token. Native and token amounts are mutually exclusive by keeping one
+    ``amount`` beside one ``asset`` name, exactly as the DEX pool sides do.
+    """
+
+    htlc_id: str
+    sender: str
+    beneficiary: str
+    hashlock: str
+    timelock_height: int
+    amount: int
+    created_at_height: int
+    asset: str = ""
+    status: HtlcStatus = HtlcStatus.LOCKED
+    closed_at_height: int | None = None
+    preimage: str | None = None
+    """The 32-byte secret a claim revealed; ``None`` until claimed.
+
+    This is public by construction: the claim transaction carries it, and the
+    maker needs it to claim the Ethereum leg. A refund never has one.
+    """
+
+    def __post_init__(self) -> None:
+        if len(self.htlc_id) != 64 or self.htlc_id != self.htlc_id.lower():
+            raise StateError("htlc id must be a 32-byte lowercase hex digest")
+        try:
+            bytes.fromhex(self.htlc_id)
+            bytes.fromhex(self.hashlock)
+        except ValueError:
+            raise StateError("htlc id and hashlock must be hex") from None
+        if len(self.hashlock) != 64 or self.hashlock != self.hashlock.lower():
+            raise StateError("htlc hashlock must be a 32-byte lowercase hex digest")
+        if not self.sender or not self.beneficiary:
+            raise StateError("an htlc needs a sender and a beneficiary")
+        if not isinstance(self.timelock_height, int) or self.timelock_height < 0:
+            raise StateError("an htlc timelock must be a non-negative height")
+        if not isinstance(self.amount, int) or isinstance(self.amount, bool) or self.amount <= 0:
+            raise StateError("an htlc amount must be a positive integer")
+        if not isinstance(self.created_at_height, int) or self.created_at_height < 0:
+            raise StateError("an htlc creation height must be non-negative")
+        if self.asset and (len(self.asset) != 64 or self.asset != self.asset.lower()):
+            raise StateError("an htlc asset must be empty or a 32-byte hex asset id")
+        if not isinstance(self.status, HtlcStatus):
+            raise StateError("an htlc status must be locked, claimed or refunded")
+        if self.preimage is not None:
+            if len(self.preimage) != 64 or self.preimage != self.preimage.lower():
+                raise StateError("an htlc preimage must be 32-byte lowercase hex")
+            try:
+                bytes.fromhex(self.preimage)
+            except ValueError:
+                raise StateError("an htlc preimage must be hex") from None
+        if self.status is HtlcStatus.LOCKED:
+            if self.closed_at_height is not None:
+                raise StateError("a locked htlc cannot have a closing height")
+            if self.preimage is not None:
+                raise StateError("a locked htlc has no revealed preimage")
+        elif self.closed_at_height is None or self.closed_at_height < self.created_at_height:
+            raise StateError("a closed htlc needs a closing height at or after creation")
+        if self.status is HtlcStatus.REFUNDED and self.preimage is not None:
+            raise StateError("a refunded htlc has no revealed preimage")
+        if self.status is HtlcStatus.CLAIMED and self.preimage is None:
+            raise StateError("a claimed htlc must record the revealed preimage")
+
+    def as_dict(self) -> dict[str, object]:
+        """Canonical mapping committed by ``state_root`` and snapshots."""
+        return {
+            "sender": self.sender,
+            "beneficiary": self.beneficiary,
+            "hashlock": self.hashlock,
+            "timelock_height": self.timelock_height,
+            "amount": self.amount,
+            "created_at_height": self.created_at_height,
+            "asset": self.asset or None,
+            "status": self.status.value,
+            "closed_at_height": self.closed_at_height,
+            "preimage": self.preimage,
+        }
+
+    @classmethod
+    def from_dict(cls, htlc_id: str, document: Mapping[str, object]) -> HtlcRecord:
+        """Rebuild an HTLC from :meth:`as_dict` output."""
+
+        def _int(key: str) -> int:
+            value = document.get(key)
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise StateError(f"htlc field {key!r} must be an integer")
+            return value
+
+        def _text(key: str) -> str:
+            value = document.get(key)
+            if not isinstance(value, str):
+                raise StateError(f"htlc field {key!r} must be text")
+            return value
+
+        asset = document.get("asset")
+        if asset is None:
+            asset = ""
+        if not isinstance(asset, str):
+            raise StateError("htlc field 'asset' must be text or null")
+        status_raw = document.get("status", HtlcStatus.LOCKED.value)
+        if not isinstance(status_raw, str):
+            raise StateError("htlc field 'status' must be text")
+        try:
+            status = HtlcStatus(status_raw)
+        except ValueError:
+            raise StateError(f"unknown htlc status {status_raw!r}") from None
+        closed = document.get("closed_at_height")
+        if closed is not None and (not isinstance(closed, int) or isinstance(closed, bool)):
+            raise StateError("htlc field 'closed_at_height' must be an integer or null")
+        preimage = document.get("preimage")
+        if preimage is not None and not isinstance(preimage, str):
+            raise StateError("htlc field 'preimage' must be text or null")
+        return cls(
+            htlc_id=htlc_id,
+            sender=_text("sender"),
+            beneficiary=_text("beneficiary"),
+            hashlock=_text("hashlock"),
+            timelock_height=_int("timelock_height"),
+            amount=_int("amount"),
+            created_at_height=_int("created_at_height"),
+            asset=asset,
+            status=status,
+            closed_at_height=closed,
+            preimage=preimage,
         )
 
 
@@ -199,6 +504,8 @@ class ProofRecord:
     winner: str
     miner: str = ""
     """Who announced the proof, recorded for audit."""
+    variant: str = "standard"
+    """The variant the game was played under."""
 
 
 @dataclass(slots=True)
@@ -248,6 +555,18 @@ def _as_int(value: object, name: str) -> int:
     raise StateError(f"{name} must be an integer in a state snapshot")
 
 
+def _roster_member_document(member: RosterMember) -> dict[str, object]:
+    """Serialize a roster entry, omitting the standard variant's default.
+
+    Existing standard-only snapshots therefore keep the exact document they had
+    before variant support; only non-standard members gain a ``variant`` key.
+    """
+    document = member.model_dump(mode="json")
+    if member.variant == "standard":
+        document.pop("variant", None)
+    return document
+
+
 @dataclass(slots=True)
 class EpochRecord:
     """Everything the chain knows about one epoch (PROTOCOL.md section 6).
@@ -273,7 +592,7 @@ class EpochRecord:
             "epoch": self.epoch,
             "beacon": self.beacon.model_dump(mode="json") if self.beacon is not None else None,
             "roster": {
-                address: member.model_dump(mode="json")
+                address: _roster_member_document(member)
                 for address, member in sorted(self.roster.items())
             },
             "availability": dict(sorted(self.availability.items())),
@@ -412,7 +731,13 @@ class State:
     timestamps: list[int] = field(default_factory=list)
     """The last :data:`MAX_RECENT_TIMESTAMPS` block timestamps, oldest first."""
     minted: int = 0
-    """Total subsidy ever created, for the ``max_supply`` clamp."""
+    """Total native subsidy ever created, for the ``max_supply`` clamp."""
+    minted_assets: dict[str, int] = field(default_factory=dict)
+    """Total variant-token supply ever created, keyed by asset id."""
+    pools: dict[str, Pool] = field(default_factory=dict)
+    """``pool_id -> Pool`` for every DEX pair the chain has created."""
+    htlcs: dict[str, HtlcRecord] = field(default_factory=dict)
+    """``htlc_id -> HtlcRecord`` for every hash lock, open or closed."""
 
     def __post_init__(self) -> None:
         if self.difficulty is None:
@@ -421,6 +746,17 @@ class State:
             raise StateError("state height must be non-negative")
         if self.minted < 0:
             raise StateError("minted supply must be non-negative")
+        for asset, amount in self.minted_assets.items():
+            if not isinstance(asset, str) or not asset:
+                raise StateError("minted_assets keys must be asset ids")
+            if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+                raise StateError("minted_assets amounts must be non-negative")
+        for pool_id, pool in self.pools.items():
+            if not isinstance(pool_id, str) or pool_id != pool.pool_id:
+                raise StateError("pools must be keyed by their pool id")
+        for htlc_id, htlc in self.htlcs.items():
+            if not isinstance(htlc_id, str) or htlc_id != htlc.htlc_id:
+                raise StateError("htlcs must be keyed by their htlc id")
 
     # -- accessors ----------------------------------------------------------
 
@@ -504,10 +840,21 @@ class State:
     # -- commitments --------------------------------------------------------
 
     def state_root(self) -> str:
-        """Merkle root over ``address -> account`` leaves (PROTOCOL.md sections 12-13)."""
-        return merkle_root_hex(
-            {address: account.as_dict() for address, account in self.accounts.items()}
-        )
+        """Merkle root over account, DEX-pool and HTLC leaves.
+
+        Account keys are bech32 addresses; pools and hash locks are prefixed with
+        ``pool:`` and ``htlc:`` so the namespaces cannot collide. A chain with no
+        pools or locks produces the same all-account root as before either
+        existed.
+        """
+        leaves: dict[str, object] = {
+            address: account.as_dict() for address, account in self.accounts.items()
+        }
+        for pool_id, pool in self.pools.items():
+            leaves[f"pool:{pool_id}"] = pool.as_dict()
+        for htlc_id, htlc in self.htlcs.items():
+            leaves[f"htlc:{htlc_id}"] = htlc.as_dict()
+        return merkle_root_hex(leaves)
 
     @staticmethod
     def roster_root_of(roster: Mapping[str, RosterMember]) -> str:
@@ -516,12 +863,16 @@ class State:
         Only the consensus-relevant fields are committed: the registered public
         key and the miner's committed game quota.
         """
-        return merkle_root_hex(
-            {
-                address: {"public_key": member.public_key, "max_games": member.max_games}
-                for address, member in roster.items()
+        leaves: dict[str, dict[str, object]] = {}
+        for address, member in roster.items():
+            leaf: dict[str, object] = {
+                "public_key": member.public_key,
+                "max_games": member.max_games,
             }
-        )
+            if member.variant != "standard":
+                leaf["variant"] = member.variant
+            leaves[address] = leaf
+        return merkle_root_hex(leaves)
 
     # -- balances -----------------------------------------------------------
 
@@ -536,30 +887,76 @@ class State:
         account.coinbase_queue.append((height, amount))
         self.minted += amount
 
+    def credit_asset_coinbase(self, miner: str, asset: str, amount: int, height: int) -> None:
+        """Credit a variant-token block reward that matures like native coinbase."""
+        if amount < 0:
+            raise StateError("asset coinbase amount must be non-negative")
+        if amount == 0:
+            return
+        account = self.ensure(miner)
+        account.immature_assets[asset] = account.immature_assets.get(asset, 0) + amount
+        account.asset_coinbase_queue.append((height, amount, asset))
+        self.minted_assets[asset] = self.minted_assets.get(asset, 0) + amount
+
     def release_matured(self, height: int) -> int:
-        """Move matured coinbase value into spendable balances; return the total."""
+        """Move matured coinbase value into spendable balances; return the native total."""
         maturity = self.params.coinbase_maturity
         total = 0
         for account in self.accounts.values():
-            if not account.coinbase_queue:
-                continue
-            released = 0
-            pending: list[tuple[int, int]] = []
-            for credit_height, amount in account.coinbase_queue:
-                if credit_height + maturity <= height:
-                    released += amount
-                else:
-                    pending.append((credit_height, amount))
-            if released:
-                account.coinbase_queue = pending
-                account.immature -= released
-                account.balance += released
-                total += released
+            if account.coinbase_queue:
+                released = 0
+                pending: list[tuple[int, int]] = []
+                for credit_height, amount in account.coinbase_queue:
+                    if credit_height + maturity <= height:
+                        released += amount
+                    else:
+                        pending.append((credit_height, amount))
+                if released:
+                    account.coinbase_queue = pending
+                    account.immature -= released
+                    account.balance += released
+                    total += released
+            if account.asset_coinbase_queue:
+                asset_pending: list[tuple[int, int, str]] = []
+                for credit_height, amount, asset in account.asset_coinbase_queue:
+                    if credit_height + maturity <= height:
+                        account.assets[asset] = account.assets.get(asset, 0) + amount
+                        account.immature_assets[asset] = max(
+                            0, account.immature_assets.get(asset, 0) - amount
+                        )
+                    else:
+                        asset_pending.append((credit_height, amount, asset))
+                account.asset_coinbase_queue = asset_pending
         return total
 
     def spendable(self, address: str) -> int:
-        """The balance a transaction may draw on: spendable plus matured coinbase."""
+        """The native balance a transaction may draw on."""
         return self.account(address).balance
+
+    def asset_balance(self, address: str, asset: str) -> int:
+        """The spendable balance of ``asset`` owned by ``address``."""
+        return self.account(address).assets.get(asset, 0)
+
+    def credit_asset(self, address: str, asset: str, amount: int) -> None:
+        """Add ``amount`` of ``asset`` to a spendable balance."""
+        if amount < 0:
+            raise StateError("asset credit must be non-negative")
+        account = self.ensure(address)
+        account.assets[asset] = account.assets.get(asset, 0) + amount
+
+    def debit_asset(self, address: str, asset: str, amount: int) -> None:
+        """Subtract ``amount`` of ``asset``, refusing an overdraft."""
+        if amount < 0:
+            raise StateError("asset debit must be non-negative")
+        account = self.ensure(address)
+        current = account.assets.get(asset, 0)
+        if current < amount:
+            raise StateError(f"{address} has {current} of {asset}, cannot debit {amount}")
+        remaining = current - amount
+        if remaining:
+            account.assets[asset] = remaining
+        else:
+            account.assets.pop(asset, None)
 
     # -- epochs -------------------------------------------------------------
 
@@ -589,6 +986,7 @@ class State:
                 roster[address] = RosterMember(
                     public_key=account.public_key or "",
                     engine=account.engine,
+                    variant=account.variant,
                     max_games=quota,
                 )
                 commitments[address] = availability[address].commitment
@@ -633,6 +1031,7 @@ class State:
                     "height": record.height,
                     "winner": record.winner,
                     "miner": record.miner,
+                    **({"variant": record.variant} if record.variant != "standard" else {}),
                 }
                 for game_hash, record in sorted(self.proofs.items())
             },
@@ -684,6 +1083,21 @@ class State:
             "last_k_change_height": self.last_k_change_height,
             "timestamps": list(self.timestamps),
             "minted": self.minted,
+            **(
+                {"minted_assets": dict(sorted(self.minted_assets.items()))}
+                if self.minted_assets
+                else {}
+            ),
+            **(
+                {"pools": {pool_id: pool.as_dict() for pool_id, pool in sorted(self.pools.items())}}
+                if self.pools
+                else {}
+            ),
+            **(
+                {"htlcs": {htlc_id: htlc.as_dict() for htlc_id, htlc in sorted(self.htlcs.items())}}
+                if self.htlcs
+                else {}
+            ),
         }
 
     @classmethod
@@ -704,6 +1118,8 @@ class State:
         reveals_raw = _as_mapping(document.get("reveals"), "reveals")
         witnesses_raw = _as_mapping(document.get("witnesses"), "witnesses")
         claims_raw = _as_mapping(document.get("timeout_claims"), "timeout_claims")
+        pools_raw = _as_mapping(document.get("pools", {}), "pools")
+        htlcs_raw = _as_mapping(document.get("htlcs", {}), "htlcs")
 
         accounts = {
             str(address): Account.from_dict(_as_mapping(entry, "account"))
@@ -718,6 +1134,7 @@ class State:
                 height=_as_int(item.get("height"), "proof height"),
                 winner=str(item["winner"]),
                 miner=str(item.get("miner") or item["winner"]),
+                variant=str(item.get("variant") or "standard"),
             )
         matches: dict[str, MatchRecord] = {}
         for match, entry in matches_raw.items():
@@ -775,6 +1192,14 @@ class State:
             str(claim_id): TimeoutClaimRecord.from_dict(_as_mapping(entry, "timeout claim"))
             for claim_id, entry in claims_raw.items()
         }
+        pools = {
+            str(pool_id): Pool.from_dict(str(pool_id), _as_mapping(entry, "pool"))
+            for pool_id, entry in pools_raw.items()
+        }
+        htlcs = {
+            str(htlc_id): HtlcRecord.from_dict(str(htlc_id), _as_mapping(entry, "htlc"))
+            for htlc_id, entry in htlcs_raw.items()
+        }
         difficulty = None
         if document.get("difficulty") is not None:
             item = _as_mapping(document.get("difficulty"), "difficulty")
@@ -807,6 +1232,9 @@ class State:
             ),
             timestamps=[_as_int(value, "timestamp") for value in timestamps_raw],
             minted=_as_int(document.get("minted"), "minted"),
+            minted_assets=_asset_totals(document.get("minted_assets")),
+            pools=pools,
+            htlcs=htlcs,
         )
 
     def copy(self) -> State:
@@ -821,13 +1249,32 @@ def _as_mapping(value: object, name: str) -> Mapping[str, object]:
     return value
 
 
+def _asset_totals(value: object) -> dict[str, int]:
+    """Parse an optional ``asset id -> total`` map from a snapshot."""
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise StateError("minted_assets must be a mapping in a state snapshot")
+    totals: dict[str, int] = {}
+    for asset, amount in value.items():
+        if not isinstance(asset, str) or not asset:
+            raise StateError("minted_assets keys must be asset ids")
+        if not isinstance(amount, int) or isinstance(amount, bool) or amount < 0:
+            raise StateError("minted_assets amounts must be non-negative integers")
+        totals[asset] = amount
+    return totals
+
+
 __all__ = [
     "MAX_RECENT_TIMESTAMPS",
     "ZERO_HASH",
     "Account",
     "EpochRecord",
+    "HtlcRecord",
+    "HtlcStatus",
     "MatchRecord",
     "MinerStats",
+    "Pool",
     "ProofRecord",
     "State",
     "TimeoutClaimRecord",

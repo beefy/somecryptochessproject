@@ -77,9 +77,11 @@ Rules:
 2. SAN is the canonical form emitted by `python-chess` 1.11.x: `O-O`, `O-O-O`,
    `e8=Q`, `exd8=Q+`, `Qxf7#`, and explicit disambiguation where required.
 3. `result` uses the PGN vocabulary. `"*"` never enters a proof.
-4. `start_fen` is `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1`.
-   Protocol v1 has no variant start positions; a PGN carrying a different
-   `FEN` (or any `SetUp`) is rejected.
+4. `start_fen` is `rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1`
+   for standard chess. A Chess960 game uses one of the 960 legal positions in
+   Shredder-FEN, carries `SetUp "1"` and `Variant "Chess960"`, and adds
+   `"variant": "chess960"` to the hash payload. A standard PGN carrying any
+   other `FEN` (or an ambiguous `KQkq` Chess960 FEN) is rejected.
 5. PGN headers, comments, clock annotations, move numbers and whitespace are
    **not** hashed. The same moves with different metadata hash identically; a
    different move order or result hashes differently.
@@ -106,7 +108,8 @@ when a second game follows the first.
 | `SeatWhite`, `SeatBlack` | Bech32 addresses; must equal the certificate |
 | `EngineWhite`, `EngineBlack` | Engine fingerprints; must equal the certificate |
 | `OpeningID`, `OpeningHash` | Book line id and its opening hash |
-| `Rules` | Exactly `chess` |
+| `Rules` | `chess` for standard, `chess960` for Fischer Random |
+| `FEN`, `SetUp`, `Variant` | Optional for standard; required for Chess960, with `SetUp "1"` and `Variant "Chess960"` |
 
 Every tag must be present and non-empty. When a certificate is supplied,
 `MatchID`, `Epoch`, `RoundNumber`, `SeatWhite`, `SeatBlack`, `EngineWhite`,
@@ -118,8 +121,9 @@ second, and the worst case `initial_ms + increment_ms * max_plies` may not excee
 
 ### 3.2 Replay
 
-- Replay starts from the standard position. Every mainline move must satisfy
-  `Board.is_legal(move)` **before** it is pushed; `Board.push()` does not
+- Replay starts from the standard position, or from the certificate's Shredder
+  FEN for Chess960 with `Board(fen, chess960=True)`. Every mainline move must
+  satisfy `Board.is_legal(move)` **before** it is pushed; `Board.push()` does not
   validate and must never be trusted as a gate.
 - The game may not exceed `max_plies`; a proof also requires at least
   `min_plies` half-moves.
@@ -805,19 +809,41 @@ the one scheme, not a second way to spend.
 | `timeout_claim` | `match_id`, `certificate`, `last_move`, `clock_evidence`, `bond`, `public_key`\* | opens a bonded claim (10.4) |
 | `timeout_dispute` | `claim_id`, `move`, `move_signature`, `clock_evidence`, `public_key`\* | the accused answers with a later signed move (10.4) |
 | `slash_evidence` | `evidence`, `proof_id`, `public_key`\* | burns an equivocating clock witness (10.4); `proof_id` is refused here |
+| `create_pool` | `asset_a`?, `amount_a`, `asset_b`?, `amount_b`, `public_key`\* | creates the ordered pair's first pool; both sides positive; the omitted asset key means native SCCP; shares are `isqrt(amount_a * amount_b)` |
+| `add_liquidity` | `pool_id`, `amount_a`, `amount_b`, `public_key`\* | deposits both sides; mints `min(amount_a * shares / reserve_a, amount_b * shares / reserve_b)` shares |
+| `remove_liquidity` | `pool_id`, `shares`, `public_key`\* | burns the sender's shares and pays both reserves pro rata; a full redemption deletes the pool |
+| `swap` | `pool_id`, `asset_in`?, `amount_in`, `min_amount_out`, `public_key`\* | moves `amount_in` into one reserve and the constant-product output out of the other; omitted `asset_in` means SCCP; rejects an output below `min_amount_out` |
+| `htlc_lock` | `hashlock`, `timelock_height`, `beneficiary`, `amount`, `asset`?, `public_key`\* | moves `amount` into consensus escrow under `sha256(preimage) == hashlock`; `timelock_height > height`; omitted `asset` means native SCCP |
+| `htlc_claim` | `htlc_id`, `preimage`, `public_key`\* | signed by `beneficiary`, valid only before `timelock_height`, checks the preimage, pays the escrow and records the revealed secret |
+| `htlc_refund` | `htlc_id`, `public_key`\* | signed by the original locker, valid only at or after `timelock_height`; mutually exclusive with a claim |
 
 \* optional: only needed for an account whose public key the chain does not
 already know (10.1).
+
+`htlc_id = H("sccp/v1/htlc", {from, nonce})`. A claimed or refunded record stays
+in state (and in `state_root`) so an explorer and the counterparty can read the
+preimage; a lock has no preimage until a claim reveals it. A native claim or
+refund may pay its network fee out of the amount being released, which lets a
+bridge taker who holds no SCCP claim the first leg. The hash is plain SHA-256,
+not a domain hash, because the Ethereum contract checks the same 32 bytes.
+
+The DEX's swap fee is `dex_fee_bps` (30 basis points by default). It is charged
+inside the curve and stays in the input reserve, so it belongs to the pool's
+liquidity providers rather than to the miner. Every DEX transaction still pays
+its ordinary fee in native SCCP.
 
 ### 10.3 Coinbase
 
 Every block above genesis carries exactly one coinbase: an *unsigned* `transfer`
 from the miner to itself with `nonce = 0`, `fee = 0` and
-`payload = {to: miner, amount: subsidy + fees}`. Its authorisation is the block
-seal, not a signature, so it is never applied as an ordinary transaction and
-consumes no nonce. `subsidy = params.subsidy >> (height // halving_interval)`,
-clamped so minted supply never exceeds `max_supply`; testnet and devnet have no
-cap and no halving. The credited amount matures after `coinbase_maturity` blocks
+`payload = {to: miner, amount: native_subsidy + fees}`. When the block settles a
+non-standard variant, the payload also carries
+`variant_rewards = {asset_id: amount}` and no native subsidy is minted for that
+proof. Its authorisation is the block seal, not a signature, so it is never
+applied as an ordinary transaction and consumes no nonce.
+`native_subsidy = params.subsidy >> (height // halving_interval)`, clamped so
+minted supply never exceeds `max_supply`; each variant has the same schedule on
+its own asset. The credited amounts mature after `coinbase_maturity` blocks
 (`immature` becomes spendable) and a body transaction may not imitate a coinbase.
 
 ### 10.4 Bonded timeout settlement
@@ -929,6 +955,31 @@ hybrid signature rules against the roster's keys rather than skipping them, and
 `sccp wallet sign-result --payload <hex>` remains an alternative for a key that
 is not in a browser.
 
+### 10.6 Liquidity pools
+
+A DEX pool is consensus state, not a contract account. It has an ordered pair
+`(asset_a, asset_b)` — the empty string means native SCCP — two integer reserves
+and an LP share ledger keyed by address. `pool_id` is
+`H("sccp/v1/pool", {asset_a, asset_b})`, so both nodes derive the same id from
+either side order.
+
+The curve is `x * y = k`. A swap with `fee_bps = dex_fee_bps` pays
+
+```text
+amount_out = amount_in * (10000 - fee_bps) * reserve_out
+             / (reserve_in * 10000 + amount_in * (10000 - fee_bps))
+```
+
+rounded down. The fee remains in the input reserve. An initial deposit mints
+`isqrt(amount_a * amount_b)` shares; later deposits mint the minimum of the two
+proportional share counts, so a deliberately imbalanced deposit cannot mint value
+out of the pool. Removing shares pays each reserve pro rata, rounded down. The
+chain refuses a redemption that would pay zero of either side, and deletes the
+pool when the last share is burned.
+
+All reserves are integer base units. Fees for DEX transactions are still paid in
+native SCCP, so an account swapping a variant token needs a small SCCP balance.
+
 ## 11. Ledger state
 
 The state is a deterministic, integer-only object (`src/sccp/chain/state.py`);
@@ -937,30 +988,35 @@ nothing in it reads a clock, a random source or the network. It holds one
 
 | Account field | Meaning |
 | --- | --- |
-| `balance` | spendable base units |
-| `immature` | coinbase credits that mature at a later height |
+| `balance`, `immature` | spendable and maturing native SCCP base units |
+| `assets`, `immature_assets` | spendable and maturing variant-token balances keyed by asset id |
 | `bonded` | locked bond (registration or witness) |
 | `nonce` | next valid transaction nonce |
 | `public_key` | the spend key, once known (10.1) |
+| `variant` | the miner's registered chess variant (`standard` is native) |
 | `registered_until_epoch`, `endpoint`, `engine`, `unbonding_height`, `banned_until` | registration and bond lifecycle |
 
 alongside the proof and match registries (`game_hash -> proof_id`, match id ->
 epoch/round/seats), per-miner stats (wins, games, last opponent epoch, which is
 what the opponent cooldown reads), per-epoch records (beacon, roster, quotas,
 matchable flag), the availability commitments and reveals (by epoch), the clock
-witness registry, and open/closed timeout claims.
+witness registry, open/closed timeout claims, and the DEX pools
+(`pool_id -> {asset_a, asset_b, reserve_a, reserve_b, total_shares, shares}`).
 
 `state_root` is the merkle root (section 1) over `address -> account` leaves,
-where an account leaf commits to every field of the table above. `roster_root` is
+where an account leaf commits to every field of the table above. When the chain
+has DEX pools, it also commits one leaf per pool under the key `pool:<pool_id>`,
+so reserves and LP positions are as authenticated as balances. `roster_root` is
 the same construction over the epoch's roster, committing only
-`{public_key, max_games}` per member. Both are recomputed rather than trusted.
+`{public_key, max_games}` per member plus `variant` for non-standard members.
+Both are recomputed rather than trusted.
 
 Snapshots are JSON with the top-level keys `network`, `height`, `tip_hash`,
 `accounts`, `proofs`, `proof_ids`, `matches`, `miner_stats`, `epochs`,
 `availability`, `reveals`, `witnesses`, `timeout_claims`, `difficulty`,
-`last_k_change_height`, `timestamps` and `minted`. A snapshot is a cache: a node
-replaying blocks checks the snapshot's `state_root` against the state it
-rebuilds, so a corrupted snapshot cannot become consensus.
+`last_k_change_height`, `timestamps`, `minted` and, when non-empty, `pools`. A
+snapshot is a cache: a node replaying blocks checks the snapshot's `state_root`
+against the state it rebuilds, so a corrupted snapshot cannot become consensus.
 
 ## 12. Blocks, difficulty and fork choice
 
@@ -1163,21 +1219,30 @@ an orphan block on `POST /v1/blocks` → 202.
 
 | Method | Path | Response |
 | --- | --- | --- |
-| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes |
-| GET | `/v1/params` | the network parameters |
-| GET | `/v1/blocks` | `BlockList`: newest first (`?limit=`, default 25, max 200; `?before_height=` for the next page) |
+| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals |
+| GET | `/v1/params` | the network parameters, including each variant and the asset it mints |
+| GET | `/v1/blocks` | `BlockList`: newest first (`?limit=`, default 25, max 200; `?before_height=` for the next page), with proof counts per variant |
 | GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |
 | POST | `/v1/blocks` | `BlockView`, or 202 when the parent is unknown |
-| GET | `/v1/accounts/{address}` | `AccountView`: network, balance, immature, bonded, nonce, registration, endpoint, engine, key, ban height |
+| GET | `/v1/accounts/{address}` | `AccountView`: network, native and per-asset balances, immature queues, bonded, nonce, registration variant, endpoint, engine, key, ban height |
+| GET | `/v1/pools` | `PoolList`: every DEX pool with reserves, total shares, fee, and each LP address's shares |
+| GET | `/v1/pools/{pool_id}` | `PoolView`: one DEX pool (404 when the chain has not created it) |
+| GET | `/v1/bridge` | `BridgeView`: the Ethereum chain id/name, HTLC contract, confirmation depth and SCCP margin for this network |
+| GET | `/v1/htlcs` | `HtlcList`: SCCP hash locks filtered by `?address=` or `?hashlock=` |
+| GET | `/v1/htlcs/{htlc_id}` | `HtlcView`: one lock, its status and the preimage once claimed |
+| GET | `/v1/orders` | `OrderList`: open signed sell-SCCP orders (`?maker_sccp=` filter) |
+| GET | `/v1/orders/{order_id}` | `OrderDetail`: one order and its take, if any |
+| POST | `/v1/orders` | `OrderAccepted`: publish a signed order in the off-consensus book |
+| POST | `/v1/orders/{order_id}/takes` | `TakeAccepted`: attach a signed take after the ETH leg is locked |
 | GET | `/v1/epochs/{epoch}` | `EpochView`: beacon, roster, availability, quotas, matchable flag |
 | GET | `/v1/epochs/{epoch}/beacon` | `Beacon` (404 when the chain has none) |
 | GET | `/v1/difficulty` | `DifficultyView`: network, current `wins_required`/`seal_bits` and retarget history |
-| GET | `/v1/ratings` | `RatingsView`: derived Glicko-2 rating per miner, strongest first (`?limit=`, default 100), plus the fixed-bucket distribution |
-| GET | `/v1/ratings/{address}` | `MinerRatingDetail`: rating, deviation, volatility, record, rank and one history point per epoch (the 1500 prior when the seat has no settled game) |
-| GET | `/v1/games` | `GameList`: pooled proofs first, then newest settle (`?limit=`, default 25, max 200; `?before_height=` and `?before_game_hash=` for the next page) |
-| GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, height, mempool flag |
+| GET | `/v1/ratings` | `RatingsView`: derived Glicko-2 rating per miner, strongest first (`?limit=`, default 100), each row naming the miner's registered variant, plus the fixed-bucket distribution |
+| GET | `/v1/ratings/{address}` | `MinerRatingDetail`: rating, deviation, volatility, record, rank, registered variant and one history point per epoch (the 1500 prior when the seat has no settled game) |
+| GET | `/v1/games` | `GameList`: pooled proofs first, then newest settle (`?limit=`, default 25, max 200; `?before_height=` and `?before_game_hash=` for the next page); every row names its variant |
+| GET | `/v1/games/{game_hash}` | `GameView`: proof/match ids, winner, variant, height, mempool flag |
 | GET | `/v1/games/{game_hash}/pgn` | `GamePgn`: the move text the proof for that game carries (404 when this node holds no block body for it) |
-| GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, certificate, transcript |
+| GET | `/v1/matches/{match_id}` | `MatchInfo`: epoch, round, seats, variant, certificate, transcript |
 | GET | `/v1/matches/{match_id}/transcript` | `Transcript` |
 | GET | `/v1/mempool` | `MempoolView`: pending txids and proof ids |
 | GET | `/v1/transactions/{txid}` | `TransactionRecord`: type, height, block hash, mempool flag |
@@ -1258,6 +1323,10 @@ every address that has settled a game. The rating is **derived, not committed**:
 - It is not in `state_root`. A node that has not synced a proof simply has a
   shorter history to replay; two nodes at the same tip replay the same blocks in
   the same order, and the node caches that replay by tip hash.
+- Each leaderboard row and detail view also names the miner's current registered
+  variant (`standard` or `chess960`, from the account), so a reader can tell
+  which discipline the rating belongs to. The Glicko-2 replay itself remains
+  global across variants.
 
 The parameters are the paper's: the prior is 1500 with deviation 350 and
 volatility 0.06, `tau = 0.5`, and one rating period is one block epoch. Every

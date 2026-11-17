@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { UNITS_PER_COIN, formatAmount, formatCoins, parseAmount } from "./format";
+import { UNITS_PER_COIN, formatAmount, formatCoins, formatTokenAmount, parseAmount, parseTokenAmount } from "./format";
 
 describe("parseAmount", () => {
   it("scales whole and fractional coins exactly", () => {
@@ -44,5 +44,17 @@ describe("parseAmount", () => {
     expect(formatCoins(1000)).toBe("1,000 SCCP");
     expect(formatCoins(1)).toBe("1 SCCP");
     expect(formatCoins(null)).toBe("-");
+  });
+});
+
+describe("variant token amounts", () => {
+  it("scales and prints a token with its own symbol", () => {
+    expect(formatTokenAmount(1_234_000_000, "C960", 8)).toBe("12.34 C960");
+    expect(parseTokenAmount("12.34", "C960", 8)).toBe(1_234_000_000);
+  });
+
+  it("names the token in a parse error", () => {
+    expect(() => parseTokenAmount("1.123456789", "C960", 8)).toThrow(/C960/);
+    expect(() => parseTokenAmount("1.1", "C960", 0)).toThrow(/C960/);
   });
 });

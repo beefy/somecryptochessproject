@@ -12,8 +12,11 @@ import pytest
 from deploy import synthetic_miner_creation as miners
 from deploy import synthetic_testnet_traffic as traffic
 
+from sccp.chain import dex
 from sccp.chain.genesis import faucet_keypair
-from sccp.config import TESTNET, coins_to_units
+from sccp.chain.state import Pool
+from sccp.chain.tx import htlc_id
+from sccp.config import CHESS960_ASSET_ID, TESTNET, coins_to_units
 from sccp.crypto.address import encode_address, validate_address
 from sccp.node.app import create_app as create_node_app
 from sccp.node.service import NodeService
@@ -31,6 +34,22 @@ def node() -> Iterator[NodeService]:
         service.close()
 
 
+def _quiet_options(**overrides: object) -> traffic.Options:
+    """Pacing for a unit test with the optional bridge and DEX traffic off.
+
+    The side paths have their own tests; wallet tests count exactly the grants and
+    sends they asked for, so the extras stay disabled unless a test opts in.
+    """
+    values: dict[str, object] = {
+        "wait_seconds": 0.0,
+        "poll_seconds": 0.0,
+        "bridge": False,
+        "dex": False,
+    }
+    values.update(overrides)
+    return traffic.Options(**values)  # type: ignore[arg-type]
+
+
 def _faucet_address() -> str:
     return encode_address(faucet_keypair(TESTNET.network_id).public_key_bytes, TESTNET)
 
@@ -46,6 +65,7 @@ def _account_payload(node: NodeService, address: str) -> dict[str, object]:
         "bonded": account.bonded,
         "total": account.total,
         "nonce": account.nonce,
+        "assets": dict(account.assets),
     }
 
 
@@ -57,7 +77,7 @@ def _transport(
     settles_immediately: bool = False,
     pool_noise: Sequence[str] = (),
     pending_recipients: Sequence[str] = (),
-    status_height: int = 0,
+    status_height: int | Callable[[], int] = 0,
 ) -> httpx.MockTransport:
     """Route the generator's requests into the real node.
 
@@ -69,21 +89,23 @@ def _transport(
     node that mines each cycle before the next one starts.
     ``pending_recipients`` are the wallets whose transfer stays in the pool, which
     is how a node behaves when a block does not carry the grant this time round.
-    ``status_height`` is what ``GET /v1/status`` reports.
+    ``status_height`` is what ``GET /v1/status`` reports, either a fixed height or
+    a callable a test can advance between polls.
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
         if path == "/v1/status":
-            return httpx.Response(
-                200, json={"network": TESTNET.network_id, "height": status_height}
-            )
+            height = status_height() if callable(status_height) else status_height
+            return httpx.Response(200, json={"network": TESTNET.network_id, "height": height})
         if path == "/v1/mempool":
             view = node.mempool_view().model_dump(mode="json")
             if settles_immediately:
                 view["transactions"] = []
             view["transactions"] = [*view["transactions"], *pool_noise]
             return httpx.Response(200, json=view)
+        if path == "/v1/pools":
+            return httpx.Response(200, json=node.pools().model_dump(mode="json"))
         if path.startswith("/v1/accounts/"):
             address = path.removeprefix("/v1/accounts/")
             return httpx.Response(200, json=_account_payload(node, address))
@@ -122,6 +144,50 @@ def _admitted(node: NodeService) -> list[Transaction]:
     return [entry.tx for entry in node.mempool.transactions.values()]
 
 
+def _seed_accounts(
+    node: NodeService,
+    addresses: Sequence[str],
+    *,
+    native_coins: int,
+    variant_coins: int = 0,
+) -> None:
+    """Credit balances in both the tip and the cycle's projected state.
+
+    The transport answers accounts from the projection, while the node validates
+    against it too; seeding both is what a block between two cycles would leave.
+    """
+    for state in (node.chain.state, node.mempool.projection):
+        for address in addresses:
+            account = state.ensure(address)
+            account.balance = coins_to_units(native_coins)
+            if variant_coins:
+                account.assets[CHESS960_ASSET_ID] = coins_to_units(variant_coins)
+
+
+def _seed_pool(
+    node: NodeService,
+    *,
+    holder: str,
+    native_coins: int = 1_000,
+    variant_coins: int = 1_000,
+    share_coins: int = 1_000,
+) -> str:
+    """Seat an SCCP/Chess960 pool with ``holder`` owning every LP share."""
+    pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
+    shares = coins_to_units(share_coins)
+    for state in (node.chain.state, node.mempool.projection):
+        state.pools[pool_id] = Pool(
+            pool_id=pool_id,
+            asset_a=dex.NATIVE_ASSET,
+            asset_b=CHESS960_ASSET_ID,
+            reserve_a=coins_to_units(native_coins),
+            reserve_b=coins_to_units(variant_coins),
+            total_shares=shares,
+            shares={holder: shares},
+        )
+    return pool_id
+
+
 def test_traffic_wallets_are_fixed_testnet_addresses() -> None:
     """The pool is deterministic, so a restart reseats the same wallets."""
     first = traffic.wallet(0)
@@ -146,7 +212,7 @@ def test_a_cycle_funds_three_wallets_and_spends_between_them(node: NodeService) 
             rng=random.Random(7),
             wallet_count=3,
             transfer_count=4,
-            options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
+            options=_quiet_options(),
         )
 
     assert (report.wallet_count, report.funded, report.transfers) == (3, 3, 4)
@@ -191,10 +257,8 @@ def test_run_seats_and_funds_the_whole_pool_up_front(
     ) as client:
         reports = traffic.run(
             client,
-            options=traffic.Options(
+            options=_quiet_options(
                 max_wallets=4,
-                wait_seconds=0.0,
-                poll_seconds=0.0,
                 idle_min_seconds=1.0,
                 idle_max_seconds=1.0,
             ),
@@ -226,7 +290,7 @@ def test_a_rate_limited_faucet_falls_back_to_the_published_key(
             rng=random.Random(5),
             wallet_count=2,
             transfer_count=1,
-            options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
+            options=_quiet_options(),
         )
 
     assert (report.faucet_grants, report.operator_grants) == (0, 2)
@@ -247,7 +311,7 @@ def test_a_busy_mempool_does_not_stall_a_cycle(node: NodeService) -> None:
             rng=random.Random(9),
             wallet_count=2,
             transfer_count=2,
-            options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
+            options=_quiet_options(),
         )
 
     assert (report.funded, report.transfers, report.confirmed) == (2, 2, 4)
@@ -273,7 +337,7 @@ def test_a_cycle_with_an_unconfirmed_grant_still_sends(node: NodeService) -> Non
             rng=random.Random(4),
             wallet_count=4,
             transfer_count=3,
-            options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
+            options=_quiet_options(),
         )
 
     assert (report.funded, report.unconfirmed, report.transfers) == (4, 1, 3)
@@ -377,10 +441,8 @@ def test_run_waits_between_cycles_and_stops_on_request(
     ) as client:
         reports = traffic.run(
             client,
-            options=traffic.Options(
+            options=_quiet_options(
                 max_wallets=3,
-                wait_seconds=0.0,
-                poll_seconds=0.0,
                 idle_min_seconds=60.0,
                 idle_max_seconds=300.0,
             ),
@@ -424,9 +486,7 @@ def test_pending_txids_rejects_a_malformed_pool() -> None:
 def test_the_operator_key_path_numbers_grants_across_cycles(node: NodeService) -> None:
     """``--no-faucet-endpoint`` must not restart the faucet nonce at zero."""
     pool = [traffic.wallet(index) for index in range(3)]
-    options = traffic.Options(
-        wait_seconds=0.0,
-        poll_seconds=0.0,
+    options = _quiet_options(
         use_faucet_endpoint=False,
         # Every wallet reads as short, so each cycle funds the ones it seats.
         min_balance_coins=100,
@@ -606,7 +666,7 @@ def test_a_cycle_churns_before_the_grants(node: NodeService) -> None:
             rng=random.Random(11),
             wallet_count=3,
             transfer_count=2,
-            options=traffic.Options(wait_seconds=0.0, poll_seconds=0.0),
+            options=_quiet_options(),
             extras=traffic.Extras(
                 fleet=_RecordingFleet(seen=seen, admitted=admitted),
             ),
@@ -619,6 +679,241 @@ def test_a_cycle_churns_before_the_grants(node: NodeService) -> None:
     assert "| miners: started synthetic-miner-1; online: synthetic-miner-1" in summary
 
 
+def test_a_cycle_locks_and_claims_a_native_htlc(node: NodeService) -> None:
+    """Odd cycles bridge: lock from one wallet, claim from the beneficiary."""
+    pool = [traffic.wallet(index) for index in range(3)]
+    _seed_accounts(node, [item.address for item in pool], native_coins=50)
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=1,
+            pool=pool,
+            rng=random.Random(5),
+            wallet_count=3,
+            transfer_count=1,
+            options=_quiet_options(bridge=True, bridge_coins=2, min_balance_coins=100),
+        )
+
+    assert "locked 2.00000000 SCCP" in report.bridge
+    assert "claimed htlc" in report.bridge
+    assert report.side_unconfirmed == 0
+    assert report.confirmed == 6  # three grants, one send, the lock and the claim
+
+    admitted = _admitted(node)
+    locks = [tx for tx in admitted if tx.type is TxType.HTLC_LOCK]
+    claims = [tx for tx in admitted if tx.type is TxType.HTLC_CLAIM]
+    assert len(locks) == len(claims) == 1
+    lock, claim = locks[0], claims[0]
+    assert lock.payload["amount"] == coins_to_units(2)
+    assert lock.payload["timelock_height"] > 1
+    assert claim.payload["htlc_id"] == htlc_id(lock.sender, lock.nonce)
+    assert lock.payload["beneficiary"] == claim.sender
+    assert f"| {report.bridge}" in traffic._summary(report)
+
+
+def test_an_even_cycle_reports_a_refund_that_must_wait_for_its_height(
+    node: NodeService,
+) -> None:
+    """A refund is only sent once the tip reaches the timelock; the wait is bounded."""
+    pool = [traffic.wallet(index) for index in range(3)]
+    _seed_accounts(node, [item.address for item in pool], native_coins=50)
+    with httpx.Client(
+        transport=_transport(node, status_height=0), base_url="http://node"
+    ) as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=2,
+            pool=pool,
+            rng=random.Random(6),
+            wallet_count=3,
+            transfer_count=1,
+            options=_quiet_options(
+                bridge=True,
+                bridge_coins=2,
+                bridge_refund_blocks=50,
+                min_balance_coins=100,
+            ),
+        )
+
+    assert "locked htlc" in report.bridge
+    assert "refund waits for height" in report.bridge
+    assert report.side_unconfirmed == 0
+    admitted = _admitted(node)
+    assert [tx for tx in admitted if tx.type is TxType.HTLC_LOCK]
+    assert not [tx for tx in admitted if tx.type is TxType.HTLC_REFUND]
+
+
+def test_an_even_cycle_refunds_once_the_timelock_is_reached(node: NodeService) -> None:
+    """The height wait ends at the timelock and the refund is submitted by its sender."""
+    pool = [traffic.wallet(index) for index in range(3)]
+    _seed_accounts(node, [item.address for item in pool], native_coins=50)
+    calls = 0
+
+    def status_height() -> int:
+        """Report the lock's block first, then the block that reaches its timelock.
+
+        The generator only reads the tip; moving the pool's view of it forward is
+        this test's stand-in for a miner settling the lock between the two legs.
+        """
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return 0
+        node.mempool.tip_state.height = 1
+        return 2
+
+    with httpx.Client(
+        transport=_transport(node, status_height=status_height),
+        base_url="http://node",
+    ) as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=2,
+            pool=pool,
+            rng=random.Random(12),
+            wallet_count=3,
+            transfer_count=1,
+            options=_quiet_options(
+                bridge=True,
+                bridge_coins=2,
+                bridge_refund_blocks=1,
+                min_balance_coins=100,
+                wait_seconds=1.0,
+            ),
+        )
+
+    assert "refunded htlc" in report.bridge
+    assert report.side_unconfirmed == 0
+    admitted = _admitted(node)
+    locks = [tx for tx in admitted if tx.type is TxType.HTLC_LOCK]
+    refunds = [tx for tx in admitted if tx.type is TxType.HTLC_REFUND]
+    assert len(locks) == len(refunds) == 1
+    assert refunds[0].sender == locks[0].sender
+    assert refunds[0].payload["htlc_id"] == htlc_id(locks[0].sender, locks[0].nonce)
+
+
+def test_a_cycle_swaps_against_an_existing_pool(node: NodeService) -> None:
+    """A seated pool is enough: the DEX leg needs nobody to hold LP shares."""
+    pool = [traffic.wallet(index) for index in range(3)]
+    _seed_accounts(node, [item.address for item in pool], native_coins=50, variant_coins=5)
+    pool_id = _seed_pool(node, holder=_faucet_address())
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=1,
+            pool=pool,
+            rng=random.Random(7),
+            wallet_count=3,
+            transfer_count=1,
+            options=_quiet_options(bridge=False, dex=True, dex_coins=2, min_balance_coins=100),
+        )
+
+    assert report.dex.startswith("dex: swapped 2.00000000 SCCP")
+    assert report.dex.endswith(f"in pool {pool_id[:12]}")
+    assert report.side_unconfirmed == 0
+    assert report.confirmed == 5  # three grants, one send and the swap
+    swaps = [tx for tx in _admitted(node) if tx.type is TxType.SWAP]
+    assert len(swaps) == 1
+    assert swaps[0].payload["pool_id"] == pool_id
+    assert swaps[0].payload["amount_in"] == coins_to_units(2)
+    assert "asset_in" not in swaps[0].payload  # native SCCP is the omitted side
+    assert f"| {report.dex}" in traffic._summary(report)
+
+
+def test_a_cycle_adds_liquidity_on_its_rotation(node: NodeService) -> None:
+    """Cycle two of the rotation deposits both pool sides in proportion."""
+    pool = [traffic.wallet(index) for index in range(3)]
+    _seed_accounts(node, [item.address for item in pool], native_coins=50, variant_coins=5)
+    pool_id = _seed_pool(node, holder=_faucet_address())
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=2,
+            pool=pool,
+            rng=random.Random(10),
+            wallet_count=3,
+            transfer_count=1,
+            options=_quiet_options(bridge=False, dex=True, dex_coins=2, min_balance_coins=100),
+        )
+
+    assert report.dex.startswith("dex: added 2.00000000 SCCP + 2.00000000 C960")
+    assert report.dex.endswith(f"to pool {pool_id[:12]}")
+    assert report.side_unconfirmed == 0
+    deposits = [tx for tx in _admitted(node) if tx.type is TxType.ADD_LIQUIDITY]
+    assert len(deposits) == 1
+    assert deposits[0].payload["pool_id"] == pool_id
+    assert deposits[0].payload["amount_a"] == deposits[0].payload["amount_b"] == coins_to_units(2)
+
+
+def test_a_cycle_removes_liquidity_on_its_rotation(node: NodeService) -> None:
+    """Cycle three redeems a tenth of the sending wallet's LP shares."""
+    pool = [traffic.wallet(index) for index in range(3)]
+    _seed_accounts(node, [item.address for item in pool], native_coins=50, variant_coins=5)
+    pool_id = _seed_pool(node, holder=pool[0].address)
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=3,
+            pool=pool,
+            rng=random.Random(11),
+            wallet_count=3,
+            transfer_count=1,
+            options=_quiet_options(bridge=False, dex=True, dex_coins=2, min_balance_coins=100),
+        )
+
+    assert report.dex.startswith(
+        "dex: removed 10000000000 shares (100.00000000 SCCP + 100.00000000 C960)"
+    )
+    assert report.dex.endswith(f"from pool {pool_id[:12]}")
+    assert report.side_unconfirmed == 0
+    redemptions = [tx for tx in _admitted(node) if tx.type is TxType.REMOVE_LIQUIDITY]
+    assert len(redemptions) == 1
+    assert redemptions[0].sender == pool[0].address
+    assert redemptions[0].payload["shares"] == coins_to_units(100)
+
+
+def test_a_cycle_without_a_pool_creates_one_from_the_variant_asset(node: NodeService) -> None:
+    """The first cycle seeds the network's SCCP/C960 market when none exists."""
+    pool = [traffic.wallet(index) for index in range(2)]
+    _seed_accounts(node, [item.address for item in pool], native_coins=50, variant_coins=5)
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=1,
+            pool=pool,
+            rng=random.Random(8),
+            wallet_count=2,
+            transfer_count=1,
+            options=_quiet_options(bridge=False, dex=True, dex_coins=2, min_balance_coins=100),
+        )
+
+    assert "dex: created SCCP/C960 pool" in report.dex
+    assert report.side_unconfirmed == 0
+    creates = [tx for tx in _admitted(node) if tx.type is TxType.CREATE_POOL]
+    assert len(creates) == 1
+    assert creates[0].payload["asset_b"] == CHESS960_ASSET_ID
+    assert creates[0].payload["amount_a"] == creates[0].payload["amount_b"] == coins_to_units(2)
+
+
+def test_side_traffic_that_cannot_find_coins_is_reported_as_a_skip(node: NodeService) -> None:
+    """An unfunded pool is a skipped DEX leg, never a failed cycle."""
+    pool = [traffic.wallet(index) for index in range(2)]
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        report = traffic.run_cycle(
+            client,
+            cycle=1,
+            pool=pool,
+            rng=random.Random(9),
+            wallet_count=2,
+            transfer_count=0,
+            options=_quiet_options(bridge=False, dex=True, min_balance_coins=0),
+        )
+
+    assert report.dex == "dex: skipped (no wallet held SCCP fees and C960)"
+    assert (report.transfers, report.side_unconfirmed) == (0, 0)
+    assert not [tx for tx in _admitted(node) if tx.type is TxType.CREATE_POOL]
+
+
 def _admitted_count(node: NodeService) -> Callable[[], int]:
     """The pool size the node's own mempool reports, read when the extras run."""
     return lambda: len(_admitted(node))
@@ -627,10 +922,8 @@ def _admitted_count(node: NodeService) -> Callable[[], int]:
 def test_run_stops_the_miners_it_was_given(node: NodeService) -> None:
     """A churn that outlived the generator would leave children nobody stops."""
     fleet = _RecordingFleet(seen={}, admitted=lambda: 0)
-    options = traffic.Options(
+    options = _quiet_options(
         max_wallets=4,
-        wait_seconds=0.0,
-        poll_seconds=0.0,
         extra_miners=0,
     )
     with httpx.Client(transport=_transport(node), base_url="http://node") as client:
@@ -664,10 +957,8 @@ def test_run_builds_the_extras_from_its_options(
         return traffic.Extras(fleet=fleet)
 
     monkeypatch.setattr(traffic, "extras_for", extras_for)
-    options = traffic.Options(
+    options = _quiet_options(
         max_wallets=4,
-        wait_seconds=0.0,
-        poll_seconds=0.0,
         extra_miners=1,
     )
     with httpx.Client(transport=_transport(node), base_url="http://node") as client:
@@ -732,6 +1023,39 @@ def test_the_stack_defaults_keep_the_churn_on(
     assert options.node == "http://node:8645"
     assert options.extra_miners == traffic.EXTRA_MINERS >= 1
     assert options.max_extra_online == traffic.MAX_EXTRA_ONLINE >= 1
+    assert options.bridge and options.dex
+    assert options.bridge_coins == traffic.BRIDGE_COINS >= 1
+    assert options.dex_coins == traffic.DEX_COINS >= 1
+
+
+def test_the_command_line_carries_the_side_traffic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bridge and DEX knobs reach the generator, including the off switches."""
+    captured: dict[str, object] = {}
+    _fake_run(monkeypatch, captured)
+    code = traffic.main(
+        [
+            "--bridge-coins",
+            "3",
+            "--dex-coins",
+            "4",
+            "--dex-asset",
+            CHESS960_ASSET_ID,
+        ]
+    )
+
+    assert code == 0
+    options = captured["options"]
+    assert isinstance(options, traffic.Options)
+    assert (options.bridge, options.dex) == (True, True)
+    assert (options.bridge_coins, options.dex_coins) == (3, 4)
+    assert options.dex_asset == CHESS960_ASSET_ID
+
+    assert traffic.main(["--no-bridge", "--no-dex"]) == 0
+    options = captured["options"]
+    assert isinstance(options, traffic.Options)
+    assert (options.bridge, options.dex) == (False, False)
 
 
 @pytest.mark.parametrize(
@@ -739,6 +1063,9 @@ def test_the_stack_defaults_keep_the_churn_on(
     [
         ["--extra-miners", "-1"],
         ["--max-extra-online", "0"],
+        ["--bridge-coins", "0"],
+        ["--dex-coins", "0"],
+        ["--dex-asset", "not-an-asset"],
         ["--cycles", "0"],
     ],
 )

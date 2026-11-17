@@ -3,12 +3,13 @@
 The CLI exposes the wallet and keyfile tools, offline ``verify pgn`` and
 ``verify proof`` checks, the matchmaking relay, the node (``node run``), the
 unattended miner (``miner run``, ``miner register``, ``miner availability``,
-``miner reveal``), the read-only chain commands, the testnet faucet and the
-one-command devnet. Every command is a thin wrapper over a library call so the
-same behaviour is testable in-process.
+``miner reveal``), the read-only chain commands, the testnet faucet, the
+one-command devnet, the on-chain DEX and the ETH/SCCP bridge. Every command is a
+thin wrapper over a library call so the same behaviour is testable in-process.
 
 Global options may be passed before or after the subcommand; an explicitly
-passed ``--network`` always wins over the global default of ``testnet``.
+passed ``--network`` always wins over ``SCCP_NETWORK``, and both win over the
+default of ``testnet``.
 """
 
 from __future__ import annotations
@@ -25,16 +26,34 @@ from pathlib import Path
 from threading import Event, Thread
 from typing import Annotated, NoReturn, TypeVar
 
+import httpx
 import typer
 
 from sccp import version as version_module
+from sccp.bridge import (
+    EthEnvironment,
+    OrderError,
+    bridge_environment,
+    sccp_timelock_height,
+    sign_order,
+    sign_take,
+)
+from sccp.bridge.eth import (
+    assert_environment,
+    claim_eth,
+    get_lock,
+    lock_eth,
+    refund_eth,
+)
+from sccp.chain import dex
 from sccp.chain.genesis import faucet_keypair
-from sccp.chain.state import reveal_deadline_tip
+from sccp.chain.state import HtlcRecord, reveal_deadline_tip
 from sccp.chain.storage import Storage
-from sccp.chain.tx import txid
+from sccp.chain.tx import htlc_id, txid
 from sccp.chess.engines import open_engine
 from sccp.chess.openings import load_book
 from sccp.chess.pgn import GameResult, validate_pgn_file
+from sccp.chess.variants import is_chess960
 from sccp.config import NetworkParams, coins_to_units, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import hybrid_sign
@@ -97,6 +116,18 @@ devnet_app = typer.Typer(no_args_is_help=True, help="Run a whole network in one 
 app.add_typer(devnet_app, name="devnet")
 faucet_app = typer.Typer(no_args_is_help=True, help="Send testnet coins from the public faucet.")
 app.add_typer(faucet_app, name="faucet")
+
+dex_app = typer.Typer(
+    no_args_is_help=True,
+    help="Create pools, provide liquidity and swap on the on-chain DEX.",
+)
+app.add_typer(dex_app, name="dex")
+
+bridge_app = typer.Typer(
+    no_args_is_help=True,
+    help="Publish ETH/SCCP orders and lock, claim or refund bridge HTLCs.",
+)
+app.add_typer(bridge_app, name="bridge")
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,14 +218,19 @@ def _run(action: Callable[[], T]) -> T:
         _fail(str(exc))
 
 
+def _requested_network(ctx: typer.Context, network: str | None) -> str | None:
+    """The network named by the command, the global flag, or ``SCCP_NETWORK``."""
+    return network or _options(ctx).network or os.environ.get("SCCP_NETWORK")
+
+
 def _resolve_network(ctx: typer.Context, network: str | None) -> NetworkParams:
-    options = _options(ctx)
-    return _run(lambda: get_network(network or options.network or DEFAULT_NETWORK))
+    requested = _requested_network(ctx, network) or DEFAULT_NETWORK
+    return _run(lambda: get_network(requested))
 
 
 def _check_network(ctx: typer.Context, network: str | None, header_network: str) -> None:
     """Refuse to operate on a keyfile belonging to a different network."""
-    explicit = network or _options(ctx).network
+    explicit = _requested_network(ctx, network)
     if explicit is None:
         return
     requested = _run(lambda: get_network(explicit))
@@ -451,6 +487,168 @@ def _require_test_network(params: NetworkParams) -> None:
         _fail(f"{params.network_id} has no faucet; use one of: {usable}", code=2)
 
 
+def _node_document(
+    node: str | None,
+    path: str,
+    document: Mapping[str, object] | None = None,
+) -> Mapping[str, object]:
+    """GET or POST one node document, with the node's error text on failure."""
+    url = (node or DEFAULT_NODE_URL).rstrip("/")
+    try:
+        response = httpx.request(
+            "POST" if document is not None else "GET",
+            f"{url}{path}",
+            json=document,
+            timeout=10.0,
+        )
+    except httpx.HTTPError as exc:
+        _fail(f"cannot reach the node at {url}: {exc}")
+    if response.status_code >= 400:
+        try:
+            detail = response.json().get("detail")
+        except (ValueError, AttributeError):
+            detail = response.text
+        _fail(f"{path} failed with {response.status_code}: {detail}")
+    try:
+        payload = response.json()
+    except ValueError:
+        _fail(f"{path} returned no JSON")
+    if not isinstance(payload, Mapping):
+        _fail(f"{path} did not return a JSON object")
+    return payload
+
+
+def _document_text(document: Mapping[str, object], key: str) -> str:
+    """Read a non-empty string field from a node document."""
+    value = document.get(key)
+    if not isinstance(value, str) or value == "":
+        _fail(f"the node document has no {key!r} string")
+    return value
+
+
+def _document_int(document: Mapping[str, object], key: str) -> int:
+    """Read an integer field from a node document."""
+    value = document.get(key)
+    if not isinstance(value, int) or isinstance(value, bool):
+        _fail(f"the node document has no {key!r} integer")
+    return value
+
+
+def _wallet_for(ctx: typer.Context, key: Path, network: str | None) -> Wallet:
+    """Read a keyfile's header, check its network and unlock it."""
+    header = _run(lambda: read_header(key))
+    _check_network(ctx, network, header.network)
+    passphrase = _passphrase(ctx, confirm=False)
+    return _run(lambda: load_wallet(key, passphrase))
+
+
+def _asset_symbol(params: NetworkParams, asset: str) -> str:
+    """The printable symbol for an asset id, or a shortened id when unknown."""
+    for variant in params.variants:
+        if variant.asset == asset:
+            return variant.symbol
+    return f"{asset[:8]}…"
+
+
+def _asset_id(params: NetworkParams, asset: str | None) -> str:
+    """Resolve a CLI asset name to an id; native SCCP is the empty string."""
+    if asset is None or asset.strip() == "" or asset.upper() == "SCCP":
+        return dex.NATIVE_ASSET
+    for variant in params.variants:
+        if asset in (variant.asset, variant.name, variant.symbol):
+            return variant.asset or dex.NATIVE_ASSET
+    known = ", ".join(
+        ["SCCP", *(variant.symbol for variant in params.variants if not variant.native)]
+    )
+    _fail(f"unknown asset {asset!r}; this network has: {known}")
+    raise AssertionError("unreachable")
+
+
+def _pool_document(node: str | None, pool_id: str) -> Mapping[str, object]:
+    """Fetch one pool and check it names reserves this CLI can read."""
+    document = _node_document(node, f"/v1/pools/{pool_id}")
+    for key in ("reserve_a", "reserve_b", "total_shares", "fee_bps"):
+        _document_int(document, key)
+    return document
+
+
+def _bridge_environment_for(
+    params: NetworkParams,
+) -> EthEnvironment:
+    """Resolve the bridge environment, turning a ValueError into a CLI error."""
+    try:
+        return bridge_environment(params)
+    except ValueError as exc:
+        _fail(str(exc))
+    raise AssertionError("unreachable")
+
+
+def _eth_endpoint(
+    ctx: typer.Context,
+    *,
+    node: str | None,
+    network: str | None,
+    rpc_url: str | None,
+    contract: str | None,
+    confirmations: int | None,
+) -> tuple[EthEnvironment, str, str, int]:
+    """Resolve and verify the RPC, contract and confirmation policy for an ETH action."""
+    params = _resolve_network(ctx, network)
+    environment = _bridge_environment_for(params)
+    document = _node_document(node, "/v1/bridge")
+    if _document_text(document, "network") != params.network_id:
+        _fail("the node answers for a different network")
+    document_rpc = document.get("eth_rpc_url")
+    resolved_rpc = rpc_url or (document_rpc if isinstance(document_rpc, str) else None)
+    resolved_rpc = resolved_rpc or environment.rpc_url
+    if resolved_rpc is None:
+        _fail(
+            f"no {environment.chain_name} RPC is configured; set SCCP_ETH_RPC_URL or pass --rpc-url"
+        )
+    document_contract = document.get("eth_htlc_contract")
+    resolved_contract = contract or (
+        document_contract if isinstance(document_contract, str) else None
+    )
+    if resolved_contract is None:
+        _fail(
+            f"no {environment.chain_name} HTLC contract is configured; set "
+            "SCCP_ETH_HTLC_CONTRACT on the node or pass --contract"
+        )
+    resolved_confirmations = (
+        confirmations if confirmations is not None else _document_int(document, "eth_confirmations")
+    )
+    assert_environment(environment, url=resolved_rpc)
+    return environment, resolved_rpc, resolved_contract, resolved_confirmations
+
+
+def _transaction_summary(tx: Transaction, receipt: Mapping[str, object]) -> dict[str, object]:
+    """The JSON fields every write command reports."""
+    return {
+        "txid": txid(tx),
+        "network": tx.network,
+        "type": str(tx.type),
+        "from": tx.sender,
+        "nonce": tx.nonce,
+        "fee": int(tx.fee),
+        "accepted": receipt.get("accepted"),
+    }
+
+
+def _report_transaction(
+    ctx: typer.Context,
+    tx: Transaction,
+    receipt: Mapping[str, object],
+    message: str,
+) -> None:
+    """Print one accepted transaction in JSON or human form."""
+    payload = _transaction_summary(tx, receipt)
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(message)
+    typer.echo(f"txid: {payload['txid']}")
+
+
 @wallet_app.command("new")
 def wallet_new(
     ctx: typer.Context,
@@ -650,7 +848,12 @@ def wallet_balance(
     params = _resolve_network(ctx, network)
     with _account_source(ctx, params, header.address, node) as accounts:
         balance = _run(lambda: accounts.service.balance(header.address))
-        empty_chain = accounts.chain_height == 0 and balance.total == 0
+        account = _run(lambda: accounts.service.account(header.address))
+        assets = {asset: units for asset, units in account.assets.items() if units > 0}
+        immature_assets = {
+            asset: units for asset, units in account.immature_assets.items() if units > 0
+        }
+        empty_chain = accounts.chain_height == 0 and balance.total == 0 and not assets
     if empty_chain:
         _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
     payload = {
@@ -660,6 +863,8 @@ def wallet_balance(
         "immature": balance.immature,
         "bonded": balance.bonded,
         "total": balance.total,
+        "assets": dict(sorted(assets.items())),
+        "immature_assets": dict(sorted(immature_assets.items())),
         "source": accounts.origin,
     }
     if _options(ctx).json_output:
@@ -670,6 +875,11 @@ def wallet_balance(
         f"(spendable {_coins(balance.spendable)}, bonded {_coins(balance.bonded)}, "
         f"immature {_coins(balance.immature)})"
     )
+    for asset in sorted(set(assets) | set(immature_assets)):
+        typer.echo(
+            f"  {_asset_symbol(params, asset)} spendable {_coins(assets.get(asset, 0))}, "
+            f"immature {_coins(immature_assets.get(asset, 0))}"
+        )
 
 
 @wallet_app.command("send")
@@ -678,6 +888,13 @@ def wallet_send(
     key: Annotated[Path, typer.Option("--key", help="Keyfile to sign with.")],
     to: Annotated[str, typer.Option("--to", help="Recipient address.")],
     amount: Annotated[int, typer.Option("--amount", help="Amount to send, in whole coins.")],
+    asset: Annotated[
+        str | None,
+        typer.Option(
+            "--asset",
+            help="Asset id, variant name or symbol (default: native SCCP).",
+        ),
+    ] = None,
     node: Annotated[
         str | None,
         typer.Option(
@@ -702,7 +919,9 @@ def wallet_send(
     wallet = _run(lambda: load_wallet(key, passphrase))
     with _account_source(ctx, params, header.address, node) as accounts:
         try:
-            tx = accounts.service.build_transfer(wallet.signer, to, coins_to_units(amount), fee=fee)
+            tx = accounts.service.build_transfer(
+                wallet.signer, to, coins_to_units(amount), fee=fee, asset=asset
+            )
         except WalletServiceError as exc:
             if accounts.chain_height == 0:
                 _warn_empty_chain(_options(ctx).data_dir / "chain.sqlite")
@@ -715,6 +934,7 @@ def wallet_send(
         "from": tx.sender,
         "to": to,
         "amount": coins_to_units(amount),
+        "asset": tx.payload.get("asset", "SCCP"),
         "fee": int(tx.fee),
         "nonce": tx.nonce,
         "accepted": receipt.get("accepted"),
@@ -723,7 +943,10 @@ def wallet_send(
     if _options(ctx).json_output:
         _echo_json(payload)
         return
-    typer.echo(f"sent {_coins(coins_to_units(amount))} to {to} (fee {_coins(int(tx.fee))})")
+    asset_label = f" {asset}" if asset is not None else ""
+    typer.echo(
+        f"sent {_coins(coins_to_units(amount))}{asset_label} to {to} (fee {_coins(int(tx.fee))})"
+    )
     typer.echo(f"txid: {payload['txid']}")
 
 
@@ -1245,6 +1468,13 @@ def miner_run(
         str | None,
         typer.Option("--network", help="Require the keyfile to belong to this network."),
     ] = None,
+    variant: Annotated[
+        str,
+        typer.Option(
+            "--variant",
+            help="Chess variant this miner plays: standard or chess960.",
+        ),
+    ] = "standard",
     engine_profile: Annotated[
         str,
         typer.Option(
@@ -1322,10 +1552,17 @@ def miner_run(
         _fail("--resign-after-plies must be at least 1 ply", code=2)
     secret = _nonce_secret(nonce_secret, nonce_secret_file)
     params = _resolve_network(ctx, network)
+    _run(lambda: params.variant(variant))
     passphrase = _passphrase(ctx, confirm=False)
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
-    engine = _run(lambda: open_engine(engine_profile, binary=engine_path))
+    engine = _run(
+        lambda: open_engine(
+            engine_profile,
+            binary=engine_path,
+            chess960=is_chess960(variant),
+        )
+    )
     witness_keys = _witness_keys(params, relay_witness_key or [])
     config = MinerConfig.for_network(
         params,
@@ -1338,12 +1575,13 @@ def miner_run(
         nonce_secret=secret,
         witness_keys=witness_keys,
         resign_after_plies=resign_after_plies,
+        variant=variant,
     )
     miner = EngineMiner(config, engine=engine)
     if not _options(ctx).json_output:
         typer.echo(
-            f"miner {wallet.address} on {params.network_id} polling {relay} "
-            f"with {engine.fingerprint}"
+            f"miner {wallet.address} on {params.network_id} variant {variant} "
+            f"polling {relay} with {engine.fingerprint}"
         )
         if secret is not None and node is None:
             typer.echo("--nonce-secret needs --node; the availability pipeline is off", err=True)
@@ -1377,6 +1615,7 @@ def miner_run(
     payload = {
         "address": wallet.address,
         "network": params.network_id,
+        "variant": variant,
         "relay": relay,
         "engine": engine.fingerprint,
         "polls": polls,
@@ -1412,6 +1651,13 @@ def miner_register(
         str,
         typer.Option("--engine", help="Engine fingerprint recorded on chain."),
     ] = "stockfish-19",
+    variant: Annotated[
+        str,
+        typer.Option(
+            "--variant",
+            help="Chess variant this registration plays: standard or chess960.",
+        ),
+    ] = "standard",
     node: Annotated[
         str | None,
         typer.Option("--node", help="Node base URL that receives the transaction."),
@@ -1426,6 +1672,7 @@ def miner_register(
     wallet = _run(lambda: load_wallet(key, passphrase))
     _check_network(ctx, network, wallet.network)
     params = wallet.network_params
+    _run(lambda: params.variant(variant))
     with _local_node(ctx, params.network_id) as service:
         tx = _run(
             lambda: WalletService(params, service.chain.state, chain=service.chain).build_register(
@@ -1433,6 +1680,7 @@ def miner_register(
                 endpoint=endpoint,
                 engine=engine,
                 bond=coins_to_units(bond),
+                variant=variant,
             )
         )
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
@@ -1442,13 +1690,16 @@ def miner_register(
         "miner": wallet.address,
         "endpoint": endpoint,
         "engine": engine,
+        "variant": variant,
         "bond": coins_to_units(bond),
         "accepted": receipt.get("accepted"),
     }
     if _options(ctx).json_output:
         _echo_json(payload)
         return
-    typer.echo(f"registered {wallet.address} with a {_coins(coins_to_units(bond))} bond")
+    typer.echo(
+        f"registered {wallet.address} for {variant} with a {_coins(coins_to_units(bond))} bond"
+    )
     typer.echo(f"txid: {payload['txid']}")
 
 
@@ -1726,6 +1977,877 @@ def faucet_send(
         return
     typer.echo(f"faucet sent {_coins(coins_to_units(amount))} to {to}")
     typer.echo(f"txid: {payload['txid']}")
+
+
+@dex_app.command("pools")
+def dex_pools(
+    ctx: typer.Context,
+    node: Annotated[str | None, typer.Option("--node", help="Node that serves the pools.")] = None,
+) -> None:
+    """List every constant-product pool on the node's chain."""
+    document = _node_document(node, "/v1/pools")
+    if _options(ctx).json_output:
+        _echo_json(document)
+        return
+    rows = document.get("pools")
+    if not isinstance(rows, list) or not rows:
+        typer.echo("no pools on this chain")
+        return
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        typer.echo(
+            f"{row.get('pool_id')} {row.get('asset_a') or 'SCCP'}/"
+            f"{row.get('asset_b') or 'SCCP'} reserves "
+            f"{row.get('reserve_a')}/{row.get('reserve_b')} "
+            f"shares {row.get('total_shares')}"
+        )
+
+
+@dex_app.command("pool")
+def dex_pool(
+    ctx: typer.Context,
+    pool_id: Annotated[str, typer.Option("--pool", help="Pool id to inspect.")],
+    node: Annotated[str | None, typer.Option("--node", help="Node that serves the pool.")] = None,
+) -> None:
+    """Show one pool's reserves, fee and LP share ledger."""
+    document = _pool_document(node, pool_id)
+    if _options(ctx).json_output:
+        _echo_json(document)
+        return
+    typer.echo(f"{pool_id} {document.get('asset_a') or 'SCCP'}/{document.get('asset_b') or 'SCCP'}")
+    typer.echo(
+        f"reserves {document['reserve_a']}/{document['reserve_b']} "
+        f"shares {document['total_shares']} fee {document['fee_bps']} bps"
+    )
+    shares = document.get("shares")
+    if isinstance(shares, Mapping):
+        for address, amount in shares.items():
+            typer.echo(f"  {address} {amount}")
+
+
+@dex_app.command("quote")
+def dex_quote(
+    ctx: typer.Context,
+    pool_id: Annotated[str, typer.Option("--pool", help="Pool id to quote.")],
+    amount_in: Annotated[int, typer.Option("--amount-in", help="Input amount, in whole coins.")],
+    asset_in: Annotated[
+        str | None,
+        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for SCCP)."),
+    ] = None,
+    slippage_bps: Annotated[
+        int,
+        typer.Option("--slippage-bps", help="Slippage used for the printed minimum."),
+    ] = 50,
+    node: Annotated[str | None, typer.Option("--node", help="Node that serves the pool.")] = None,
+) -> None:
+    """Quote a constant-product swap before signing it."""
+    if amount_in <= 0:
+        _fail("--amount-in must be positive", code=2)
+    if not 0 <= slippage_bps < 10_000:
+        _fail("--slippage-bps must be between 0 and 9999", code=2)
+    params = _resolve_network(ctx, None)
+    pool = _pool_document(node, pool_id)
+    resolved = _asset_id(params, asset_in)
+    left = pool.get("asset_a") or dex.NATIVE_ASSET
+    right = pool.get("asset_b") or dex.NATIVE_ASSET
+    if resolved not in (left, right):
+        _fail(f"pool {pool_id} does not trade {asset_in or 'SCCP'}")
+    native_in = resolved == left
+    reserve_in = _document_int(pool, "reserve_a" if native_in else "reserve_b")
+    reserve_out = _document_int(pool, "reserve_b" if native_in else "reserve_a")
+    fee_bps = _document_int(pool, "fee_bps")
+    units_in = coins_to_units(amount_in)
+    units_out = dex.swap_output(reserve_in, reserve_out, units_in, fee_bps)
+    minimum = units_out * (10_000 - slippage_bps) // 10_000
+    if _options(ctx).json_output:
+        _echo_json(
+            {
+                "pool_id": pool_id,
+                "asset_in": resolved,
+                "amount_in": units_in,
+                "amount_out": units_out,
+                "min_amount_out": minimum,
+                "fee_bps": fee_bps,
+            }
+        )
+        return
+    typer.echo(f"in   {_coins(units_in)} at {asset_in or 'SCCP'}")
+    typer.echo(f"out  {_coins(units_out)}")
+    typer.echo(f"min  {_coins(minimum)} ({slippage_bps / 100:.2f}% slippage)")
+
+
+@dex_app.command("create-pool")
+def dex_create_pool(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="LP keyfile that funds both sides.")],
+    amount_a: Annotated[int, typer.Option("--amount-a", help="First side, in whole coins.")],
+    amount_b: Annotated[int, typer.Option("--amount-b", help="Second side, in whole coins.")],
+    asset_a: Annotated[
+        str | None,
+        typer.Option("--asset-a", help="First asset id/name/symbol (omit for SCCP)."),
+    ] = None,
+    asset_b: Annotated[
+        str | None,
+        typer.Option("--asset-b", help="Second asset id/name/symbol (omit for SCCP)."),
+    ] = None,
+    fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that receives the transaction.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Create a pool and deposit the first two reserves."""
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    with _account_source(ctx, params, wallet.address, node) as accounts:
+        tx = _run(
+            lambda: accounts.service.build_create_pool(
+                wallet.signer,
+                asset_a=asset_a,
+                amount_a=coins_to_units(amount_a),
+                asset_b=asset_b,
+                amount_b=coins_to_units(amount_b),
+                fee=fee,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    normalized_a, _, normalized_b, _ = dex.normalize_pair(
+        _asset_id(params, asset_a), 1, _asset_id(params, asset_b), 1
+    )
+    payload = {
+        **_transaction_summary(tx, receipt),
+        "pool_id": dex.pool_id(normalized_a, normalized_b),
+    }
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"created pool {payload['pool_id']}")
+    typer.echo(f"txid: {payload['txid']}")
+
+
+@dex_app.command("add-liquidity")
+def dex_add_liquidity(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="LP keyfile that funds the deposit.")],
+    pool_id: Annotated[str, typer.Option("--pool", help="Pool id to add to.")],
+    amount_a: Annotated[int, typer.Option("--amount-a", help="Pool asset_a, in whole coins.")],
+    amount_b: Annotated[int, typer.Option("--amount-b", help="Pool asset_b, in whole coins.")],
+    fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that receives the transaction.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Add a proportional two-sided deposit to an existing pool."""
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    with _account_source(ctx, params, wallet.address, node) as accounts:
+        tx = _run(
+            lambda: accounts.service.build_add_liquidity(
+                wallet.signer,
+                pool_id=pool_id,
+                amount_a=coins_to_units(amount_a),
+                amount_b=coins_to_units(amount_b),
+                fee=fee,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    _report_transaction(ctx, tx, receipt, "added liquidity")
+
+
+@dex_app.command("remove-liquidity")
+def dex_remove_liquidity(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="LP keyfile that owns the shares.")],
+    pool_id: Annotated[str, typer.Option("--pool", help="Pool id to redeem.")],
+    shares: Annotated[int, typer.Option("--shares", help="Pool shares to redeem.")],
+    fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that receives the transaction.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Redeem pool shares for both reserves."""
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    with _account_source(ctx, params, wallet.address, node) as accounts:
+        tx = _run(
+            lambda: accounts.service.build_remove_liquidity(
+                wallet.signer,
+                pool_id=pool_id,
+                shares=shares,
+                fee=fee,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    _report_transaction(ctx, tx, receipt, "removed liquidity")
+
+
+@dex_app.command("swap")
+def dex_swap(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile that pays the swap input.")],
+    pool_id: Annotated[str, typer.Option("--pool", help="Pool id to swap through.")],
+    amount_in: Annotated[int, typer.Option("--amount-in", help="Input amount, in whole coins.")],
+    asset_in: Annotated[
+        str | None,
+        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for SCCP)."),
+    ] = None,
+    min_out: Annotated[
+        int | None,
+        typer.Option(
+            "--min-out", help="Minimum output, in whole coins (default: quote minus slippage)."
+        ),
+    ] = None,
+    slippage_bps: Annotated[
+        int,
+        typer.Option("--slippage-bps", help="Slippage used when --min-out is omitted."),
+    ] = 50,
+    fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that receives the transaction.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Swap one pool side for the other, with a minimum output in the signature."""
+    if min_out is not None and min_out < 0:
+        _fail("--min-out cannot be negative", code=2)
+    if not 0 <= slippage_bps < 10_000:
+        _fail("--slippage-bps must be between 0 and 9999", code=2)
+    params = _resolve_network(ctx, network)
+    pool = _pool_document(node, pool_id)
+    resolved = _asset_id(params, asset_in)
+    left = pool.get("asset_a") or dex.NATIVE_ASSET
+    right = pool.get("asset_b") or dex.NATIVE_ASSET
+    if resolved not in (left, right):
+        _fail(f"pool {pool_id} does not trade {asset_in or 'SCCP'}")
+    native_in = resolved == left
+    reserve_in = _document_int(pool, "reserve_a" if native_in else "reserve_b")
+    reserve_out = _document_int(pool, "reserve_b" if native_in else "reserve_a")
+    quote = dex.swap_output(
+        reserve_in, reserve_out, coins_to_units(amount_in), _document_int(pool, "fee_bps")
+    )
+    minimum = (
+        coins_to_units(min_out)
+        if min_out is not None
+        else quote * (10_000 - slippage_bps) // 10_000
+    )
+    wallet = _wallet_for(ctx, key, network)
+    with _account_source(ctx, params, wallet.address, node) as accounts:
+        tx = _run(
+            lambda: accounts.service.build_swap(
+                wallet.signer,
+                pool_id=pool_id,
+                asset_in=asset_in,
+                amount_in=coins_to_units(amount_in),
+                min_amount_out=minimum,
+                fee=fee,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    _report_transaction(
+        ctx,
+        tx,
+        receipt,
+        f"swapped {_coins(coins_to_units(amount_in))} for at least {_coins(minimum)}",
+    )
+
+
+@bridge_app.command("info")
+def bridge_info(
+    ctx: typer.Context,
+    node: Annotated[str | None, typer.Option("--node", help="Node that serves /v1/bridge.")] = None,
+) -> None:
+    """Show the Ethereum environment this node is paired with."""
+    document = _node_document(node, "/v1/bridge")
+    if _options(ctx).json_output:
+        _echo_json(document)
+        return
+    typer.echo(
+        f"{document.get('network')} -> {document.get('eth_chain_name')} "
+        f"(chain {document.get('eth_chain_id')})"
+    )
+    typer.echo(f"contract: {document.get('eth_htlc_contract') or 'not configured'}")
+    typer.echo(f"rpc: {document.get('eth_rpc_url') or 'not configured'}")
+    typer.echo(
+        f"confirmations: {document.get('eth_confirmations')} "
+        f"sccp margin: {document.get('sccp_margin')}"
+    )
+
+
+@bridge_app.command("orders")
+def bridge_orders(
+    ctx: typer.Context,
+    maker: Annotated[
+        str | None, typer.Option("--maker", help="Filter by maker SCCP address.")
+    ] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that serves the order book.")
+    ] = None,
+) -> None:
+    """List open sell-SCCP orders, best price first."""
+    path = "/v1/orders" if maker is None else f"/v1/orders?maker_sccp={maker}"
+    document = _node_document(node, path)
+    if _options(ctx).json_output:
+        _echo_json(document)
+        return
+    rows = document.get("orders")
+    if not isinstance(rows, list) or not rows:
+        typer.echo("no open orders")
+        return
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        typer.echo(
+            f"{row.get('order_id')} {_coins(int(row.get('give_amount', 0)))} SCCP "
+            f"for {row.get('want_amount')} wei maker {row.get('maker_sccp')}"
+        )
+
+
+@bridge_app.command("order")
+def bridge_order(
+    ctx: typer.Context,
+    order_id: Annotated[str, typer.Option("--order-id", help="Order id to inspect.")],
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that serves the order book.")
+    ] = None,
+) -> None:
+    """Show one order and its take, if a taker has locked ETH."""
+    document = _node_document(node, f"/v1/orders/{order_id}")
+    if _options(ctx).json_output:
+        _echo_json(document)
+        return
+    order = document.get("order")
+    if not isinstance(order, Mapping):
+        _fail("the node returned no order")
+    typer.echo(
+        f"{order_id} {_coins(int(order.get('give_amount', 0)))} SCCP for "
+        f"{order.get('want_amount')} wei"
+    )
+    take = document.get("take")
+    if isinstance(take, Mapping):
+        typer.echo(f"take: {take.get('take_id')}")
+        typer.echo(f"  taker SCCP {take.get('taker_sccp')}")
+        typer.echo(f"  taker ETH  {take.get('taker_eth')}")
+        typer.echo(f"  hashlock   {take.get('hashlock')}")
+        typer.echo(f"  ETH tx     {take.get('eth_tx_hash')}")
+        typer.echo(f"  ETH lock   {take.get('eth_timelock')}")
+        typer.echo(f"  SCCP lock  {take.get('sccp_timelock_height')}")
+    else:
+        typer.echo("take: none")
+
+
+@bridge_app.command("htlcs")
+def bridge_htlcs(
+    ctx: typer.Context,
+    address: Annotated[str | None, typer.Option("--address", help="Filter by participant.")] = None,
+    hashlock: Annotated[str | None, typer.Option("--hashlock", help="Filter by hashlock.")] = None,
+    node: Annotated[str | None, typer.Option("--node", help="Node that serves the locks.")] = None,
+) -> None:
+    """List SCCP HTLCs involving an address or one hashlock."""
+    query = []
+    if address is not None:
+        query.append(f"address={address}")
+    if hashlock is not None:
+        query.append(f"hashlock={hashlock}")
+    path = "/v1/htlcs" + ("?" + "&".join(query) if query else "")
+    document = _node_document(node, path)
+    if _options(ctx).json_output:
+        _echo_json(document)
+        return
+    rows = document.get("htlcs")
+    if not isinstance(rows, list) or not rows:
+        typer.echo("no locks")
+        return
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        typer.echo(
+            f"{row.get('htlc_id')} {row.get('status')} {row.get('amount')} "
+            f"lock {row.get('timelock_height')} "
+            f"{row.get('sender')} -> {row.get('beneficiary')}"
+        )
+
+
+@bridge_app.command("secret")
+def bridge_secret(ctx: typer.Context) -> None:
+    """Generate a 32-byte preimage and its SHA-256 hashlock."""
+    preimage = secrets.token_hex(32)
+    digest = sha256(bytes.fromhex(preimage)).hexdigest()
+    if _options(ctx).json_output:
+        _echo_json({"preimage": preimage, "hashlock": digest})
+        return
+    typer.echo(f"preimage: {preimage}")
+    typer.echo(f"hashlock: {digest}")
+
+
+@bridge_app.command("sell")
+def bridge_sell(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Maker's SCCP keyfile.")],
+    eth_address: Annotated[str, typer.Option("--eth-address", help="Maker's Ethereum address.")],
+    amount: Annotated[int, typer.Option("--amount", help="SCCP to sell, in whole coins.")],
+    price_wei: Annotated[
+        str,
+        typer.Option("--price-wei", help="ETH price as a positive wei decimal string."),
+    ],
+    expiry_hours: Annotated[
+        float,
+        typer.Option("--expiry-hours", help="How long the order stays open."),
+    ] = 24.0,
+    min_sccp_timelock: Annotated[
+        int | None,
+        typer.Option("--min-sccp-timelock", help="Minimum SCCP timelock height."),
+    ] = None,
+    nonce: Annotated[
+        int | None,
+        typer.Option("--order-nonce", help="Order nonce (default: current milliseconds)."),
+    ] = None,
+    node: Annotated[str | None, typer.Option("--node", help="Node that accepts the order.")] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Publish a signed order to sell SCCP for ETH."""
+    if amount <= 0:
+        _fail("--amount must be positive", code=2)
+    if expiry_hours <= 0:
+        _fail("--expiry-hours must be positive", code=2)
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    bridge = _node_document(node, "/v1/bridge")
+    if bridge.get("configured") is not True:
+        _fail(
+            "the node has no Ethereum HTLC contract configured; set "
+            "SCCP_ETH_HTLC_CONTRACT before publishing an order"
+        )
+    give_amount = coins_to_units(amount)
+    account = _node_document(node, f"/v1/accounts/{wallet.address}")
+    if _document_int(account, "balance") < give_amount + params.min_fee:
+        _fail(
+            f"{wallet.address} holds {_coins(_document_int(account, 'balance'))} SCCP; "
+            f"the order needs {_coins(give_amount + params.min_fee)}"
+        )
+    status = _node_document(node, "/v1/status")
+    minimum = min_sccp_timelock or _document_int(status, "height") + 1
+    order = _run(
+        lambda: sign_order(
+            wallet.signer,
+            params,
+            maker_eth=eth_address,
+            give_amount=give_amount,
+            want_amount=price_wei,
+            min_sccp_timelock=minimum,
+            expiry=int(time.time()) + int(expiry_hours * 3600),
+            nonce=nonce if nonce is not None else int(time.time() * 1000),
+        )
+    )
+    accepted = _node_document(node, "/v1/orders", order.model_dump(mode="json"))
+    if _options(ctx).json_output:
+        _echo_json({**accepted, "order": order.model_dump(mode="json")})
+        return
+    typer.echo(f"published order {_document_text(accepted, 'order_id')}")
+    typer.echo(f"  {_coins(give_amount)} SCCP for {price_wei} wei")
+
+
+@bridge_app.command("take")
+def bridge_take(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Taker's SCCP keyfile.")],
+    order_id: Annotated[str, typer.Option("--order-id", help="Order to take.")],
+    eth_address: Annotated[str, typer.Option("--eth-address", help="Taker's Ethereum address.")],
+    hashlock: Annotated[str, typer.Option("--hashlock", help="SHA-256 of the shared preimage.")],
+    eth_timelock: Annotated[
+        int, typer.Option("--eth-timelock", help="ETH unlock time, Unix seconds.")
+    ],
+    eth_tx_hash: Annotated[str, typer.Option("--eth-tx-hash", help="The lock transaction hash.")],
+    sccp_timelock: Annotated[
+        int | None,
+        typer.Option("--sccp-timelock-height", help="SCCP expiry height (default: safe maximum)."),
+    ] = None,
+    nonce: Annotated[
+        int | None,
+        typer.Option("--take-nonce", help="Take nonce (default: current milliseconds)."),
+    ] = None,
+    node: Annotated[str | None, typer.Option("--node", help="Node that accepts the take.")] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Publish the take after locking the ETH leg."""
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    detail = _node_document(node, f"/v1/orders/{order_id}")
+    order = detail.get("order")
+    if not isinstance(order, Mapping):
+        _fail(f"order {order_id} is not open")
+    environment = _bridge_environment_for(params)
+    if sccp_timelock is None:
+        status = _node_document(node, "/v1/status")
+        minimum = _document_int(order, "min_sccp_timelock")
+        try:
+            sccp_timelock = sccp_timelock_height(
+                _document_int(status, "height"),
+                eth_timelock,
+                int(time.time()),
+                params.target_block_seconds,
+                environment.sccp_margin,
+                minimum,
+            )
+        except OrderError as exc:
+            _fail(str(exc))
+    take = _run(
+        lambda: sign_take(
+            wallet.signer,
+            params,
+            order=order_id,
+            taker_eth=eth_address,
+            hashlock=hashlock,
+            eth_timelock=eth_timelock,
+            sccp_timelock_height=sccp_timelock,
+            eth_tx_hash=eth_tx_hash,
+            nonce=nonce if nonce is not None else int(time.time() * 1000),
+        )
+    )
+    accepted = _node_document(node, f"/v1/orders/{order_id}/takes", take.model_dump(mode="json"))
+    if _options(ctx).json_output:
+        _echo_json({**accepted, "take": take.model_dump(mode="json")})
+        return
+    typer.echo(f"published take {_document_text(accepted, 'take_id')}")
+    typer.echo(f"  SCCP timelock height {sccp_timelock}; ETH timelock {eth_timelock}")
+
+
+@bridge_app.command("htlc")
+def bridge_htlc(
+    ctx: typer.Context,
+    htlc_id_value: Annotated[str, typer.Option("--htlc-id", help="Lock id to inspect.")],
+    node: Annotated[str | None, typer.Option("--node", help="Node that serves the lock.")] = None,
+) -> None:
+    """Show one SCCP HTLC, including the preimage once claimed."""
+    document = _node_document(node, f"/v1/htlcs/{htlc_id_value}")
+    if _options(ctx).json_output:
+        _echo_json(document)
+        return
+    for key in (
+        "htlc_id",
+        "status",
+        "sender",
+        "beneficiary",
+        "hashlock",
+        "timelock_height",
+        "amount",
+        "created_at_height",
+        "closed_at_height",
+        "preimage",
+    ):
+        typer.echo(f"{key}: {document.get(key)}")
+
+
+@bridge_app.command("lock")
+def bridge_lock(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="SCCP keyfile that locks the funds.")],
+    hashlock: Annotated[str, typer.Option("--hashlock", help="SHA-256 of the shared preimage.")],
+    timelock_height: Annotated[
+        int,
+        typer.Option("--timelock-height", help="Absolute SCCP height after which refund is valid."),
+    ],
+    beneficiary: Annotated[str, typer.Option("--beneficiary", help="SCCP address that may claim.")],
+    amount: Annotated[int, typer.Option("--amount", help="Amount to lock, in whole coins.")],
+    asset: Annotated[
+        str | None,
+        typer.Option("--asset", help="Asset id/name/symbol (omit for SCCP)."),
+    ] = None,
+    fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that receives the transaction.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Lock SCCP under a hashlock for a bridge counterparty."""
+    if amount <= 0:
+        _fail("--amount must be positive", code=2)
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    with _account_source(ctx, params, wallet.address, node) as accounts:
+        tx = _run(
+            lambda: accounts.service.build_htlc_lock(
+                wallet.signer,
+                hashlock=hashlock,
+                timelock_height=timelock_height,
+                beneficiary=beneficiary,
+                amount=coins_to_units(amount),
+                fee=fee,
+                asset=asset,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    payload = {**_transaction_summary(tx, receipt), "htlc_id": htlc_id(tx.sender, tx.nonce)}
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"locked {_coins(coins_to_units(amount))}")
+    typer.echo(f"htlc: {payload['htlc_id']}")
+    typer.echo(f"txid: {payload['txid']}")
+
+
+@bridge_app.command("claim")
+def bridge_claim(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Beneficiary's SCCP keyfile.")],
+    htlc_id_value: Annotated[str, typer.Option("--htlc-id", help="Lock id to claim.")],
+    preimage: Annotated[
+        str, typer.Option("--preimage", help="32-byte secret that opens the lock.")
+    ],
+    fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that receives the transaction.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Claim SCCP and reveal the preimage."""
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    document = _node_document(node, f"/v1/htlcs/{htlc_id_value}")
+    record = _run(lambda: HtlcRecord.from_dict(htlc_id_value, document))
+    with _account_source(ctx, params, wallet.address, node) as accounts:
+        tx = _run(
+            lambda: accounts.service.build_htlc_claim(
+                wallet.signer,
+                htlc_id=htlc_id_value,
+                preimage=preimage,
+                fee=fee,
+                record=record,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    _report_transaction(ctx, tx, receipt, "claimed SCCP and revealed the preimage")
+
+
+@bridge_app.command("refund")
+def bridge_refund(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="SCCP keyfile that created the lock.")],
+    htlc_id_value: Annotated[str, typer.Option("--htlc-id", help="Lock id to refund.")],
+    fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that receives the transaction.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Refund an expired SCCP lock to its creator."""
+    params = _resolve_network(ctx, network)
+    wallet = _wallet_for(ctx, key, network)
+    document = _node_document(node, f"/v1/htlcs/{htlc_id_value}")
+    record = _run(lambda: HtlcRecord.from_dict(htlc_id_value, document))
+    with _account_source(ctx, params, wallet.address, node) as accounts:
+        tx = _run(
+            lambda: accounts.service.build_htlc_refund(
+                wallet.signer,
+                htlc_id=htlc_id_value,
+                fee=fee,
+                record=record,
+            )
+        )
+    receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
+    _report_transaction(ctx, tx, receipt, "refunded SCCP")
+
+
+@bridge_app.command("eth-lock")
+def bridge_eth_lock(
+    ctx: typer.Context,
+    sender: Annotated[
+        str, typer.Option("--from", help="Unlocked Ethereum account that locks ETH.")
+    ],
+    hashlock: Annotated[str, typer.Option("--hashlock", help="SHA-256 of the shared preimage.")],
+    timelock: Annotated[int, typer.Option("--timelock", help="ETH unlock time, Unix seconds.")],
+    beneficiary: Annotated[
+        str, typer.Option("--beneficiary", help="Maker's Ethereum address that may claim.")
+    ],
+    value_wei: Annotated[int, typer.Option("--value-wei", help="ETH to lock, in wei.")],
+    rpc_url: Annotated[
+        str | None, typer.Option("--rpc-url", help="Override the bridge RPC.")
+    ] = None,
+    contract: Annotated[
+        str | None, typer.Option("--contract", help="Override the HTLC address.")
+    ] = None,
+    confirmations: Annotated[
+        int | None, typer.Option("--confirmations", help="Override the confirmation depth.")
+    ] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that publishes /v1/bridge.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Lock ETH through the node's configured EthHtlc contract.
+
+    The JSON-RPC node must have ``--from`` unlocked. That is the default on
+    Anvil; on a production network use the Bridge page and an EIP-1193 wallet.
+    """
+    if value_wei <= 0:
+        _fail("--value-wei must be positive", code=2)
+    _, rpc, address, depth = _eth_endpoint(
+        ctx,
+        node=node,
+        network=network,
+        rpc_url=rpc_url,
+        contract=contract,
+        confirmations=confirmations,
+    )
+    tx_hash, lock_id = _run(
+        lambda: lock_eth(
+            rpc,
+            address,
+            sender=sender,
+            hashlock=hashlock,
+            timelock=timelock,
+            beneficiary=beneficiary,
+            value=value_wei,
+            confirmations=depth,
+        )
+    )
+    payload = {"tx_hash": tx_hash, "lock_id": lock_id, "value_wei": value_wei}
+    if _options(ctx).json_output:
+        _echo_json(payload)
+        return
+    typer.echo(f"locked {value_wei} wei")
+    typer.echo(f"lock: {lock_id}")
+    typer.echo(f"tx:   {tx_hash}")
+
+
+@bridge_app.command("eth-claim")
+def bridge_eth_claim(
+    ctx: typer.Context,
+    sender: Annotated[str, typer.Option("--from", help="Unlocked maker account that claims.")],
+    lock_id: Annotated[str, typer.Option("--lock-id", help="Ethereum lock id.")],
+    preimage: Annotated[str, typer.Option("--preimage", help="Revealed 32-byte secret.")],
+    rpc_url: Annotated[
+        str | None, typer.Option("--rpc-url", help="Override the bridge RPC.")
+    ] = None,
+    contract: Annotated[
+        str | None, typer.Option("--contract", help="Override the HTLC address.")
+    ] = None,
+    confirmations: Annotated[
+        int | None, typer.Option("--confirmations", help="Override the confirmation depth.")
+    ] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that publishes /v1/bridge.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Claim the ETH leg with the preimage the SCCP claim revealed."""
+    _, rpc, address, depth = _eth_endpoint(
+        ctx,
+        node=node,
+        network=network,
+        rpc_url=rpc_url,
+        contract=contract,
+        confirmations=confirmations,
+    )
+    tx_hash = _run(
+        lambda: claim_eth(
+            rpc,
+            address,
+            sender=sender,
+            lock_id=lock_id,
+            preimage=preimage,
+            confirmations=depth,
+        )
+    )
+    if _options(ctx).json_output:
+        _echo_json({"tx_hash": tx_hash, "lock_id": lock_id})
+        return
+    typer.echo(f"claimed ETH lock {lock_id}")
+    typer.echo(f"tx: {tx_hash}")
+
+
+@bridge_app.command("eth-refund")
+def bridge_eth_refund(
+    ctx: typer.Context,
+    sender: Annotated[str, typer.Option("--from", help="Unlocked depositor account.")],
+    lock_id: Annotated[str, typer.Option("--lock-id", help="Ethereum lock id.")],
+    rpc_url: Annotated[
+        str | None, typer.Option("--rpc-url", help="Override the bridge RPC.")
+    ] = None,
+    contract: Annotated[
+        str | None, typer.Option("--contract", help="Override the HTLC address.")
+    ] = None,
+    confirmations: Annotated[
+        int | None, typer.Option("--confirmations", help="Override the confirmation depth.")
+    ] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that publishes /v1/bridge.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Refund an expired ETH lock to the account that deposited it."""
+    _, rpc, address, depth = _eth_endpoint(
+        ctx,
+        node=node,
+        network=network,
+        rpc_url=rpc_url,
+        contract=contract,
+        confirmations=confirmations,
+    )
+    tx_hash = _run(
+        lambda: refund_eth(
+            rpc,
+            address,
+            sender=sender,
+            lock_id=lock_id,
+            confirmations=depth,
+        )
+    )
+    if _options(ctx).json_output:
+        _echo_json({"tx_hash": tx_hash, "lock_id": lock_id})
+        return
+    typer.echo(f"refunded ETH lock {lock_id}")
+    typer.echo(f"tx: {tx_hash}")
+
+
+@bridge_app.command("eth-lock-info")
+def bridge_eth_lock_info(
+    ctx: typer.Context,
+    lock_id: Annotated[str, typer.Option("--lock-id", help="Ethereum lock id.")],
+    rpc_url: Annotated[
+        str | None, typer.Option("--rpc-url", help="Override the bridge RPC.")
+    ] = None,
+    contract: Annotated[
+        str | None, typer.Option("--contract", help="Override the HTLC address.")
+    ] = None,
+    node: Annotated[
+        str | None, typer.Option("--node", help="Node that publishes /v1/bridge.")
+    ] = None,
+    network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
+) -> None:
+    """Read one EthHtlc lock."""
+    _, rpc, address, _ = _eth_endpoint(
+        ctx,
+        node=node,
+        network=network,
+        rpc_url=rpc_url,
+        contract=contract,
+        confirmations=None,
+    )
+    stored = _run(lambda: get_lock(rpc, address, lock_id))
+    if _options(ctx).json_output:
+        _echo_json(
+            {
+                "lock_id": lock_id,
+                "depositor": stored.depositor,
+                "beneficiary": stored.beneficiary,
+                "hashlock": stored.hashlock,
+                "timelock": stored.timelock,
+                "amount": stored.amount,
+                "claimed": stored.claimed,
+                "refunded": stored.refunded,
+            }
+        )
+        return
+    typer.echo(f"lock {lock_id}")
+    typer.echo(f"depositor:   {stored.depositor}")
+    typer.echo(f"beneficiary: {stored.beneficiary}")
+    typer.echo(f"hashlock:    {stored.hashlock}")
+    typer.echo(f"timelock:    {stored.timelock}")
+    typer.echo(f"amount:      {stored.amount} wei")
+    typer.echo(f"closed:      claimed={stored.claimed} refunded={stored.refunded}")
 
 
 if __name__ == "__main__":  # pragma: no cover - console-script parity

@@ -26,7 +26,19 @@ import {
 } from "./keys";
 
 /** Wire spellings from `sccp.protocol.models.TxType`. */
-export type TxType = "transfer" | "register" | "register_witness" | "availability" | "reveal";
+export type TxType =
+  | "transfer"
+  | "register"
+  | "register_witness"
+  | "availability"
+  | "reveal"
+  | "create_pool"
+  | "add_liquidity"
+  | "remove_liquidity"
+  | "swap"
+  | "htlc_lock"
+  | "htlc_claim"
+  | "htlc_refund";
 
 /** A signed ledger transaction, in wire order (`from` is the sender field). */
 export interface Transaction {
@@ -119,22 +131,28 @@ export interface RegisterFields {
   endpoint: string;
   engine: string;
   publicKeyHex: string;
+  /** `standard` is the protocol-v1 default and is omitted from the payload. */
+  variant?: string;
 }
 
 /** The `register` transaction: a bond, an endpoint and an engine fingerprint. */
 export function buildRegister(fields: RegisterFields): Transaction {
+  const payload: Record<string, unknown> = {
+    public_key: fields.publicKeyHex.toLowerCase(),
+    endpoint: fields.endpoint,
+    engine: fields.engine,
+    bond: fields.bond,
+  };
+  if (fields.variant !== undefined && fields.variant !== "standard") {
+    payload.variant = fields.variant;
+  }
   return {
     network: fields.network,
     type: "register",
     from: fields.sender,
     nonce: fields.nonce,
     fee: fields.fee,
-    payload: {
-      public_key: fields.publicKeyHex.toLowerCase(),
-      endpoint: fields.endpoint,
-      engine: fields.engine,
-      bond: fields.bond,
-    },
+    payload,
   };
 }
 
@@ -186,21 +204,32 @@ export interface TransferFields {
   fee: number;
   /** Recipient, a bech32 address on the same network. */
   to: string;
-  /** Base units (1 SCCP = 100 000 000), always positive. */
+  /** Base units (one token unit = 10^-decimals), always positive. */
   amount: number;
   publicKeyHex: string;
+  /** A non-native asset id; omit for SCCP so the v1 payload stays byte-identical. */
+  asset?: string | null;
 }
 
 /**
- * The `transfer` transaction: `{to, amount, public_key}`, exactly the payload
- * `sccp.wallet.service.WalletService.build_transfer` signs.
+ * The `transfer` transaction: `{to, amount, asset?, public_key}`, exactly the
+ * payload `sccp.wallet.service.WalletService.build_transfer` signs.
  *
  * The chain's `_check_unknown_keys` makes this set strict, so nothing else may
  * be added here without a protocol change (`docs/BIG_PICTURE.md` section 5).
+ * A token transfer still pays its fee in native SCCP.
  */
 export function buildTransfer(fields: TransferFields): Transaction {
   if (!Number.isSafeInteger(fields.amount) || fields.amount <= 0) {
     throw new TxError(`a transfer amount must be a positive integer, got ${fields.amount}`);
+  }
+  const payload: Record<string, unknown> = {
+    to: fields.to,
+    amount: fields.amount,
+    public_key: fields.publicKeyHex.toLowerCase(),
+  };
+  if (fields.asset !== undefined && fields.asset !== null && fields.asset !== "") {
+    payload.asset = fields.asset;
   }
   return {
     network: fields.network,
@@ -208,11 +237,7 @@ export function buildTransfer(fields: TransferFields): Transaction {
     from: fields.sender,
     nonce: fields.nonce,
     fee: fields.fee,
-    payload: {
-      to: fields.to,
-      amount: fields.amount,
-      public_key: fields.publicKeyHex.toLowerCase(),
-    },
+    payload,
   };
 }
 
@@ -239,6 +264,241 @@ export function buildReveal(fields: RevealFields): Transaction {
       public_key: fields.publicKeyHex.toLowerCase(),
       epoch: fields.epoch,
       nonce: fields.nonceSecret,
+    },
+  };
+}
+
+/** The `create_pool` transaction: an initial two-sided deposit. */
+export interface CreatePoolFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  /** `null` means native SCCP. The builder orders the pair itself. */
+  assetA: string | null;
+  amountA: number;
+  assetB: string | null;
+  amountB: number;
+  publicKeyHex: string;
+}
+
+function requirePositive(field: string, value: number): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TxError(`${field} must be a positive integer, got ${value}`);
+  }
+}
+
+/** The `create_pool` transaction: `{asset_a?, amount_a, asset_b?, amount_b}`. */
+export function buildCreatePool(fields: CreatePoolFields): Transaction {
+  requirePositive("amount_a", fields.amountA);
+  requirePositive("amount_b", fields.amountB);
+  const first = { asset: fields.assetA ?? "", amount: fields.amountA };
+  const second = { asset: fields.assetB ?? "", amount: fields.amountB };
+  if (first.asset === second.asset) {
+    throw new TxError("a pool needs two different assets");
+  }
+  const [a, b] = first.asset < second.asset ? [first, second] : [second, first];
+  const payload: Record<string, unknown> = {
+    amount_a: a.amount,
+    amount_b: b.amount,
+    public_key: fields.publicKeyHex.toLowerCase(),
+  };
+  if (a.asset !== "") payload.asset_a = a.asset;
+  if (b.asset !== "") payload.asset_b = b.asset;
+  return {
+    network: fields.network,
+    type: "create_pool",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload,
+  };
+}
+
+export interface AddLiquidityFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  poolId: string;
+  amountA: number;
+  amountB: number;
+  publicKeyHex: string;
+}
+
+/** The `add_liquidity` transaction: a proportional two-sided deposit. */
+export function buildAddLiquidity(fields: AddLiquidityFields): Transaction {
+  requirePositive("amount_a", fields.amountA);
+  requirePositive("amount_b", fields.amountB);
+  return {
+    network: fields.network,
+    type: "add_liquidity",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload: {
+      pool_id: fields.poolId,
+      amount_a: fields.amountA,
+      amount_b: fields.amountB,
+      public_key: fields.publicKeyHex.toLowerCase(),
+    },
+  };
+}
+
+export interface RemoveLiquidityFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  poolId: string;
+  shares: number;
+  publicKeyHex: string;
+}
+
+/** The `remove_liquidity` transaction: redeem pool shares for both reserves. */
+export function buildRemoveLiquidity(fields: RemoveLiquidityFields): Transaction {
+  requirePositive("shares", fields.shares);
+  return {
+    network: fields.network,
+    type: "remove_liquidity",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload: {
+      pool_id: fields.poolId,
+      shares: fields.shares,
+      public_key: fields.publicKeyHex.toLowerCase(),
+    },
+  };
+}
+
+export interface SwapFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  poolId: string;
+  /** `null` means native SCCP. */
+  assetIn: string | null;
+  amountIn: number;
+  minAmountOut: number;
+  publicKeyHex: string;
+}
+
+/** The `swap` transaction: one side in, the other out, both in one transition. */
+export function buildSwap(fields: SwapFields): Transaction {
+  requirePositive("amount_in", fields.amountIn);
+  if (!Number.isSafeInteger(fields.minAmountOut) || fields.minAmountOut < 0) {
+    throw new TxError(`min_amount_out must be a non-negative integer`);
+  }
+  const payload: Record<string, unknown> = {
+    pool_id: fields.poolId,
+    amount_in: fields.amountIn,
+    min_amount_out: fields.minAmountOut,
+    public_key: fields.publicKeyHex.toLowerCase(),
+  };
+  if (fields.assetIn !== null && fields.assetIn !== "") payload.asset_in = fields.assetIn;
+  return {
+    network: fields.network,
+    type: "swap",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload,
+  };
+}
+
+/** The id an `htlc_lock` creates: `H("sccp/v1/htlc", {from, nonce})`. */
+export function htlcId(sender: string, nonce: number): string {
+  return domainHex(DOMAINS.HTLC, { from: sender, nonce });
+}
+
+function requireDigest(name: string, value: string): void {
+  if (!/^[0-9a-f]{64}$/.test(value)) {
+    throw new TxError(`${name} must be 32-byte lowercase hex`);
+  }
+}
+
+export interface HtlcLockFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  hashlock: string;
+  timelockHeight: number;
+  beneficiary: string;
+  amount: number;
+  publicKeyHex: string;
+  /** A non-native asset id; omit for native SCCP. */
+  asset?: string | null;
+}
+
+/** `htlc_lock`: move tokens out of a balance into consensus escrow. */
+export function buildHtlcLock(fields: HtlcLockFields): Transaction {
+  requirePositive("amount", fields.amount);
+  requireDigest("hashlock", fields.hashlock);
+  if (!Number.isSafeInteger(fields.timelockHeight) || fields.timelockHeight < 0) {
+    throw new TxError("timelock_height must be a non-negative integer");
+  }
+  const payload: Record<string, unknown> = {
+    hashlock: fields.hashlock,
+    timelock_height: fields.timelockHeight,
+    beneficiary: fields.beneficiary,
+    amount: fields.amount,
+    public_key: fields.publicKeyHex.toLowerCase(),
+  };
+  if (fields.asset !== undefined && fields.asset !== null && fields.asset !== "") {
+    payload.asset = fields.asset;
+  }
+  return {
+    network: fields.network,
+    type: "htlc_lock",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload,
+  };
+}
+
+export interface HtlcCloseFields {
+  network: string;
+  sender: string;
+  nonce: number;
+  fee: number;
+  htlcId: string;
+  publicKeyHex: string;
+}
+
+/** `htlc_claim`: reveal the 32-byte preimage and receive the escrow. */
+export function buildHtlcClaim(fields: HtlcCloseFields & { preimage: string }): Transaction {
+  requireDigest("htlc_id", fields.htlcId);
+  requireDigest("preimage", fields.preimage);
+  return {
+    network: fields.network,
+    type: "htlc_claim",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload: {
+      htlc_id: fields.htlcId,
+      preimage: fields.preimage,
+      public_key: fields.publicKeyHex.toLowerCase(),
+    },
+  };
+}
+
+/** `htlc_refund`: return an expired escrow to the account that locked it. */
+export function buildHtlcRefund(fields: HtlcCloseFields): Transaction {
+  requireDigest("htlc_id", fields.htlcId);
+  return {
+    network: fields.network,
+    type: "htlc_refund",
+    from: fields.sender,
+    nonce: fields.nonce,
+    fee: fields.fee,
+    payload: {
+      htlc_id: fields.htlcId,
+      public_key: fields.publicKeyHex.toLowerCase(),
     },
   };
 }

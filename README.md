@@ -254,6 +254,11 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 `devnet` (in-process, mock engines, zero seal difficulty) exists for tests and CI.
 All values above are provisional and live in `src/sccp/config.py`.
 
+The ETH bridge is pinned to one Ethereum environment per SCCP network: devnet to
+Anvil (chain id `31337`), testnet to Sepolia (`11155111`) and mainnet to Ethereum
+(`1`). `GET /v1/bridge` publishes that mapping; see
+[`contracts/README.md`](contracts/README.md) and [`deploy/README.md`](deploy/README.md).
+
 ---
 
 ## 5. Repository layout
@@ -274,7 +279,7 @@ responsibility rather than a construction phase.
 ├── .github/workflows/deploy-explorer.yml        # hosted explorer (explorer.*)
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
-│   ├── BIG_PICTURE.md            # wallet, bridge, DEX and variant tokens (plan)
+│   ├── BIG_PICTURE.md            # wallet, bridge, DEX and variant-token design
 │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
 │   ├── DOMAIN_MIGRATION.md       # move the deployment to a new project/domain
 │   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
@@ -287,10 +292,15 @@ responsibility rather than a construction phase.
 │   ├── TESTNET_DEPLOYMENT.md     # CI deployment and monthly cost estimate
 │   ├── RUN_A_TESTNET_MINER.md    # operator guide: relay, miner and registration
 │   ├── SEND_COINS.md             # fund a wallet and send a transfer
+│   ├── TEST_DEVNET_BRIDGE_DEX.md # bridge, DEX and Chess960/C960 devnet test
 │   └── THREAT_MODEL.md           # adversary model and residual risk
 ├── data/
 │   ├── openings.json             # curated opening lines, shipped in the wheel
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
+├── contracts/
+│   ├── EthHtlc.sol               # the Ethereum leg: lock / claim / refund
+│   ├── test/EthHtlc.t.sol        # Foundry adversarial suite
+│   └── script/Deploy.s.sol       # chain-id-checked deployment
 ├── deploy/
 │   ├── README.md                 # what the compose stack does and does not do
 │   ├── explorer/                 # Caddy + nginx + compose for the hosted page
@@ -459,6 +469,9 @@ The wallet and miner guides are separate:
 - [`docs/RUN_A_DEVNET.md`](docs/RUN_A_DEVNET.md) — run a whole devnet from source:
   `devnet up`, the faucet, wallets, transfers, a miner and the two-process relay
   stack, with the devnet parameters and troubleshooting.
+- [`docs/TEST_DEVNET_BRIDGE_DEX.md`](docs/TEST_DEVNET_BRIDGE_DEX.md) — test the
+  ETH↔SCCP bridge, the on-chain DEX and the Chess960/C960 path end to end, from
+  the CLI and from the web UI.
 - [`docs/CREATE_A_TESTNET_WALLET.md`](docs/CREATE_A_TESTNET_WALLET.md) — create a
   testnet keyfile, fund it from the faucet and check the balance.
 - [`docs/OPEN_A_WALLET.md`](docs/OPEN_A_WALLET.md) — create a keyfile, back up the
@@ -470,9 +483,12 @@ The wallet and miner guides are separate:
 - [`docs/EXPLORE_THE_CHAIN.md`](docs/EXPLORE_THE_CHAIN.md) — build the web
   explorer, serve it from `sccp node run --web`, and play a signed table.
 
-The roadmap for the browser wallet, the ETH↔SCCP bridge, the native DEX and the
-variant tokens is [`docs/BIG_PICTURE.md`](docs/BIG_PICTURE.md); it is a plan, not
-a description of what the chain does today.
+The browser wallet, native DEX and trustless ETH↔SCCP HTLC bridge are implemented.
+The same user actions are available from the CLI under `sccp dex` and
+`sccp bridge`; the node, relay and miners remain operator processes.
+[`docs/BIG_PICTURE.md`](docs/BIG_PICTURE.md) records the design and the remaining
+work (the optional federated `wETH` asset, more bridge chains and an external
+audit of `contracts/EthHtlc.sol`).
 
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
 [`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current
@@ -585,6 +601,7 @@ make test-all      # adds integration/e2e; skips if Stockfish is absent
 make dist-check    # build sdist+wheel and run `twine check --strict` (twine>=7)
 make devnet        # in-process node + relay + mock miners
 make stack         # write the docker-compose stack and validate the file
+make container-e2e # build the image and run live HTLC, transfer, DEX and miner-payout tests (Docker)
 ```
 
 Real-engine tests are marked `engine` and deselected by default:

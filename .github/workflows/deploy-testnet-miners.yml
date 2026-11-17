@@ -1,7 +1,8 @@
 name: deploy-testnet-miners
 
 # Runs on every merge to main: builds the stack image, then (when a target is
-# configured) resets and redeploys the two-miner testnet over SSH.
+# configured) resets and redeploys the four-miner testnet (two standard, two
+# Chess960) over SSH.
 #
 # Required repository configuration:
 #   vars.TESTNET_DEPLOY_HOST     user@host of the deployment VM
@@ -10,6 +11,11 @@ name: deploy-testnet-miners
 #   vars.TESTNET_DEPLOY_DIR      optional; defaults to /opt/sccp-testnet
 #   vars.TESTNET_DEPLOY_PORT     optional; defaults to 22
 #   vars.TESTNET_PUBLIC_URL      optional; defaults to the current testnet URL
+#   vars.SCCP_ETH_RPC_URL        optional Sepolia RPC used by the node's bridge
+#                                document (and the web UI's chain metadata)
+#   vars.SCCP_ETH_HTLC_CONTRACT  optional deployed EthHtlc address on Sepolia
+#   vars.SCCP_ETH_CONFIRMATIONS  optional confirmation-depth override
+#   vars.SCCP_ETH_SCCP_MARGIN    optional SCCP timelock-margin override (blocks)
 #   secrets.TESTNET_KNOWN_HOSTS  optional pinned host key; without it the
 #                                workflow learns the key with ssh-keyscan
 #
@@ -60,7 +66,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   deploy:
-    name: redeploy two miners
+    name: redeploy four miners
     needs: build
     # A repository without a deployment target still gets a green image build;
     # set vars.TESTNET_DEPLOY_HOST to turn the remote job on.
@@ -131,7 +137,12 @@ jobs:
           ssh testnet "cd '$DEPLOY_DIR' \
             && SCCP_IMAGE='$IMAGE' docker compose down -v --remove-orphans \
             && SCCP_IMAGE='$IMAGE' docker compose pull \
-            && SCCP_IMAGE='$IMAGE' docker compose up -d --no-build --remove-orphans"
+            && SCCP_IMAGE='$IMAGE' \
+               SCCP_ETH_RPC_URL='${{ vars.SCCP_ETH_RPC_URL }}' \
+               SCCP_ETH_HTLC_CONTRACT='${{ vars.SCCP_ETH_HTLC_CONTRACT }}' \
+               SCCP_ETH_CONFIRMATIONS='${{ vars.SCCP_ETH_CONFIRMATIONS }}' \
+               SCCP_ETH_SCCP_MARGIN='${{ vars.SCCP_ETH_SCCP_MARGIN }}' \
+               docker compose up -d --no-build --remove-orphans"
 
       - name: Wait for the bootstrap chain and relay
         run: |
@@ -162,4 +173,4 @@ jobs:
         if: always()
         run: |
           ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose ps -a" || true
-          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 init node relay bootstrap drip traffic" || true
+          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 init node relay bootstrap drip traffic miner-1 miner-2 miner-3 miner-4" || true

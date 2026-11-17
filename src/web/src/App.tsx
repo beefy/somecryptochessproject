@@ -13,8 +13,10 @@ import { Banner, Button, PaperProvider, Surface, Text, useTheme } from "react-na
 import { AppMenu } from "./components/AppMenu";
 import { Anchor, Loading, Page } from "./components/Chrome";
 import { NoticeProvider } from "./components/Notices";
+import { WalletSessionProvider } from "./components/WalletSession";
+import { WalletStatusBar } from "./components/WalletStatusBar";
 import { formatInteger, shortHash } from "./lib/format";
-import { currentSite } from "./lib/site";
+import { currentSite, siteHash, type Site } from "./lib/site";
 import { NodeProvider, useNode } from "./node";
 import { activeSection, navigate, useRoute, type Route } from "./router";
 import { darkTheme, lightTheme, ThemeModeContext, preferredMode, useThemeMode, type ThemeMode } from "./theme";
@@ -40,6 +42,22 @@ const Wallet = lazy(async () => {
   return { default: module.Wallet };
 });
 
+/** Play brings in `chess.js`; DEX and Bridge are their own pages now too. */
+const PlayPage = lazy(async () => {
+  const module = await import("./views/PlayPage");
+  return { default: module.PlayPage };
+});
+
+const DexPage = lazy(async () => {
+  const module = await import("./views/Dex");
+  return { default: module.DexPage };
+});
+
+const BridgePage = lazy(async () => {
+  const module = await import("./views/BridgePage");
+  return { default: module.BridgePage };
+});
+
 const EXPLORER_SECTIONS = [
   { key: "dashboard", label: "Overview", href: "#/" },
   { key: "blocks", label: "Blocks", href: "#/blocks" },
@@ -50,7 +68,6 @@ const EXPLORER_SECTIONS = [
 
 const WALLET_SECTIONS = [
   { key: "wallet", label: "Overview", href: "#/wallet" },
-  { key: "walletPlay", label: "Play", href: "#/wallet/play" },
   { key: "walletSend", label: "Send", href: "#/wallet/send" },
   { key: "walletReceive", label: "Receive", href: "#/wallet/receive" },
   { key: "walletFaucet", label: "Faucet", href: "#/wallet/faucet" },
@@ -58,6 +75,32 @@ const WALLET_SECTIONS = [
   { key: "walletSettings", label: "Settings", href: "#/wallet/settings" },
 ] as const;
 
+const PLAY_SECTIONS = [{ key: "play", label: "Play", href: "#/play" }] as const;
+const DEX_SECTIONS = [
+  { key: "dex", label: "Swap", href: "#/dex" },
+  { key: "dexLiquidity", label: "Liquidity", href: "#/dex/liquidity" },
+  { key: "dexCreate", label: "Create pool", href: "#/dex/create" },
+] as const;
+const BRIDGE_SECTIONS = [
+  { key: "bridge", label: "Buy SCCP", href: "#/bridge" },
+  { key: "bridgeSell", label: "Sell SCCP", href: "#/bridge/sell" },
+  { key: "bridgeActivity", label: "Activity", href: "#/bridge/activity" },
+] as const;
+
+function sectionsFor(site: Site): typeof EXPLORER_SECTIONS | typeof WALLET_SECTIONS | typeof PLAY_SECTIONS | typeof DEX_SECTIONS | typeof BRIDGE_SECTIONS {
+  switch (site) {
+    case "wallet":
+      return WALLET_SECTIONS;
+    case "play":
+      return PLAY_SECTIONS;
+    case "dex":
+      return DEX_SECTIONS;
+    case "bridge":
+      return BRIDGE_SECTIONS;
+    case "explorer":
+      return EXPLORER_SECTIONS;
+  }
+}
 
 export function App(): ReactNode {
   const [mode, setMode] = useState<ThemeMode>(preferredMode);
@@ -70,13 +113,16 @@ export function App(): ReactNode {
       <PaperProvider theme={mode === "dark" ? darkTheme : lightTheme}>
         <NodeProvider>
           <NoticeProvider>
-            <Shell />
+            <WalletSessionProvider>
+              <Shell />
+            </WalletSessionProvider>
           </NoticeProvider>
         </NodeProvider>
       </PaperProvider>
     </ThemeModeContext.Provider>
   );
 }
+
 
 function Shell(): ReactNode {
   const route = useRoute();
@@ -88,20 +134,33 @@ function Shell(): ReactNode {
   const site = currentSite();
   // The wallet shows its own tabs wherever it is open -- the wallet subdomain,
   // `explorer/#/wallet`, or a dev server -- so "Send" is a tab and not a detour
-  // through the hamburger. The hamburger itself only switches sites.
+  // through the hamburger. Play, DEX and Bridge are their own sites now.
   const walletOpen =
     site === "wallet" ||
     route.name === "wallet" ||
-    route.name === "walletPlay" ||
     route.name === "walletSend" ||
     route.name === "walletReceive" ||
     route.name === "walletFaucet" ||
     route.name === "walletHistory" ||
     route.name === "walletSettings";
+  const dexOpen =
+    route.name === "dex" || route.name === "dexLiquidity" || route.name === "dexCreate";
+  const bridgeOpen =
+    route.name === "bridge" || route.name === "bridgeSell" || route.name === "bridgeActivity";
+  const activeSite: Site =
+    route.name === "play"
+      ? "play"
+      : dexOpen
+        ? "dex"
+        : bridgeOpen
+          ? "bridge"
+          : walletOpen
+            ? "wallet"
+            : site;
   const section =
-    walletOpen && route.name === "dashboard" ? "wallet" : activeSection(route);
+    route.name === "dashboard" ? (activeSite === "explorer" ? "dashboard" : activeSite) : activeSection(route);
   const offline = status.error !== undefined;
-  const sections = walletOpen ? WALLET_SECTIONS : EXPLORER_SECTIONS;
+  const sections = sectionsFor(activeSite);
 
   return (
     <View style={[styles.root, { backgroundColor: paper.colors.background }]}>
@@ -109,13 +168,13 @@ function Shell(): ReactNode {
         <View style={styles.headerRow}>
           <AppMenu />
 
-          <Anchor href="#/" onPress={() => navigate(walletOpen ? "#/wallet" : "#/")} style={styles.brand}>
+          <Anchor href={siteHash(activeSite)} onPress={() => navigate(siteHash(activeSite))} style={styles.brand}>
             <Text variant="titleLarge" style={styles.brandText}>
               SCCP
             </Text>
             {!compact && (
               <Text variant="bodySmall" style={styles.brandSub}>
-                {walletOpen ? "wallet" : site}
+                {activeSite}
               </Text>
             )}
           </Anchor>
@@ -156,6 +215,7 @@ function Shell(): ReactNode {
             </Text>
           </View>
         )}
+        <WalletStatusBar />
       </Surface>
 
       {offline && (
@@ -240,9 +300,8 @@ function routeKey(route: Route): string {
     case "notFound":
       return `notFound:${route.path}`;
     case "dashboard":
-      return currentSite() === "wallet" ? "wallet" : "dashboard";
+      return currentSite() === "explorer" ? "dashboard" : currentSite();
     case "wallet":
-    case "walletPlay":
     case "walletSend":
     case "walletReceive":
     case "walletFaucet":
@@ -261,7 +320,7 @@ function routeKey(route: Route): string {
 function WalletRoute({
   view,
 }: {
-  view: "overview" | "play" | "send" | "receive" | "faucet" | "history" | "settings";
+  view: "overview" | "send" | "receive" | "faucet" | "history" | "settings";
 }): ReactNode {
   return (
     <Suspense fallback={<Loading />}>
@@ -270,10 +329,41 @@ function WalletRoute({
   );
 }
 
+function LazyPage({ children }: { children: ReactNode }): ReactNode {
+  return <Suspense fallback={<Loading />}>{children}</Suspense>;
+}
+
+function SiteLanding(): ReactNode {
+  switch (currentSite()) {
+    case "wallet":
+      return <WalletRoute view="overview" />;
+    case "play":
+      return (
+        <LazyPage>
+          <PlayPage />
+        </LazyPage>
+      );
+    case "dex":
+      return (
+        <LazyPage>
+          <DexPage view="swap" />
+        </LazyPage>
+      );
+    case "bridge":
+      return (
+        <LazyPage>
+          <BridgePage view="buy" />
+        </LazyPage>
+      );
+    case "explorer":
+      return <Dashboard />;
+  }
+}
+
 function RouteView({ route }: { route: Route }): ReactNode {
   switch (route.name) {
     case "dashboard":
-      return currentSite() === "wallet" ? <WalletRoute view="overview" /> : <Dashboard />;
+      return <SiteLanding />;
     case "blocks":
       return <Blocks />;
     case "block":
@@ -294,8 +384,48 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <AccountView address={route.address} />;
     case "wallet":
       return <WalletRoute view="overview" />;
-    case "walletPlay":
-      return <WalletRoute view="play" />;
+    case "play":
+      return (
+        <LazyPage>
+          <PlayPage />
+        </LazyPage>
+      );
+    case "dex":
+      return (
+        <LazyPage>
+          <DexPage view="swap" />
+        </LazyPage>
+      );
+    case "dexLiquidity":
+      return (
+        <LazyPage>
+          <DexPage view="liquidity" />
+        </LazyPage>
+      );
+    case "dexCreate":
+      return (
+        <LazyPage>
+          <DexPage view="create" />
+        </LazyPage>
+      );
+    case "bridge":
+      return (
+        <LazyPage>
+          <BridgePage view="buy" />
+        </LazyPage>
+      );
+    case "bridgeSell":
+      return (
+        <LazyPage>
+          <BridgePage view="sell" />
+        </LazyPage>
+      );
+    case "bridgeActivity":
+      return (
+        <LazyPage>
+          <BridgePage view="activity" />
+        </LazyPage>
+      );
     case "walletSend":
       return <WalletRoute view="send" />;
     case "walletReceive":
