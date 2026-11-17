@@ -1,14 +1,14 @@
 # The four-miner testnet stack
 
 `docker-compose.yml` runs the testnet deployment on one machine: a full node, the
-matchmaking relay, one deterministic bootstrap job, a traffic drip and four
-Stockfish miners -- two standard-chess seats and two Chess960 seats. It starts
-from the pinned `testnet` genesis, funds and registers all four miners for their
-variants, commits/reveals availability, opens a matchable epoch, plays one game
-per variant per round and settles the winning proofs on chain. `sccp devnet up`
-remains the fast in-process demo; this stack exercises the real multi-process,
-HTTP and SQLite path. The merge-to-deploy workflow and its monthly cost are in
-[`docs/TESTNET_DEPLOYMENT.md`](../docs/TESTNET_DEPLOYMENT.md).
+matchmaking relay, one deterministic bootstrap job, a demo seeder, a traffic drip
+and four Stockfish miners -- two standard-chess seats and two Chess960 seats. It
+starts from the pinned `testnet` genesis, funds and registers all four miners for
+their variants, commits/reveals availability, opens a matchable epoch, plays one
+game per variant per round and settles the winning proofs on chain. `sccp devnet
+up` remains the fast in-process demo; this stack exercises the real
+multi-process, HTTP and SQLite path. The merge-to-deploy workflow and its monthly
+cost are in [`docs/TESTNET_DEPLOYMENT.md`](../docs/TESTNET_DEPLOYMENT.md).
 
 The current hosted deployment is at
 `http://testnet.chessproofofwork.com:8645`; the commands below use
@@ -22,7 +22,7 @@ docker compose up --build
 curl http://127.0.0.1:8645/v1/status    # node: height, mempool, peers
 curl http://127.0.0.1:8646/v1/status     # relay: beacon, matches, reputation
 curl http://127.0.0.1:8646/v1/matches    # what the miners are playing
-docker compose logs -f bootstrap drip miner-1
+docker compose logs -f bootstrap seed drip miner-1
 docker compose down -v                   # resets the chain and relay state
 ```
 
@@ -77,6 +77,7 @@ proof to settle.
 | `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the four keyfiles, their availability secrets, the passphrase file and `stack.json` |
 | `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 60 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers all four miners for their variants, commits and reveals availability, writes `relay.json` from epoch 3 |
+| `seed` | `python -m deploy.seed_testnet_demo --stack /stack --node http://node:8645` | funds two deterministic demo wallets, creates and claims an SCCP HTLC, then waits for the first mature C960 coinbase and creates the SCCP/C960 pool |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
 | `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 0` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; the extra-miner churn is off because the VM holds the four fixed miners |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, pairs within each variant, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
@@ -95,6 +96,21 @@ testnet nobody is watching still exercises the paths a client takes. Neither hol
 a roster slot or builds a block. `traffic` keeps its coins inside its own wallet
 pool, so it circulates them instead of draining the faucet; the
 [runbook](../docs/RUNBOOK.md#synthetic-traffic) has the arithmetic.
+
+`seed` is not a generator: it makes a fresh deploy look used. It signs with the
+published stack keys and two deterministic demo wallets, and every transaction
+goes through the node's normal admission path. The bridge leg is immediate: one
+SCCP HTLC is locked and claimed, so `GET /v1/htlcs` and the Bridge **Activity**
+tab have a completed swap. The DEX pool cannot be immediate, because consensus
+mints C960 only when a Chess960 proof settles and the coinbase must then mature
+for `coinbase_maturity` blocks (20 on testnet). `seed` waits in the background for
+that first spendable C960, moves enough of it to the demo liquidity wallet, and
+creates the SCCP/C960 pool. On a normal stack the pool therefore appears roughly
+20-25 minutes after `docker compose up`, depending on when the first Chess960 game
+finishes. `docker compose logs -f seed` shows whether it is waiting for C960 or
+has created the pool. The Ethereum leg remains an operator deployment: the node
+holds no Ethereum key by design, so deploying `EthHtlc` for Sepolia still needs a
+funded deployer key and `SCCP_ETH_HTLC_CONTRACT`.
 
 The `traffic` container can also churn extra miners
 (`deploy/synthetic_miner_creation.py`), but the Compose deployment disables it

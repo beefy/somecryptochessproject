@@ -160,17 +160,17 @@ jobs:
           curl -fsS --retry 12 --retry-delay 5 --retry-connrefused --max-time 20 \
             "$PUBLIC_URL/v1/status" | jq -e '.network == "testnet"'
 
-      - name: Show the synthetic traffic log
-        # Informational only: the generator paces itself in minutes and the node
-        # settles on its own schedule, so a slow first cycle must not fail a deploy
-        # that has already passed the stack checks above.
+      - name: Show the synthetic traffic and demo seed logs
+        # Informational only: the generator paces itself in minutes, and the seed
+        # can wait 20+ minutes for the first mature C960 coinbase. Neither may fail
+        # a deploy that has already passed the stack checks above.
         continue-on-error: true
         run: |
           set -u
-          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=20 --no-color traffic" || true
+          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=20 --no-color traffic seed" || true
 
       - name: Show service state
         if: always()
         run: |
           ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose ps -a" || true
-          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 init node relay bootstrap drip traffic miner-1 miner-2 miner-3 miner-4" || true
+          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 init node relay bootstrap seed drip traffic miner-1 miner-2 miner-3 miner-4" || true

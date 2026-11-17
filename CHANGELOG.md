@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [Unreleased]
+
+### Added
+
+- **A seeded testnet bridge and DEX.** `deploy/seed_testnet_demo.py` runs as the
+  `seed` compose service after the bootstrap. It funds two deterministic demo
+  wallets, locks and claims one SCCP HTLC so the Bridge activity list is not
+  empty, then waits for the first mature C960 coinbase on a Chess960 miner and
+  creates the SCCP/C960 pool with equal sides. The bridge leg is immediate; the
+  pool appears after the first Chess960 proof and its 20-block coinbase maturity.
+  Every transaction is signed and admitted normally, and the Ethereum leg stays
+  an operator deployment because the node holds no Ethereum key.
+
 ## [0.24.0] - 2026-11-15
 
 ### Added

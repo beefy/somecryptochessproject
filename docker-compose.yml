@@ -116,6 +116,26 @@ services:
         condition: service_healthy
     restart: "no"
 
+  seed:
+    <<: *sccp-service
+    entrypoint: ["python", "-m", "deploy.seed_testnet_demo"]
+    command:
+      - --stack
+      - /stack
+      - --node
+      - http://node:8645
+    # A fresh chain has no C960 until a Chess960 proof settles and its coinbase
+    # matures, so this waits in the background for the first spendable reward,
+    # then creates the SCCP/C960 pool. The bridge leg is created immediately.
+    # The published stack keys let it move that first C960 reward to the demo
+    # liquidity wallet; every transaction is still admitted by the node.
+    volumes:
+      - stack:/stack
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: on-failure
+
   relay:
     <<: *sccp-service
     command:

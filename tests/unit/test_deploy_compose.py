@@ -18,6 +18,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from deploy import seed_testnet_demo as seed
 from deploy import synthetic_testnet_traffic as traffic
 from deploy.init_testnet_stack import DEFAULT_PASSPHRASE, write_stack
 
@@ -31,6 +32,9 @@ ADDRESS = re.compile(r"sccpt1[0-9a-z]+")
 
 TRAFFIC = "/app/deploy/synthetic_testnet_traffic.py"
 """The generator's script inside the container, as the traffic service runs it."""
+
+SEED = "deploy.seed_testnet_demo"
+"""The demo pool and bridge seeder module, run with ``python -m``."""
 
 
 def _option_arguments(text: str, option: str) -> list[str]:
@@ -81,8 +85,14 @@ def test_every_address_literal_in_the_compose_file_is_a_testnet_address() -> Non
 def _service_arguments(text: str, entrypoint: str) -> list[str]:
     """The arguments the service that runs ``entrypoint`` passes to it."""
     lines = text.splitlines()
-    marker = f'entrypoint: ["python", "{entrypoint}"]'
-    start = next((index for index, line in enumerate(lines) if marker in line), None)
+    markers = (
+        f'entrypoint: ["python", "{entrypoint}"]',
+        f'entrypoint: ["python", "-m", "{entrypoint}"]',
+    )
+    start = next(
+        (index for index, line in enumerate(lines) if any(marker in line for marker in markers)),
+        None,
+    )
     assert start is not None, f"no service runs {entrypoint}"
     arguments: list[str] = []
     in_command = False
@@ -97,6 +107,14 @@ def _service_arguments(text: str, entrypoint: str) -> list[str]:
             break
         arguments.append(stripped.removeprefix("- ").strip().strip('"'))
     return arguments
+
+
+def test_the_seed_command_speaks_the_flags_the_seeder_accepts() -> None:
+    """The seed service must not exit before the bridge or the pool exists."""
+    argv = _service_arguments(COMPOSE.read_text(encoding="utf-8"), SEED)
+    assert argv == ["--stack", "/stack", "--node", "http://node:8645"]
+    parsed = seed._parser().parse_args(argv)
+    assert (parsed.stack.name, parsed.node) == ("stack", "http://node:8645")
 
 
 def test_the_traffic_command_speaks_the_flags_the_generator_accepts(

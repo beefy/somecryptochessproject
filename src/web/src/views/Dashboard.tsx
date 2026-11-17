@@ -93,7 +93,9 @@ export function Dashboard(): ReactNode {
           title="Variant tokens"
           subtitle="every variant mints its own token; native SCCP remains the fee currency"
         >
-          <KeyValue label="SCCP minted" mono>
+          {/* `minted` starts at the genesis premine and grows by each block's
+              subsidy plus its transaction fees. */}
+          <KeyValue label="SCCP minted + fees" mono>
             {formatAmount(status.data.minted)}
           </KeyValue>
           {variantTokens.map((token) => (
@@ -103,7 +105,7 @@ export function Dashboard(): ReactNode {
                 token.symbol,
                 token.decimals,
               )}{" "}
-              · {formatTokenAmount(token.subsidy, token.symbol, token.decimals)} per block
+              · {formatTokenAmount(token.subsidy, token.symbol, token.decimals)} per settled proof
             </KeyValue>
           ))}
         </Section>
