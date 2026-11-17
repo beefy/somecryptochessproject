@@ -76,8 +76,16 @@ const WALLET_SECTIONS = [
 ] as const;
 
 const PLAY_SECTIONS = [{ key: "play", label: "Play", href: "#/play" }] as const;
-const DEX_SECTIONS = [{ key: "dex", label: "DEX", href: "#/dex" }] as const;
-const BRIDGE_SECTIONS = [{ key: "bridge", label: "Bridge", href: "#/bridge" }] as const;
+const DEX_SECTIONS = [
+  { key: "dex", label: "Swap", href: "#/dex" },
+  { key: "dexLiquidity", label: "Liquidity", href: "#/dex/liquidity" },
+  { key: "dexCreate", label: "Create pool", href: "#/dex/create" },
+] as const;
+const BRIDGE_SECTIONS = [
+  { key: "bridge", label: "Buy SCCP", href: "#/bridge" },
+  { key: "bridgeSell", label: "Sell SCCP", href: "#/bridge/sell" },
+  { key: "bridgeActivity", label: "Activity", href: "#/bridge/activity" },
+] as const;
 
 function sectionsFor(site: Site): typeof EXPLORER_SECTIONS | typeof WALLET_SECTIONS | typeof PLAY_SECTIONS | typeof DEX_SECTIONS | typeof BRIDGE_SECTIONS {
   switch (site) {
@@ -135,12 +143,16 @@ function Shell(): ReactNode {
     route.name === "walletFaucet" ||
     route.name === "walletHistory" ||
     route.name === "walletSettings";
+  const dexOpen =
+    route.name === "dex" || route.name === "dexLiquidity" || route.name === "dexCreate";
+  const bridgeOpen =
+    route.name === "bridge" || route.name === "bridgeSell" || route.name === "bridgeActivity";
   const activeSite: Site =
     route.name === "play"
       ? "play"
-      : route.name === "dex"
+      : dexOpen
         ? "dex"
-        : route.name === "bridge"
+        : bridgeOpen
           ? "bridge"
           : walletOpen
             ? "wallet"
@@ -334,13 +346,13 @@ function SiteLanding(): ReactNode {
     case "dex":
       return (
         <LazyPage>
-          <DexPage />
+          <DexPage view="swap" />
         </LazyPage>
       );
     case "bridge":
       return (
         <LazyPage>
-          <BridgePage />
+          <BridgePage view="buy" />
         </LazyPage>
       );
     case "explorer":
@@ -381,13 +393,37 @@ function RouteView({ route }: { route: Route }): ReactNode {
     case "dex":
       return (
         <LazyPage>
-          <DexPage />
+          <DexPage view="swap" />
+        </LazyPage>
+      );
+    case "dexLiquidity":
+      return (
+        <LazyPage>
+          <DexPage view="liquidity" />
+        </LazyPage>
+      );
+    case "dexCreate":
+      return (
+        <LazyPage>
+          <DexPage view="create" />
         </LazyPage>
       );
     case "bridge":
       return (
         <LazyPage>
-          <BridgePage />
+          <BridgePage view="buy" />
+        </LazyPage>
+      );
+    case "bridgeSell":
+      return (
+        <LazyPage>
+          <BridgePage view="sell" />
+        </LazyPage>
+      );
+    case "bridgeActivity":
+      return (
+        <LazyPage>
+          <BridgePage view="activity" />
         </LazyPage>
       );
     case "walletSend":

@@ -99,6 +99,39 @@ describe("wallet routes", () => {
     expect(activeSection({ name: "bridge" })).toBe("bridge");
   });
 
+  it("round-trips each DEX tab", () => {
+    for (const [path, name] of [
+      ["#/dex", "dex"],
+      ["#/dex/liquidity", "dexLiquidity"],
+      ["#/dex/create", "dexCreate"],
+    ] as const) {
+      const route = parseRoute(path);
+      expect(route).toEqual({ name });
+      expect(routeHash(route)).toBe(path);
+      expect(activeSection(route)).toBe(name);
+    }
+  });
+
+  it("round-trips each Bridge tab", () => {
+    for (const [path, name] of [
+      ["#/bridge", "bridge"],
+      ["#/bridge/sell", "bridgeSell"],
+      ["#/bridge/activity", "bridgeActivity"],
+    ] as const) {
+      const route = parseRoute(path);
+      expect(route).toEqual({ name });
+      expect(routeHash(route)).toBe(path);
+      expect(activeSection(route)).toBe(name);
+    }
+  });
+
+  it("keeps unknown DEX and Bridge tabs out of the router", () => {
+    expect(parseRoute("#/dex/swap/extra")).toEqual({ name: "notFound", path: "/dex/swap/extra" });
+    expect(parseRoute("#/dex/nope")).toEqual({ name: "notFound", path: "/dex/nope" });
+    expect(parseRoute("#/bridge/buy")).toEqual({ name: "notFound", path: "/bridge/buy" });
+    expect(parseRoute("#/bridge/nope")).toEqual({ name: "notFound", path: "/bridge/nope" });
+  });
+
   it("refuses unknown and over-long wallet paths", () => {
     expect(parseRoute("#/wallet/nope")).toEqual({ name: "notFound", path: "/wallet/nope" });
     expect(parseRoute("#/wallet/send/extra")).toEqual({

@@ -10,12 +10,14 @@
  *
  * The page needs both keys: the SCCP wallet signs orders, takes and HTLC
  * transactions; an EIP-1193 wallet signs the Ethereum leg. The chain ids are
- * checked against `GET /v1/bridge` before anything is signed.
+ * checked against `GET /v1/bridge` before anything is signed. Buy, Sell and
+ * Activity are separate hash routes, so the shell header renders them as tabs
+ * and each one is linkable.
  */
 
 import { useEffect, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
-import { SegmentedButtons, Text } from "react-native-paper";
+import { Text } from "react-native-paper";
 
 import { fetchAccount, fetchBridge, fetchOrders } from "../api";
 import { FailureNotice, Loading, StatusPill } from "../components/Chrome";
@@ -32,9 +34,9 @@ import { BuyPanel } from "./bridge/BuyPanel";
 import { SellPanel } from "./bridge/SellPanel";
 import type { BridgeContext } from "./bridge/types";
 
-type Tab = "buy" | "sell" | "activity";
+export type BridgeTab = "buy" | "sell" | "activity";
 
-export function BridgePage(): ReactNode {
+export function BridgePage({ view }: { view: BridgeTab }): ReactNode {
   return (
     <View style={styles.root}>
       <View style={styles.header}>
@@ -46,17 +48,16 @@ export function BridgePage(): ReactNode {
         hash-time-locked, so a stalled swap refunds instead of stranding funds.
       </Text>
       <WalletGate purpose="the Bridge">
-        <Desk />
+        <Desk view={view} />
       </WalletGate>
     </View>
   );
 }
 
-function Desk(): ReactNode {
+function Desk({ view }: { view: BridgeTab }): ReactNode {
   const { session, pendingNonce, setPendingNonce } = useWalletSession();
   const { status: statusResource, params: paramsResource } = useNode();
   const notify = useNotice();
-  const [tab, setTab] = useState<Tab>("buy");
   const [ethAccount, setEthAccount] = useState<string | null>(null);
   const [ethError, setEthError] = useState<Error | null>(null);
   const address = session?.record.address ?? "";
@@ -162,21 +163,12 @@ function Desk(): ReactNode {
           confirmations · margin {bridgeInfo.sccp_margin} blocks
         </Text>
       </View>
-      <SegmentedButtons
-        value={tab}
-        onValueChange={(value) => setTab(value as Tab)}
-        buttons={[
-          { value: "buy", label: "Buy SCCP" },
-          { value: "sell", label: "Sell SCCP" },
-          { value: "activity", label: "Activity" },
-        ]}
-      />
       {bridge.error !== undefined && <FailureNotice error={bridge.error} />}
       {orders.error !== undefined && <FailureNotice error={orders.error} />}
       {ethError !== null && <FailureNotice error={ethError} />}
-      {tab === "buy" && <BuyPanel {...context} />}
-      {tab === "sell" && <SellPanel {...context} />}
-      {tab === "activity" && <ActivityPanel account={accountView} bridge={bridge.data} />}
+      {view === "buy" && <BuyPanel {...context} />}
+      {view === "sell" && <SellPanel {...context} />}
+      {view === "activity" && <ActivityPanel account={accountView} bridge={bridge.data} />}
     </>
   );
 }

@@ -183,8 +183,12 @@ rules, its DNS record and its rollback are in
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
 | `#/wallet/play` | legacy alias for `#/play`; the table now has its own page |
 | `#/play` | a seat in a real match, signed with the unlocked wallet key; standard or Chess960 |
-| `#/dex` | swap SCCP and variant tokens, create pools, add/remove liquidity, view LP positions |
-| `#/bridge` | buy SCCP with ETH, publish signed sell orders, and follow/refund both HTLC legs |
+| `#/dex` | swap SCCP and variant tokens (the DEX's default tab) |
+| `#/dex/liquidity` | add/remove liquidity and view LP positions |
+| `#/dex/create` | create a new constant-product pool |
+| `#/bridge` | buy SCCP with ETH (the bridge's default tab) |
+| `#/bridge/sell` | publish signed sell orders and follow/refund their HTLC legs |
+| `#/bridge/activity` | SCCP hash locks involving the connected wallet |
 | `#/wallet` | the wallet: unlock or create a keyfile, SCCP and variant-token balances, nickname, pending transfers |
 | `#/wallet/send` | build, review and sign an SCCP or C960 transfer, with an optional recipient nickname |
 | `#/wallet/receive` | the address, every token it can receive, a copy button and its public-key fingerprint |

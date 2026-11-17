@@ -20,7 +20,11 @@ export type Route =
   | { name: "wallet" }
   | { name: "play" }
   | { name: "dex" }
+  | { name: "dexLiquidity" }
+  | { name: "dexCreate" }
   | { name: "bridge" }
+  | { name: "bridgeSell" }
+  | { name: "bridgeActivity" }
   | { name: "walletSend" }
   | { name: "walletReceive" }
   | { name: "walletFaucet" }
@@ -56,9 +60,27 @@ export function parseRoute(hash: string): Route {
     case "play":
       return { name: "play" };
     case "dex":
-      return { name: "dex" };
+      if (second === undefined) return { name: "dex" };
+      if (segments.length > 2) return { name: "notFound", path };
+      switch (second) {
+        case "liquidity":
+          return { name: "dexLiquidity" };
+        case "create":
+          return { name: "dexCreate" };
+        default:
+          return { name: "notFound", path };
+      }
     case "bridge":
-      return { name: "bridge" };
+      if (second === undefined) return { name: "bridge" };
+      if (segments.length > 2) return { name: "notFound", path };
+      switch (second) {
+        case "sell":
+          return { name: "bridgeSell" };
+        case "activity":
+          return { name: "bridgeActivity" };
+        default:
+          return { name: "notFound", path };
+      }
     case "accounts":
       return second === undefined ? { name: "notFound", path } : { name: "account", address: decode(second) };
     case "wallet": {
@@ -124,8 +146,16 @@ export function routeHash(route: Route): string {
       return "#/play";
     case "dex":
       return "#/dex";
+    case "dexLiquidity":
+      return "#/dex/liquidity";
+    case "dexCreate":
+      return "#/dex/create";
     case "bridge":
       return "#/bridge";
+    case "bridgeSell":
+      return "#/bridge/sell";
+    case "bridgeActivity":
+      return "#/bridge/activity";
     case "walletSend":
       return "#/wallet/send";
     case "walletReceive":
@@ -174,7 +204,11 @@ export type Section =
   | "wallet"
   | "play"
   | "dex"
+  | "dexLiquidity"
+  | "dexCreate"
   | "bridge"
+  | "bridgeSell"
+  | "bridgeActivity"
   | "walletSend"
   | "walletReceive"
   | "walletFaucet"
@@ -203,8 +237,16 @@ export function activeSection(route: Route): Section {
       return "play";
     case "dex":
       return "dex";
+    case "dexLiquidity":
+      return "dexLiquidity";
+    case "dexCreate":
+      return "dexCreate";
     case "bridge":
       return "bridge";
+    case "bridgeSell":
+      return "bridgeSell";
+    case "bridgeActivity":
+      return "bridgeActivity";
     case "walletSend":
       return "walletSend";
     case "walletReceive":

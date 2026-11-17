@@ -1,7 +1,9 @@
 /**
  * The DEX: one page for swaps, pool creation and LP positions.
  *
- * Every action becomes an ordinary signed ledger transaction, reviewed before it
+ * Swap, Liquidity and Create pool are separate hash routes, so the shell header
+ * can render them as tabs and each one is linkable. Every action becomes an
+ * ordinary signed ledger transaction, reviewed before it
  * is signed. The page quotes with the same constant-product formula the chain
  * applies, but a quote is only a preview: the transaction carries a minimum
  * output and the node recomputes the fill from its own reserves.
@@ -13,7 +15,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { StyleSheet, View } from "react-native";
-import { Button, HelperText, SegmentedButtons, Text } from "react-native-paper";
+import { Button, HelperText, Text } from "react-native-paper";
 
 import { fetchAccount, fetchPools, submitTransaction } from "../api";
 import { FailureNotice, KeyValue, Loading, Section, StatusPill } from "../components/Chrome";
@@ -30,9 +32,9 @@ import { LiquidityPanel } from "./dex/LiquidityPanel";
 import { SwapPanel } from "./dex/SwapPanel";
 import type { DeskProps, Review } from "./dex/types";
 
-type Tab = "swap" | "liquidity" | "create";
+export type DexTab = "swap" | "liquidity" | "create";
 
-export function DexPage(): ReactNode {
+export function DexPage({ view }: { view: DexTab }): ReactNode {
   return (
     <View style={styles.root}>
       <View style={styles.header}>
@@ -44,17 +46,16 @@ export function DexPage(): ReactNode {
         constant-product pool. Every action is a signed transaction; fees are paid in SCCP.
       </Text>
       <WalletGate purpose="the DEX">
-        <Desk />
+        <Desk view={view} />
       </WalletGate>
     </View>
   );
 }
 
-function Desk(): ReactNode {
+function Desk({ view }: { view: DexTab }): ReactNode {
   const { session, pendingNonce, setPendingNonce } = useWalletSession();
   const { params: paramsResource } = useNode();
   const notify = useNotice();
-  const [tab, setTab] = useState<Tab>("swap");
   const [review, setReview] = useState<Review | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -127,23 +128,10 @@ function Desk(): ReactNode {
 
   return (
     <>
-      <SegmentedButtons
-        value={tab}
-        onValueChange={(value) => {
-          setReview(null);
-          setError(null);
-          setTab(value as Tab);
-        }}
-        buttons={[
-          { value: "swap", label: "Swap" },
-          { value: "liquidity", label: "Liquidity" },
-          { value: "create", label: "Create pool" },
-        ]}
-      />
       {pools.error !== undefined && <FailureNotice error={pools.error} />}
-      {tab === "swap" && <SwapPanel {...desk} />}
-      {tab === "liquidity" && <LiquidityPanel {...desk} />}
-      {tab === "create" && <CreatePanel {...desk} />}
+      {view === "swap" && <SwapPanel {...desk} />}
+      {view === "liquidity" && <LiquidityPanel {...desk} />}
+      {view === "create" && <CreatePanel {...desk} />}
       {review !== null && (
         <Section
           title="Review"
