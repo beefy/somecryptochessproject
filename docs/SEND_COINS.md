@@ -12,7 +12,7 @@ sccp wallet send \
     --key alice.key \
     --to sccpt1q9l8ptm8fmdrsmnj80lgf76k8xqrwhpdj0dq6puawdz79c6d8dtswkjp0sd \
     --amount 12 \
-    --node http://testnet.chessproofofwork.com:8645
+    --node http://app.proofofchess.com:8645
 ```
 
 ```text
@@ -32,7 +32,7 @@ what the command checks, and how to prove the coins moved.
 | Item | Why |
 | --- | --- |
 | A keyfile | `wallet send` signs with it and refuses a keyfile from another network. |
-| A running node | The command reads your balance and next nonce from it and POSTs the signed transfer back to it. The default is `http://127.0.0.1:8645`; the hosted testnet is `http://testnet.chessproofofwork.com:8645`. |
+| A running node | The command reads your balance and next nonce from it and POSTs the signed transfer back to it. The default is `http://127.0.0.1:8645`; the hosted testnet is `http://app.proofofchess.com:8645`. |
 | A recipient address | A `sccpt1...` address on testnet/devnet, `sccp1...` on mainnet. |
 | Spendable coins | `amount + fee` must be **spendable**; `bonded` and `immature` coins cannot be spent. |
 

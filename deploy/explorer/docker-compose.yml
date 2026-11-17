@@ -1,18 +1,21 @@
-# The web app's static host: an nginx origin that serves the uploaded release
-# and puts the node and the relay on the same origin, behind a Caddy container
-# that terminates TLS.
+# The web deployment's static host: one nginx origin serves the application
+# release on :8080 and the apex landing release on :8081, behind a Caddy
+# container that terminates TLS for both public names.
 #
-# It answers whatever Host arrives, so the same release directory and the same
-# container serve `explorer`, `wallet`, `play`, `dex` and
-# `bridge.chessproofofwork.com`; only Caddy's site blocks name them.
+#   app.proofofchess.com  -> :8080, the app plus /v1 and /relay proxies
+#   proofofchess.com      -> :8081, the static project overview
+#
+# It serves two uploaded release trees, so a landing-only deploy and an app
+# deploy cannot overwrite each other; Caddy names both origins.
 #
 # Both proxies exist because the node sends no CORS headers: a page served from
 # one origin cannot read /v1 on another, and `#/play` signs payloads for both.
 # Keeping the relay behind /relay as well means the browser needs neither a
 # public 8646 nor `--origin` on the relay.
 #
-# The workflow uploads this file, nginx.conf, Caddyfile and a release directory,
-# then switches the `current` symlink; see docs/EXPLORER_DEPLOYMENT.md.
+# The workflow uploads this file, nginx.conf, Caddyfile and two release
+# directories, then switches both `current` symlinks; see
+# docs/EXPLORER_DEPLOYMENT.md.
 #
 #   docker compose up -d
 #
@@ -35,7 +38,13 @@ services:
       # release that existed when the container started.
       - ./www:/srv:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/index.html"]
+      # One container, two listeners: both release trees have to answer before
+      # the proxy is considered healthy.
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:8080/index.html && wget -q -O /dev/null http://127.0.0.1:8081/index.html",
+        ]
       interval: 30s
       timeout: 3s
       retries: 3

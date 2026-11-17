@@ -22,8 +22,8 @@
  * are remembered here and listed on Overview and History until the committed
  * nonce passes them.
  *
- * `#/` is this page when served from `wallet.chessproofofwork.com`; the same
- * routes work from the explorer, where the hamburger menu sends people here.
+ * `#/wallet` is this page on `https://app.proofofchess.com`; the hamburger menu and
+ * every wallet link point there without leaving the origin.
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";

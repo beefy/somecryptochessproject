@@ -1,20 +1,24 @@
 name: deploy-explorer
 
-# Publishes the built web app (src/web) to explorer.chessproofofwork.com and
-# wallet.chessproofofwork.com.
+# Publishes two static origins from one commit:
 #
-# Both names are one bundle and one release directory: the page decides whether
-# `#/` is the block explorer or the wallet from the hostname it was served under,
-# and the hamburger menu links between them by absolute URL. Caddy holds one
-# certificate per name (deploy/explorer/Caddyfile), so both A records must exist
-# before the first deploy.
+#   https://app.proofofchess.com  the web app (src/web)
+#   https://proofofchess.com      the project landing page (src/landing)
 #
-# The page has to be same-origin with the node: the node sends no CORS headers,
+# The app is one bundle and one release directory: every view is a hash route
+# (`#/`, `#/wallet`, `#/play`, `#/dex`, `#/bridge`) and the hamburger switches
+# between them in place. The landing page is a separate plain-HTML release, so
+# it renders without JavaScript and can be changed without rebuilding the app.
+#
+# Caddy holds one certificate per name (deploy/explorer/Caddyfile), so both A
+# records must exist before the first deploy.
+#
+# The app has to be same-origin with the node: the node sends no CORS headers,
 # so a browser will not let a bundle served from one origin read `/v1` on
-# another. This workflow therefore ships an nginx sidecar that serves the bundle
-# and proxies `/v1` to the node and `/relay` to the matchmaker. The relay proxy
-# also means `#/play` works without opening 8646 to browsers or passing
-# `--origin` to `sccp matchmaker run`.
+# another. This workflow therefore ships an nginx sidecar that serves both
+# releases and proxies `/v1` to the node and `/relay` to the matchmaker. The
+# relay proxy also means `#/play` works without opening 8646 to browsers or
+# passing `--origin` to `sccp matchmaker run`.
 #
 # Setup (DNS, firewall, GitHub wiring) is in docs/EXPLORER_DEPLOYMENT.md.
 #
@@ -26,12 +30,14 @@ name: deploy-explorer
 #   vars.EXPLORER_DEPLOY_PORT    optional; defaults to 22
 #
 # Unlike deploy-testnet-miners.yml this deploy never touches the chain: it
-# uploads a release directory, switches one symlink and leaves the node alone.
+# uploads two release directories, switches two symlinks and leaves the node
+# alone.
 on:
   push:
     branches: [main]
     paths:
       - "src/web/**"
+      - "src/landing/**"
       - "deploy/explorer/**"
       - ".github/workflows/deploy-explorer.yml"
   workflow_dispatch:
@@ -83,9 +89,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      # The landing page is already the artifact: plain HTML, CSS and an SVG
+      # icon, with no build step. Keeping it out of the Vite bundle is what lets
+      # it render for a crawler or a browser with JavaScript disabled.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: landing-dist
+          path: src/landing/
+          if-no-files-found: error
+          retention-days: 7
+
 
   deploy:
-    name: publish to the explorer host
+    name: publish the app and landing page
     needs: build
     # A repository without an explorer host still gets a green bundle build; set
     # vars.EXPLORER_DEPLOY_HOST (or keep TESTNET_DEPLOY_HOST) to turn this on.
@@ -106,6 +122,11 @@ jobs:
         with:
           name: explorer-dist
           path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: landing-dist
+          path: landing-dist
 
       - name: Configure SSH
         env:
@@ -167,29 +188,43 @@ jobs:
       - name: Upload the proxy configuration
         run: |
           set -eu
-          ssh explorer "mkdir -p '$DEPLOY_DIR/www/releases'"
+          ssh explorer "mkdir -p '$DEPLOY_DIR/www/app/releases' '$DEPLOY_DIR/www/landing/releases'"
           scp deploy/explorer/docker-compose.yml explorer:"$DEPLOY_DIR/docker-compose.yml"
           scp deploy/explorer/nginx.conf explorer:"$DEPLOY_DIR/nginx.conf"
           scp deploy/explorer/Caddyfile explorer:"$DEPLOY_DIR/Caddyfile"
 
-      # Each deploy is a new directory under www/releases, so the switch below is
-      # one rename: no request ever sees a half-written bundle, and the previous
-      # release stays on disk for a rollback.
-      - name: Upload the release
+      # Each deploy gets one release name and two directories. The app and the
+      # landing page can therefore be rolled back independently even though they
+      # are published together, and neither upload can overwrite the other.
+      - name: Prepare the release name
         run: |
           set -eu
           release="$(date -u +%Y%m%d%H%M%S)-$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
           echo "RELEASE=$release" >> "$GITHUB_ENV"
-          ssh explorer "mkdir -p '$DEPLOY_DIR/www/releases/$release'"
-          tar -C dist -czf - . | ssh explorer "tar -C '$DEPLOY_DIR/www/releases/$release' -xzf -"
+          echo "publishing release $release"
+
+      # Separate directories under each origin make the switch below one rename:
+      # no request ever sees a half-written tree, and the previous release stays
+      # on disk for a rollback.
+      - name: Upload the app release
+        run: |
+          set -eu
+          ssh explorer "mkdir -p '$DEPLOY_DIR/www/app/releases/$RELEASE'"
+          tar -C dist -czf - . | ssh explorer "tar -C '$DEPLOY_DIR/www/app/releases/$RELEASE' -xzf -"
+
+      - name: Upload the landing release
+        run: |
+          set -eu
+          ssh explorer "mkdir -p '$DEPLOY_DIR/www/landing/releases/$RELEASE'"
+          tar -C landing-dist -czf - . | ssh explorer "tar -C '$DEPLOY_DIR/www/landing/releases/$RELEASE' -xzf -"
 
       - name: Start or update the proxy
         run: ssh explorer "cd '$DEPLOY_DIR' && docker compose up -d --remove-orphans"
 
       # `docker compose up -d` does not restart a container whose bind-mounted
       # config changed, and Caddy does not watch the file, so an edited Caddyfile
-      # (a new site block, a second certificate) would sit unused until something
-      # restarted the container. Reload asks the running Caddy to re-read it; the
+      # (a changed site block) would sit unused until something restarted the
+      # container. Reload asks the running Caddy to re-read it; the
       # admin API the healthcheck already polls is the endpoint.
       - name: Reload the TLS terminator
         run: |
@@ -198,21 +233,42 @@ jobs:
                   --config /etc/caddy/Caddyfile --adapter caddyfile \
                 || docker compose restart tls)"
 
-      - name: Switch the release
+      - name: Switch both releases
         run: |
           set -eu
-          ssh explorer "cd '$DEPLOY_DIR/www' \
-            && ln -sfn 'releases/$RELEASE' current.next \
-            && mv -T current.next current"
-          # `-T` is what keeps that a rename. Without it mv sees a destination
-          # that is a symlink to a directory, moves the new link *inside* the old
-          # release, and leaves the site on the previous bundle without failing.
-          live="$(ssh explorer "readlink -f '$DEPLOY_DIR/www/current'")"
-          echo "current -> $live"
-          test "$(basename "$live")" = "$RELEASE"
+          switch() {
+            origin="$1"
+            ssh explorer "cd '$DEPLOY_DIR/www/$origin' \
+              && ln -sfn 'releases/$RELEASE' current.next \
+              && mv -T current.next current"
+            # `-T` is what keeps that a rename. Without it mv sees a destination
+            # that is a symlink to a directory, moves the new link *inside* the
+            # old release, and leaves the site on the previous bundle without
+            # failing.
+            live="$(ssh explorer "readlink -f '$DEPLOY_DIR/www/$origin/current'")"
+            echo "$origin/current -> $live"
+            test "$(basename "$live")" = "$RELEASE"
+          }
+          switch app
+          switch landing
+
+      # The nginx healthcheck proves that both listeners answer. These checks
+      # prove that the switched trees are the ones just published: the app shell
+      # contains the React root, and the landing page has its own title. A 200
+      # from the previous release would still pass the healthcheck.
+      - name: Smoke-test the switched releases
+        run: |
+          set -eu
+          app="$(ssh explorer "cd '$DEPLOY_DIR' && docker compose exec -T explorer wget -qO- http://127.0.0.1:8080/")"
+          landing="$(ssh explorer "cd '$DEPLOY_DIR' && docker compose exec -T explorer wget -qO- http://127.0.0.1:8081/")"
+          printf '%s' "$app" | grep -q 'id="root"'
+          printf '%s' "$landing" | grep -q 'Proof of Chess'
+          echo "app and landing both answer from the new release"
 
       - name: Keep the last five releases
-        run: ssh explorer "cd '$DEPLOY_DIR/www/releases' && ls -1t | tail -n +6 | xargs -r rm -rf"
+        run: |
+          ssh explorer "cd '$DEPLOY_DIR/www/app/releases' && ls -1t | tail -n +6 | xargs -r rm -rf"
+          ssh explorer "cd '$DEPLOY_DIR/www/landing/releases' && ls -1t | tail -n +6 | xargs -r rm -rf"
 
       - name: Show the proxy state
         if: always()

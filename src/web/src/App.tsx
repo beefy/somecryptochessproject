@@ -6,7 +6,7 @@
  * owns its own request, its loading state and its empty state.
  */
 
-import { Component, lazy, Suspense, useMemo, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from "react";
 import { ScrollView, StyleSheet, useWindowDimensions, View } from "react-native";
 import { Banner, Button, PaperProvider, Surface, Text, useTheme } from "react-native-paper";
 
@@ -16,7 +16,7 @@ import { NoticeProvider } from "./components/Notices";
 import { WalletSessionProvider } from "./components/WalletSession";
 import { WalletStatusBar } from "./components/WalletStatusBar";
 import { formatInteger, shortHash } from "./lib/format";
-import { currentSite, siteHash, type Site } from "./lib/site";
+import { SITE_TITLES, siteHash, type Site } from "./lib/site";
 import { NodeProvider, useNode } from "./node";
 import { activeSection, navigate, useRoute, type Route } from "./router";
 import { darkTheme, lightTheme, ThemeModeContext, preferredMode, useThemeMode, type ThemeMode } from "./theme";
@@ -35,7 +35,7 @@ import { TransactionDetail } from "./views/TransactionDetail";
 /**
  * The wallet pulls in scrypt, ML-DSA-65 key derivation and the BIP-39 wordlist.
  * Loaded on demand for the same reason: most explorer visits never open it, and
- * on the wallet subdomain it is the first and only thing asked for.
+ * a visit to `#/wallet` is the first and only thing that asks for it.
  */
 const Wallet = lazy(async () => {
   const module = await import("./views/Wallet");
@@ -131,12 +131,10 @@ function Shell(): ReactNode {
   const paper = useTheme();
   const { width } = useWindowDimensions();
   const compact = width < 720;
-  const site = currentSite();
-  // The wallet shows its own tabs wherever it is open -- the wallet subdomain,
-  // `explorer/#/wallet`, or a dev server -- so "Send" is a tab and not a detour
-  // through the hamburger. Play, DEX and Bridge are their own sites now.
+  // The wallet's own tabs follow the wallet routes on the single origin, so
+  // "Send" is a tab and not a detour through the hamburger. Play, DEX and
+  // Bridge are their own views as well.
   const walletOpen =
-    site === "wallet" ||
     route.name === "wallet" ||
     route.name === "walletSend" ||
     route.name === "walletReceive" ||
@@ -156,11 +154,14 @@ function Shell(): ReactNode {
           ? "bridge"
           : walletOpen
             ? "wallet"
-            : site;
-  const section =
-    route.name === "dashboard" ? (activeSite === "explorer" ? "dashboard" : activeSite) : activeSection(route);
+            : "explorer";
+  const section = activeSection(route);
   const offline = status.error !== undefined;
   const sections = sectionsFor(activeSite);
+
+  useEffect(() => {
+    document.title = SITE_TITLES[activeSite];
+  }, [activeSite]);
 
   return (
     <View style={[styles.root, { backgroundColor: paper.colors.background }]}>
@@ -300,7 +301,7 @@ function routeKey(route: Route): string {
     case "notFound":
       return `notFound:${route.path}`;
     case "dashboard":
-      return currentSite() === "explorer" ? "dashboard" : currentSite();
+      return "dashboard";
     case "wallet":
     case "walletSend":
     case "walletReceive":
@@ -314,8 +315,8 @@ function routeKey(route: Route): string {
 }
 
 /**
- * The wallet, lazily: `#/` on the wallet subdomain is its landing page, so the
- * site's default route and `#/wallet` render the same view.
+ * The wallet, lazily: `#/wallet` is its landing page. Play, DEX and Bridge are
+ * lazy for the same reason and share the one `LazyPage` fallback.
  */
 function WalletRoute({
   view,
@@ -333,37 +334,10 @@ function LazyPage({ children }: { children: ReactNode }): ReactNode {
   return <Suspense fallback={<Loading />}>{children}</Suspense>;
 }
 
-function SiteLanding(): ReactNode {
-  switch (currentSite()) {
-    case "wallet":
-      return <WalletRoute view="overview" />;
-    case "play":
-      return (
-        <LazyPage>
-          <PlayPage />
-        </LazyPage>
-      );
-    case "dex":
-      return (
-        <LazyPage>
-          <DexPage view="swap" />
-        </LazyPage>
-      );
-    case "bridge":
-      return (
-        <LazyPage>
-          <BridgePage view="buy" />
-        </LazyPage>
-      );
-    case "explorer":
-      return <Dashboard />;
-  }
-}
-
 function RouteView({ route }: { route: Route }): ReactNode {
   switch (route.name) {
     case "dashboard":
-      return <SiteLanding />;
+      return <Dashboard />;
     case "blocks":
       return <Blocks />;
     case "block":

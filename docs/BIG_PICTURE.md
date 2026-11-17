@@ -36,7 +36,7 @@ That gives four deliverables, in dependency order:
 | Native DEX | pools, LP positions and swaps between on-chain assets | protocol v2 | 0.24.0 |
 | ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | protocol v2 + one Ethereum contract | 0.24.0 |
 
-Optionally, 0.26.0 adds a `wETH` asset so that ETH itself can be traded in the
+Optionally, 0.27.0 adds a `wETH` asset so that ETH itself can be traded in the
 native DEX; that is a bonded federation and is explicitly out of the critical
 path (section 7.7).
 
@@ -144,7 +144,7 @@ way to sign in a browser.
 **Status (0.22.0).** Shipped: the keystore port (§4.1), `buildTransfer` (§4.2),
 the review screen and local nonce tracking (§4.3), the create/restore/open,
 receive, send, history and settings views (§4.4), deployed at
-`wallet.chessproofofwork.com` with the explorer. History is implemented as the
+`https://app.proofofchess.com/#/wallet` with the explorer. History is implemented as the
 bounded block scan described in §4.3, not as a full index: the tab names the
 heights it covered and caches that window in IndexedDB. The table moved in too:
 `#/wallet/play` registers and signs with the wallet's unlocked key instead of a
@@ -629,7 +629,7 @@ inventory and price move, and cancels by signed message. `sccp miner --auto-sell
 composes on top of it for operators who want rewards converted as they vest. No
 custody anywhere: the bot can lose its own inventory to a bug, and nobody else's.
 
-### 7.7 Later, and optional: wrapped ETH (0.26.0)
+### 7.7 Later, and optional: wrapped ETH (0.27.0)
 
 If users want ETH itself traded inside the native DEX (rather than swapped
 peer-to-peer), add a `wETH` asset backed by a **bonded federation**: N operators
@@ -657,7 +657,8 @@ wallet's Bridge view recovers correctly from a page reload at every step.
 | 0.23.0 | protocol v2: assets and variants | v2 spec in `PROTOCOL.md`; regenerated golden chain; two-variant soak |
 | 0.24.0 | native DEX, HTLC bridge and order book | property tests for `k` and rounding; adversarial swap suite on Anvil + devnet; contract audit |
 | 0.25.0 | genesis premine and testnet bootstrap | pinned mainnet/testnet genesis hashes; cap accounting; NodeService loads both networks |
-| 0.26.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure |
+| 0.26.0 | hosted app and landing page | split nginx origins, two certificates, deploy smoke tests |
+| 0.27.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure |
 | 1.0.0 | mainnet | the go/no-go in `IMPLEMENTATION_PLAN.md`, plus the bridge audit |
 
 Each release keeps `make check` green, regenerates the vectors and OpenAPI

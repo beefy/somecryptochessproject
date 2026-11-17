@@ -1,33 +1,26 @@
-# The public application names. They are one bundle, one nginx origin and one
-# release directory; the browser's hostname only picks the landing view. Each
-# name gets its own certificate, so each needs an A record pointing at this VM
-# and port 80 open, or the challenge fails and Caddy serves a TLS error instead.
-# Add an `email` in the global block if you want expiry notices from Let's Encrypt.
+# Two public names, one VM and one Caddy instance:
+#
+#   proofofchess.com      -> the landing page on 127.0.0.1:8081
+#   app.proofofchess.com  -> the application on 127.0.0.1:8080
+#
+# The app serves its bundle, the node API under /v1 and the matchmaker under
+# /relay. Every view is a hash route (`#/`, `#/wallet`, `#/play`, `#/dex`,
+# `#/bridge`), so one app bundle and one app certificate cover all five.
+#
+# Each name gets its own certificate over HTTP-01. Both A records must point at
+# this VM and port 80 must be reachable before the first deploy. Add an `email`
+# in the global block if you want expiry notices from Let's Encrypt.
 {
 	# No DNS provider token here, so HTTP-01 is the challenge in use.
 	# auto_https is on by default: :80 answers the challenge and redirects.
 }
 
-explorer.chessproofofwork.com {
-	reverse_proxy 127.0.0.1:8080
+# The project overview: a static, crawlable first page that links into the app.
+proofofchess.com {
+	reverse_proxy 127.0.0.1:8081
 }
 
-# The wallet. Same release directory, same nginx: `wallet.chessproofofwork.com/#/`
-# is the wallet's landing page.
-wallet.chessproofofwork.com {
-	reverse_proxy 127.0.0.1:8080
-}
-
-# Play, the DEX and the bridge. The bridge is the same bundle and wallet gate;
-# its Ethereum environment comes from the SCCP node's `GET /v1/bridge`.
-play.chessproofofwork.com {
-	reverse_proxy 127.0.0.1:8080
-}
-
-dex.chessproofofwork.com {
-	reverse_proxy 127.0.0.1:8080
-}
-
-bridge.chessproofofwork.com {
+# The application: explorer, wallet, Play, DEX and Bridge on one origin.
+app.proofofchess.com {
 	reverse_proxy 127.0.0.1:8080
 }

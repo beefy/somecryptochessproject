@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!--
+    The apex landing page's mark: the same four centre squares as the app icon,
+    with a knight cut out of the dark half. The board stays legible at 16px and
+    the silhouette gives the landing page its own identity.
+  -->
+  <title>Proof of Chess</title>
+  <defs>
+    <clipPath id="board-disc">
+      <circle cx="32" cy="32" r="32" />
+    </clipPath>
+    <clipPath id="knight">
+      <path
+        d="M22 43c0-6.2 3-8.4 4.6-12.4 1-2.6.4-4.8-.8-6.2l4.2-6.2 3.4 5c5.4 1.2 9.2 5.2 9.2 11 0 4.8-2.8 7.2-6.2 7.2h-8.2l-.4 3.6H22z"
+      />
+    </clipPath>
+  </defs>
+  <g clip-path="url(#board-disc)">
+    <rect width="64" height="64" fill="#e9e2d0" />
+    <rect x="32" width="32" height="32" fill="#38634f" />
+    <rect y="32" width="32" height="32" fill="#38634f" />
+    <g clip-path="url(#knight)">
+      <rect width="64" height="64" fill="#f7f0df" />
+    </g>
+  </g>
+  <circle cx="32" cy="32" r="31.25" fill="none" stroke="#172019" stroke-opacity="0.28" stroke-width="1.5" />
+</svg>

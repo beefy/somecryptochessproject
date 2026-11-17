@@ -8,7 +8,7 @@ to choose (section 2.1) — and a spend needs both halves of the signature, so a
 quantum attacker has to break ML-DSA-65 as well as Ed25519.
 
 The same keyfile opens in the browser wallet at
-<https://wallet.chessproofofwork.com>: create or restore one there and the CLI
+<https://app.proofofchess.com/#/wallet>: create or restore one there and the CLI
 reads the export, or paste a CLI keyfile into the page. The page keeps only the
 encrypted document, in the browser's IndexedDB, and clears the decrypted key
 after a few idle minutes; the commands below remain the way to keep a key
@@ -42,7 +42,7 @@ sccp --version
 You should see the package and protocol version, for example:
 
 ```text
-sccp 0.25.0 (protocol v1)
+sccp 0.26.0 (protocol v1)
 ```
 
 ---

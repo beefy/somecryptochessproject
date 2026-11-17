@@ -20,7 +20,7 @@ There are three ways to see a miner run:
 > fast in-process demo, and the relay flow below for a miner you run yourself.
 >
 > The current public node is at
-> `http://testnet.chessproofofwork.com:8645`. Its relay is exposed on
+> `http://app.proofofchess.com:8645`. Its relay is exposed on
 > `8646`, but the deployed two-miner stack is a demonstration, not a shared
 > mining pool; run your own relay while developing a miner.
 

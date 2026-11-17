@@ -7,6 +7,21 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-17
+
+### Changed
+
+- **The hosted app moved to `https://app.proofofchess.com`, and the apex is now a
+  landing page.** The explorer, wallet, Play, DEX and bridge are hash routes
+  (`#/`, `#/wallet`, `#/play`, `#/dex`, `#/bridge`) of one bundle instead of five
+  subdomains of `chessproofofwork.com`. The node API and relay are still on ports
+  8645 and 8646, and the app proxies them as `/v1` and `/relay` on its own origin.
+  `https://proofofchess.com/` is a static, JavaScript-free overview that deep-links
+  every action to the app. Two Caddy site blocks and two certificates replace the
+  five name-based blocks, and the deploy publishes both releases from one commit.
+  Old subdomain URLs are not redirected; the cutover and rollback are in
+  `docs/DOMAIN_MIGRATION.md`.
+
 ## [0.25.0] - 2026-11-16
 
 ### Added

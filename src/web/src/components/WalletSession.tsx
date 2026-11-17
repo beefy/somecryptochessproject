@@ -10,9 +10,8 @@
  *
  * The keypair is never persisted, never written to a URL and never placed in a
  * cookie. Locking fills its seed buffers with zeroes before dropping the
- * reference. Moving to another subdomain is still a fresh origin with fresh
- * IndexedDB; the in-app menu therefore switches with a hash so this session stays
- * alive.
+ * reference. The in-app menu switches with a hash, so the one origin keeps its
+ * IndexedDB keyfile and this session stays alive.
  */
 
 import {
