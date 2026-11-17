@@ -116,6 +116,24 @@ services:
         condition: service_healthy
     restart: "no"
 
+  seed:
+    <<: *sccp-service
+    entrypoint: ["python", "-m", "deploy.seed_testnet_demo"]
+    command:
+      - --stack
+      - /stack
+      - --node
+      - http://node:8645
+    # Testnet genesis already creates the SCCP/C960 pool and a completed SCCP
+    # HTLC, so this normally just reports them. It remains the fallback creator
+    # for a custom chain whose genesis does not seed those records.
+    volumes:
+      - stack:/stack
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: on-failure
+
   relay:
     <<: *sccp-service
     command:

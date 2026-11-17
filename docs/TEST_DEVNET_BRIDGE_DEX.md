@@ -18,9 +18,11 @@ two (or four) miners.
 > **Two facts that explain the shape of this guide.**
 >
 > 1. The devnet SCCP faucet funds **SCCP only**. C960 is not minted by the
->    faucet: consensus creates C960 only when a block settles a Chess960 proof.
->    The guide therefore starts two Chess960 miners once, lets Alice's node
->    miner collect the C960 coinbase, and only then creates the SCCP/C960 pool.
+>    faucet: consensus creates C960 when a block settles a Chess960 proof, plus
+>    the fixed testnet/mainnet genesis allocation. This guide uses devnet, so it
+>    starts two Chess960 miners once, lets Alice's node miner collect the C960
+>    coinbase, and only then creates the SCCP/C960 pool. The hosted testnet needs
+>    none of that: its genesis already seeds the pool and a bridge example.
 > 2. In this build the C960 coinbase is credited to the **block miner**
 >    (`header.miner`, the node's `--miner-address`), not directly to the game
 >    winner. The guide uses Alice as both the node miner and the LP, so the C960

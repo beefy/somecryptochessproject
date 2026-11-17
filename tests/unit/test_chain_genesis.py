@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
+from sccp.chain import dex, genesis
 from sccp.chain.genesis import (
     FAUCET_SEEDS,
     GENESIS_DOCUMENT_VERSION,
     GenesisAllocation,
+    GenesisHtlc,
+    GenesisPool,
     build_genesis,
     faucet_allocation,
     faucet_keypair,
@@ -19,7 +23,15 @@ from sccp.chain.genesis import (
     parse_genesis_document,
     zero_address,
 )
-from sccp.config import DEVNET, MAINNET, TESTNET, NetworkParams
+from sccp.chain.state import HtlcStatus
+from sccp.config import (
+    CHESS960_ASSET_ID,
+    DEVNET,
+    MAINNET,
+    TESTNET,
+    UNITS_PER_COIN,
+    NetworkParams,
+)
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import GenesisError
@@ -31,12 +43,22 @@ UNPINNED = TESTNET.model_copy(update={"genesis_hash": None})
 """Testnet parameters without the pinned hash, for document round-trip tests."""
 
 
-def _allocation(amount: int = 1_000 * COINS, params: NetworkParams = TESTNET) -> GenesisAllocation:
-    keypair = faucet_keypair("testnet")
+def _allocation(
+    amount: int = 1_000 * COINS,
+    params: NetworkParams = TESTNET,
+    asset: str = "",
+    index: int = 0,
+) -> GenesisAllocation:
+    keypair = (
+        faucet_keypair("testnet")
+        if index == 0
+        else hybrid_keypair_from_seed(bytes([0x50 + index]) * 32)
+    )
     return GenesisAllocation(
         address=encode_address(keypair.public_key_bytes, params),
         public_key=keypair.public_key_hex,
         amount=amount,
+        asset=asset,
     )
 
 
@@ -176,3 +198,219 @@ def test_the_faucet_is_public_and_test_only() -> None:
     assert testnet.address != devnet.address
     assert testnet.amount == devnet.amount == 1_000_000 * COINS
     assert testnet.public_key == faucet_keypair("testnet").public_key_hex
+
+
+def test_variant_allocations_are_tracked_in_their_own_asset() -> None:
+    native = _allocation(10 * COINS)
+    variant = _allocation(20 * COINS, asset=CHESS960_ASSET_ID)
+    block, state = build_genesis(
+        TESTNET,
+        timestamp=1_700_000_000,
+        allocations=(native, variant),
+    )
+    account = state.account(native.address)
+    assert block.header.state_root == state.state_root()
+    assert state.minted == native.amount
+    assert state.minted_assets == {CHESS960_ASSET_ID: variant.amount}
+    assert account.balance == native.amount
+    assert account.assets == {CHESS960_ASSET_ID: variant.amount}
+
+
+def test_a_variant_allocation_is_clamped_by_its_own_cap() -> None:
+    variant = MAINNET.variant_for_asset(CHESS960_ASSET_ID)
+    assert variant.max_supply is not None
+    cap = variant.max_supply * UNITS_PER_COIN
+    with pytest.raises(GenesisError, match="C960 allocations exceed"):
+        build_genesis(
+            MAINNET,
+            timestamp=1_700_000_000,
+            allocations=(_allocation(cap + 1, MAINNET, CHESS960_ASSET_ID),),
+        )
+
+
+def test_an_unknown_allocation_asset_is_rejected() -> None:
+    allocation = _allocation()
+    document = genesis_document(UNPINNED, timestamp=1_700_000_000, allocations=(allocation,))
+    document["allocations"] = [{**allocation.as_dict(), "asset": "ab" * 32}]
+    with pytest.raises(GenesisError, match="unknown asset"):
+        parse_genesis_document(UNPINNED, document)
+
+
+def test_a_genesis_pool_is_created_from_its_creators_allocation() -> None:
+    creator = _allocation(10 * COINS)
+    variant = _allocation(10 * COINS, asset=CHESS960_ASSET_ID)
+    pool = GenesisPool(
+        creator=creator.address,
+        asset_a="",
+        amount_a=10 * COINS,
+        asset_b=CHESS960_ASSET_ID,
+        amount_b=10 * COINS,
+    )
+    _block, state = build_genesis(
+        TESTNET,
+        timestamp=1_700_000_000,
+        allocations=(creator, variant),
+        pools=(pool,),
+    )
+    identifier = dex.pool_id("", CHESS960_ASSET_ID)
+    stored = state.pools[identifier]
+    assert stored.reserve_a == stored.reserve_b == 10 * COINS
+    assert stored.total_shares == dex.initial_shares(10 * COINS, 10 * COINS)
+    assert stored.shares == {creator.address: stored.total_shares}
+    assert state.account(creator.address).balance == 0
+    assert state.account(creator.address).assets.get(CHESS960_ASSET_ID, 0) == 0
+
+
+def test_a_genesis_pool_cannot_spend_funds_that_were_not_allocated() -> None:
+    creator = _allocation(5 * COINS)
+    pool = GenesisPool(
+        creator=creator.address,
+        asset_a="",
+        amount_a=10 * COINS,
+        asset_b=CHESS960_ASSET_ID,
+        amount_b=10 * COINS,
+    )
+    with pytest.raises(GenesisError, match="holds 500000000 SCCP"):
+        build_genesis(
+            TESTNET,
+            timestamp=1_700_000_000,
+            allocations=(creator,),
+            pools=(pool,),
+        )
+
+
+def test_a_claimed_genesis_htlc_pays_the_beneficiary() -> None:
+    sender = _allocation(10 * COINS)
+    beneficiary = _allocation(COINS, index=1)
+    preimage = genesis.testnet_bridge_preimage()
+    record = GenesisHtlc(
+        sender=sender.address,
+        beneficiary=beneficiary.address,
+        hashlock=genesis.testnet_bridge_hashlock(),
+        amount=COINS,
+        timelock_height=100,
+        status=HtlcStatus.CLAIMED,
+        preimage=preimage,
+        closed_at_height=0,
+        nonce=7,
+    )
+    _block, state = build_genesis(
+        TESTNET,
+        timestamp=1_700_000_000,
+        allocations=(sender, beneficiary),
+        htlcs=(record,),
+    )
+    assert len(state.htlcs) == 1
+    stored = next(iter(state.htlcs.values()))
+    assert stored.status is HtlcStatus.CLAIMED
+    assert stored.preimage == preimage
+    assert state.account(sender.address).balance == 9 * COINS
+    assert state.account(beneficiary.address).balance == 2 * COINS
+
+
+def test_a_locked_genesis_htlc_holds_its_amount_in_escrow() -> None:
+    sender = _allocation(10 * COINS)
+    beneficiary = _allocation(COINS, index=1)
+    record = GenesisHtlc(
+        sender=sender.address,
+        beneficiary=beneficiary.address,
+        hashlock=genesis.testnet_bridge_hashlock(),
+        amount=COINS,
+        timelock_height=100,
+        nonce=8,
+    )
+    _block, state = build_genesis(
+        TESTNET,
+        timestamp=1_700_000_000,
+        allocations=(sender, beneficiary),
+        htlcs=(record,),
+    )
+    assert next(iter(state.htlcs.values())).status is HtlcStatus.LOCKED
+    assert state.account(sender.address).balance == 9 * COINS
+    assert state.account(beneficiary.address).balance == COINS
+
+
+def test_a_claimed_genesis_htlc_must_open_its_hashlock() -> None:
+    sender = _allocation(10 * COINS)
+    beneficiary = _allocation(COINS, index=1)
+    record = GenesisHtlc(
+        sender=sender.address,
+        beneficiary=beneficiary.address,
+        hashlock=sha256(b"a different secret").hexdigest(),
+        amount=COINS,
+        timelock_height=100,
+        status=HtlcStatus.CLAIMED,
+        preimage=genesis.testnet_bridge_preimage(),
+        closed_at_height=0,
+        nonce=10,
+    )
+    with pytest.raises(GenesisError, match="does not open"):
+        build_genesis(
+            TESTNET,
+            timestamp=1_700_000_000,
+            allocations=(sender, beneficiary),
+            htlcs=(record,),
+        )
+
+
+def test_the_document_round_trips_pools_and_htlcs() -> None:
+    creator = _allocation(11 * COINS)
+    variant = _allocation(10 * COINS, asset=CHESS960_ASSET_ID)
+    beneficiary = _allocation(COINS, index=1)
+    pool = GenesisPool(
+        creator=creator.address,
+        asset_a="",
+        amount_a=10 * COINS,
+        asset_b=CHESS960_ASSET_ID,
+        amount_b=10 * COINS,
+    )
+    htlc = GenesisHtlc(
+        sender=creator.address,
+        beneficiary=beneficiary.address,
+        hashlock=genesis.testnet_bridge_hashlock(),
+        amount=COINS,
+        timelock_height=100,
+        status=HtlcStatus.CLAIMED,
+        preimage=genesis.testnet_bridge_preimage(),
+        closed_at_height=0,
+        nonce=9,
+    )
+    document = genesis_document(
+        UNPINNED,
+        timestamp=1_700_000_000,
+        allocations=(creator, variant, beneficiary),
+        pools=(pool,),
+        htlcs=(htlc,),
+    )
+    assert document["pools"] == [pool.as_dict()]
+    assert document["htlcs"] == [htlc.as_dict()]
+    _block, state = parse_genesis_document(UNPINNED, document)
+    assert len(state.pools) == 1
+    assert next(iter(state.htlcs.values())).status is HtlcStatus.CLAIMED
+
+
+def test_the_committed_mainnet_premine_is_ten_and_five_percent() -> None:
+    _block, state = load_genesis(GENESIS_DIR / "mainnet.json", MAINNET)
+    assert MAINNET.max_money is not None
+    variant = MAINNET.variant_for_asset(CHESS960_ASSET_ID)
+    assert variant.max_supply is not None
+    assert state.minted == MAINNET.max_money * 1_000 // 10_000
+    assert state.minted_assets == {
+        CHESS960_ASSET_ID: variant.max_supply * UNITS_PER_COIN * 500 // 10_000
+    }
+
+
+def test_testnet_genesis_seeds_a_pool_and_a_completed_bridge() -> None:
+    _block, state = load_genesis(GENESIS_DIR / "testnet.json", TESTNET)
+    identifier = dex.pool_id("", CHESS960_ASSET_ID)
+    pool = state.pools[identifier]
+    assert pool.reserve_a == pool.reserve_b == 5 * COINS
+    assert pool.total_shares == 5 * COINS
+    assert len(state.htlcs) == 1
+    record = next(iter(state.htlcs.values()))
+    assert record.status is HtlcStatus.CLAIMED
+    assert record.amount == COINS
+    assert record.preimage == genesis.testnet_bridge_preimage()
+    expected = encode_address(genesis.testnet_demo_keypair(0).public_key_bytes, TESTNET)
+    assert pool.shares == {expected: pool.total_shares}
+    assert record.sender == expected

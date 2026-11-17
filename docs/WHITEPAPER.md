@@ -2,7 +2,7 @@
 
 ## Chess as proof of work
 
-**Whitepaper for protocol v1 · reference implementation 0.24.0 · November 2026**
+**Whitepaper for protocol v1 · reference implementation 0.25.0 · November 2026**
 
 > **Scope.** This document explains how the current reference implementation
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,
@@ -213,7 +213,7 @@ requirement to run two strong engines; it does not claim to eliminate it.
 | Clock witness | Signs move and flag receipts with a bonded key | Consensus checks a quorum and slashes equivocation; testnet uses one witness |
 | Full node | Validates and stores blocks, maintains mempool and peer state, serves the API | Peers revalidate everything; a bad node cannot make an invalid block valid |
 | Peer | Gossips transactions, proofs and blocks; serves blocks for pull-sync | Content-addressed ids and full validation; failures affect only peer score |
-| Faucet | Sends testnet/devnet coins from a published deterministic key | Test networks only; mainnet has no faucet and no premine |
+| Faucet | Sends testnet/devnet coins from a published deterministic key | Test networks only; mainnet has no faucet |
 
 ### 4.2 Trust assumptions
 
@@ -236,8 +236,8 @@ There are three parameter sets:
 
 | Network | Purpose | Address prefix | Genesis |
 | --- | --- | --- | --- |
-| `testnet` | Public, valueless integration network | `sccpt1...` | Pinned testnet genesis with a faucet allocation |
-| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis, no premine |
+| `testnet` | Public, valueless integration network | `sccpt1...` | Pinned testnet genesis with a faucet allocation, a seeded SCCP/C960 pool and a completed SCCP HTLC |
+| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis with a 10% SCCP and 5% C960 premine |
 | `devnet` | Deterministic in-process tests and demos | `sccpt1...` | Pinned deterministic genesis with a faucet allocation |
 
 The network id is inside transaction hashes, game hashes, certificates,
@@ -1406,10 +1406,14 @@ root. It is loaded from a pinned document; its hash must equal
 `params.genesis_hash`. A network with no pinned hash still parses the document,
 but production callers are expected to pin it.
 
-The genesis state contains the initial allocations. Testnet and devnet include a
-faucet allocation under a published deterministic key. Mainnet parameters
-contain no premine and no faucet. Every later block must descend from the
-genesis block; a document with a different genesis hash is a different chain.
+The genesis state contains the initial allocations. Mainnet allocates 10% of
+the SCCP cap and 5% of each variant's cap; the known tranches are bootstrap
+grants, liquidity and ecosystem funding, and their public addresses are in
+`genesis/mainnet-premine.json`. Testnet and devnet include a faucet allocation
+under a published deterministic key, and testnet also seeds an SCCP/C960 pool
+and a completed SCCP bridge HTLC. Mainnet has no faucet. Every later block must
+descend from the genesis block; a document with a different genesis hash is a
+different chain.
 
 ---
 
@@ -1580,7 +1584,12 @@ A block's cost has three parts:
    impossible.
 
 The reward is the block subsidy plus fees. On mainnet the subsidy starts at 50
-coins and halves every 210,000 blocks, with a 21,000,000-coin cap. Testnet and
+coins and halves every 210,000 blocks, with a 21,000,000-coin cap. Genesis
+allocates 10% of that cap (2,100,000 SCCP) and 5% of each variant cap (1,050,000
+C960 today). The SCCP tranches are designated for bootstrap grants, liquidity
+and development/ecosystem funding; the C960 tranches are for liquidity and
+player/ecosystem incentives. The private keys are not in the repository and the
+on-chain split is auditable in `genesis/mainnet-premine.json`. Testnet and
 devnet rewards are valueless.
 
 ### 16.2 The central attack: self-play
@@ -1862,7 +1871,8 @@ sccp --data-dir ./data faucet send --network testnet \
 
 The faucet is a local command that submits a transfer from the published
 deterministic genesis key. It is not a public service and it does not exist on
-mainnet. Mainnet parameters have no faucet and no premine.
+mainnet. Mainnet parameters have no faucet; their genesis premine is described
+in [section 14.8](#148-genesis) and `genesis/mainnet-premine.json`.
 
 ### 18.5 Register and commit availability
 

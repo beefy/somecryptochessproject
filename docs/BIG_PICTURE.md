@@ -34,7 +34,7 @@ That gives four deliverables, in dependency order:
 | Web wallet | creates, holds and signs in the browser | none | 0.22.0 |
 | Multi-asset ledger + variants | variant tokens mined by variant games | protocol v2 | 0.23.0 |
 | Native DEX | pools, LP positions and swaps between on-chain assets | protocol v2 | 0.24.0 |
-| ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | protocol v2 + one Ethereum contract | 0.25.0 |
+| ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | protocol v2 + one Ethereum contract | 0.24.0 |
 
 Optionally, 0.26.0 adds a `wETH` asset so that ETH itself can be traded in the
 native DEX; that is a bonded federation and is explicitly out of the critical
@@ -71,9 +71,11 @@ What is missing, and is the subject of the rest of this document:
   210,000 blocks, 8 decimals (`UNITS_PER_COIN = 100_000_000`). None of this
   changes; standard chess is not one variant among many but the chain's own
   unit of account.
-- **A variant asset is minted only by the coinbase of that variant's proofs.**
-  There is no premine, no sale, and no administrative mint. If nobody settles
-  Crazyhouse games, no CZH exists.
+- **A variant asset is minted by the coinbase of that variant's proofs.** The
+  one exception is a fixed genesis allocation: 5% of each variant's cap, public
+  and auditable, for liquidity and ecosystem incentives. There is no sale and no
+  administrative mint after genesis. If nobody settles Crazyhouse games, no CZH
+  is mined.
 - **Assets are consensus objects, not contracts.** An asset has an id, a supply
   counter and a minting rule. It has no bytecode, no issuer privileges and no
   upgrade path, so there is nothing for an issuer to rug and nothing for a
@@ -106,6 +108,11 @@ Each variant carries its own cap so SCCP's schedule is untouched. Giving every
 variant the same cap and halving interval makes "one variant is one chain's worth
 of scarcity" legible at launch; both are `VariantParams` fields and can diverge
 later only by a fork.
+
+Mainnet genesis pre-allocates 10% of the SCCP cap (2,100,000 SCCP) and 5% of each
+variant's cap (1,050,000 C960 today) for bootstrap grants, liquidity and
+ecosystem incentives. The split is public in `genesis/mainnet-premine.json`; see
+[`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 
 ### 3.3 The token is the games
 
@@ -460,7 +467,7 @@ randomised property test, batch clearing resists an in-block sandwich (an
 adversarial test with a deliberately front-run order), and removing all
 liquidity after the fee accrual returns the expected amounts to the unit.
 
-## 7. Workstream D -- ETH<->SCCP bridge (0.25.0)
+## 7. Workstream D -- ETH<->SCCP bridge (0.24.0)
 
 ### 7.1 Principle: no custody, one secret
 
@@ -648,8 +655,8 @@ wallet's Bridge view recovers correctly from a page reload at every step.
 | 0.19.0 | this document | reviewed; no code change |
 | 0.22.0 | web wallet | vectors, vitest, Playwright devnet e2e; keyfile round-trips with the CLI |
 | 0.23.0 | protocol v2: assets and variants | v2 spec in `PROTOCOL.md`; regenerated golden chain; two-variant soak |
-| 0.24.0 | native DEX | property tests for `k` and rounding; quote equals execution; no admin keys |
-| 0.25.0 | HTLC bridge and order book | adversarial swap suite on Anvil + devnet; contract audit |
+| 0.24.0 | native DEX, HTLC bridge and order book | property tests for `k` and rounding; adversarial swap suite on Anvil + devnet; contract audit |
+| 0.25.0 | genesis premine and testnet bootstrap | pinned mainnet/testnet genesis hashes; cap accounting; NodeService loads both networks |
 | 0.26.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure |
 | 1.0.0 | mainnet | the go/no-go in `IMPLEMENTATION_PLAN.md`, plus the bridge audit |
 
@@ -711,8 +718,10 @@ receipts for producing them.
 - **EVM compatibility.** No `eth_*` endpoints, no chain-id registration, no
   ERC-20 or Solidity on the SCCP node, no MetaMask network switch. The one
   Solidity file is the counterparty HTLC contract and it runs on Ethereum.
-- **Permissionless asset issuance.** No `create_asset`, no ICO, no premine, no
-  token sale. Assets are protocol-defined and mined.
+- **Permissionless asset issuance.** No `create_asset`, no ICO and no token
+  sale. Assets are protocol-defined; the only pre-issued supply is the fixed,
+  public genesis allocation described in
+  [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 - **A custodial bridge or deposit addresses.** The HTLC path needs neither. An
   exchange that wants to list SCCP integrates against the same transactions.
 - **An AMM over external assets before `wETH`.** No oracle, no wrapped assets in

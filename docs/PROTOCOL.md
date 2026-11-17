@@ -1176,37 +1176,73 @@ about 36 KiB, plus one 3.4 KiB checkpoint signature per quorum member.
 
 ## 13. Genesis documents
 
-Genesis is the only premine. Its block hash is pinned in `NetworkParams`
-(`genesis_hash`), and a pinned network refuses a document that hashes to
-anything else, so two nodes cannot disagree about height 0.
+Genesis is the only place where supply can exist before a block subsidy. Its
+block hash is pinned in `NetworkParams` (`genesis_hash`), and a pinned network
+refuses a document that hashes to anything else, so two nodes cannot disagree
+about height 0.
 
 ```json
-{"version": 1,
- "network": "testnet",
- "timestamp": 1700000000,
- "miner": "sccpt1...",
- "allocations": [{"address": "sccpt1...", "public_key": "hex", "amount": 5000000000}],
+{"version": 2,
+ "network": "mainnet",
+ "timestamp": 1735689600,
+ "miner": "sccp1...",
+ "allocations": [
+   {"address": "sccp1...", "public_key": "hex", "amount": 4200000000000},
+   {"address": "sccp1...", "public_key": "hex",
+    "asset": "<64-hex C960 id>", "amount": 52500000000000}
+ ],
+ "pools": [
+   {"creator": "sccp1...", "amount_a": 500000000, "amount_b": 500000000,
+    "asset_b": "<64-hex C960 id>"}
+ ],
+ "htlcs": [
+   {"sender": "sccp1...", "beneficiary": "sccp1...", "hashlock": "64 hex",
+    "amount": 100000000, "timelock_height": 1000, "status": "claimed",
+    "preimage": "64 hex", "created_at_height": 0, "closed_at_height": 0,
+    "nonce": 1000000}
+ ],
  "hash": "64 hex chars"}
 ```
 
 The `hash` shown above is illustrative; a document may omit it, and a pinned
 network always checks the computed hash against `NetworkParams.genesis_hash`.
 
-`version` must be `1` and `network` must name the parameter set. `miner` is
-optional and defaults to the first allocation. `allocations` may be empty
-(mainnet has no premine); each entry needs a positive integer `amount` in base
-units, a valid address for this network, and a `public_key` that **derives** that
-address — Ed25519 is not key-recoverable, so an allocation without a matching key
-would be unspendable. Duplicate addresses are rejected. `hash` is optional and,
-when present, must equal the block hash the document builds; `scripts/make_genesis.py`
-writes it.
+`version` must be `2` and `network` must name the parameter set. `miner` is
+optional and defaults to the first allocation. Each `allocations` entry needs a
+positive integer `amount` in base units, a valid address for this network, and a
+`public_key` that **derives** that address — Ed25519 is not key-recoverable, so
+an allocation without a matching key would be unspendable. The entry is native
+SCCP when `asset` is omitted and otherwise names a variant asset id. One address
+may appear once per asset; a duplicate `(address, asset)` pair is rejected.
 
-Genesis state is the allocation accounts plus the initial difficulty, height 0,
-the genesis timestamp as the first median-time-past sample, an open epoch 0 record
-and an empty body. `genesis/devnet.json` is the devnet chain used by the test
-suite; `genesis/testnet.json` and `genesis/mainnet.json` are the pinned networks.
-Test-network faucet keys come from published seeds, which is why those networks
-are safe to hand out and mainnet must never gain one.
+`pools` and `htlcs` are optional and are applied after the allocations, in that
+order. A genesis pool debits its creator's allocation exactly like `create_pool`
+and records the creator's `isqrt(amount_a * amount_b)` LP shares. A genesis HTLC
+uses `htlc_id = H("sccp/v1/htlc", {from: sender, nonce})`; `locked` holds the
+amount in escrow, `claimed` debits the sender and credits the beneficiary, and
+`refunded` has no net ledger effect. A claimed record must carry the preimage
+that opens its hashlock. Genesis pools and HTLCs are limited to height 0 and are
+part of `state_root`.
+
+Mainnet allocates **10% of the SCCP cap** and **5% of each variant's cap** at
+genesis. The public tranche addresses and basis-point splits live in
+`genesis/mainnet-premine.json`; private keys are not part of the repository.
+Today that is 2,100,000 SCCP and 1,050,000 C960, split across bootstrap,
+liquidity and ecosystem tranches. A newly added variant must add its 500-basis-
+point entry before `scripts/make_genesis.py` will generate a document.
+
+Testnet also seeds an SCCP/C960 pool with 5 coins per side and one completed
+1-SCCP HTLC, using published demo keys, so `GET /v1/pools` and `GET /v1/htlcs`
+are useful on a fresh deployment. The Ethereum leg remains an operator
+deployment.
+
+Genesis state is the allocation accounts, any seeded pools and HTLCs, the
+initial difficulty, height 0, the genesis timestamp as the first median-time-past
+sample, an open epoch 0 record and an empty body. `genesis/devnet.json` is the
+devnet chain used by the test suite; `genesis/testnet.json` and
+`genesis/mainnet.json` are the pinned networks. Test-network faucet keys come
+from published seeds, which is why those networks are safe to hand out and
+mainnet must never gain one.
 
 ## 14. Node API and gossip
 
