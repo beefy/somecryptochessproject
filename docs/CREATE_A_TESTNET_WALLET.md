@@ -101,7 +101,7 @@ export SCCP_NODE="http://127.0.0.1:8645"
 For the hosted four-miner deployment, use the public testnet host:
 
 ```bash
-export SCCP_NODE="http://proofofchess.com:8645"
+export SCCP_NODE="http://app.proofofchess.com:8645"
 ```
 
 The hosted chain is reset on every deployment, so addresses and balances from

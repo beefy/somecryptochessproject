@@ -69,8 +69,8 @@ at startup:
 
 ```bash
 sccp --network testnet --data-dir data node run \
-  --peer http://proofofchess.com:8645
-# synced http://proofofchess.com:8645: +121 blocks to height 121
+  --peer http://app.proofofchess.com:8645
+# synced http://app.proofofchess.com:8645: +121 blocks to height 121
 ```
 
 The dev server proxies `/v1` to `SCCP_NODE` (default `http://127.0.0.1:8645`), so
@@ -127,21 +127,23 @@ Two things to know before doing that:
   Without that flag the relay answers no preflights at all, which keeps a
   relay-only deployment from advertising itself to browsers.
 
-The hosted chain (`http://proofofchess.com:8645`) answers `/v1`
+The hosted chain (`http://app.proofofchess.com:8645`) answers `/v1`
 and nothing else: `http://…:8645/` is a `{"detail":"Not Found"}`, because that
 node was deployed without `dist/` behind `--web`. Point a local dev server at it
 instead of expecting a page there:
 
 ```bash
-SCCP_NODE=http://proofofchess.com:8645 npm run dev
+SCCP_NODE=http://app.proofofchess.com:8645 npm run dev
 ```
 
 The published page is the same origin as its API:
-`https://proofofchess.com`, where nginx serves the bundle and
+`https://app.proofofchess.com`, where nginx serves the bundle and
 proxies `/v1` and `/relay`, behind a Caddy terminator that holds the certificate.
 That is the shape a hosted build always needs: the
-API on the page's own origin, the relay on a path of it. The deploy, its firewall
-rules, its DNS record and its rollback are in
+API on the page's own origin, the relay on a path of it. The apex
+`https://proofofchess.com/` is a separate static landing page in
+[`src/landing`](../landing); it links into the app and has no API proxy. The
+deploy, its firewall rules, its DNS records and its rollback are in
 [`docs/EXPLORER_DEPLOYMENT.md`](../../docs/EXPLORER_DEPLOYMENT.md).
 
 ## Scripts
@@ -164,7 +166,7 @@ rules, its DNS record and its rollback are in
 | `SCCP_WEB_DIST` | `sccp node run --web` | `src/web/dist` | directory to mount |
 
 There are no per-view origin variables: Explorer, Wallet, Play, DEX and Bridge are
-hash routes on `https://proofofchess.com`, served by the same bundle.
+hash routes on `https://app.proofofchess.com`, served by the same bundle.
 
 ## Routes
 
@@ -212,7 +214,7 @@ Browser storage is per origin, and every view now shares one origin, so the
 encrypted keyfile, the unlocked keypair and the wallet settings are available in
 the explorer, Play, the DEX and the bridge without an import. The hamburger stays
 on that origin, which is what keeps the in-memory key in the tab. Opening
-`https://proofofchess.com` on another device still needs its own keyfile in that
+`https://app.proofofchess.com` on another device still needs its own keyfile in that
 browser.
 
 The tab icon is [`public/favicon.svg`](public/favicon.svg): the four centre
@@ -459,7 +461,7 @@ src/
   fresh `--data-dir` is a genesis-only chain, so there is nothing to show. The
   page is innocent here — it prints `/v1/status` verbatim. Nothing mines testnet
   for you either: make blocks (`--mine`, one a minute) or sync once from the
-  hosted node (`--peer http://proofofchess.com:8645`, which
+  hosted node (`--peer http://app.proofofchess.com:8645`, which
   prints `synced …: +121 blocks to height 121`). A dir that "went back to 0" is a
   different `--data-dir`, not a lost chain — the SQLite file is bound to one path.
 - **`no built explorer found`** (exit 2) — `sccp node run --web` found no

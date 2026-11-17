@@ -2,9 +2,10 @@
  * The hamburger in the top-left corner: the switch between the five views.
  *
  * Explorer, Wallet, Play, DEX and Bridge are hash routes on the one origin,
- * `https://proofofchess.com`. The menu switches in place so the unlocked keypair,
- * which lives only in this tab's memory, is not lost. Each view is still a
- * direct, bookmarkable entry point; inside the app, the menu is one session.
+ * `https://app.proofofchess.com`. The menu switches in place so the unlocked
+ * keypair, which lives only in this tab's memory, is not lost. Each view is still a
+ * direct, bookmarkable entry point; inside the app, the menu is one session. The
+ * last item leaves the app for the static overview at `https://proofofchess.com/`.
  *
  * The glyph is three `View`s rather than `IconButton icon="menu"`: react-native-paper
  * renders icons through an icon library, and this bundle has none installed, so an
@@ -13,7 +14,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
-import { Menu, useTheme } from "react-native-paper";
+import { Divider, Menu, useTheme } from "react-native-paper";
 
 import { SITE_LABELS, siteHash, type Site } from "../lib/site";
 import { navigate } from "../router";
@@ -58,6 +59,14 @@ export function AppMenu(): ReactNode {
           onPress={close(site)}
         />
       ))}
+      <Divider />
+      <Menu.Item
+        title="Project overview"
+        onPress={() => {
+          setVisible(false);
+          window.location.assign("https://proofofchess.com/");
+        }}
+      />
     </Menu>
   );
 }

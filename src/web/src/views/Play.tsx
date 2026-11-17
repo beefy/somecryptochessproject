@@ -17,7 +17,7 @@
  * epoch beacon — including both hybrid signature rules, verified against the
  * roster's keys.
  *
- * The page lives at `https://proofofchess.com/#/play`, not inside the explorer's
+ * The page lives at `https://app.proofofchess.com/#/play`, not inside the explorer's
  * overview: a seat is a funded account, and the wallet is where the key and the
  * funds already are. The old `#/wallet/play` URL is an alias, so a bookmark does
  * not break.

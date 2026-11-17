@@ -22,7 +22,7 @@
  * are remembered here and listed on Overview and History until the committed
  * nonce passes them.
  *
- * `#/wallet` is this page on `https://proofofchess.com`; the hamburger menu and
+ * `#/wallet` is this page on `https://app.proofofchess.com`; the hamburger menu and
  * every wallet link point there without leaving the origin.
  */
 

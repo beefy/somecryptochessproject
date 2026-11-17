@@ -9,10 +9,11 @@ credit. A miner must collect several verified wins - from different opponents an
 featuring never-before-mined games - before it may produce a block and claim the
 reward.
 
- - [Block explorer](https://proofofchess.com/)
- - [Web wallet](https://proofofchess.com/#/wallet)
+ - [Project overview](https://proofofchess.com/)
+ - [Block explorer](https://app.proofofchess.com/)
+ - [Web wallet](https://app.proofofchess.com/#/wallet)
  - [Living Whitepaper](https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/WHITEPAPER.md)
- - [Public testnet](http://proofofchess.com:8645/v1/status)
+ - [Public testnet](http://app.proofofchess.com:8645/v1/status)
  - [Reddit](https://www.reddit.com/r/chessproofofwork/)
 
 > **Status: protocol v1 is implemented and deployed on testnet.** The repository
@@ -27,7 +28,7 @@ reward.
 > parameters exist, but no mainnet has launched or been audited; testnet and
 > devnet coins have no value.
 
-> **Public testnet:** <http://proofofchess.com:8645>. The
+> **Public testnet:** <http://app.proofofchess.com:8645>. The
 > `GET /v1/status` endpoint is the health check. The chain is reset on every
 > deployment, so wallets, balances and faucet grants do not survive a redeploy.
 > This endpoint is plain HTTP and carries worthless test coins only.
@@ -277,7 +278,7 @@ responsibility rather than a construction phase.
 ├── docker-compose.yml            # node + relay + bootstrap + 2 miners + traffic
 ├── .github/workflows/ci.yml      # ruff + mypy + pytest (3.11–3.13); web (22, 24)
 ├── .github/workflows/deploy-testnet-miners.yml  # image + hosted testnet deploy
-├── .github/workflows/deploy-explorer.yml        # hosted explorer (explorer.*)
+├── .github/workflows/deploy-explorer.yml        # hosted app + landing page
 ├── docs/
 │   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
 │   ├── BIG_PICTURE.md            # wallet, bridge, DEX and variant-token design
@@ -304,7 +305,7 @@ responsibility rather than a construction phase.
 │   └── script/Deploy.s.sol       # chain-id-checked deployment
 ├── deploy/
 │   ├── README.md                 # what the compose stack does and does not do
-│   ├── explorer/                 # Caddy + nginx + compose for the hosted page
+│   ├── explorer/                 # Caddy + nginx + compose for app and landing
 │   ├── init_testnet_stack.py     # deterministic testnet stack keys
 │   ├── init_devnet_stack.py      # the same two keys for a local devnet stack
 │   └── bootstrap_devnet_stack.py # devnet chain + relay config, no node needed
@@ -332,6 +333,10 @@ responsibility rather than a construction phase.
 │   ├── transport.py              # synchronous ASGI transport for httpx
 │   ├── devnet.py                 # in-process local network
 │   └── cli.py                    # Typer CLI
+├── src/landing/                  # static, no-JS overview served at the apex
+│   ├── index.html
+│   ├── styles.css
+│   └── favicon.svg
 ├── src/web/                      # explorer: React Native for Web + Material
 │   ├── README.md                 # build it, serve it, run the relay, play a seat
 │   ├── src/views/                # overview, blocks, games, accounts, table
@@ -355,7 +360,7 @@ Every step below is a thin wrapper over a library call, so the CLI, tests and
 services exercise the same code path.
 
 The hosted two-miner testnet is available at
-`http://proofofchess.com:8645`. The quickstart below starts
+`http://app.proofofchess.com:8645`. The quickstart below starts
 local processes so you can change code without depending on it; use the hosted
 URL as `--node` or `SCCP_NODE` when you want the shared deployment instead.
 
@@ -494,18 +499,18 @@ audit of `contracts/EthHtlc.sol`).
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
 [`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current
 deployment is published at
-`http://proofofchess.com:8645`; the workflow connects to the
-same name over SSH (`sccp@proofofchess.com`). Moving a deployment to
+`http://app.proofofchess.com:8645`; the workflow connects to the VM over SSH
+through the apex name (`sccp@proofofchess.com`). Moving a deployment to
 a new project or domain -- the cutover that produced those names -- is
 [`docs/DOMAIN_MIGRATION.md`](docs/DOMAIN_MIGRATION.md).
 
-The explorer and the wallet are one deploy on one name:
-`https://proofofchess.com` serves the built bundle with `/v1` and `/relay`
-proxied onto that origin, because the node sends no CORS headers. A Caddy
-terminator in front holds the single certificate. The hamburger menu in the
-top-left corner switches between the explorer, the wallet, Play, the DEX and the
-bridge by hash route (`#/`, `#/wallet`, `#/play`, `#/dex`, `#/bridge`), so the
-unlocked key stays in the tab. See
+The apex `https://proofofchess.com/` is a static project overview. The explorer
+and wallet are one app deploy on `https://app.proofofchess.com`: nginx serves the
+built bundle with `/v1` and `/relay` proxied onto that origin, because the node
+sends no CORS headers. A Caddy terminator in front holds one certificate per
+name. The hamburger menu in the top-left corner switches between the explorer,
+the wallet, Play, the DEX and the bridge by hash route (`#/`, `#/wallet`,
+`#/play`, `#/dex`, `#/bridge`), so the unlocked key stays in the tab. See
 [`docs/EXPLORER_DEPLOYMENT.md`](docs/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws

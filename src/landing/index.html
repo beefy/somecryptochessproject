@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f3eddf" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d1511" media="(prefers-color-scheme: dark)" />
+    <title>Proof of Chess — chess as proof of work</title>
+    <meta
+      name="description"
+      content="Some Crypto Chess Project is a research blockchain where the proof of work is winning chess games. Explore the public testnet, wallet, games, DEX and bridge."
+    />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://proofofchess.com/" />
+    <link rel="icon" type="image/svg+xml" sizes="any" href="/favicon.svg" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Proof of Chess" />
+    <meta property="og:title" content="Proof of Chess — chess as proof of work" />
+    <meta
+      property="og:description"
+      content="A research blockchain where miners compete by winning real chess games. Every block is backed by verified games played by adversarial engines."
+    />
+    <meta property="og:url" content="https://proofofchess.com/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Proof of Chess — chess as proof of work" />
+    <meta
+      name="twitter:description"
+      content="A research blockchain where miners compete by winning real chess games. Every block is backed by verified games played by adversarial engines."
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="shell header-inner">
+        <a class="brand" href="/" aria-label="Proof of Chess home">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="8" fill="currentColor" />
+            <path d="M9 23h14v2H9z" fill="var(--brand-contrast)" />
+            <path
+              d="M12 21c0-3.1 1.5-4.2 2.3-6.2.5-1.3.2-2.4-.4-3.1l2.1-3.1 1.7 2.5c2.7.6 4.6 2.6 4.6 5.5 0 2.4-1.4 3.6-3.1 3.6h-4.1l-.2 1.8H12z"
+              fill="var(--brand-contrast)"
+            />
+            <circle cx="18.7" cy="13.5" r=".9" fill="currentColor" />
+          </svg>
+          <span class="brand-name">Proof <span>of</span> Chess</span>
+          <span class="brand-tag">SCCP</span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary">
+          <a href="#how">How it works</a>
+          <a href="#applications">Applications</a>
+          <a href="#protocol">Protocol</a>
+          <a class="nav-cta" href="https://app.proofofchess.com/">
+            Open app
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 3.5 13 8l-4.5 4.5" /></svg>
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero shell" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow"><span class="live-dot"></span> Public testnet · live now</p>
+          <h1 id="hero-title">Chess is the<br /><em>proof of work.</em></h1>
+          <p class="lede">
+            Some Crypto Chess Project is a research blockchain where miners compete by
+            winning real chess games — not by burning SHA-256. Every block is backed by
+            verified games played by adversarial engines.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://app.proofofchess.com/">
+              Enter the app
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 3.5 13 8l-4.5 4.5" /></svg>
+            </a>
+            <a
+              class="button button-quiet"
+              href="https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/WHITEPAPER.md"
+            >
+              Read the whitepaper
+            </a>
+          </div>
+          <p class="fine-print">Open source · testnet only · no mainnet, no audit, no real money</p>
+        </div>
+
+        <div class="hero-art" aria-hidden="true">
+          <div class="art-glow"></div>
+          <div class="board-wrap">
+            <div class="board"></div>
+            <span class="piece">♞</span>
+            <span class="board-label board-label-top">beacon paired</span>
+            <span class="board-label board-label-bottom">30 + 0</span>
+          </div>
+          <div class="proof-card proof-card-win">
+            <span class="proof-icon">✓</span>
+            <span>
+              <strong>Win verified</strong>
+              <small>unique game · both seats signed</small>
+            </span>
+          </div>
+          <div class="proof-card proof-card-block">
+            <span class="block-glyph"></span>
+            <span>
+              <strong>Block #740</strong>
+              <small>1 win credit · testnet</small>
+            </span>
+          </div>
+          <div class="art-grid"></div>
+        </div>
+      </section>
+
+      <section class="stat-strip shell" aria-label="Protocol at a glance">
+        <div>
+          <strong>60 s</strong>
+          <span>testnet block target</span>
+        </div>
+        <div>
+          <strong>30 + 0</strong>
+          <span>timed relay games</span>
+        </div>
+        <div>
+          <strong>Ed25519 + ML-DSA-65</strong>
+          <span>hybrid wallet keys</span>
+        </div>
+        <div>
+          <strong>1 game = 1 win</strong>
+          <span>testnet proof unit</span>
+        </div>
+      </section>
+
+      <section id="how" class="section shell" aria-labelledby="how-title">
+        <div class="section-head">
+          <p class="kicker">The protocol in four moves</p>
+          <h2 id="how-title">A game is the work.<br />A win is the proof.</h2>
+          <p>
+            The chain does not trust a matchmaker, an engine or a score. It trusts a
+            transcript that anyone can replay, a pairing anyone can recompute, and a game
+            hash that has never appeared on chain before.
+          </p>
+        </div>
+
+        <ol class="steps">
+          <li>
+            <span class="step-number">01</span>
+            <h3>Commit</h3>
+            <p>
+              Miners register a bond and publish availability for the epoch ahead. A
+              hashed nonce fixes their contribution before the beacon exists.
+            </p>
+          </li>
+          <li>
+            <span class="step-number">02</span>
+            <h3>Pair</h3>
+            <p>
+              The beacon mixes chain history with the revealed nonces — and optionally a
+              drand signature. It deterministically pairs the active roster.
+            </p>
+          </li>
+          <li>
+            <span class="step-number">03</span>
+            <h3>Play</h3>
+            <p>
+              Two UCI engines play a legal game from a beacon-selected opening. Both seats
+              co-sign the transcript; the relay clocks every move.
+            </p>
+          </li>
+          <li>
+            <span class="step-number">04</span>
+            <h3>Mine</h3>
+            <p>
+              Only the winner earns a credit. Enough wins from distinct opponents, with
+              previously unseen games, assemble into a block.
+            </p>
+          </li>
+        </ol>
+      </section>
+
+      <section id="applications" class="section shell" aria-labelledby="apps-title">
+        <div class="section-head split-head">
+          <div>
+            <p class="kicker">One chain, five doors</p>
+            <h2 id="apps-title">Everything runs on the same proof.</h2>
+          </div>
+          <p>
+            The explorer, wallet, playable table, DEX and bridge are one application on
+            <a href="https://app.proofofchess.com/">app.proofofchess.com</a>. Each view
+            has its own bookmarkable hash route.
+          </p>
+        </div>
+
+        <div class="app-grid">
+          <a class="app-card app-card-wide" href="https://app.proofofchess.com/#/">
+            <span class="app-index">01</span>
+            <h3>Explorer</h3>
+            <p>Blocks, transactions, game records, live tables and miner Elo — straight from the node.</p>
+            <span class="card-link">Open explorer <span>↗</span></span>
+          </a>
+          <a class="app-card app-card-wide" href="https://app.proofofchess.com/#/wallet">
+            <span class="app-index">02</span>
+            <h3>Wallet</h3>
+            <p>Create or restore a hybrid post-quantum key, receive test coins and send transfers.</p>
+            <span class="card-link">Open wallet <span>↗</span></span>
+          </a>
+          <a class="app-card" href="https://app.proofofchess.com/#/play">
+            <span class="app-index">03</span>
+            <h3>Play</h3>
+            <p>Take a seat in a timed, protocol-signed table against an engine.</p>
+            <span class="card-link">Play a game <span>↗</span></span>
+          </a>
+          <a class="app-card" href="https://app.proofofchess.com/#/dex">
+            <span class="app-index">04</span>
+            <h3>DEX</h3>
+            <p>Swap, provide liquidity and create pools in the native AMM.</p>
+            <span class="card-link">Open DEX <span>↗</span></span>
+          </a>
+          <a class="app-card" href="https://app.proofofchess.com/#/bridge">
+            <span class="app-index">05</span>
+            <h3>Bridge</h3>
+            <p>Move value between Sepolia and the testnet through a trustless HTLC.</p>
+            <span class="card-link">Open bridge <span>↗</span></span>
+          </a>
+        </div>
+      </section>
+
+      <section id="protocol" class="section shell" aria-labelledby="protocol-title">
+        <div class="section-head">
+          <p class="kicker">Why the work is real</p>
+          <h2 id="protocol-title">No shortcuts, no trusted referee.</h2>
+          <p>
+            A legal PGN is not proof. The protocol binds every game to a pairing, an
+            opening and two signing identities — then checks the result without asking how
+            well anyone played.
+          </p>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature">
+            <span class="feature-mark">◇</span>
+            <h3>Previously unseen games</h3>
+            <p>
+              A canonical game hash excludes PGN metadata, clocks and comments. Nodes
+              reject a game that has already appeared on the canonical chain.
+            </p>
+          </article>
+          <article class="feature">
+            <span class="feature-mark">⌁</span>
+            <h3>Nobody picks their opponent</h3>
+            <p>
+              Pairings are a deterministic function of the epoch beacon. Miners commit
+              before the beacon exists, so they cannot choose who they play.
+            </p>
+          </article>
+          <article class="feature">
+            <span class="feature-mark">↯</span>
+            <h3>A relay cannot cheat</h3>
+            <p>
+              The matchmaker is untrusted. It cannot invent a pairing, change an opening
+              or fabricate a result without the proof failing validation.
+            </p>
+          </article>
+          <article class="feature">
+            <span class="feature-mark">◎</span>
+            <h3>Post-quantum custody</h3>
+            <p>
+              Wallet keys combine Ed25519 with ML-DSA-65 and sign with both. The SCCP leg
+              is post-quantum; the Ethereum leg of the bridge is not.
+            </p>
+          </article>
+          <article class="feature">
+            <span class="feature-mark">≋</span>
+            <h3>Bonds, not blind trust</h3>
+            <p>
+              Registration bonds, pairing diversity, co-signatures and win-only payment
+              make self-play and collusion expensive rather than invisible.
+            </p>
+          </article>
+          <article class="feature">
+            <span class="feature-mark">◐</span>
+            <h3>Designed to be inspected</h3>
+            <p>
+              Protocol formats are normative, every check is decidable from the record,
+              and every page can be replayed by a full node.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section shell" aria-labelledby="honest-title">
+        <div class="honest">
+          <div class="honest-intro">
+            <p class="kicker">The honest version</p>
+            <h2 id="honest-title">A prototype, not a promise.</h2>
+          </div>
+          <div class="honest-columns">
+            <div>
+              <h3>What this is</h3>
+              <ul>
+                <li>A research prototype exploring whether useful adversarial computation can secure a chain.</li>
+                <li>A testbed for verifiable random matchmaking and commit-reveal beacons.</li>
+                <li>A public source of real, human-reviewable chess games.</li>
+              </ul>
+            </div>
+            <div>
+              <h3>What this is not</h3>
+              <ul>
+                <li>A drop-in replacement for Bitcoin, or proof that chess is a verifiable delay function.</li>
+                <li>A chess GUI, an engine or a rating system.</li>
+                <li>Anonymous, audited or ready for real money.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta-band">
+        <div class="shell cta-inner">
+          <div>
+            <p class="kicker">The chain is running</p>
+            <h2>Follow it from the first move.</h2>
+            <p>Explore a live testnet block, open a wallet or sit down at a signed table.</p>
+          </div>
+          <div class="cta-actions">
+            <a class="button button-light" href="https://app.proofofchess.com/">
+              Launch the app
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h9M8.5 3.5 13 8l-4.5 4.5" /></svg>
+            </a>
+            <a class="text-link" href="https://github.com/chessproofofwork/somecryptochessproject">
+              Browse the source <span>↗</span>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-top">
+        <div class="footer-brand">
+          <a class="brand" href="/" aria-label="Proof of Chess home">
+            <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+              <rect width="32" height="32" rx="8" fill="currentColor" />
+              <path d="M9 23h14v2H9z" fill="var(--brand-contrast)" />
+              <path
+                d="M12 21c0-3.1 1.5-4.2 2.3-6.2.5-1.3.2-2.4-.4-3.1l2.1-3.1 1.7 2.5c2.7.6 4.6 2.6 4.6 5.5 0 2.4-1.4 3.6-3.1 3.6h-4.1l-.2 1.8H12z"
+                fill="var(--brand-contrast)"
+              />
+            </svg>
+            <span class="brand-name">Proof <span>of</span> Chess</span>
+          </a>
+          <p>A chess-native proof-of-work chain.<br />Built in the open as a research prototype.</p>
+        </div>
+
+        <div class="footer-links">
+          <div>
+            <h3>Project</h3>
+            <a href="https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/WHITEPAPER.md">Whitepaper</a>
+            <a href="https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/PROTOCOL.md">Protocol</a>
+            <a href="https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/IMPLEMENTATION_PLAN.md">Roadmap</a>
+            <a href="https://github.com/chessproofofwork/somecryptochessproject/blob/main/CHANGELOG.md">Changelog</a>
+          </div>
+          <div>
+            <h3>Application</h3>
+            <a href="https://app.proofofchess.com/">Explorer</a>
+            <a href="https://app.proofofchess.com/#/wallet">Wallet</a>
+            <a href="https://app.proofofchess.com/#/play">Play</a>
+            <a href="https://app.proofofchess.com/#/dex">DEX</a>
+            <a href="https://app.proofofchess.com/#/bridge">Bridge</a>
+          </div>
+          <div>
+            <h3>Network</h3>
+            <a href="https://app.proofofchess.com/v1/status">Node status</a>
+            <a href="https://app.proofofchess.com/relay/v1/status">Relay status</a>
+            <a href="https://www.reddit.com/r/chessproofofwork/">Reddit</a>
+            <a href="https://github.com/chessproofofwork/somecryptochessproject">GitHub</a>
+          </div>
+        </div>
+      </div>
+
+      <div class="shell footer-bottom">
+        <p>© 2026 somecryptochessproject. Open source under the MIT license.</p>
+        <p>Testnet coins are worthless. No mainnet has launched or been audited.</p>
+      </div>
+    </footer>
+  </body>
+</html>
+

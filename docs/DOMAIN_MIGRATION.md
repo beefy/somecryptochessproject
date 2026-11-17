@@ -1,33 +1,35 @@
 # Moving the deployment to `proofofchess.com`
 
-The public testnet and the web application now live on one name,
-`proofofchess.com`, in the existing `chessproofofwork` Google Cloud project. The
-five subdomains (`explorer.`, `wallet.`, `play.`, `dex.`, `bridge.`) are gone:
-they were never five deployments, only five names for one bundle, and the bundle
-now selects its view from the hash route instead of the hostname.
+The public testnet and the web application now live on
+`app.proofofchess.com`, in the existing `chessproofofwork` Google Cloud project.
+The apex `proofofchess.com` is the project's landing page. The five subdomains
+(`explorer.`, `wallet.`, `play.`, `dex.`, `bridge.`) are gone: they were never
+five deployments, only five names for one bundle, and the bundle now selects its
+view from the hash route instead of the hostname.
 
 This page is the cutover record and the rebuild recipe: what already exists, what
 has to be created, the order to do it in, and how to get back.
 
 **Status (2026-11-17): the `proofofchess-com` zone is delegated, its apex `A`
-record points at the VM, and the GitHub variables name the new host. The
-one-origin code is in this commit; merging it deploys the bundle and issues the
-certificate. The old subdomain records stay in place for rollback until step 8.**
-The GCP project, VM, network, static IP, deploy user and GitHub environment
-already exist. The only new cloud resource is the `proofofchess-com` Cloud DNS
-zone; the only changed settings are its `A` record and the GitHub variables that
-name the host. The repository changes (web routing, Caddyfile, docs) are in the
-same commit as this page.
+record points at the VM, and the GitHub variables name the app host. The
+app-plus-landing code is in this commit; merging it publishes both releases and
+issues the apex and `app.` certificates. The old subdomain records stay in place
+for rollback until step 8.** The GCP project, VM, network, static IP, deploy user
+and GitHub environment already exist. The only new cloud resource is the
+`proofofchess-com` Cloud DNS zone; the changed settings are its two `A` records
+and the GitHub variables that name the host. The repository changes (landing
+page, web routing, Caddyfile, docs) are in the same commit as this page.
 
 ## Before and after
 
 | | Before | After |
 | --- | --- | --- |
-| Public origin | `https://explorer.chessproofofwork.com`, `https://wallet.chessproofofwork.com`, `https://play.chessproofofwork.com`, `https://dex.…`, `https://bridge.…` | `https://proofofchess.com` |
-| View selection | hostname (`siteForHostname`) | hash route: `#/`, `#/wallet`, `#/play`, `#/dex`, `#/bridge` |
-| Certificates | one per name, five ACME orders | one certificate for the apex |
-| DNS | five `A` records in `chessproofofwork-com` | one `A` record in `proofofchess-com` |
-| Node API | `http://testnet.chessproofofwork.com:8645` | `http://proofofchess.com:8645`, plus `https://proofofchess.com/v1` through nginx |
+| Application origin | `https://explorer.chessproofofwork.com`, `https://wallet.chessproofofwork.com`, `https://play.chessproofofwork.com`, `https://dex.…`, `https://bridge.…` | `https://app.proofofchess.com` |
+| Project overview | none | `https://proofofchess.com` |
+| View selection | hostname (`siteForHostname`) | hash route: `#/`, `#/wallet`, `#/play`, `#/dex`, `#/bridge` on the app origin |
+| Certificates | one per name, five ACME orders | two: the apex landing page and the app |
+| DNS | five `A` records in `chessproofofwork-com` | two `A` records in `proofofchess-com` |
+| Node API | `http://testnet.chessproofofwork.com:8645` | `http://app.proofofchess.com:8645`, plus `https://app.proofofchess.com/v1` through nginx |
 | GitHub host | `sccp@testnet.chessproofofwork.com` | `sccp@proofofchess.com` |
 | Cloud project | `chessproofofwork` (206061816244) | unchanged |
 | VM | `sccp-testnet-1`, `us-central1-a`, `e2-standard-2`, 20 GB, Debian 12 | unchanged |
@@ -42,19 +44,20 @@ to migrate.
 
 | Where | What changed |
 | --- | --- |
+| `src/landing/` | new static overview served at the apex; no JavaScript, no API call, links every action to the app |
 | `src/web/src/lib/site.ts` | dropped `SITE_ORIGINS`, `siteForHostname`, `currentSite`, `crossSiteHref` and `hashUrl`; one `siteHash()` map is now the whole routing contract |
 | `src/web/src/App.tsx` | the dashboard no longer depends on the hostname; the tab title follows the active view |
 | `src/web/src/main.tsx` | removed the hostname-based title selection |
-| `deploy/explorer/Caddyfile` | one `proofofchess.com` site block, one certificate |
-| `deploy/explorer/nginx.conf`, `docker-compose.yml` | comments describe one origin, not five names |
-| `.github/workflows/deploy-explorer.yml` | comments and the one-name publish description |
-| `.github/workflows/deploy-testnet-miners.yml` | `TESTNET_PUBLIC_URL` default is `http://proofofchess.com:8645` |
+| `deploy/explorer/Caddyfile` | two site blocks, `proofofchess.com` and `app.proofofchess.com`, one certificate each |
+| `deploy/explorer/nginx.conf`, `docker-compose.yml` | one nginx container with two listeners and two independent release trees |
+| `.github/workflows/deploy-explorer.yml` | builds and publishes the app and landing artifacts, switches both symlinks, smoke-tests both |
+| `.github/workflows/deploy-testnet-miners.yml` | `TESTNET_PUBLIC_URL` default is `http://app.proofofchess.com:8645` |
 | `README.md`, `deploy/README.md`, `docs/*.md`, `analysis/*` | every `curl`, `--peer`, `--node`, `dig` and browser URL |
-| `src/web/src/**/*.test.ts` | route and relay fixtures use the new origin |
+| `src/web/src/**/*.test.ts` | route and relay fixtures use the app origin |
 
 The web bundle is built with `VITE_SCCP_API=""` and `VITE_SCCP_RELAY=/relay`,
-so it reads `/v1` and `/relay` from whatever origin served it. Moving the name
-does not change either path, and the node still needs no CORS exception.
+so it reads `/v1` and `/relay` from whatever origin served it. Moving the app to
+`app.` does not change either path, and the node still needs no CORS exception.
 
 ## 1. Confirm the project and the zone
 
@@ -63,12 +66,13 @@ export PROJECT_ID="chessproofofwork"
 export REGION="us-central1"
 export ZONE="us-central1-a"
 export DNS_ZONE="proofofchess-com"
-export WEB_HOST="proofofchess.com"
+export APEX_HOST="proofofchess.com"
+export APP_HOST="app.proofofchess.com"
 
 gcloud config set project "$PROJECT_ID"
 gcloud dns managed-zones describe "$DNS_ZONE" \
     --format='value(dnsName,nameServers)'
-dig +short NS "$WEB_HOST"
+dig +short NS "$APEX_HOST"
 ```
 
 The zone must be public, must serve `proofofchess.com.`, and its name servers
@@ -83,20 +87,24 @@ in place during the cutover; step 8 retires them.
 
 ## 2. Reserve the name
 
-One `A` record at the apex, pointing at the VM's static address:
+Two `A` records, both pointing at the VM's static address:
 
 ```bash
-gcloud dns record-sets create "$WEB_HOST." \
-    --zone="$DNS_ZONE" --type=A --ttl=60 \
-    --rrdatas="34.66.79.187" --project="$PROJECT_ID"
+for host in "$APEX_HOST" "$APP_HOST"; do
+  gcloud dns record-sets create "$host." \
+      --zone="$DNS_ZONE" --type=A --ttl=60 \
+      --rrdatas="34.66.79.187" --project="$PROJECT_ID"
+done
 
-dig +short "$WEB_HOST" A      # 34.66.79.187
+dig +short "$APEX_HOST" A      # 34.66.79.187
+dig +short "$APP_HOST" A       # 34.66.79.187
 ```
 
-Use `gcloud dns record-sets update` if the record already exists. TTL 60 is
+Use `gcloud dns record-sets update` if a record already exists. TTL 60 is
 deliberate for the cutover window; raise it to 300 after a week. Do not put a
-`CNAME` at the apex: `proofofchess.com` needs an address record, and the node API
-and relay are paths on that same host.
+`CNAME` at the apex: `proofofchess.com` needs an address record. The app
+subdomain could be a `CNAME`, but this deployment uses plain `A` records so both
+names land on the host running the proxy.
 
 ## 3. Harden SSH before the first new-name deploy
 
@@ -144,7 +152,7 @@ the VPC can restrict the rule to its subnet, or use the IAP range
 # (as EXPLORER_DEPLOYMENT.md recommends), use `--env testnet` on each command
 # instead: environment values override repository values.
 gh variable set TESTNET_DEPLOY_HOST --body "sccp@proofofchess.com"
-gh variable set TESTNET_PUBLIC_URL  --body "http://proofofchess.com:8645"
+gh variable set TESTNET_PUBLIC_URL  --body "http://app.proofofchess.com:8645"
 
 # The host did not change, but its name did; pin the key under the new name.
 ssh-keyscan -H proofofchess.com | gh secret set TESTNET_KNOWN_HOSTS
@@ -175,21 +183,23 @@ gh run watch
 ```
 
 The testnet deploy rebuilds the chain from the deterministic bootstrap, so expect
-height 19, an empty mempool and a fresh faucet. The explorer deploy uploads the
-bundle and obtains the one certificate. Order matters: nginx proxies `/v1` and
-`/relay` to `127.0.0.1:8645` and `127.0.0.1:8646`, so the chain must be up first.
+height 19, an empty mempool and a fresh faucet. The explorer deploy uploads both
+the app and landing releases and obtains the two certificates. Order matters:
+nginx proxies `/v1` and `/relay` to `127.0.0.1:8645` and `127.0.0.1:8646`, so the
+chain must be up first.
 
 ## 6. Verify from outside the VM
 
 ```bash
-curl -fsS http://proofofchess.com:8645/v1/status \
+curl -fsS http://app.proofofchess.com:8645/v1/status \
   | jq '{network, height, tip_hash, mempool}'
-curl -fsS http://proofofchess.com:8646/v1/status | jq '.epoch'
+curl -fsS http://app.proofofchess.com:8646/v1/status | jq '.epoch'
 
-curl -sS  https://proofofchess.com/v1/status | jq '.height'
-curl -sS  https://proofofchess.com/relay/v1/status | jq '.epoch'
-curl -sSI https://proofofchess.com/ | head -3    # 200, not a TLS error
-curl -sSI http://proofofchess.com/  | head -1    # 308 -> https
+curl -sS  https://app.proofofchess.com/v1/status | jq '.height'
+curl -sS  https://app.proofofchess.com/relay/v1/status | jq '.epoch'
+curl -sSI https://app.proofofchess.com/ | head -3    # 200, not a TLS error
+curl -sSI https://proofofchess.com/    | head -3    # the landing page
+curl -sSI http://proofofchess.com/     | head -1    # 308 -> https
 ```
 
 The hash routes cannot be checked with `curl` because the server always returns
@@ -197,15 +207,16 @@ the same document. Open each one in a browser and confirm the view:
 
 | URL | Expected |
 | --- | --- |
-| `https://proofofchess.com/#/` | explorer dashboard |
-| `https://proofofchess.com/#/wallet` | wallet overview (or the unlock form) |
-| `https://proofofchess.com/#/play` | Play, with the wallet gate |
-| `https://proofofchess.com/#/dex` | DEX swap view |
-| `https://proofofchess.com/#/bridge` | bridge buy view |
+| `https://proofofchess.com/` | project overview, with links into the app |
+| `https://app.proofofchess.com/#/` | explorer dashboard |
+| `https://app.proofofchess.com/#/wallet` | wallet overview (or the unlock form) |
+| `https://app.proofofchess.com/#/play` | Play, with the wallet gate |
+| `https://app.proofofchess.com/#/dex` | DEX swap view |
+| `https://app.proofofchess.com/#/bridge` | bridge buy view |
 
 On the VM, `docker compose ps` should show every service healthy in both
 `/opt/sccp-testnet` and `/opt/sccp-explorer`, and the `tls` log should say the
-certificate for `proofofchess.com` was obtained.
+certificates for `proofofchess.com` and `app.proofofchess.com` were obtained.
 
 ## 7. Rollback
 
@@ -216,16 +227,16 @@ git revert <the single-domain merge>
 git push
 ```
 
-That redeploys the previous Caddyfile and bundle under the old names. The old
-`chessproofofwork-com` records are still in place until step 8, so the old URLs
-work again as soon as Caddy reloads. If only GitHub is wrong, revert step 4 first:
-put `TESTNET_DEPLOY_HOST` and `TESTNET_PUBLIC_URL` back to the old values and
-re-run the deploy.
+That redeploys the previous Caddyfile and both bundles under the old names. The
+old `chessproofofwork-com` records are still in place until step 8, so the old
+URLs work again as soon as Caddy reloads. If only GitHub is wrong, revert step 4
+first: put `TESTNET_DEPLOY_HOST` and `TESTNET_PUBLIC_URL` back to the old values
+and re-run the deploy.
 
 ## 8. Retire the old names
 
-After a week of the new origin serving traffic, remove the subdomain records so
-nothing silently depends on them. They do not redirect: the single-name Caddyfile
+After a week of the new app origin serving traffic, remove the subdomain records
+so nothing silently depends on them. They do not redirect: the current Caddyfile
 stops answering them at cutover, and the records stay only so a revert can bring
 the old names back. After this step, a rollback also needs the records recreated.
 Remove them with:

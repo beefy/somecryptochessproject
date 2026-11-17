@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RELAY_BASE, relayMatches, relayPublicUrl } from "./relay";
 
-const PAGE = "https://proofofchess.com/";
+const PAGE = "https://app.proofofchess.com/";
 
 describe("relayPublicUrl", () => {
   it("leaves an absolute base alone", () => {

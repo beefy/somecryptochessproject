@@ -116,9 +116,10 @@ Check it:
 gcloud services list --enabled --project="$PROJECT_ID"
 ```
 
-Compute Engine runs the VM; Cloud DNS publishes `proofofchess.com` and answers
-the `A` record the page and the node share. The VM pulls public container images,
-so no Artifact Registry or Cloud Storage setup is required.
+Compute Engine runs the VM; Cloud DNS publishes `proofofchess.com` and
+`app.proofofchess.com` and answers the two `A` records the landing page, app and
+node share. The VM pulls public container images, so no Artifact Registry or
+Cloud Storage setup is required.
 
 ---
 
@@ -306,32 +307,35 @@ the first command and export it before continuing:
 export STATIC_IP="203.0.113.10"   # the natIP from the describe output
 ```
 
-For the current deployment, the public name and Cloud DNS zone are:
+For the current deployment, the public names and Cloud DNS zone are:
 
 ```bash
-export WEB_HOST="proofofchess.com"
+export APEX_HOST="proofofchess.com"
+export APP_HOST="app.proofofchess.com"
 export DNS_ZONE="proofofchess-com"
 ```
 
 The deployment lives in the project `chessproofofwork` (number 206061816244).
 [`DOMAIN_MIGRATION.md`](DOMAIN_MIGRATION.md) records how it moved from five
-subdomains to this single name, in the order the steps have to run.
+subdomains to one application origin and an apex overview, in the order the steps
+have to run.
 
 The GCP commands use `$STATIC_IP`; the deploy workflow and public smoke checks use
-`$WEB_HOST`.
+`$APP_HOST` for the app and `$APEX_HOST` for the landing page.
 
 ### DNS
 
-The current deployment publishes everything under one apex,
-`proofofchess.com`, in the public `proofofchess-com` Cloud DNS zone: one `A`
-record on the static address. The node API and relay are ports `8645` and `8646`
-on that name, and the page plus its `/v1` and `/relay` proxies are the same name
-on `443`. If you are building the name from scratch, create the zone once and delegate
+The current deployment publishes two names in the public `proofofchess-com`
+Cloud DNS zone: the apex `proofofchess.com` for the landing page and
+`app.proofofchess.com` for the application. Both are `A` records on the same
+static address. The node API and relay are ports `8645` and `8646` on the app
+name, and the app plus its `/v1` and `/relay` proxies are the same name on `443`.
+If you are building the zone from scratch, create it once and delegate
 `proofofchess.com` at the registrar to the `nameServers` it reports:
 
 ```bash
 gcloud dns managed-zones create "$DNS_ZONE" \
-    --dns-name="$WEB_HOST." \
+    --dns-name="$APEX_HOST." \
     --description="proofofchess.com" \
     --visibility=public \
     --project="$PROJECT_ID"
@@ -345,31 +349,35 @@ A new zone has only `NS` and `SOA`; recreate any `MX`, `TXT`, `CAA` or
 verification records before switching the registrar's delegation.
 
 The existing deployment already has this zone delegated; do not create a second
-one for the same name. Create the record after the static IP exists:
+one for the same name. Create both records after the static IP exists:
 
 ```bash
-gcloud dns record-sets create "$WEB_HOST." \
-    --zone="$DNS_ZONE" \
-    --type=A \
-    --ttl=60 \
-    --rrdatas="$STATIC_IP" \
-    --project="$PROJECT_ID"
+for host in "$APEX_HOST" "$APP_HOST"; do
+  gcloud dns record-sets create "$host." \
+      --zone="$DNS_ZONE" \
+      --type=A \
+      --ttl=60 \
+      --rrdatas="$STATIC_IP" \
+      --project="$PROJECT_ID"
+done
 ```
 
-Do not put a `CNAME` at the apex: the name needs an address record. If the record
+Do not put a `CNAME` at the apex: the name needs an address record. If a record
 already exists, use `gcloud dns record-sets update` with the same arguments.
 Verify before wiring GitHub:
 
 ```bash
-dig +short "$WEB_HOST" A
-curl -sS "http://$WEB_HOST:8645/v1/status" \
+dig +short "$APEX_HOST" A
+dig +short "$APP_HOST" A
+curl -sS "http://$APP_HOST:8645/v1/status" \
     | jq '{network, height, tip_hash, mempool}'
 ```
 
 There is no GCP load balancer or managed certificate in this setup, and the node
-still speaks plain HTTP on `8645`. Caddy obtains one certificate for `$WEB_HOST`
-and terminates TLS on `443`, so the page and the `/v1` and `/relay` proxies are
-served over `https` while the node and relay ports stay as described above.
+still speaks plain HTTP on `8645`. Caddy obtains one certificate for each name
+and terminates TLS on `443`, so the landing page and the app with its `/v1` and
+`/relay` proxies are served over `https` while the node and relay ports stay as
+described above.
 
 
 ---
@@ -464,7 +472,7 @@ gcloud compute ssh "$VM" --zone="$ZONE" --project="$PROJECT_ID" --command \
 Test the exact login the workflow will use, from your workstation:
 
 ```bash
-ssh -i ~/.ssh/sccp_testnet_deploy sccp@"$WEB_HOST" \
+ssh -i ~/.ssh/sccp_testnet_deploy sccp@"$APEX_HOST" \
     'id && docker version --format "{{.Server.Version}}" && \
      docker compose version && ls -ld /opt/sccp-testnet'
 ```
@@ -514,7 +522,7 @@ then SSHes to the VM and runs Compose there. Configure the repository (or the
 | variable | `TESTNET_DEPLOY_HOST` | `sccp@proofofchess.com` |
 | variable | `TESTNET_DEPLOY_DIR` | `/opt/sccp-testnet` |
 | variable | `TESTNET_DEPLOY_PORT` | `22` (optional, defaults to 22) |
-| variable | `TESTNET_PUBLIC_URL` | `http://proofofchess.com:8645` (optional; workflow default) |
+| variable | `TESTNET_PUBLIC_URL` | `http://app.proofofchess.com:8645` (optional; workflow default) |
 | secret | `TESTNET_SSH_KEY` | contents of `~/.ssh/sccp_testnet_deploy` |
 | secret | `TESTNET_KNOWN_HOSTS` | `ssh-keyscan -H proofofchess.com` output (optional) |
 
@@ -526,12 +534,12 @@ approve every deploy. The remote deploy job stays skipped until
 Using the GitHub CLI from the repository root:
 
 ```bash
-gh variable set TESTNET_DEPLOY_HOST --body "sccp@$WEB_HOST"
+gh variable set TESTNET_DEPLOY_HOST --body "sccp@$APEX_HOST"
 gh variable set TESTNET_DEPLOY_DIR  --body "/opt/sccp-testnet"
-gh variable set TESTNET_PUBLIC_URL  --body "http://$WEB_HOST:8645"  # optional
+gh variable set TESTNET_PUBLIC_URL  --body "http://$APP_HOST:8645"  # optional
 gh secret set TESTNET_SSH_KEY < ~/.ssh/sccp_testnet_deploy
 
-ssh-keyscan -H "$WEB_HOST" > /tmp/sccp-known-hosts 2>/dev/null
+ssh-keyscan -H "$APEX_HOST" > /tmp/sccp-known-hosts 2>/dev/null
 gh secret set TESTNET_KNOWN_HOSTS < /tmp/sccp-known-hosts
 ```
 
@@ -564,23 +572,23 @@ Or push a commit to `main`; the workflow is configured for both.
 When it finishes, check the host:
 
 ```bash
-ssh -i ~/.ssh/sccp_testnet_deploy sccp@"$WEB_HOST" \
+ssh -i ~/.ssh/sccp_testnet_deploy sccp@"$APEX_HOST" \
     'cd /opt/sccp-testnet && docker compose ps'
 ```
 
 Check the API from your workstation:
 
 ```bash
-curl -sS "http://$WEB_HOST:8645/v1/status" \
+curl -sS "http://$APP_HOST:8645/v1/status" \
     | jq '{network, height, tip_hash, mempool}'
 
-curl -sS "http://$WEB_HOST:8645/v1/faucet" | jq
+curl -sS "http://$APP_HOST:8645/v1/faucet" | jq
 ```
 
 Expected after a successful deploy: network `testnet`, height `19` after
 bootstrap, and a faucet policy response. The workflow also runs
 `deploy/check_testnet_stack.py` against the node and relay, then checks
-`http://proofofchess.com:8645/v1/status` from the runner, so a
+`http://app.proofofchess.com:8645/v1/status` from the runner, so a
 green deploy job proves both the internal Compose network and the public DNS
 path work.
 
@@ -590,7 +598,7 @@ is intentional for the deterministic demonstrator.
 
 To fund a wallet against this host, follow
 [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) with
-`SCCP_NODE="http://$WEB_HOST:8645"`.
+`SCCP_NODE="http://$APP_HOST:8645"`.
 
 
 ---
@@ -656,8 +664,9 @@ environment; remove those separately if you are decommissioning the repository.
 | `docker: 'compose' is not a docker command` | Compose v2 plugin missing. | `docker compose version` on the VM. |
 | GHCR `unauthorized` during deploy | Package visibility or workflow token permissions. | Check the build job and package settings. |
 | `curl :8645` times out | VM lacks `sccp-node` tag, firewall rule is wrong, or the stack is not running. | `docker compose ps` and the firewall list. |
-| `curl :80` times out | Web-origin firewall rule missing, or `dig` returns nothing yet. | The `sccp-testnet-explorer-web` rule and `dig +short proofofchess.com`. |
-| `curl https://proofofchess.com` times out | `tcp:443` missing from that rule, or the Caddy container is down. | `gcloud compute firewall-rules describe sccp-testnet-explorer-web`; `docker compose ps` in `/opt/sccp-explorer`. |
+| `curl :80` times out | Web-origin firewall rule missing, or `dig` returns nothing yet. | The `sccp-testnet-explorer-web` rule and `dig +short proofofchess.com app.proofofchess.com`. |
+| `curl https://app.proofofchess.com` times out | `tcp:443` missing from that rule, or the Caddy container is down. | `gcloud compute firewall-rules describe sccp-testnet-explorer-web`; `docker compose ps` in `/opt/sccp-explorer`. |
+| Apex loads but `app.` says `ERR_CERT_*` | The `app` A record is missing or the second certificate has not issued | `dig +short app.proofofchess.com`; `docker compose logs tls` in `/opt/sccp-explorer`. |
 | Deploy succeeds but faucet `404` | Node started with `--no-faucet`. | Compose environment and `docker compose logs node`. |
 | Chain height resets after every deploy | Expected: the workflow runs `docker compose down -v`. | [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md). |
 
@@ -668,11 +677,12 @@ environment; remove those separately if you are decommissioning the repository.
 - [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) — compose settings, workflow
   details and smoke tests.
 - [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md) — the web origin's firewall
-  rules, DNS record, proxy and certificate.
+  rules, the two DNS records, the proxies and both certificates.
 - [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) — fund a wallet
   against the deployed node.
 - [`RUNBOOK.md`](RUNBOOK.md) — operating and recovering the testnet.
 - [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — miner-side setup.
 - [`DOMAIN_MIGRATION.md`](DOMAIN_MIGRATION.md) — the cutover that produced
-  `proofofchess.com`, in the order the steps have to run.
+  `app.proofofchess.com` and the apex landing page, in the order the steps have
+  to run.
 

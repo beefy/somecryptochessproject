@@ -1,7 +1,7 @@
 /**
  * The five named views of the one web application.
  *
- * There is one public origin, `https://proofofchess.com`, and one bundle. A view
+ * There is one public origin, `https://app.proofofchess.com`, and one bundle. A view
  * is selected by the hash route (`#/`, `#/wallet`, `#/play`, `#/dex`,
  * `#/bridge`), not by a hostname, so every view is a direct, bookmarkable URL on
  * the same origin and one TLS certificate covers all of them. The hamburger

@@ -2,7 +2,7 @@
  * The five views of the one-origin web application.
  *
  * There are no hostnames to resolve any more: each view is a hash route on
- * `https://proofofchess.com`, and the menu switches between them in place.
+ * `https://app.proofofchess.com`, and the menu switches between them in place.
  */
 
 import { describe, expect, it } from "vitest";
