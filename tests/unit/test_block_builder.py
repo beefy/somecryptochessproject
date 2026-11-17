@@ -63,6 +63,45 @@ def test_a_bootstrap_block_pays_the_subsidy_plus_the_fees(
     assert chain.state.minted == chain.genesis_state.minted + coinbase.payload["amount"]
 
 
+def test_a_proof_block_pays_the_subsidy_and_every_fee(
+    live_chain: Any, chain_match: Any, miner_keys: dict[str, Any], protocol_accounts: Any
+) -> None:
+    chain = live_chain.chain
+    match = chain_match(chain, epoch=3)
+    winner = match.proof.winner
+    alice = protocol_accounts["alice"]
+    bob = protocol_accounts["bob"]
+    pool = Mempool(params=chain.params, tip_state=chain.state, book=chain.book)
+    first = WalletService(chain.params, chain.state).build_transfer(
+        alice.keypair, bob.address, COINS
+    )
+    second = WalletService(chain.params, chain.state).build_transfer(
+        bob.keypair, alice.address, COINS
+    )
+    for tx in (first, second):
+        pool.add_transaction(tx)
+    pool.add_proof(match.proof)
+    before = chain.state.account(winner).immature
+    minted_before = chain.state.minted
+
+    block = _builder(chain, miner_keys[winner], pool).build(
+        timestamp=chain.state.timestamps[-1] + 1
+    )
+    assert block is not None
+    coinbase = block.coinbase
+    assert coinbase is not None
+    assert len(block.transactions) == 2
+    expected = block_subsidy(chain.params, block.header.height, chain.state.minted) + sum(
+        tx.fee for tx in block.transactions
+    )
+    assert coinbase.payload["to"] == winner
+    assert coinbase.payload["amount"] == expected
+
+    assert chain.add_block(block) is not None
+    assert chain.state.account(winner).immature == before + expected
+    assert chain.state.minted == minted_before + expected
+
+
 def test_the_builder_refuses_to_invent_a_win(live_chain: Any, protocol_accounts: Any) -> None:
     chain = live_chain.chain
     assert (

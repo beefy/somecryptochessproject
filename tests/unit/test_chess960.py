@@ -27,6 +27,7 @@ from sccp.config import (
 )
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
+from sccp.errors import StateError
 from sccp.miner.matchmaker import Matchmaker
 from sccp.protocol.models import Beacon
 from sccp.protocol.pairing import RosterEntry, pair
@@ -254,6 +255,47 @@ def test_c960_rewards_mature_like_native_coinbase() -> None:
     assert state.minted_assets[CHESS960_ASSET_ID] == 123
     state.release_matured(10 + DEVNET.coinbase_maturity)
     assert state.asset_balance(address, CHESS960_ASSET_ID) == 123
+
+
+def test_c960_and_native_coinbases_mature_on_their_own_schedules() -> None:
+    state = State(params=DEVNET)
+    address = "sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g"
+    maturity = DEVNET.coinbase_maturity
+    state.credit_coinbase(address, 700, height=10)
+    state.credit_asset_coinbase(address, CHESS960_ASSET_ID, 123, height=11)
+    account = state.account(address)
+    assert account.balance == 0
+    assert account.immature == 700
+    assert account.assets == {}
+    assert account.immature_assets == {CHESS960_ASSET_ID: 123}
+    assert state.minted == 700
+    assert state.minted_assets == {CHESS960_ASSET_ID: 123}
+
+    assert state.release_matured(10 + maturity - 1) == 0
+    assert state.release_matured(10 + maturity) == 700
+    assert account.balance == 700
+    assert account.immature == 0
+    assert state.asset_balance(address, CHESS960_ASSET_ID) == 0
+    assert account.immature_assets == {CHESS960_ASSET_ID: 123}
+
+    # The return value is the native total only: the C960 release below moves
+    # the asset balance without adding to that total.
+    assert state.release_matured(11 + maturity - 1) == 0
+    assert state.release_matured(11 + maturity) == 0
+    assert state.asset_balance(address, CHESS960_ASSET_ID) == 123
+    assert account.assets == {CHESS960_ASSET_ID: 123}
+    assert account.immature_assets.get(CHESS960_ASSET_ID, 0) == 0
+    assert account.asset_coinbase_queue == []
+
+
+def test_credit_asset_coinbase_ignores_zero_and_rejects_negative() -> None:
+    state = State(params=DEVNET)
+    address = "sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g"
+    state.credit_asset_coinbase(address, CHESS960_ASSET_ID, 0, 1)
+    assert address not in state.accounts
+    assert state.minted_assets == {}
+    with pytest.raises(StateError):
+        state.credit_asset_coinbase(address, CHESS960_ASSET_ID, -1, 1)
 
 
 def test_asset_transfer_moves_c960_and_pays_the_fee_in_sccp() -> None:

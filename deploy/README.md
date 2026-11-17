@@ -181,7 +181,11 @@ traffic container, and asserts through the node API that the mined chain
 contains closed HTLCs: one claimed before its timelock and one refunded after
 it. A transfer case sends an ordinary SCCP payment and checks both balances and
 the mined transaction record, and a DEX case drives a C960 pool through create,
-swap, add-liquidity and remove-liquidity. The containers only talk to the node;
+swap, add-liquidity and remove-liquidity. A miner-payout case then mines one
+maturity window of fee-paying transfers and checks that the miner account gains
+the bootstrap subsidy and the transaction fees, releases them only after
+`coinbase_maturity` blocks, and grows the node's `minted` total by exactly the
+new coinbase value. The containers only talk to the node;
 the assertions run in the host process, so the test covers the artefact the
 deploy workflow ships rather than the Python packages in place.
 

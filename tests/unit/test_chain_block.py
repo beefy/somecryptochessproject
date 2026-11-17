@@ -23,7 +23,7 @@ from sccp.chain.block import (
 from sccp.chain.genesis import load_genesis
 from sccp.chain.mempool import Mempool
 from sccp.chain.state import ZERO_HASH
-from sccp.config import DEVNET, MAINNET, NetworkParams
+from sccp.config import CHESS960_ASSET_ID, DEVNET, MAINNET, NetworkParams
 from sccp.errors import BlockValidationError
 from sccp.miner.block_builder import BlockBuilder
 
@@ -209,6 +209,44 @@ def test_connect_rejects_tampered_commitments(devnet_chain: Any, protocol_accoun
     assert (
         _reason(devnet_chain, block.model_copy(update={"coinbase": None})) is BlockFailure.COINBASE
     )
+
+
+def test_a_coinbase_cannot_claim_variant_rewards_without_a_variant_proof(
+    devnet_chain: Any, protocol_accounts: Any
+) -> None:
+    block = _propose(devnet_chain, protocol_accounts["carol"].keypair)
+    coinbase = block.coinbase
+    assert coinbase is not None
+    rewarded = coinbase.model_copy(
+        update={"payload": {**coinbase.payload, "variant_rewards": {CHESS960_ASSET_ID: 1}}}
+    )
+    tampered = block.model_copy(update={"coinbase": rewarded})
+    tampered = _header(tampered, merkle_root=merkle_root_of(tampered))
+    assert _reason(devnet_chain, tampered) is BlockFailure.COINBASE
+
+
+@pytest.mark.parametrize(
+    "rewards",
+    [
+        [],
+        {CHESS960_ASSET_ID: 0},
+        {CHESS960_ASSET_ID: True},
+        {"SCCP": 1},
+        {"aa" * 32: 1},
+    ],
+)
+def test_a_coinbase_rejects_malformed_variant_rewards(
+    devnet_chain: Any, protocol_accounts: Any, rewards: Any
+) -> None:
+    block = _propose(devnet_chain, protocol_accounts["carol"].keypair)
+    coinbase = block.coinbase
+    assert coinbase is not None
+    rewarded = coinbase.model_copy(
+        update={"payload": {**coinbase.payload, "variant_rewards": rewards}}
+    )
+    tampered = block.model_copy(update={"coinbase": rewarded})
+    tampered = _header(tampered, merkle_root=merkle_root_of(tampered))
+    assert _reason(devnet_chain, tampered) is BlockFailure.COINBASE
 
 
 def test_connect_enforces_the_timestamp_window(devnet_chain: Any, protocol_accounts: Any) -> None:

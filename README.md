@@ -601,7 +601,7 @@ make test-all      # adds integration/e2e; skips if Stockfish is absent
 make dist-check    # build sdist+wheel and run `twine check --strict` (twine>=7)
 make devnet        # in-process node + relay + mock miners
 make stack         # write the docker-compose stack and validate the file
-make container-e2e # build the image and run live HTLC, transfer and DEX tests (Docker)
+make container-e2e # build the image and run live HTLC, transfer, DEX and miner-payout tests (Docker)
 ```
 
 Real-engine tests are marked `engine` and deselected by default:

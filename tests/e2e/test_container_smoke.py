@@ -7,9 +7,12 @@ node, the traffic generator and the drip as separate containers. The node mines
 on its own, the drip keeps a quiet chain supplied with ledger work, and the
 traffic generator sends transfers and locks, claims and refunds HTLCs. Separate
 cases assert that an ordinary transfer moves the balances the node reports, and
-that the DEX can create a pool, swap, add liquidity and remove it again. C960
-only exists after a settled Chess960 proof, so the DEX fixture credits the
-published traffic wallets before its dedicated devnet node serves.
+that the DEX can create a pool, swap, add liquidity and remove it again. A
+payout case mines a maturity window of fee-paying transfers and checks that the
+miner's account receives the bootstrap subsidy and fees, matures them on
+schedule, and keeps the node's minted total in step. C960 only exists after a
+settled Chess960 proof, so the DEX fixture credits the published traffic wallets
+before its dedicated devnet node serves.
 
 It is opt-in because it needs a Docker daemon and a few minutes of wall clock.
 Set ``SCCP_RUN_CONTAINER_E2E=1`` and select the ``container`` marker::
@@ -63,14 +66,20 @@ SEEDED_VARIANT_COINS = 1_000
 
 TRANSFER_SENDER_INDEX = 10
 TRANSFER_RECIPIENT_INDEX = 11
+MINER_PAYOUT_SENDER_INDEX = 2
+MINER_PAYOUT_RECIPIENT_INDEX = 3
 DEX_CREATOR_INDEX = 0
 DEX_TRADER_INDEX = 1
 DEX_POOL_ID = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
 
 TRANSFER_COINS = 5
+MINER_PAYOUT_COINS = 1
 DEX_CREATE_COINS = 100
 DEX_SWAP_COINS = 5
 DEX_ADD_COINS = 10
+
+MINER_PAYOUT_BLOCKS = DEVNET.coinbase_maturity + 1
+"""One block past maturity: releases an old subsidy and a new fee reward."""
 
 BOOTSTRAP_TIMEOUT_SECONDS = 120.0
 REQUEST_TIMEOUT_SECONDS = 10.0
@@ -606,6 +615,80 @@ with httpx.Client(
         raise SystemExit(f"transfer {{digest}} did not confirm")
 """
 
+MINER_PAYOUT_SCRIPT = f"""
+import json
+
+import httpx
+
+from deploy import synthetic_testnet_traffic as traffic
+from sccp.config import DEVNET, coins_to_units
+
+MINER = {DEVNET_MINER_ADDRESS!r}
+SENDER = traffic.wallet({MINER_PAYOUT_SENDER_INDEX}, DEVNET)
+RECIPIENT = traffic.wallet({MINER_PAYOUT_RECIPIENT_INDEX}, DEVNET)
+AMOUNT = coins_to_units({MINER_PAYOUT_COINS})
+
+with httpx.Client(
+    base_url="http://{DEVNET_NODE_ALIAS}:{NODE_CONTAINER_PORT}", timeout=30.0
+) as client:
+    before = traffic.account(client, MINER)
+    status_before = client.get("/v1/status").json()
+    start_height = traffic.tip_height(client)
+    txids = []
+    for index in range({MINER_PAYOUT_BLOCKS}):
+        tx = traffic.transfer_transaction(
+            SENDER,
+            to=RECIPIENT.address,
+            amount=AMOUNT,
+            nonce=traffic.nonce(client, SENDER.address),
+            params=DEVNET,
+        )
+        digest = traffic.submit_transaction(client, tx)
+        confirmed = traffic.wait_for_transactions(
+            client, (digest,), wait_seconds=60.0, poll_seconds=0.2
+        )
+        if digest not in confirmed:
+            status = client.get("/v1/status").json()
+            pool = client.get("/v1/mempool").json()
+            raise SystemExit(
+                f"payout transaction {{index}} ({{digest}}) did not confirm; "
+                f"status={{status}} pool={{pool}}"
+            )
+        txids.append(digest)
+    end_height = traffic.tip_height(client)
+    after = traffic.account(client, MINER)
+    status_after = client.get("/v1/status").json()
+    print(
+        "MINER_PAYOUT_RESULT "
+        + json.dumps(
+            {{
+                "miner": MINER,
+                "sender": SENDER.address,
+                "recipient": RECIPIENT.address,
+                "amount": AMOUNT,
+                "fee": DEVNET.min_fee,
+                "blocks": {MINER_PAYOUT_BLOCKS},
+                "start_height": start_height,
+                "end_height": end_height,
+                "txids": txids,
+                "before": {{
+                    "balance": int(before["balance"]),
+                    "immature": int(before["immature"]),
+                    "total": int(before["total"]),
+                }},
+                "after": {{
+                    "balance": int(after["balance"]),
+                    "immature": int(after["immature"]),
+                    "total": int(after["total"]),
+                }},
+                "minted_before": int(status_before["minted"]),
+                "minted_after": int(status_after["minted"]),
+            }}
+        ),
+        flush=True,
+    )
+"""
+
 DEX_SCRIPT = f"""
 import json
 
@@ -804,6 +887,17 @@ def _run_transfer(node_image: str, private_network: str) -> str:
     )
 
 
+def _run_miner_payout(node_image: str, private_network: str) -> str:
+    """Mine a maturity window of fee-paying transfers from the image."""
+    return _run_script(
+        node_image,
+        private_network,
+        label="miner-payout",
+        script=MINER_PAYOUT_SCRIPT,
+        timeout=BOOTSTRAP_TIMEOUT_SECONDS,
+    )
+
+
 def _run_dex(node_image: str, private_network: str) -> str:
     """Create a C960 pool and exercise all three pool actions."""
     return _run_script(
@@ -910,6 +1004,74 @@ def test_image_transfers_coins(
     assert record["type"] == "transfer"
     assert record["height"] == height
     assert record["in_mempool"] is False
+
+
+def test_image_pays_the_miner(
+    devnet_node: str,
+    node_image: str,
+    private_network: str,
+) -> None:
+    """Subsidies, fees and maturity reach the miner account the API reports."""
+    output = _run_miner_payout(node_image, private_network)
+    print(output)
+    result = _marker_json(output, "MINER_PAYOUT_RESULT ")
+
+    assert result["miner"] == DEVNET_MINER_ADDRESS
+    assert result["sender"] == traffic.wallet(MINER_PAYOUT_SENDER_INDEX, DEVNET).address
+    assert result["recipient"] == traffic.wallet(MINER_PAYOUT_RECIPIENT_INDEX, DEVNET).address
+    assert result["amount"] == coins_to_units(MINER_PAYOUT_COINS)
+    assert result["fee"] == DEVNET.min_fee
+    assert result["blocks"] == MINER_PAYOUT_BLOCKS
+    assert len(result["txids"]) == MINER_PAYOUT_BLOCKS
+
+    start_height = result["start_height"]
+    end_height = result["end_height"]
+    assert isinstance(start_height, int) and not isinstance(start_height, bool)
+    assert isinstance(end_height, int) and not isinstance(end_height, bool)
+    assert end_height == start_height + MINER_PAYOUT_BLOCKS
+
+    with httpx.Client(timeout=REQUEST_TIMEOUT_SECONDS) as client:
+        blocks = {
+            height: client.get(f"{devnet_node}/v1/blocks/{height}").json()["block"]
+            for height in range(1, end_height + 1)
+        }
+
+    def coinbase(height: int) -> int:
+        block = blocks[height]
+        assert block["header"]["miner"] == DEVNET_MINER_ADDRESS
+        assert block["coinbase"]["payload"]["to"] == DEVNET_MINER_ADDRESS
+        amount = block["coinbase"]["payload"]["amount"]
+        assert isinstance(amount, int) and not isinstance(amount, bool)
+        return amount
+
+    bootstrap_end = bootstrap_end_height(DEVNET)
+    for height in range(1, bootstrap_end + 1):
+        assert blocks[height]["transactions"] == []
+        assert blocks[height]["proofs"] == []
+        assert coinbase(height) == DEVNET.subsidy
+
+    for height in range(bootstrap_end + 1, end_height + 1):
+        block = blocks[height]
+        assert block["proofs"] == []
+        assert len(block["transactions"]) == 1
+        fees = sum(tx["fee"] for tx in block["transactions"])
+        assert coinbase(height) == fees
+    for height in range(start_height + 1, end_height + 1):
+        assert coinbase(height) == DEVNET.min_fee
+
+    maturity = DEVNET.coinbase_maturity
+    released_before = sum(coinbase(height) for height in range(1, start_height - maturity + 1))
+    released_after = sum(coinbase(height) for height in range(1, end_height - maturity + 1))
+    new_value = sum(coinbase(height) for height in range(start_height + 1, end_height + 1))
+    matured = released_after - released_before
+
+    before = result["before"]
+    after = result["after"]
+    assert matured > 0
+    assert after["balance"] - before["balance"] == matured
+    assert after["immature"] - before["immature"] == new_value - matured
+    assert after["total"] - before["total"] == new_value
+    assert result["minted_after"] - result["minted_before"] == new_value
 
 
 def test_image_exercises_dex(
