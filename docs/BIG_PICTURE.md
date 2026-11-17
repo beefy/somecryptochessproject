@@ -34,7 +34,7 @@ That gives four deliverables, in dependency order:
 | Web wallet | creates, holds and signs in the browser | none | 0.22.0 |
 | Multi-asset ledger + variants | variant tokens mined by variant games | protocol v2 | 0.23.0 |
 | Native DEX | pools, LP positions and swaps between on-chain assets | protocol v2 | 0.24.0 |
-| ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | protocol v2 + one Ethereum contract | 0.25.0 |
+| ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | protocol v2 + one Ethereum contract | 0.24.0 |
 
 Optionally, 0.26.0 adds a `wETH` asset so that ETH itself can be traded in the
 native DEX; that is a bonded federation and is explicitly out of the critical
@@ -467,7 +467,7 @@ randomised property test, batch clearing resists an in-block sandwich (an
 adversarial test with a deliberately front-run order), and removing all
 liquidity after the fee accrual returns the expected amounts to the unit.
 
-## 7. Workstream D -- ETH<->SCCP bridge (0.25.0)
+## 7. Workstream D -- ETH<->SCCP bridge (0.24.0)
 
 ### 7.1 Principle: no custody, one secret
 
@@ -655,8 +655,8 @@ wallet's Bridge view recovers correctly from a page reload at every step.
 | 0.19.0 | this document | reviewed; no code change |
 | 0.22.0 | web wallet | vectors, vitest, Playwright devnet e2e; keyfile round-trips with the CLI |
 | 0.23.0 | protocol v2: assets and variants | v2 spec in `PROTOCOL.md`; regenerated golden chain; two-variant soak |
-| 0.24.0 | native DEX | property tests for `k` and rounding; quote equals execution; no admin keys |
-| 0.25.0 | HTLC bridge and order book | adversarial swap suite on Anvil + devnet; contract audit |
+| 0.24.0 | native DEX, HTLC bridge and order book | property tests for `k` and rounding; adversarial swap suite on Anvil + devnet; contract audit |
+| 0.25.0 | genesis premine and testnet bootstrap | pinned mainnet/testnet genesis hashes; cap accounting; NodeService loads both networks |
 | 0.26.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure |
 | 1.0.0 | mainnet | the go/no-go in `IMPLEMENTATION_PLAN.md`, plus the bridge audit |
 

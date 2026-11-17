@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-16
+
 ### Added
 
 - **A 10% SCCP and 5%-per-variant genesis premine.** Mainnet genesis now
