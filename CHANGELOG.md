@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-17
+
 ### Changed
 
 - **The hosted app moved to `https://app.proofofchess.com`, and the apex is now a
