@@ -7,8 +7,20 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **The testnet notebook charts the bridge and the DEX.** `analysis/testnet_stats.ipynb`
+  now reads the HTLC and pool transaction types the traffic bot emits: one panel covers
+  lock, claim and refund lifecycles, another covers pool creation, liquidity changes and
+  swaps with the SCCP named in each payload, and the closing snapshot counts both.
+
 ### Fixed
 
+- **The balance reconstruction's drift check can fail again.** It compared the rebuilt
+  series with `GET /v1/accounts` *after* shifting the series to match, so it always read
+  zero. The gap is now measured before the opening-balance anchor is applied, and the
+  reconstruction debits native transfers as well as crediting them, models HTLC escrow
+  and release plus the native DEX legs, and pays every transaction's fee.
 - **The landing page's chess board is no longer mirrored.** The hero board's
   `repeating-conic-gradient` put the light stop first, which painted the top-left
   square with it, so a8 and h1 — both light on a real board — came out dark. Dark
