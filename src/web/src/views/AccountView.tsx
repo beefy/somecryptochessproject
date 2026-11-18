@@ -100,7 +100,7 @@ export function AccountView({ address }: { address: string }): ReactNode {
           {view.public_key === null ? "-" : <Mono copy>{view.public_key}</Mono>}
         </KeyValue>
         {registered && (
-          <KeyValue label="Elo">
+          <KeyValue label="Rating">
             <Link href={`#/miners/${address}`}>rating history</Link>
           </KeyValue>
         )}

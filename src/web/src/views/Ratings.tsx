@@ -1,5 +1,5 @@
 /**
- * Miner Elo: the derived Glicko-2 leaderboard and its distribution.
+ * Ratings: the derived Glicko-2 leaderboard and its distribution.
  *
  * The node computes these numbers by replaying settled proofs; the explorer only
  * shapes them. The top ten is a slice of `miners`, while the histogram covers
@@ -32,7 +32,7 @@ export function Ratings(): ReactNode {
     <>
       <View style={styles.hero}>
         <Text variant="headlineMedium" style={styles.heroTitle}>
-          Miner Elo
+          Ratings
         </Text>
         <Text variant="bodyLarge" style={styles.heroBody}>
           Every settled proof is a game with two seats and a result, so the node can replay the

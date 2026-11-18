@@ -69,16 +69,14 @@ deploy that does exactly this is
   settlement, paged by settle height with the game hash as the tie-break so a
   block carrying several proofs yields exact pages. A row says whether the proof
   is in a block or still in the mempool and how the chain currently judges it.
-- **Live** — the sessions the relay still has open, polled every couple of
-  seconds: both seats, the side to move, and clocks counted down locally from the
-  relay's last answer. Finished games are not listed here; their proofs appear on
-  the Games page once a block settles one.
+  A match the relay is still running has no proof yet, so it is not listed: the
+  explorer shows a game from the moment a seat's transcript reaches the mempool.
 - **A game** — settlement state, the match certificate (both seats, opening,
   engines, start signatures) and the PGN, when this node has cached the
   transcript.
-- **Elo** — the derived Glicko-2 leaderboard: the top ten miners with their rating
-  deviation and record, and the distribution of current ratings across every
-  rated miner in fixed 100-point bands.
+- **Ratings** — the derived Glicko-2 leaderboard: the top ten miners with their
+  rating deviation and record, and the distribution of current ratings across
+  every rated miner in fixed 100-point bands.
 - **A miner** — its current rating, the rank and record behind it, and a line
   chart of one point per epoch. Each point carries its rating and deviation as a
   hover tooltip; the chart is an SVG the page draws from the node's replay, with

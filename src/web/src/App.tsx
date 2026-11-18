@@ -13,20 +13,20 @@ import { Banner, Button, PaperProvider, Surface, Text, useTheme } from "react-na
 import { AppMenu } from "./components/AppMenu";
 import { Anchor, Loading, Page } from "./components/Chrome";
 import { NoticeProvider } from "./components/Notices";
+import { ThemeToggle } from "./components/ThemeToggle";
 import { WalletSessionProvider } from "./components/WalletSession";
 import { WalletStatusBar } from "./components/WalletStatusBar";
 import { formatInteger, shortHash } from "./lib/format";
 import { SITE_TITLES, siteHash, type Site } from "./lib/site";
 import { NodeProvider, useNode } from "./node";
 import { activeSection, navigate, useRoute, type Route } from "./router";
-import { darkTheme, lightTheme, ThemeModeContext, preferredMode, useThemeMode, type ThemeMode } from "./theme";
+import { darkTheme, lightTheme, ThemeModeContext, preferredMode, type ThemeMode } from "./theme";
 import { AccountView } from "./views/AccountView";
 import { BlockDetail } from "./views/BlockDetail";
 import { Blocks } from "./views/Blocks";
 import { Dashboard } from "./views/Dashboard";
 import { GameDetail } from "./views/GameDetail";
 import { Games } from "./views/Games";
-import { LiveGames } from "./views/LiveGames";
 import { MinerRating } from "./views/MinerRating";
 import { NotFound } from "./views/NotFound";
 import { Ratings } from "./views/Ratings";
@@ -62,8 +62,7 @@ const EXPLORER_SECTIONS = [
   { key: "dashboard", label: "Overview", href: "#/" },
   { key: "blocks", label: "Blocks", href: "#/blocks" },
   { key: "games", label: "Games", href: "#/games" },
-  { key: "liveGames", label: "Live", href: "#/live" },
-  { key: "ratings", label: "Elo", href: "#/ratings" },
+  { key: "ratings", label: "Ratings", href: "#/ratings" },
 ] as const;
 
 const WALLET_SECTIONS = [
@@ -127,7 +126,6 @@ export function App(): ReactNode {
 function Shell(): ReactNode {
   const route = useRoute();
   const { status } = useNode();
-  const { mode, toggle } = useThemeMode();
   const paper = useTheme();
   const { width } = useWindowDimensions();
   const compact = width < 720;
@@ -200,11 +198,10 @@ function Shell(): ReactNode {
                 {formatInteger(status.data.height)}
               </Text>
             )}
-            {/* A label, not an icon: no icon library ships with this bundle, so
-                `IconButton icon="weather-night"` renders an empty circle. */}
-            <Button compact mode="text" onPress={toggle} accessibilityLabel="Toggle colour scheme">
-              {mode === "dark" ? "Light" : "Dark"}
-            </Button>
+            {/* An icon, not a label: the sun/moon pair says what the press does
+                without spending header width on a word. `ThemeToggle` draws the
+                glyph itself because this bundle ships no icon library. */}
+            <ThemeToggle />
           </View>
         </View>
         {status.data !== undefined && (
@@ -348,8 +345,6 @@ function RouteView({ route }: { route: Route }): ReactNode {
       return <Games />;
     case "game":
       return <GameDetail gameHash={route.gameHash} />;
-    case "liveGames":
-      return <LiveGames />;
     case "ratings":
       return <Ratings />;
     case "miner":

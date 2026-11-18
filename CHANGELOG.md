@@ -7,6 +7,42 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-17
+
+### Changed
+
+- **The explorer lost its Live page, and "Elo" is now "Ratings".** `#/live`
+  duplicated the Games table with a fresher poll, while `/v1/games` already
+  reports each match's termination and settlement height, so the route, its view
+  and its section are gone and an old `#/live` bookmark lands on the 404 view.
+  The leaderboard and miner pages say "Ratings", which is what the node's
+  Glicko-2 projection is called everywhere else. The header's text theme switch
+  became a sun/moon icon (`ThemeToggle`), the wallet bar spans the full header
+  width instead of stopping at the page column, and the block and game tables
+  scroll inside their own box so a wide row never pushes a phone's page sideways.
+
+### Fixed
+
+- **Chess960 miners start again, so C960 games reach the chain.**
+  `open_engine(..., chess960=True)` used to pass Stockfish's `UCI_Chess960`
+  through `engine.configure`, which python-chess 1.11 refuses ("cannot set
+  UCI_Chess960 which is automatically managed") because the library sets that
+  option from each position's board itself. `sccp miner run --variant chess960`
+  therefore exited at start-up: the relay opened a C960 session per round,
+  abandoned each one at ply 0, and only standard games ever minted. The flag now
+  only requires the binary to advertise `UCI_Chess960` (raising a clear
+  `EngineError` when it does not) and leaves the option to python-chess, and a
+  regression test plays a beacon-selected C960 start through a real Stockfish
+  (`-m engine`).
+- **Chess960 proofs are verified against the Chess960 half of the roster.**
+  The proof context built from an epoch record dropped each member's `variant`,
+  so every C960 seat was checked as `standard` and the node refused the proof
+  ("seat ... is registered for 'standard', not 'chess960'"). The relay settled
+  C960 sessions, but the node kept rejecting them and only SCCP ever minted.
+  Both `chain/block.py` and the devnet scripts now carry `member.variant`
+  through, and `test_a_chess960_proof_settles_against_a_chess960_roster` drives
+  a signed C960 win proof into a mempool built from a C960 epoch record.
+
 ## [0.26.0] - 2026-11-17
 
 ### Changed

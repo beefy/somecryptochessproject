@@ -170,6 +170,16 @@ class UciEngine:
             engine.quit()
             raise
 
+    def supports_chess960(self) -> bool:
+        """Whether the UCI handshake advertised ``UCI_Chess960``.
+
+        The option itself is managed by python-chess, which sets it from
+        ``board.chess960`` before every position and refuses to have it set
+        through ``configure``; this only answers whether the binary can do
+        Fischer Random at all.
+        """
+        return "UCI_Chess960" in self._engine.options
+
     def choose_move(self, board: chess.Board, limit: chess.engine.Limit) -> chess.Move:
         try:
             result = self._engine.play(board, limit)
@@ -275,8 +285,13 @@ def open_engine(
 
     ``mock`` ignores ``binary``; every other profile requires one and refuses to
     guess, because starting the wrong binary would silently change the
-    certificate's fingerprint. ``chess960`` turns on Stockfish's
-    ``UCI_Chess960`` option, which changes how it parses and reports castling.
+    certificate's fingerprint.
+
+    ``chess960`` requires the binary to advertise ``UCI_Chess960``, which is what
+    changes how it parses and reports castling. The option is *not* passed to
+    ``configure``: python-chess manages it from ``board.chess960`` before every
+    position, and since 1.11 a managed option cannot be configured at all, so
+    setting it here would fail at start-up instead of enabling anything.
     """
     selected = get_profile(profile)
     if selected.kind == "mock":
@@ -286,7 +301,11 @@ def open_engine(
             f"engine profile {selected.name!r} needs an explicit binary; "
             f"pass an engine path or run scripts/fetch_engine.py"
         )
-    options = dict(selected.options)
-    if chess960:
-        options["UCI_Chess960"] = True
-    return UciEngine.popen(binary, name=selected.name, options=options)
+    engine = UciEngine.popen(binary, name=selected.name, options=dict(selected.options))
+    if chess960 and not engine.supports_chess960():
+        engine.close()
+        raise EngineError(
+            f"engine profile {selected.name!r} does not advertise UCI_Chess960; "
+            f"a Chess960 miner needs a Fischer Random capable build"
+        )
+    return engine

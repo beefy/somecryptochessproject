@@ -7,7 +7,7 @@
  */
 
 import type { ReactNode } from "react";
-import { useWindowDimensions, View } from "react-native";
+import { ScrollView, useWindowDimensions, View } from "react-native";
 import { Text } from "react-native-paper";
 
 import { formatInteger, shortAddress } from "../lib/format";
@@ -93,39 +93,41 @@ export function GameTable({ games }: { games: GameSummary[] }): ReactNode {
   const wide = width >= 720;
   if (games.length === 0) return <EmptyState>No games yet</EmptyState>;
   return (
-    <View>
-      <View style={styles.header}>
-        <Text variant="labelSmall" style={[styles.colResult, styles.muted]}>
-          RESULT
-        </Text>
-        {wide && (
-          <Text variant="labelSmall" style={[styles.colVariant, styles.muted]}>
-            VARIANT
+    <ScrollView horizontal style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <View style={[styles.table, !wide && styles.tableNarrow]}>
+        <View style={styles.header}>
+          <Text variant="labelSmall" style={[styles.colResult, styles.muted]}>
+            RESULT
           </Text>
-        )}
-        <Text variant="labelSmall" style={[styles.colSeats, styles.muted]}>
-          WINNER
-        </Text>
-        {wide && (
-          <Text variant="labelSmall" style={[styles.colPlies, styles.muted]}>
-            LENGTH
+          {wide && (
+            <Text variant="labelSmall" style={[styles.colVariant, styles.muted]}>
+              VARIANT
+            </Text>
+          )}
+          <Text variant="labelSmall" style={[styles.colSeats, styles.muted]}>
+            WINNER
           </Text>
-        )}
-        {wide && (
-          <Text variant="labelSmall" style={[styles.colEpoch, styles.muted]}>
-            EPOCH
+          {wide && (
+            <Text variant="labelSmall" style={[styles.colPlies, styles.muted]}>
+              LENGTH
+            </Text>
+          )}
+          {wide && (
+            <Text variant="labelSmall" style={[styles.colEpoch, styles.muted]}>
+              EPOCH
+            </Text>
+          )}
+          <Text variant="labelSmall" style={[styles.colWhere, styles.muted]}>
+            SETTLED / STATE
           </Text>
-        )}
-        <Text variant="labelSmall" style={[styles.colWhere, styles.muted]}>
-          SETTLED / STATE
-        </Text>
-        <Text variant="labelSmall" style={[styles.colGameHash, styles.muted]}>
-          GAME HASH
-        </Text>
+          <Text variant="labelSmall" style={[styles.colGameHash, styles.muted]}>
+            GAME HASH
+          </Text>
+        </View>
+        {games.map((game) => (
+          <GameRow key={game.game_hash} game={game} />
+        ))}
       </View>
-      {games.map((game) => (
-        <GameRow key={game.game_hash} game={game} />
-      ))}
-    </View>
+    </ScrollView>
   );
 }

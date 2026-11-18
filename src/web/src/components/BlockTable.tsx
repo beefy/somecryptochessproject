@@ -8,7 +8,7 @@
  */
 
 import type { ReactNode } from "react";
-import { useWindowDimensions, View } from "react-native";
+import { ScrollView, useWindowDimensions, View } from "react-native";
 import { Surface, Text } from "react-native-paper";
 
 import { formatAge, formatInteger, shortAddress } from "../lib/format";
@@ -126,11 +126,13 @@ export function BlockTable({ blocks }: { blocks: BlockSummary[] }): ReactNode {
   const wide = width >= 720;
   if (blocks.length === 0) return <EmptyState>No blocks yet</EmptyState>;
   return (
-    <View>
-      <HeaderRow wide={wide} />
-      {blocks.map((block) => (
-        <BlockRow key={block.hash} block={block} />
-      ))}
-    </View>
+    <ScrollView horizontal style={styles.scroll} contentContainerStyle={styles.scrollContent}>
+      <View style={[styles.table, !wide && styles.tableNarrow]}>
+        <HeaderRow wide={wide} />
+        {blocks.map((block) => (
+          <BlockRow key={block.hash} block={block} />
+        ))}
+      </View>
+    </ScrollView>
   );
 }

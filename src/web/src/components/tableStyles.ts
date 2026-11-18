@@ -2,12 +2,19 @@
  * Column widths shared by the block and game lists.
  *
  * Narrow viewports drop columns rather than squeezing them; the widths live here
- * so both tables keep the same rhythm down the page.
+ * so both tables keep the same rhythm down the page. The `scroll*` and
+ * `tableNarrow` styles are what keeps an unavoidable width from pushing the
+ * whole page sideways on a phone: the table scrolls inside its own box.
  */
 
 import { Platform, StyleSheet } from "react-native";
 
 export const tableStyles = StyleSheet.create({
+  scroll: { width: "100%" },
+  scrollContent: { minWidth: "100%" },
+  table: { flexGrow: 1 },
+  /** The floor a narrow table scrolls to instead of shrinking past legibility. */
+  tableNarrow: { minWidth: 460 },
   stat: { flexGrow: 1, flexBasis: 150, padding: 12, borderRadius: 12, gap: 2 },
   statValue: { fontVariant: ["tabular-nums"] },
   header: {
