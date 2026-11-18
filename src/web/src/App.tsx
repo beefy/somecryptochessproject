@@ -16,7 +16,7 @@ import { NoticeProvider } from "./components/Notices";
 import { ThemeToggle } from "./components/ThemeToggle";
 import { WalletSessionProvider } from "./components/WalletSession";
 import { WalletStatusBar } from "./components/WalletStatusBar";
-import { formatInteger, shortHash } from "./lib/format";
+import { shortHash } from "./lib/format";
 import { SITE_TITLES, siteHash, type Site } from "./lib/site";
 import { NodeProvider, useNode } from "./node";
 import { activeSection, navigate, useRoute, type Route } from "./router";
@@ -193,11 +193,6 @@ function Shell(): ReactNode {
           </ScrollView>
 
           <View style={styles.headerRight}>
-            {status.data !== undefined && (
-              <Text variant="labelLarge" style={styles.height}>
-                {formatInteger(status.data.height)}
-              </Text>
-            )}
             {/* An icon, not a label: the sun/moon pair says what the press does
                 without spending header width on a word. `ThemeToggle` draws the
                 glyph itself because this bundle ships no icon library. */}
@@ -437,7 +432,6 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   headerRight: { flexDirection: "row", alignItems: "center", marginLeft: "auto" },
-  height: { fontVariant: ["tabular-nums"], opacity: 0.8 },
   statusLine: {
     paddingHorizontal: 16,
     paddingBottom: 6,

@@ -7,6 +7,13 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The header no longer shows the chain height.** The top-right corner is down
+  to the theme toggle; the number duplicated the "Chain height" figure on the
+  dashboard and pushed the header's crowded right edge wider on a phone. The
+  overview, the blocks table and `/v1/status` still report the tip height.
+
 ## [0.27.0] - 2026-11-17
 
 ### Changed
