@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-17
+
 ### Changed
 
 - **The explorer lost its Live page, and "Elo" is now "Ratings".** `#/live`
