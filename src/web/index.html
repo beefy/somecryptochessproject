@@ -22,6 +22,16 @@
       #root {
         display: flex;
         flex-direction: column;
+        min-width: 0;
+        max-width: 100%;
+      }
+      /* Phones: a wide row or a long unbroken hash must scroll inside its own
+         container, never sideways across the whole page. */
+      html,
+      body {
+        max-width: 100%;
+        overflow-x: hidden;
+        overscroll-behavior-x: none;
       }
       @media (prefers-color-scheme: dark) {
         html,

@@ -1,5 +1,5 @@
 /**
- * One miner's Elo page: current rating, the whole rating history as a line
+ * One miner's rating page: current rating, the whole rating history as a line
  * chart, and the games this node can still list for the seat.
  *
  * The page is a read-only projection of `/v1/ratings/{address}`. It never
@@ -108,7 +108,7 @@ export function MinerRating({ address }: { address: string }): ReactNode {
       </View>
 
       <Section
-        title="Elo over time"
+        title="Rating over time"
         subtitle={
           view.history.length === 0
             ? "no settled game in this node's chain"

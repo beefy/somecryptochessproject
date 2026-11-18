@@ -430,8 +430,16 @@ def _proof_context(
     return ProofContext(
         params=params,
         beacon=record.beacon,
+        # The variant travels with the seat: a Chess960 proof is checked against
+        # the same-variant half of the roster (PROTOCOL.md section 12.1), so
+        # dropping it here would fail every C960 seat as "registered for
+        # 'standard'".
         roster={
-            address: RosterEntry(address=address, max_games=member.max_games)
+            address: RosterEntry(
+                address=address,
+                max_games=member.max_games,
+                variant=member.variant,
+            )
             for address, member in record.roster.items()
         },
         public_keys=work.public_keys(),

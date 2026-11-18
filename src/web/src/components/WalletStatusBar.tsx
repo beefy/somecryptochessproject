@@ -30,34 +30,43 @@ export function WalletStatusBar(): ReactNode {
 
   return (
     <View style={[styles.bar, { backgroundColor: background, borderColor: `${colour}55` }]}>
-      <View style={styles.message}>
-        <Text variant="labelLarge" style={[styles.state, { color: colour }]}>
-          {active ? "Wallet active" : "Wallet inactive"}
-        </Text>
-        <Text variant="bodySmall" style={{ color: colour }} numberOfLines={1}>
-          {active && session !== null
-            ? `${shortAddress(session.record.address)} · ${session.record.network}`
-            : "unlock the wallet to use Play, DEX or Bridge"}
-        </Text>
+      <View style={styles.content}>
+        <View style={styles.message}>
+          <Text variant="labelLarge" style={[styles.state, { color: colour }]}>
+            {active ? "Wallet active" : "Wallet inactive"}
+          </Text>
+          <Text variant="bodySmall" style={{ color: colour }} numberOfLines={1}>
+            {active && session !== null
+              ? `${shortAddress(session.record.address)} · ${session.record.network}`
+              : "unlock the wallet to use Play, DEX or Bridge"}
+          </Text>
+        </View>
+        {active ? (
+          <Button compact mode="outlined" textColor={colour} onPress={() => lock("wallet locked")}>
+            Lock
+          </Button>
+        ) : (
+          <Button compact mode="outlined" textColor={colour} onPress={() => navigate("#/wallet")}>
+            Open wallet
+          </Button>
+        )}
       </View>
-      {active ? (
-        <Button compact mode="outlined" textColor={colour} onPress={() => lock("wallet locked")}>
-          Lock
-        </Button>
-      ) : (
-        <Button compact mode="outlined" textColor={colour} onPress={() => navigate("#/wallet")}>
-          Open wallet
-        </Button>
-      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   bar: {
+    // Full width of the header: the tint is what tells a reader, at a glance,
+    // whether Play/DEX/Bridge will work, so it spans the whole strip instead of
+    // sitting in the page-width column and stopping short of the edges. The
+    // content keeps the page's 1080px rhythm inside it.
     marginTop: 4,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
+    width: "100%",
+  },
+  content: {
     paddingVertical: 5,
     paddingHorizontal: 16,
     flexDirection: "row",

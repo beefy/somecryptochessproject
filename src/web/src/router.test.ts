@@ -1,5 +1,5 @@
 /**
- * Hash routes for the Elo pages.
+ * Hash routes for the ratings pages.
  *
  * The miner page is a real, shareable URL (`#/miners/<address>`), so parsing and
  * rendering it back must round-trip exactly and the bare parent path must stay a
@@ -12,7 +12,7 @@ import { activeSection, parseRoute, routeHash } from "./router";
 
 const ADDRESS = "sccpt1qexampleaddress0000000000000000000000";
 
-describe("Elo routes", () => {
+describe("ratings routes", () => {
   it("parses the leaderboard", () => {
     expect(parseRoute("#/ratings")).toEqual({ name: "ratings" });
     expect(routeHash({ name: "ratings" })).toBe("#/ratings");
@@ -28,17 +28,18 @@ describe("Elo routes", () => {
     expect(parseRoute("#/miners")).toEqual({ name: "notFound", path: "/miners" });
   });
 
-  it("lights up the Elo tab for both pages", () => {
+  it("lights up the ratings tab for both pages", () => {
     expect(activeSection({ name: "ratings" })).toBe("ratings");
     expect(activeSection({ name: "miner", address: ADDRESS })).toBe("ratings");
   });
 });
 
-describe("live games route", () => {
-  it("round-trips the in-progress page", () => {
-    expect(parseRoute("#/live")).toEqual({ name: "liveGames" });
-    expect(routeHash({ name: "liveGames" })).toBe("#/live");
-    expect(activeSection({ name: "liveGames" })).toBe("liveGames");
+describe("retired routes", () => {
+  it("keeps the old live page out of the router", () => {
+    // The in-progress page is gone; an old bookmark lands on the 404 view
+    // instead of rendering a page that no longer exists.
+    expect(parseRoute("#/live")).toEqual({ name: "notFound", path: "/live" });
+    expect(parseRoute("#/live/12")).toEqual({ name: "notFound", path: "/live/12" });
   });
 });
 

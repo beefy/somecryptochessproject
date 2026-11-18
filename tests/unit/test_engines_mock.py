@@ -122,6 +122,55 @@ def test_open_engine_needs_a_binary_for_uci_profiles(tmp_path: Path) -> None:
         open_engine("stockfish-19", binary=tmp_path / "missing")
 
 
+def test_profiles_pin_no_managed_option() -> None:
+    """python-chess owns ``UCI_Chess960``; pinning it in a profile would crash.
+
+    ``SimpleEngine.configure`` refuses a managed option, so a profile carrying
+    one would fail to start every miner on that profile, not just the Chess960
+    pair.
+    """
+    for profile in ENGINE_PROFILES.values():
+        assert "UCI_Chess960" not in profile.options
+        assert "UCI_Variant" not in profile.options
+
+
+def test_open_engine_chess960_configures_only_the_profile_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Chess960 engine starts with the profile's options and nothing else.
+
+    Regression: ``open_engine(..., chess960=True)`` used to add
+    ``UCI_Chess960`` to ``configure``, which python-chess 1.11 rejects with
+    "cannot set UCI_Chess960 which is automatically managed" — every Chess960
+    miner exited at start-up, so no C960 game ever reached the relay.
+    """
+    binary = tmp_path / "stockfish"
+    binary.write_bytes(b"engine bytes")
+    fake = FakeSimpleEngine(chess960=True)
+    monkeypatch.setattr(chess.engine.SimpleEngine, "popen_uci", staticmethod(lambda path: fake))
+
+    engine = open_engine("stockfish-19", binary=binary, chess960=True)
+
+    assert isinstance(engine, UciEngine)
+    assert fake.configured == {"Threads": 1, "Hash": 16}
+    assert engine.supports_chess960()
+    engine.close()
+
+
+def test_open_engine_chess960_needs_a_capable_binary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    binary = tmp_path / "stockfish"
+    binary.write_bytes(b"engine bytes")
+    fake = FakeSimpleEngine()
+    monkeypatch.setattr(chess.engine.SimpleEngine, "popen_uci", staticmethod(lambda path: fake))
+
+    with pytest.raises(EngineError, match="does not advertise UCI_Chess960"):
+        open_engine("stockfish-19", binary=binary, chess960=True)
+
+    assert fake.quit_calls >= 1
+
+
 class FakeSimpleEngine:
     """Duck-typed stand-in for ``chess.engine.SimpleEngine``."""
 
@@ -131,10 +180,14 @@ class FakeSimpleEngine:
         *,
         play_error: Exception | None = None,
         configure_error: Exception | None = None,
+        chess960: bool = False,
     ) -> None:
         self.move = move
         self.play_error = play_error
         self.configure_error = configure_error
+        # ``SimpleEngine.options`` holds the definitions the handshake printed;
+        # ``open_engine`` only asks whether one of them is UCI_Chess960.
+        self.options: dict[str, Any] = {"UCI_Chess960": None} if chess960 else {}
         self.configured: dict[str, Any] | None = None
         self.quit_calls = 0
 

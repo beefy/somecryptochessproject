@@ -123,10 +123,11 @@ keyfiles live under `/data/synthetic-miners`, an anonymous volume.
 `deploy/init_testnet_stack.py` derives all four miners from fixed seeds and the
 stack passphrase is published (`sccp-testnet-stack`). The image installs Debian's
 Stockfish as `/usr/games/stockfish`; the bootstrap registers that binary's
-fingerprint and every miner runs it, with `UCI_Chess960=true` for the Chess960
-pair. Testnet coins have no value, and a reproducible stack is what makes
-`docker compose up` work without a coordination step. **Never reuse these seeds,
-that passphrase or that bond on mainnet.**
+fingerprint and every miner runs it, with `UCI_Chess960` enabled for the Chess960
+pair (python-chess turns it on from each board, so a miner must never configure
+the option itself). Testnet coins have no value, and a reproducible stack is what
+makes `docker compose up` work without a coordination step. **Never reuse these
+seeds, that passphrase or that bond on mainnet.**
 
 `/stack/stack.json` lists each miner's address, keyfile and availability nonce
 secret, and `/stack/keys/miner-N.nonce` holds that secret for

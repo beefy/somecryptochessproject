@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import chess
 import pytest
 
 from sccp.chain.block import minted_subsidy, minted_variant_rewards
-from sccp.chain.state import State
+from sccp.chain.mempool import Mempool
+from sccp.chain.state import EpochRecord, State, epoch_end_height
 from sccp.chain.tx import apply_transaction, validate_transaction
 from sccp.chess.engines import MockEngine
 from sccp.chess.gameplay import play_game
@@ -24,14 +26,24 @@ from sccp.config import (
     CHESS960_VARIANT,
     DEVNET,
     STANDARD_VARIANT,
+    NetworkParams,
 )
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import StateError
 from sccp.miner.matchmaker import Matchmaker
-from sccp.protocol.models import Beacon
-from sccp.protocol.pairing import RosterEntry, pair
-from sccp.protocol.transcript import opening_hash
+from sccp.protocol.beacon import commitment, compute_beacon
+from sccp.protocol.models import Beacon, BeaconReveal, OpeningRef, RosterMember
+from sccp.protocol.pairing import RosterEntry, match_id, pair
+from sccp.protocol.transcript import (
+    build_win_proof,
+    create_certificate,
+    create_result,
+    opening_hash,
+    render_transcript_pgn,
+    sign_certificate,
+    sign_result,
+)
 from sccp.serialization import domain_hex
 from sccp.wallet.service import WalletService
 
@@ -320,3 +332,134 @@ def test_asset_transfer_moves_c960_and_pays_the_fee_in_sccp() -> None:
     assert state.asset_balance(sender_address, CHESS960_ASSET_ID) == 300
     assert state.asset_balance(recipient, CHESS960_ASSET_ID) == 200
     assert state.spendable(sender_address) == 0
+
+
+C960_IDENTITY_POSITION = 518
+"""Position 518 is the standard array, so a C960 game can replay a known mate."""
+
+
+def _identity_beacon(
+    params: NetworkParams, epoch: int, seats: tuple[str, str], match: str
+) -> tuple[Beacon, dict[str, str]]:
+    """A beacon the chain can recompute whose draw picks the identity position.
+
+    The beacon hash mixes the block hash with the epoch's reveals, so any block
+    hash is a legal input: the search varies that free field until
+    :func:`select_chess960_start` returns :data:`C960_IDENTITY_POSITION`.
+    """
+    nonces = {address: f"{index:02x}" * 32 for index, address in enumerate(seats, start=1)}
+    availability = {address: commitment(address, epoch, nonce) for address, nonce in nonces.items()}
+    reveals = [
+        BeaconReveal(miner=address, commitment=digest, nonce=nonces[address])
+        for address, digest in availability.items()
+    ]
+    for counter in range(1 << 16):
+        beacon = compute_beacon(
+            network=params.network_id,
+            epoch=epoch,
+            block_hash=f"{counter:064x}",
+            reveals=reveals,
+        )
+        if select_chess960_start(bytes.fromhex(beacon.hash), match) == C960_IDENTITY_POSITION:
+            return beacon, availability
+    raise AssertionError("no block hash drew the identity position")
+
+
+def test_a_chess960_proof_settles_against_a_chess960_roster(devnet_chain: Any) -> None:
+    """The epoch context must carry each seat's variant, or C960 proofs fail.
+
+    A Chess960 proof is verified against the same-variant half of the roster, so
+    the roster a block (or the mempool) derives from the epoch record has to keep
+    every member's variant instead of falling back to standard.
+    """
+    chain = devnet_chain
+    params = chain.params
+    epoch = 3
+    by_address = {
+        encode_address(keypair.public_key_bytes, params): keypair
+        for keypair in (
+            hybrid_keypair_from_seed(bytes([1]) * 32),
+            hybrid_keypair_from_seed(bytes([2]) * 32),
+        )
+    }
+    seats = tuple(sorted(by_address))
+    match = match_id(params.network_id, epoch, 0, seats)
+    beacon, availability = _identity_beacon(params, epoch, seats, match)
+
+    roster = {
+        address: RosterEntry(address=address, max_games=3, variant=CHESS960_VARIANT)
+        for address in seats
+    }
+    matchups = pair(
+        list(roster.values()),
+        bytes.fromhex(beacon.hash),
+        network=params.network_id,
+        epoch=epoch,
+        round_number=0,
+        rounds_per_epoch=params.rounds_per_epoch,
+    )
+    assert len(matchups) == 1, "two same-variant seats pair exactly once"
+    matchup = matchups[0]
+    assert matchup.variant == CHESS960_VARIANT
+
+    start_fen = chess960_start_fen(C960_IDENTITY_POSITION)
+    opening = OpeningRef(
+        book_version="none",
+        line_id=C960_IDENTITY_POSITION,
+        hash=opening_hash(
+            "none",
+            C960_IDENTITY_POSITION,
+            (),
+            start_fen=start_fen,
+            variant=CHESS960_VARIANT,
+        ),
+        moves=(),
+        start_fen=start_fen,
+        variant=CHESS960_VARIANT,
+    )
+    engines = {address: f"mock-v1:{index:016d}" for index, address in enumerate(seats, start=1)}
+    certificate = create_certificate(
+        matchup,
+        opening,
+        engine_white=engines[matchup.white],
+        engine_black=engines[matchup.black],
+    )
+    for seat in ("white", "black"):
+        certificate = sign_certificate(certificate, seat, by_address[getattr(certificate, seat)])
+
+    board = board_for_variant(CHESS960_VARIANT, start_fen)
+    for san in ("e4", "e5", "Bc4", "Nc6", "Qh5", "Nf6", "Qxf7#"):
+        board.push(board.parse_san(san))
+    assert board.is_checkmate(), "the identity position takes the scholar's mate"
+    pgn = render_transcript_pgn(certificate, board, result="1-0", termination="checkmate")
+    parsed = validate_pgn(pgn, params=params, require_win=True)
+    result = create_result(certificate, parsed)
+    for seat in ("white", "black"):
+        result = sign_result(result, certificate, seat, by_address[getattr(certificate, seat)])
+    proof = build_win_proof(certificate, pgn, result.result_signatures, params=params)
+    assert proof.variant == CHESS960_VARIANT
+
+    state = chain.state.copy()
+    state.height = epoch_end_height(epoch, params)
+    for address, keypair in by_address.items():
+        state.ensure(address).public_key = keypair.public_key_hex
+    state.epochs[epoch] = EpochRecord(
+        epoch=epoch,
+        beacon=beacon,
+        roster={
+            address: RosterMember(
+                public_key=by_address[address].public_key_hex,
+                engine=engines[address],
+                variant=CHESS960_VARIANT,
+                max_games=3,
+            )
+            for address in seats
+        },
+        availability=availability,
+        quotas={address: 3 for address in seats},
+        matchable=True,
+    )
+
+    pool = Mempool(params=params, tip_state=state, book=None)
+    assert pool.add_proof(proof) == proof.proof_id
+    assert pool.has_proof(proof.proof_id) is True

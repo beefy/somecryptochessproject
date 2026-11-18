@@ -403,7 +403,11 @@ def _relay_for_epoch(
     if record is None or record.beacon is None or not record.matchable:
         raise DevnetError(f"epoch {epoch} is not matchable")
     roster = {
-        address: RosterEntry(address=address, max_games=member.max_games)
+        address: RosterEntry(
+            address=address,
+            max_games=member.max_games,
+            variant=member.variant,
+        )
         for address, member in record.roster.items()
     }
     engines = {participant.address: participant.engine.fingerprint for participant in participants}

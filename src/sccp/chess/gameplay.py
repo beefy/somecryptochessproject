@@ -138,7 +138,8 @@ def play_game(
 
     ``limit`` controls engine effort; the default is
     ``chess.engine.Limit(nodes=params.nodes_per_move)``. Chess960 games must
-    pass their ``start_fen``; the engine also needs ``UCI_Chess960`` set.
+    pass their ``start_fen``; the engine must advertise ``UCI_Chess960``
+    (python-chess sets the option from the board before every position).
     """
     effort = limit if limit is not None else chess.engine.Limit(nodes=params.nodes_per_move)
     canonical_start = normalise_start_fen(start_fen, variant)
