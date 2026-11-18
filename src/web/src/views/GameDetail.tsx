@@ -170,7 +170,7 @@ export function GameDetail({ gameHash }: { gameHash: string }): ReactNode {
             <EmptyState>No PGN available for this game</EmptyState>
           )
         ) : (
-          <CodeBlock>{pgn}</CodeBlock>
+          <CodeBlock fullHeight>{pgn}</CodeBlock>
         )}
       </Section>
     </>

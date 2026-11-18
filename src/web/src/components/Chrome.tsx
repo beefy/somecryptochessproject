@@ -246,13 +246,33 @@ export function Loading(): ReactNode {
   );
 }
 
-/** A preformatted, horizontally scrollable JSON/PGN block. */
-export function CodeBlock({ children }: { children: string }): ReactNode {
+/**
+ * A preformatted JSON/PGN block, scrollable in both directions.
+ *
+ * The outer vertical ScrollView is what makes a capped block reachable: on the
+ * web a horizontal-only ScrollView carries `overflow-y: hidden`, so anything
+ * past `maxHeight` was clipped with no way to scroll to it. The inner
+ * horizontal ScrollView still keeps long hex lines from wrapping.
+ *
+ * `fullHeight` drops the cap for the block a reader came for: a PGN. Chess960
+ * adds the FEN, SetUp and Variant headers, and those three lines were enough to
+ * push the move text past the cap that a standard game's PGN only just fit, so
+ * a C960 game showed its tag pair and none of its moves.
+ */
+export function CodeBlock({
+  children,
+  fullHeight = false,
+}: {
+  children: string;
+  fullHeight?: boolean;
+}): ReactNode {
   return (
-    <ScrollView horizontal style={styles.codeBlock}>
-      <Text selectable style={[styles.mono, styles.codeText]}>
-        {children}
-      </Text>
+    <ScrollView style={[styles.codeBlock, !fullHeight && styles.codeBlockCapped]}>
+      <ScrollView horizontal>
+        <Text selectable style={[styles.mono, styles.codeText]}>
+          {children}
+        </Text>
+      </ScrollView>
     </ScrollView>
   );
 }
@@ -304,8 +324,10 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(128,128,128,0.12)",
     borderRadius: 12,
     padding: 12,
-    maxHeight: 420,
   },
+  // Only a deep JSON dump (a 60-line proof body) needs a cap; a PGN must show
+  // its moves, so it passes `fullHeight` instead.
+  codeBlockCapped: { maxHeight: 420 },
   codeText: { fontSize: 12, lineHeight: 18 },
 });
 

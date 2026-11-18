@@ -14,6 +14,17 @@ not itemised here.
   dashboard and pushed the header's crowded right edge wider on a phone. The
   overview, the blocks table and `/v1/status` still report the tip height.
 
+### Fixed
+
+- **A Chess960 game shows its moves again.** The explorer printed the PGN into a
+  height-capped, horizontally scrolling block, and a horizontal `ScrollView`
+  hides its vertical overflow, so a C960 PGN's three extra headers (`FEN`,
+  `SetUp`, `Variant`) pushed the movetext past the cap where a standard game's
+  only just fit: the page showed the tag pair and none of the game. `CodeBlock`
+  now lets the PGN take its natural height on the game and block pages, and any
+  block that keeps the cap (a 60-line proof JSON) scrolls vertically as well as
+  horizontally, so nothing below the fold is unreachable.
+
 ## [0.27.0] - 2026-11-17
 
 ### Changed
