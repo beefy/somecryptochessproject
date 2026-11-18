@@ -225,7 +225,8 @@ holds one unlocked key, and the bridge/DEX tests need two independent wallets.
 
 To move a browser wallet into the CLI, use **Settings → Export keyfile** in the
 wallet, save the JSON, and open it with `sccp` (`wallet address --key ...`). To
-move a CLI wallet into the browser, use **Open a keyfile** and paste the JSON.
+move a CLI wallet into the browser, use **Open a keyfile**, then **Choose a file…**
+and pick the `.key` file (or paste the JSON).
 The passphrase is the one you chose; the seed never leaves the browser
 unencrypted.
 

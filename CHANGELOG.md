@@ -9,6 +9,13 @@ not itemised here.
 
 ### Added
 
+- **A keyfile can be opened straight from the computer.** **Open a keyfile** in
+  `#/wallet` now offers **Choose a file…** next to the paste field, so the file
+  `sccp wallet new` wrote (`sccp-<address>.key`) goes into the form without being
+  opened in an editor and copied by hand. The file is read in the tab and never
+  uploaded, the picker is filtered to keyfiles and text, a dismissed dialog leaves
+  the panel untouched, and an empty or multi-megabyte selection is refused by name
+  before any decrypt is attempted.
 - **The testnet notebook charts the bridge and the DEX.** `analysis/testnet_stats.ipynb`
   now reads the HTLC and pool transaction types the traffic bot emits: one panel covers
   lock, claim and refund lifecycles, another covers pool creation, liquidity changes and

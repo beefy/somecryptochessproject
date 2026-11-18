@@ -284,8 +284,10 @@ What the page does:
   encrypted keyfile.
 - **Restore** — 24 words plus a new passphrase, re-encrypted with a fresh salt and
   nonce around the same seed.
-- **Open** — paste a keyfile from `sccp wallet new` and unlock it; the header is
-  validated and the decrypted seed has to derive the address it names.
+- **Open** — pick the keyfile `sccp wallet new` wrote (or paste its JSON) and
+  unlock it; the file is read in the tab and never uploaded, the picker offers
+  `.key`/`.json`/`.txt`, and the header is validated while the decrypted seed has
+  to derive the address it names.
 - **Balances** — `GET /v1/accounts/<address>` polled every 8 seconds, with a
   Refresh button and a copy-address button; the nickname from Settings heads the
   page.
