@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-18
+
 ### Added
 
 - **A keyfile can be opened straight from the computer.** **Open a keyfile** in
