@@ -9,7 +9,7 @@ mempool, and applies two independent limits before doing so:
 - a fixed number of grants per client per window (default: five per hour).
 
 Limits are in memory. A restart forgets them, which is acceptable for a testnet
-faucet and is called out in ``docs/RUNBOOK.md``. The CLI's offline
+faucet and is called out in ``docs/operations/RUNBOOK.md``. The CLI's offline
 ``sccp faucet send`` remains available to an operator who already holds the
 public faucet key; the HTTP endpoint is the abuse-limited path for everyone
 else.

@@ -13,7 +13,7 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 export type Json = null | boolean | number | bigint | string | Json[] | { [key: string]: Json };
 
-/** Hash domains from `sccp.serialization.Domain` (docs/PROTOCOL.md section 1). */
+/** Hash domains from `sccp.serialization.Domain` (docs/design/PROTOCOL.md section 1). */
 export const DOMAINS = {
   ADDRESS: "sccp/v1/address",
   BEACON: "sccp/v1/beacon",

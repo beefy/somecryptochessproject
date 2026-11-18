@@ -13,7 +13,7 @@
  *
  * A proof says nothing about how well either side played. That is deliberate:
  * the record is enough to replay the game, and no engine verdict enters the
- * consensus rules. See docs/PROTOCOL.md section 9.2.
+ * consensus rules. See docs/design/PROTOCOL.md section 9.2.
  */
 
 import type {

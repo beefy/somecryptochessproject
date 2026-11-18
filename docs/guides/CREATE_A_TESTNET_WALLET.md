@@ -19,22 +19,9 @@ For the full keyfile and backup reference, see
 
 ## 1. Install the CLI
 
-From the repository root:
-
-```bash
-cd somecryptochessproject
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
-sccp --version
-```
-
-```text
-sccp 0.28.0 (protocol v1)
-```
-
-Python 3.11 or newer is required. The HTTP examples pipe JSON through `jq` for
-readability; install it separately or drop the `| jq` suffix.
+The editable install, the version check and the node URL are in
+[`INSTALL.md`](INSTALL.md) — one block shared by every guide, so it is not
+repeated here. The rest of this page assumes `sccp` is on your `PATH`.
 
 ---
 
@@ -92,24 +79,16 @@ a script needs structured output:
 
 ## 3. Point at a testnet node
 
-The faucet and balance endpoints are served by the node on port `8645`:
+Use the `SCCP_NODE` you set in [`INSTALL.md`](INSTALL.md#point-at-a-node): the
+local stack (`http://127.0.0.1:8645`) or the hosted four-miner deployment
+(`http://app.proofofchess.com:8645`). Two facts are specific to the hosted one:
 
-```bash
-export SCCP_NODE="http://127.0.0.1:8645"
-```
+- it is reset on every deployment, so addresses and balances from an earlier
+  deploy are gone;
+- it does **not** terminate TLS. If the node is behind a reverse proxy, use its
+  HTTPS URL instead.
 
-For the hosted four-miner deployment, use the public testnet host:
-
-```bash
-export SCCP_NODE="http://app.proofofchess.com:8645"
-```
-
-The hosted chain is reset on every deployment, so addresses and balances from
-an earlier deploy are gone. Use `http://127.0.0.1:8645` when running the stack
-locally from source.
-
-The testnet deployment does **not** terminate TLS. If the node is behind a reverse
-proxy, use its HTTPS URL instead. Check that the node is alive and on testnet:
+Check that it is alive and on testnet:
 
 ```bash
 curl -sS "$SCCP_NODE/v1/status" | jq '{network, height, tip_hash, mempool}'
@@ -345,6 +324,7 @@ Exit codes for CLI commands: `0` success, `1` refused/failed, `2` invalid usage.
 - [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) — full keyfile, mnemonic and network
   reference.
 - [`SEND_COINS.md`](SEND_COINS.md) — spend the funded balance.
-- [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — use the wallet as a miner.
-- [`RUNBOOK.md`](RUNBOOK.md) — faucet policy and testnet operations.
+- [`INSTALL.md`](INSTALL.md) — the install, if you skipped it.
+
+All pages, by task: [`docs/README.md`](../README.md).
 

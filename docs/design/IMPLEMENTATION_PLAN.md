@@ -157,7 +157,7 @@ preparing a mainnet decision. It is not a continuation of the protocol build.
 Every change should still meet the following bar:
 
 - Tests at the right layer; `make check` green.
-- Wire-format or consensus changes update `docs/PROTOCOL.md` in the same change.
+- Wire-format or consensus changes update `docs/design/PROTOCOL.md` in the same change.
 - Consensus changes include a golden-chain update and a migration note.
 - New dependencies are justified in the change description.
 - README and operator instructions remain accurate; broken instructions are a

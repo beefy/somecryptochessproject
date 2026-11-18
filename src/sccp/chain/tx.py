@@ -158,7 +158,7 @@ def check_sender_key(state: State, params: NetworkParams, tx: Transaction) -> st
     The key must be the 1985-byte hybrid blob that re-encodes to ``tx.sender``;
     a key of any other length is a schema violation rather than a second scheme,
     and a signature is always the hybrid blob. Nothing here dispatches on a
-    scheme: there is only one (docs/PROTOCOL.md section 2).
+    scheme: there is only one (docs/design/PROTOCOL.md section 2).
     """
     key_hex = resolve_public_key(state, tx)
     try:

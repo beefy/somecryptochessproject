@@ -29,6 +29,7 @@ Make sure you are using python3 with your venv.
 | Throughput | cumulative transactions, transactions per block, arrival rate, block interval |
 | Confirmation speed | interval distribution, blocks-settled-within-x, retargets |
 | Transactions | the type mix and the busiest senders |
+| Bridge and DEX | HTLC lifecycles, pool actions, SCCP named in the payload |
 | Transfer graph | directed wallet-to-wallet graph, synthetic wallets highlighted |
 | Token distribution | tokens per wallet, largest wallets |
 | Synthetic balances | stacked area of the ten bot wallets over time |
@@ -65,8 +66,16 @@ few megabytes on a busy chain.
   is the same fact. `deploy/bootstrap_*_stack.py` now stamps new bootstraps with the wall
   clock, so this only describes chains bootstrapped before that fix.
 * **Balances are reconstructed, then anchored.** The synthetic-wallet history is rebuilt
-  from their transfers and shifted so its last point equals `GET /v1/accounts`' `total`.
-  The cell prints the drift, which is zero when every movement was captured.
+  from every native leg the sampled bodies carry: a transfer debits its sender and credits
+  its recipient, an HTLC lock escrows `amount` and its claim or refund releases it, pool
+  creation and deposits debit the SCCP side, a native-in swap debits `amount_in`, and every
+  transaction's fee is paid in SCCP. A removal's payout and a variant-in swap's SCCP output
+  are a share of the reserves, and a close whose lock predates the sample carries only an
+  id, so none of their amounts is recoverable; they are counted and left to the anchor. The
+  gap printed above the chart is measured *before* that anchor is applied: it is what each
+  wallet already held when the window opened, so a negative value means the window moved
+  coins the reconstruction missed. (The cell used to compare the series with the ledger
+  *after* shifting it, so it printed zero by construction.)
 * **Sampled, not exhaustive.** Charts cover the newest `MAX_BLOCKS` blocks; a chain longer
   than that shows its recent history, not its whole life.
 

@@ -5,15 +5,15 @@ is intentionally not a Terraform module or a complete production landing zone:
 one operator, one VM, one Docker Compose stack.
 
 The goal is the smallest footprint that can run
-[`docker-compose.yml`](../docker-compose.yml), serve the node API on port
+[`docker-compose.yml`](../../docker-compose.yml), serve the node API on port
 `8645`, and receive deploys from the
-[`deploy-testnet-miners`](../.github/workflows/deploy-testnet-miners.yml)
+[`deploy-testnet-miners`](../../.github/workflows/deploy-testnet-miners.yml)
 workflow.
 
 For exact application settings, environment variables and smoke tests, use
 [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md). This page only covers the
 cloud-side setup. It deliberately does not prescribe a budget amount or budget
-commands; see [Cost guardrails](#cost-guardrails) for the shape of that work.
+commands; see [Cost guardrails](#9-cost-guardrails) for the shape of that work.
 
 ---
 
@@ -597,7 +597,7 @@ wallets, balances and faucet grants from a previous deploy are discarded. This
 is intentional for the deterministic demonstrator.
 
 To fund a wallet against this host, follow
-[`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) with
+[`CREATE_A_TESTNET_WALLET.md`](../guides/CREATE_A_TESTNET_WALLET.md) with
 `SCCP_NODE="http://$APP_HOST:8645"`.
 
 
@@ -678,11 +678,7 @@ environment; remove those separately if you are decommissioning the repository.
   details and smoke tests.
 - [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md) — the web origin's firewall
   rules, the two DNS records, the proxies and both certificates.
-- [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) — fund a wallet
-  against the deployed node.
 - [`RUNBOOK.md`](RUNBOOK.md) — operating and recovering the testnet.
-- [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — miner-side setup.
-- [`DOMAIN_MIGRATION.md`](DOMAIN_MIGRATION.md) — the cutover that produced
-  `app.proofofchess.com` and the apex landing page, in the order the steps have
-  to run.
+
+All pages, by task: [`docs/README.md`](../README.md).
 

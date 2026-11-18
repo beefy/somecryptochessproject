@@ -27,6 +27,7 @@ import {
 import { downloadText, keyfileName } from "../../lib/download";
 import { formatInteger } from "../../lib/format";
 import { mnemonicToSeed, seedToMnemonic } from "../../lib/mnemonic";
+import { pickTextFile, readTextFile } from "../../lib/upload";
 import type { HybridKeypair } from "../../lib/keys";
 import { Mono, Section, StatusPill } from "../../components/Chrome";
 import { monospace } from "../../theme";
@@ -550,6 +551,19 @@ function RestorePanel({
   );
 }
 
+/**
+ * Bringing in a keyfile that exists somewhere else: the file `sccp wallet new`
+ * wrote, or its JSON.
+ *
+ * Both routes end in the same text field, because the field is the review step —
+ * what is imported is what is on screen, and the keyfile is a small document a
+ * person can actually read. Choosing a file only fills the field; unlocking still
+ * takes an explicit press and the passphrase, which is the expensive part (scrypt
+ * at n = 2^17) and the one thing this tab must never do by accident.
+ *
+ * A dismissed picker resolves `null` and is not an error: nothing changed, so
+ * nothing is reported.
+ */
 function OpenPanel({
   onCancel,
   onImport,
@@ -558,9 +572,27 @@ function OpenPanel({
   onImport: (document: KeyfileDocument, keypair: HybridKeypair) => Promise<void>;
 }): ReactNode {
   const [text, setText] = useState("");
+  const [filename, setFilename] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
   const [passphrase, setPassphrase] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+
+  const choose = async (): Promise<void> => {
+    setPicking(true);
+    setError(null);
+    try {
+      const file = await pickTextFile();
+      // `null` is a dismissed dialog: nothing was chosen and nothing is wrong.
+      if (file === null) return;
+      setText(await readTextFile(file));
+      setFilename(file.name);
+    } catch (failure) {
+      setError(describe(failure));
+    } finally {
+      setPicking(false);
+    }
+  };
 
   const open = async (): Promise<void> => {
     setBusy(true);
@@ -576,7 +608,29 @@ function OpenPanel({
   };
 
   return (
-    <Section title="Open a keyfile" subtitle="paste the JSON `sccp wallet new` wrote">
+    <Section
+      title="Open a keyfile"
+      subtitle="pick the file `sccp wallet new` wrote, or paste its JSON"
+    >
+      <View style={styles.actions}>
+        <Button
+          mode="contained-tonal"
+          loading={picking}
+          disabled={busy || picking}
+          onPress={() => void choose()}
+        >
+          Choose a file…
+        </Button>
+        {filename !== null ? (
+          <Text variant="bodySmall" numberOfLines={1} style={styles.fileNote}>
+            read <Text style={styles.mono}>{filename}</Text>
+          </Text>
+        ) : (
+          <Text variant="bodySmall" style={styles.fileNote}>
+            or paste it below
+          </Text>
+        )}
+      </View>
       <TextInput
         label="Keyfile JSON"
         mode="outlined"
@@ -585,7 +639,10 @@ function OpenPanel({
         autoCapitalize="none"
         autoCorrect={false}
         value={text}
-        onChangeText={setText}
+        onChangeText={(value) => {
+          setText(value);
+          setFilename(null);
+        }}
         style={styles.keyfileInput}
       />
       <TextInput
@@ -598,8 +655,9 @@ function OpenPanel({
         onChangeText={setPassphrase}
       />
       <HelperText type="info" visible>
-        Parsing validates the header, the cipher and the salt; unlocking decrypts the seed and
-        checks that it really derives the address the file names.
+        The file is read in this tab and never uploaded. Parsing validates the header, the cipher
+        and the salt; unlocking decrypts the seed and checks that it really derives the address the
+        file names.
       </HelperText>
       {error !== null && (
         <HelperText type="error" visible>
@@ -615,7 +673,7 @@ function OpenPanel({
         >
           Open
         </Button>
-        <Button onPress={onCancel} disabled={busy}>
+        <Button onPress={onCancel} disabled={busy || picking}>
           Cancel
         </Button>
       </View>
@@ -643,6 +701,7 @@ const styles = StyleSheet.create({
   checkRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 6 },
   checkBox: { width: 20, height: 20, borderRadius: 4, borderWidth: 2 },
   actions: { flexDirection: "row", alignItems: "center", gap: 8, flexWrap: "wrap" },
+  fileNote: { flexShrink: 1, opacity: 0.66 },
   words: { flexDirection: "row", flexWrap: "wrap", gap: 8, paddingVertical: 4 },
   word: {
     fontFamily: monospace,

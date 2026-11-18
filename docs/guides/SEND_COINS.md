@@ -274,7 +274,8 @@ pays, and it carries exactly one transaction, so a backlog of ledger work turns
 into one block per transaction -- the chain's clock only advances that way when
 no proof is available. Because the stack's miners commit availability and reveal
 it every epoch, a transfer normally confirms well within one epoch. See
-[`RUNBOOK.md`](RUNBOOK.md) for the exact bootstrap and settlement behaviour.
+[`RUNBOOK.md`](../operations/RUNBOOK.md) for the exact bootstrap and settlement
+behaviour.
 
 ---
 
@@ -353,10 +354,9 @@ node's URL for every wallet command, and restart a node you started without
 ## See also
 
 - [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) — create a keyfile
-  and fund it from the HTTP faucet before sending.
-- [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) — create a keyfile, back it up, read its
-  address.
-- [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — register a miner with a
-  bond and earn block rewards.
+  and use the HTTP faucet before sending.
 - [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — play a game on-chain.
-- [`PROTOCOL.md`](PROTOCOL.md) — normative transaction and address formats.
+- [`PROTOCOL.md`](../design/PROTOCOL.md) — normative transaction and address
+  formats.
+
+All pages, by task: [`docs/README.md`](../README.md).

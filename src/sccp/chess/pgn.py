@@ -1,4 +1,4 @@
-"""PGN validation and canonical game hashing (docs/PROTOCOL.md section 3).
+"""PGN validation and canonical game hashing (docs/design/PROTOCOL.md section 3).
 
 ``validate_pgn`` turns untrusted PGN text into a :class:`ParsedGame` or raises
 :class:`~sccp.errors.PgnValidationError`. It never mutates global state and has
@@ -456,7 +456,7 @@ def validate_pgn(
 ) -> ParsedGame:
     """Validate untrusted PGN text and return a :class:`ParsedGame`.
 
-    The steps mirror ``docs/PROTOCOL.md`` section 3: size and encoding, exactly
+    The steps mirror ``docs/design/PROTOCOL.md`` section 3: size and encoding, exactly
     one game, parser errors, required and certificate tags, legality of every
     move, the opening prefix, result/termination agreement, and -- for a proof --
     a decisive result of at least ``params.min_plies``.

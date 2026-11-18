@@ -30,20 +30,9 @@ only the balance and faucet commands in section 5 talk to a node.
 
 ## 1. Prepare
 
-Run commands from the repository root:
-
-```bash
-cd somecryptochessproject
-source .venv/bin/activate       # if not already active
-pip install -e ".[dev]"         # first time only
-sccp --version
-```
-
-You should see the package and protocol version, for example:
-
-```text
-sccp 0.28.0 (protocol v1)
-```
+The install (Python 3.11+, the editable `pip install`, the version check) is in
+[`INSTALL.md`](INSTALL.md#install); this page assumes `sccp` is already on your
+`PATH`.
 
 ---
 
@@ -359,8 +348,7 @@ unknown network.
 - [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) — the short
   keyfile-plus-faucet walkthrough.
 - [`SEND_COINS.md`](SEND_COINS.md) — fund the wallet and transfer coins.
-- [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — register the wallet as a
-  miner.
-- [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — play a game on-chain.
-- [`PROTOCOL.md`](PROTOCOL.md) — normative address and transaction formats; the
-  keyfile layout itself is documented in this guide.
+- [`PROTOCOL.md`](../design/PROTOCOL.md) — normative address and transaction
+  formats; the keyfile layout itself is documented in this guide.
+
+All pages, by task: [`docs/README.md`](../README.md).

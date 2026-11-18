@@ -12,7 +12,8 @@ reward.
  - [Project overview](https://proofofchess.com/)
  - [Block explorer](https://app.proofofchess.com/)
  - [Web wallet](https://app.proofofchess.com/#/wallet)
- - [Living Whitepaper](https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/WHITEPAPER.md)
+ - [Living Whitepaper](https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/design/WHITEPAPER.md)
+ - [All documentation](docs/README.md)
  - [Public testnet](http://app.proofofchess.com:8645/v1/status)
  - [Reddit](https://www.reddit.com/r/chessproofofwork/)
 
@@ -23,10 +24,11 @@ reward.
 > choice, difficulty, SQLite storage and block builder; the node API, gossip and
 > pull-sync; the unattended engine miner; and a funded two-miner testnet with a
 > public faucet, automated deployment and operator runbooks. Normative formats
-> are in [`docs/PROTOCOL.md`](docs/PROTOCOL.md); next steps and improvement areas
-> are in [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md). Mainnet
-> parameters exist, but no mainnet has launched or been audited; testnet and
-> devnet coins have no value.
+> are in [`docs/design/PROTOCOL.md`](docs/design/PROTOCOL.md); next steps and
+> improvement areas are in
+> [`docs/design/IMPLEMENTATION_PLAN.md`](docs/design/IMPLEMENTATION_PLAN.md).
+> Mainnet parameters exist, but no mainnet has launched or been audited; testnet
+> and devnet coins have no value.
 
 > **Public testnet:** <http://app.proofofchess.com:8645>. The
 > `GET /v1/status` endpoint is the health check. The chain is reset on every
@@ -45,10 +47,10 @@ reward.
 > claim it cannot reproduce. `sccp matchmaker run --witness-key` signs the
 > receipts, `--round-seconds` adds the opt-in round scheduler, and
 > `sccp miner run --relay-witness-key` trusts that witness. The formats are
-> normative in [`docs/PROTOCOL.md`](docs/PROTOCOL.md) section 8.4 and 10.4. The
-> ledger rules, clock evidence and local claim verification are implemented; the
-> remaining integration gap is automatic submission of a timeout claim from the
-> demo/CLI path.
+> normative in [`docs/design/PROTOCOL.md`](docs/design/PROTOCOL.md) section 8.4
+> and 10.4. The ledger rules, clock evidence and local claim verification are
+> implemented; the remaining integration gap is automatic submission of a
+> timeout claim from the demo/CLI path.
 
 > **Naming.** The repository and project name is `somecryptochessproject`. The
 > Python package and console command use the short form `sccp` (import `sccp`,
@@ -205,7 +207,7 @@ work. A valid proof therefore also requires:
 - registration, bond and claim-window checks.
 
 Nothing in that list asks how well the moves were played. That is deliberate:
-see [`docs/PROTOCOL.md` §9.2](docs/PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain).
+see [§9.2](docs/design/PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain).
 
 ### 3.5 Draws
 
@@ -249,7 +251,7 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 | Claim window | 64 blocks | 144 blocks |
 | Game length | 20-300 plies | 30-400 plies |
 | Engines allowed | any UCI engine, incl. mock | pinned Stockfish builds |
-| Move-quality arbitration | none | none (see [`PROTOCOL.md` §9.2](docs/PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain)) |
+| Move-quality arbitration | none | none (see [`PROTOCOL.md` §9.2](docs/design/PROTOCOL.md#92-why-quality-is-not-arbitrated-on-chain)) |
 | Beacon | commit-reveal | commit-reveal; optional drand mix-in (pinned verifier pending) |
 | Minimum fee | 1,000 base units | 1,000 base units |
 
@@ -280,22 +282,29 @@ responsibility rather than a construction phase.
 ├── .github/workflows/deploy-testnet-miners.yml  # image + hosted testnet deploy
 ├── .github/workflows/deploy-explorer.yml        # hosted app + landing page
 ├── docs/
-│   ├── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
-│   ├── BIG_PICTURE.md            # wallet, bridge, DEX and variant-token design
-│   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
-│   ├── DOMAIN_MIGRATION.md       # move the deployment to a new project/domain
-│   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
-│   ├── EXPLORER_DEPLOYMENT.md    # publish the explorer: proxy, DNS, rollback
-│   ├── GCP_RESOURCE_SETUP.md     # project, VM, firewall and deploy wiring
-│   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
-│   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
-│   ├── PROTOCOL.md               # normative wire formats and consensus rules
-│   ├── RUNBOOK.md                # restart, faucet, mining, incidents
-│   ├── TESTNET_DEPLOYMENT.md     # CI deployment and monthly cost estimate
-│   ├── RUN_A_TESTNET_MINER.md    # operator guide: relay, miner and registration
-│   ├── SEND_COINS.md             # fund a wallet and send a transfer
-│   ├── TEST_DEVNET_BRIDGE_DEX.md # bridge, DEX and Chess960/C960 devnet test
-│   └── THREAT_MODEL.md           # adversary model and residual risk
+│   ├── README.md                     # index: every page, grouped by task
+│   ├── design/                       # what the chain is and why
+│   │   ├── PROTOCOL.md               # normative wire formats and consensus rules
+│   │   ├── WHITEPAPER.md             # the implementation end to end, in prose
+│   │   ├── BIG_PICTURE.md            # wallet, bridge, DEX and variant-token design
+│   │   ├── THREAT_MODEL.md           # adversary model and residual risk
+│   │   └── IMPLEMENTATION_PLAN.md    # next steps and improvement areas
+│   ├── guides/                       # use the CLI, the wallet and the web app
+│   │   ├── INSTALL.md                # install, node URL, network flag, keyfile rules
+│   │   ├── CREATE_A_TESTNET_WALLET.md # create a keyfile, call the faucet, check it
+│   │   ├── OPEN_A_WALLET.md          # create, back up and inspect a keyfile
+│   │   ├── SEND_COINS.md             # fund a wallet and send a transfer
+│   │   ├── PLAY_AND_EXPORT.md        # play on-chain, then export the block's games
+│   │   ├── EXPLORE_THE_CHAIN.md      # build the web explorer and play a real seat
+│   │   └── TEST_DEVNET_BRIDGE_DEX.md # bridge, DEX and Chess960/C960 devnet test
+│   └── operations/                   # run, deploy and repair the network
+│       ├── RUN_A_DEVNET.md           # a whole devnet from source
+│       ├── RUN_A_TESTNET_MINER.md    # operator guide: relay, miner and registration
+│       ├── RUNBOOK.md                # restart, faucet, mining, incidents
+│       ├── TESTNET_DEPLOYMENT.md     # CI deployment and monthly cost estimate
+│       ├── GCP_RESOURCE_SETUP.md     # project, VM, firewall and deploy wiring
+│       ├── EXPLORER_DEPLOYMENT.md    # publish the explorer: proxy, DNS, rollback
+│       └── DOMAIN_MIGRATION.md       # move the deployment to a new project/domain
 ├── data/
 │   ├── openings.json             # curated opening lines, shipped in the wheel
 │   └── engines.json              # pinned Stockfish URLs + SHA-256 per platform
@@ -468,41 +477,37 @@ python scripts/export_block_games.py --block 5 --out ./games   # game 2 on a res
 For a step-by-step walkthrough — including the settlement report, resuming the
 chain, starting the node on the right data directory and troubleshooting a
 `block 0 (0 games)` export — see
-[`docs/PLAY_AND_EXPORT.md`](docs/PLAY_AND_EXPORT.md).
+[`docs/guides/PLAY_AND_EXPORT.md`](docs/guides/PLAY_AND_EXPORT.md).
 
-The wallet and miner guides are separate:
+The wallet and miner guides are separate. All of them are indexed, with what
+each one needs and where it ends, in [`docs/README.md`](docs/README.md):
 
-- [`docs/RUN_A_DEVNET.md`](docs/RUN_A_DEVNET.md) — run a whole devnet from source:
-  `devnet up`, the faucet, wallets, transfers, a miner and the two-process relay
-  stack, with the devnet parameters and troubleshooting.
-- [`docs/TEST_DEVNET_BRIDGE_DEX.md`](docs/TEST_DEVNET_BRIDGE_DEX.md) — test the
-  ETH↔SCCP bridge, the on-chain DEX and the Chess960/C960 path end to end, from
-  the CLI and from the web UI.
-- [`docs/CREATE_A_TESTNET_WALLET.md`](docs/CREATE_A_TESTNET_WALLET.md) — create a
-  testnet keyfile, fund it from the faucet and check the balance.
-- [`docs/OPEN_A_WALLET.md`](docs/OPEN_A_WALLET.md) — create a keyfile, back up the
-  24-word phrase, restore it and read the address.
-- [`docs/SEND_COINS.md`](docs/SEND_COINS.md) — fund a test wallet from the
-  faucet, send a transfer and watch it settle.
-- [`docs/RUN_A_TESTNET_MINER.md`](docs/RUN_A_TESTNET_MINER.md) — run the relay and
-  an engine miner, register on chain and commit/reveal availability.
-- [`docs/EXPLORE_THE_CHAIN.md`](docs/EXPLORE_THE_CHAIN.md) — build the web
-  explorer, serve it from `sccp node run --web`, and play a signed table.
+| Guide | What it is for |
+| --- | --- |
+| [`guides/INSTALL.md`](docs/guides/INSTALL.md) | install the CLI, choose a node, the `--network` rule |
+| [`guides/CREATE_A_TESTNET_WALLET.md`](docs/guides/CREATE_A_TESTNET_WALLET.md) | keyfile, faucet, balance — the short path |
+| [`guides/OPEN_A_WALLET.md`](docs/guides/OPEN_A_WALLET.md) | the full keyfile, mnemonic and restore reference |
+| [`guides/SEND_COINS.md`](docs/guides/SEND_COINS.md) | fund, transfer, fees and settlement |
+| [`guides/PLAY_AND_EXPORT.md`](docs/guides/PLAY_AND_EXPORT.md) | play on-chain and export the block's games |
+| [`guides/EXPLORE_THE_CHAIN.md`](docs/guides/EXPLORE_THE_CHAIN.md) | build the web app and play a signed table |
+| [`operations/RUN_A_DEVNET.md`](docs/operations/RUN_A_DEVNET.md) | a whole devnet from source, step by step |
+| [`operations/RUN_A_TESTNET_MINER.md`](docs/operations/RUN_A_TESTNET_MINER.md) | relay, engine miner, registration, availability |
+| [`guides/TEST_DEVNET_BRIDGE_DEX.md`](docs/guides/TEST_DEVNET_BRIDGE_DEX.md) | bridge, DEX and Chess960 end to end |
 
 The browser wallet, native DEX and trustless ETH↔SCCP HTLC bridge are implemented.
 The same user actions are available from the CLI under `sccp dex` and
 `sccp bridge`; the node, relay and miners remain operator processes.
-[`docs/BIG_PICTURE.md`](docs/BIG_PICTURE.md) records the design and the remaining
-work (the optional federated `wETH` asset, more bridge chains and an external
-audit of `contracts/EthHtlc.sol`).
+[`docs/design/BIG_PICTURE.md`](docs/design/BIG_PICTURE.md) records the design
+and the remaining work (the optional federated `wETH` asset, more bridge chains
+and an external audit of `contracts/EthHtlc.sol`).
 
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
-[`docs/GCP_RESOURCE_SETUP.md`](docs/GCP_RESOURCE_SETUP.md). The current
-deployment is published at
-`http://app.proofofchess.com:8645`; the workflow connects to the VM over SSH
+[`docs/operations/GCP_RESOURCE_SETUP.md`](docs/operations/GCP_RESOURCE_SETUP.md).
+The current deployment is published at `http://app.proofofchess.com:8645`; the
+workflow connects to the VM over SSH
 through the apex name (`sccp@proofofchess.com`). Moving a deployment to
 a new project or domain -- the cutover that produced those names -- is
-[`docs/DOMAIN_MIGRATION.md`](docs/DOMAIN_MIGRATION.md).
+[`docs/operations/DOMAIN_MIGRATION.md`](docs/operations/DOMAIN_MIGRATION.md).
 
 The apex `https://proofofchess.com/` is a static project overview. The explorer
 and wallet are one app deploy on `https://app.proofofchess.com`: nginx serves the
@@ -511,7 +516,7 @@ sends no CORS headers. A Caddy terminator in front holds one certificate per
 name. The hamburger menu in the top-left corner switches between the explorer,
 the wallet, Play, the DEX and the bridge by hash route (`#/`, `#/wallet`,
 `#/play`, `#/dex`, `#/bridge`), so the unlocked key stays in the tab. See
-[`docs/EXPLORER_DEPLOYMENT.md`](docs/EXPLORER_DEPLOYMENT.md).
+[`docs/operations/EXPLORER_DEPLOYMENT.md`](docs/operations/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws
 for the match and hands you the position after it, so the script opens by
@@ -565,7 +570,7 @@ The work that remains is operational and economic rather than foundational:
 - complete the audit, economic review and mainnet go/no-go decision.
 
 The prioritized list, acceptance criteria and improvement areas are in
-[`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
+[`docs/design/IMPLEMENTATION_PLAN.md`](docs/design/IMPLEMENTATION_PLAN.md).
 
 ---
 
@@ -647,7 +652,7 @@ print(raw.pgn)
 `validate_pgn` enforces the 18 required sccp headers, replays every move with
 `Board.is_legal`, checks the result and termination against the board, and hashes
 only `(network, start position, SAN list, result)`. The opening book and engine
-pins are described in [`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+pins are described in [`docs/design/PROTOCOL.md`](docs/design/PROTOCOL.md).
 
 ### Matchmaking and proofs
 
@@ -715,7 +720,7 @@ snapshots, and a restart replays from the last snapshot rather than trusting it.
 Bonded `timeout_claim`/`timeout_dispute` settlement and clock-witness slashing
 live in `src/sccp/chain/timeout.py`; genesis documents in `genesis/*.json` are
 regenerated by `scripts/make_genesis.py`. Wire formats are in
-[`docs/PROTOCOL.md`](docs/PROTOCOL.md).
+[`docs/design/PROTOCOL.md`](docs/design/PROTOCOL.md).
 
 ### The node, gossip and the miner daemon
 
@@ -790,9 +795,9 @@ Two tests pin the parts a unit test could otherwise drift from:
 `docker-compose.yml` (with `Dockerfile` and `deploy/`) runs the same software as
 one node, one relay, a deterministic bootstrap and two Stockfish miners on
 testnet. `deploy/README.md` explains the stack and its published keys,
-[`docs/RUNBOOK.md`](docs/RUNBOOK.md) covers operations and
-[`docs/TESTNET_DEPLOYMENT.md`](docs/TESTNET_DEPLOYMENT.md) documents the merge-to-
-deploy workflow and its monthly cost.
+[`docs/operations/RUNBOOK.md`](docs/operations/RUNBOOK.md) covers operations and
+[`docs/operations/TESTNET_DEPLOYMENT.md`](docs/operations/TESTNET_DEPLOYMENT.md)
+documents the merge-to-deploy workflow and its monthly cost.
 
 ### Releasing
 

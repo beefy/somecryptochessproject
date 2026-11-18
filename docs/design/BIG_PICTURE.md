@@ -36,7 +36,7 @@ That gives four deliverables, in dependency order:
 | Native DEX | pools, LP positions and swaps between on-chain assets | protocol v2 | 0.24.0 |
 | ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | protocol v2 + one Ethereum contract | 0.24.0 |
 
-Optionally, 0.29.0 adds a `wETH` asset so that ETH itself can be traded in the
+Optionally, 0.30.0 adds a `wETH` asset so that ETH itself can be traded in the
 native DEX; that is a bonded federation and is explicitly out of the critical
 path (section 7.7).
 
@@ -629,7 +629,7 @@ inventory and price move, and cancels by signed message. `sccp miner --auto-sell
 composes on top of it for operators who want rewards converted as they vest. No
 custody anywhere: the bot can lose its own inventory to a bug, and nobody else's.
 
-### 7.7 Later, and optional: wrapped ETH (0.29.0)
+### 7.7 Later, and optional: wrapped ETH (0.30.0)
 
 If users want ETH itself traded inside the native DEX (rather than swapped
 peer-to-peer), add a `wETH` asset backed by a **bonded federation**: N operators
@@ -660,7 +660,8 @@ wallet's Bridge view recovers correctly from a page reload at every step.
 | 0.26.0 | hosted app and landing page | split nginx origins, two certificates, deploy smoke tests |
 | 0.27.0 | Chess960 games settle on chain | managed `UCI_Chess960` option; variant-aware proof context; explorer refresh |
 | 0.28.0 | explorer: whole PGNs and a slimmer header | vitest suite; C960 and standard game pages render their moves |
-| 0.29.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure |
+| 0.29.0 | explorer wallet: keyfile import from disk, honest swap rows | vitest suite; a CLI keyfile opens from the picker; a swap names both legs |
+| 0.30.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure |
 | 1.0.0 | mainnet | the go/no-go in `IMPLEMENTATION_PLAN.md`, plus the bridge audit |
 
 Each release keeps `make check` green, regenerates the vectors and OpenAPI

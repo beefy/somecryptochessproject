@@ -144,7 +144,7 @@ API on the page's own origin, the relay on a path of it. The apex
 `https://proofofchess.com/` is a separate static landing page in
 [`src/landing`](../landing); it links into the app and has no API proxy. The
 deploy, its firewall rules, its DNS records and its rollback are in
-[`docs/EXPLORER_DEPLOYMENT.md`](../../docs/EXPLORER_DEPLOYMENT.md).
+[`docs/operations/EXPLORER_DEPLOYMENT.md`](../../docs/operations/EXPLORER_DEPLOYMENT.md).
 
 ## Scripts
 
@@ -284,8 +284,10 @@ What the page does:
   encrypted keyfile.
 - **Restore** — 24 words plus a new passphrase, re-encrypted with a fresh salt and
   nonce around the same seed.
-- **Open** — paste a keyfile from `sccp wallet new` and unlock it; the header is
-  validated and the decrypted seed has to derive the address it names.
+- **Open** — pick the keyfile `sccp wallet new` wrote (or paste its JSON) and
+  unlock it; the file is read in the tab and never uploaded, the picker offers
+  `.key`/`.json`/`.txt`, and the header is validated while the decrypted seed has
+  to derive the address it names.
 - **Balances** — `GET /v1/accounts/<address>` polled every 8 seconds, with a
   Refresh button and a copy-address button; the nickname from Settings heads the
   page.
@@ -306,9 +308,13 @@ What the page does:
   backwards from the tip (200 blocks to start), keeps the transactions that touch
   the address, and caches the window in IndexedDB. It names the heights it covered
   and offers "newer", "older" and "rescan" rather than pretending to be complete.
-  Transfers this browser signed but no block has carried yet appear above the scan
-  until the committed nonce passes them, and counterparties show their nickname
-  when there is one.
+  Every row carries a copy button for its txid and one for the address it names (the
+  pool id on a swap). A swap is one row with both of its legs: the exact `amount_in`,
+  the asset the pool paid out (from the pool's immutable pair, which `pool_id`
+  hashes) and the `min_amount_out` floor the chain enforced, because a block keeps
+  the bound and not the fill. Transfers this browser signed but no block has carried
+  yet appear above the scan until the committed nonce passes them, and
+  counterparties show their nickname when there is one.
 - **Export** — the keyfile, byte-compatible with the CLI's JSON layout, for
   `sccp wallet balance --key` and `wallet import-mnemonic`.
 
@@ -499,4 +505,4 @@ src/
   fetched; the header's network id and tip are the ones to trust.
 
 For the explorer's role in the wider system, see
-[`docs/EXPLORE_THE_CHAIN.md`](../../docs/EXPLORE_THE_CHAIN.md).
+[`docs/guides/EXPLORE_THE_CHAIN.md`](../../docs/guides/EXPLORE_THE_CHAIN.md).

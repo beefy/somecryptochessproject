@@ -405,8 +405,11 @@ svg {
   overflow: hidden;
   border: 10px solid var(--paper);
   border-radius: 18px;
+  /* A conic gradient starts at 12 o'clock and turns clockwise, so the first
+     stop paints each tile's top-right quadrant. Dark first leaves a8 (top-left)
+     and h1 (bottom-right) light, as on a real board: "white on the right". */
   background:
-    repeating-conic-gradient(var(--board-light) 0% 25%, var(--board-dark) 0% 50%) 0 0 / 25% 25%;
+    repeating-conic-gradient(var(--board-dark) 0% 25%, var(--board-light) 0% 50%) 0 0 / 25% 25%;
   box-shadow:
     inset 0 0 0 1px var(--line-strong),
     0 0 0 1px var(--line-strong);

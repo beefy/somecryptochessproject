@@ -9,7 +9,7 @@ roster/pairing, signatures, PGN replay, hashes, duplicates -- and raises
 Move quality is deliberately absent, and so is any engine: a proof that passes
 here is structurally and cryptographically valid. How well the chess was played
 is not a fact about the game record, and this protocol does not attempt to
-arbitrate it; see docs/PROTOCOL.md section 9.2.
+arbitrate it; see docs/design/PROTOCOL.md section 9.2.
 """
 
 from __future__ import annotations

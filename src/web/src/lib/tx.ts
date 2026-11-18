@@ -216,7 +216,7 @@ export interface TransferFields {
  * payload `sccp.wallet.service.WalletService.build_transfer` signs.
  *
  * The chain's `_check_unknown_keys` makes this set strict, so nothing else may
- * be added here without a protocol change (`docs/BIG_PICTURE.md` section 5).
+ * be added here without a protocol change (`docs/design/BIG_PICTURE.md` section 5).
  * A token transfer still pays its fee in native SCCP.
  */
 export function buildTransfer(fields: TransferFields): Transaction {

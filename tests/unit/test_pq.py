@@ -1,7 +1,7 @@
 """The one-scheme invariants: hybrid Ed25519 + ML-DSA-65 is the only identity.
 
 These tests are the acceptance criteria for the post-quantum rewrite
-(docs/PROTOCOL.md sections 2-4 and 8.5):
+(docs/design/PROTOCOL.md sections 2-4 and 8.5):
 
 * every address is a version-1 program over the full 32-byte hash;
 * every transaction signature is the 3374-byte hybrid blob, with no Ed25519

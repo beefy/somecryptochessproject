@@ -225,7 +225,8 @@ holds one unlocked key, and the bridge/DEX tests need two independent wallets.
 
 To move a browser wallet into the CLI, use **Settings → Export keyfile** in the
 wallet, save the JSON, and open it with `sccp` (`wallet address --key ...`). To
-move a CLI wallet into the browser, use **Open a keyfile** and paste the JSON.
+move a CLI wallet into the browser, use **Open a keyfile**, then **Choose a file…**
+and pick the `.key` file (or paste the JSON).
 The passphrase is the one you chose; the seed never leaves the browser
 unencrypted.
 
@@ -1042,6 +1043,12 @@ The review screen shows the pool, pay amount, estimated receive, minimum
 receive, slippage, SCCP fee and nonce. The minimum output is signed; a pool that
 moves past it rejects the transaction.
 
+The swap is one row in `#/wallet/history`, marked `swap`: the exact input, the
+asset the pool paid out and the minimum that was signed, as in
+`10 SCCP → ≥… C960`, with the pool id and the txid each behind a copy button. The
+received side is a floor and not the fill, because a block records the bound the
+chain enforced rather than what the pool actually paid.
+
 ---
 
 
@@ -1248,13 +1255,14 @@ sccp --network devnet --passphrase-file .devnet-stack/passphrase miner run \
 
 ## Related documentation
 
-- [`RUN_A_DEVNET.md`](RUN_A_DEVNET.md) — the base devnet, faucet, wallets,
-  transfers and miner pipeline.
-- [`BIG_PICTURE.md`](BIG_PICTURE.md) — the bridge/DEX/variant design and the
-  remaining work.
-- [`PROTOCOL.md`](PROTOCOL.md) — the transaction, state, HTLC and pool rules.
-- [`contracts/README.md`](../contracts/README.md) — `EthHtlc` interface and
-  deployment.
-- [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — play a game and export it.
-- [`SEND_COINS.md`](SEND_COINS.md) — transfers, fees and addresses.
+- [`RUN_A_DEVNET.md`](../operations/RUN_A_DEVNET.md) — the base devnet, faucet,
+  wallets, transfers and miner pipeline.
+- [`BIG_PICTURE.md`](../design/BIG_PICTURE.md) — the bridge/DEX/variant design
+  and the remaining work.
+- [`PROTOCOL.md`](../design/PROTOCOL.md) — the transaction, state, HTLC and pool
+  rules.
+- [`contracts/README.md`](../../contracts/README.md) — the `EthHtlc` interface
+  and its deployment.
+
+All pages, by task: [`docs/README.md`](../README.md).
 

@@ -1,6 +1,6 @@
 """Wire models for matchmaking, certificates and win proofs.
 
-The models in this module are the schema half of docs/PROTOCOL.md sections 6-9.
+The models in this module are the schema half of docs/design/PROTOCOL.md sections 6-9.
 They are frozen, forbid unknown fields and use constrained string types, so a
 malformed object fails at the boundary instead of deep inside a verifier.
 
@@ -56,7 +56,7 @@ EngineFingerprint = Annotated[
     str,
     StringConstraints(min_length=1, max_length=128, pattern=r"^[\x20-\x7e]+$"),
 ]
-"""A printable engine fingerprint (see docs/PROTOCOL.md section 5)."""
+"""A printable engine fingerprint (see docs/design/PROTOCOL.md section 5)."""
 
 Color = Literal["white", "black"]
 ResultValue = Literal["1-0", "0-1", "1/2-1/2"]

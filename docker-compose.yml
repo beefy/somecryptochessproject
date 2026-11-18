@@ -3,7 +3,7 @@
 # chain in use. Each variant has its own pair, and the relay matches within a
 # variant, so a round opens one standard and one Chess960 game.
 # `deploy/bootstrap_testnet_stack.py` builds the funded, registered, matchable
-# chain once; see deploy/README.md and docs/RUNBOOK.md.
+# chain once; see deploy/README.md and docs/operations/RUNBOOK.md.
 #
 #   docker compose up --build
 #   curl http://127.0.0.1:8645/v1/status
