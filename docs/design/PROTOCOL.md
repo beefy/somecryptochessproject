@@ -979,6 +979,25 @@ pool when the last share is burned.
 
 All reserves are integer base units. Fees for DEX transactions are still paid in
 native SCCP, so an account swapping a variant token needs a small SCCP balance.
+Creating a pool costs nothing beyond the ordinary transaction fee: there is no
+pool-creation deposit and no protocol-owned minimum liquidity, so the first
+deposit is the whole of `k` and a zero-share initial deposit is refused rather
+than burned.
+
+**Execution model.** A swap carries `min_amount_out` and nothing else: there is no
+`deadline_height` and no per-block clearing price. Transactions execute in block
+order against the reserves the earlier transactions in that block left, and the
+only bound on the price a swap receives is its own `min_amount_out`, checked when
+it applies. Two consequences follow and are deliberate for v1:
+
+- a builder who orders a swap before another can move the price the later one
+  pays, up to that transaction's bound;
+- a transaction delayed in a mempool executes at whatever the curve yields when
+  it is included, because nothing expires it.
+
+Both are open design items rather than oversights; `BIG_PICTURE.md` section 6.2
+records the alternatives (a deadline field, batch clearing, an opt-in
+commit-reveal) and `THREAT_MODEL.md` section 4 carries the residual risk.
 
 ## 11. Ledger state
 
