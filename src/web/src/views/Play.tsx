@@ -561,7 +561,7 @@ function Table({
   const sendSan = (san: string): void => {
     if (match === null || colour === null) return;
     const ply = match.san_moves.length;
-    // Moves are Ed25519: `docs/PROTOCOL.md` section 8.5 keeps the high-volume
+    // Moves are Ed25519: `docs/design/PROTOCOL.md` section 8.5 keeps the high-volume
     // streams classical and anchors them with a hybrid signature over the move
     // root inside the result. The relay verifies this with the registered key's
     // Ed25519 half.

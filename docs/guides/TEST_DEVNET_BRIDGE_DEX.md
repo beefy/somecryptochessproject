@@ -1248,13 +1248,14 @@ sccp --network devnet --passphrase-file .devnet-stack/passphrase miner run \
 
 ## Related documentation
 
-- [`RUN_A_DEVNET.md`](RUN_A_DEVNET.md) — the base devnet, faucet, wallets,
-  transfers and miner pipeline.
-- [`BIG_PICTURE.md`](BIG_PICTURE.md) — the bridge/DEX/variant design and the
-  remaining work.
-- [`PROTOCOL.md`](PROTOCOL.md) — the transaction, state, HTLC and pool rules.
-- [`contracts/README.md`](../contracts/README.md) — `EthHtlc` interface and
-  deployment.
-- [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — play a game and export it.
-- [`SEND_COINS.md`](SEND_COINS.md) — transfers, fees and addresses.
+- [`RUN_A_DEVNET.md`](../operations/RUN_A_DEVNET.md) — the base devnet, faucet,
+  wallets, transfers and miner pipeline.
+- [`BIG_PICTURE.md`](../design/BIG_PICTURE.md) — the bridge/DEX/variant design
+  and the remaining work.
+- [`PROTOCOL.md`](../design/PROTOCOL.md) — the transaction, state, HTLC and pool
+  rules.
+- [`contracts/README.md`](../../contracts/README.md) — the `EthHtlc` interface
+  and its deployment.
+
+All pages, by task: [`docs/README.md`](../README.md).
 

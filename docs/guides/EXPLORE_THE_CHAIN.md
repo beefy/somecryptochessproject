@@ -6,7 +6,7 @@ built with Vite, and it talks to the node's `/v1` JSON API and, from `#/play`, t
 the matchmaking relay — every number on the page is a field one of them sent.
 
 For the day-to-day commands — `npm ci`, `npm run dev` against a node, port and
-proxy variables, troubleshooting — see [`src/web/README.md`](../src/web/README.md).
+proxy variables, troubleshooting — see [`src/web/README.md`](../../src/web/README.md).
 This page is the tour.
 
 ## Build it
@@ -48,7 +48,7 @@ An empty API base and a relative relay path are what a hosted build uses, becaus
 the node sends no CORS headers: `/v1` and `/relay` have to be paths on the origin
 that served the page, which means a reverse proxy in front of the same host. The
 deploy that does exactly this is
-[`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md).
+[`EXPLORER_DEPLOYMENT.md`](../operations/EXPLORER_DEPLOYMENT.md).
 
 ## What the pages show
 

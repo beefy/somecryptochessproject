@@ -34,15 +34,9 @@ This guide uses the defaults:
 
 ## 1. Prepare
 
-Run commands from the repository root:
-
-```bash
-cd somecryptochessproject
-source .venv/bin/activate       # if not already active
-pip install -e ".[dev]"         # first time only
-```
-
-The default opponent is the built-in `mock` engine, so Stockfish is not needed.
+The install is in [`INSTALL.md`](INSTALL.md#install); this page assumes `sccp` is
+already on your `PATH`. The default opponent is the built-in `mock` engine, so
+Stockfish is not needed.
 
 ---
 
@@ -150,7 +144,8 @@ height 19: the last block of epoch 3, with epochs 3 and 4 able to pair and epoch
 5's commitments already on chain. That is the state
 `deploy/bootstrap_testnet_stack.py` publishes.
 
-Playing is different in one visible way. [`PROTOCOL.md`](PROTOCOL.md) 12.2 lets a
+Playing is different in one visible way.
+[`PROTOCOL.md`](../design/PROTOCOL.md) 12.2 lets a
 proof be mined only once its epoch has ended, allows a block without a proof one
 transaction, and gives a block *with* a proof only the transactions its epoch can
 spare above one per remaining block. On devnet — one block per epoch — that
@@ -319,7 +314,9 @@ python scripts/export_block_games.py --block 4 --out block-games/game-1
 
 Related references:
 
-- [README quickstart](../README.md#6-quickstart)
-- [`docs/PROTOCOL.md`](PROTOCOL.md)
+- [README quickstart](../../README.md#6-quickstart)
+- [`PROTOCOL.md`](../design/PROTOCOL.md) — normative block and proof rules
 - `python scripts/play_miner.py --help`
 - `python scripts/export_block_games.py --help`
+
+All pages, by task: [`docs/README.md`](../README.md).

@@ -1,7 +1,7 @@
 """Ed25519 keys, signatures and domain-separated signing.
 
 Consensus uses raw 32-byte public keys and 64-byte signatures
-(docs/PROTOCOL.md section 1). :func:`verify` is total: it returns
+(docs/design/PROTOCOL.md section 1). :func:`verify` is total: it returns
 ``False`` instead of raising for any malformed input, because it consumes
 untrusted network data.
 """

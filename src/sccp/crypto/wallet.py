@@ -1,6 +1,6 @@
 """Wallet keyfiles: scrypt + AES-256-GCM, plus BIP-39 mnemonic backup.
 
-Keyfile layout (docs/PROTOCOL.md section 4)::
+Keyfile layout (docs/design/PROTOCOL.md section 4)::
 
     {
         "version": 2,

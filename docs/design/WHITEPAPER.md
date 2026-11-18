@@ -2056,17 +2056,17 @@ the engine-marked tests.
 
 ### 20.1 Repository documents
 
-- [`docs/PROTOCOL.md`](PROTOCOL.md) — normative wire formats and rule details.
-- [`docs/IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — next steps,
-  acceptance criteria and improvement areas.
-- [`docs/PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — on-chain play and game
+- [`PROTOCOL.md`](PROTOCOL.md) — normative wire formats and rule details.
+- [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md) — next steps, acceptance
+  criteria and improvement areas.
+- [`PLAY_AND_EXPORT.md`](../guides/PLAY_AND_EXPORT.md) — on-chain play and game
   export walkthrough.
-- [`docs/OPEN_A_WALLET.md`](OPEN_A_WALLET.md) — wallet creation, backup and
+- [`OPEN_A_WALLET.md`](../guides/OPEN_A_WALLET.md) — wallet creation, backup and
   restore.
-- [`docs/SEND_COINS.md`](SEND_COINS.md) — transfers, fees and settlement.
-- [`docs/RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — relay and miner
-  operator guide.
-- [`README.md`](../README.md) — overview, quickstart and command examples.
+- [`SEND_COINS.md`](../guides/SEND_COINS.md) — transfers, fees and settlement.
+- [`RUN_A_TESTNET_MINER.md`](../operations/RUN_A_TESTNET_MINER.md) — the relay
+  and miner operator guide.
+- [`README.md`](../../README.md) — overview, quickstart and command examples.
 - `data/openings.json` — the shipped opening book.
 - `data/engines.json` — pinned engine profiles and checksums.
 - `genesis/{testnet,mainnet,devnet}.json` — pinned genesis documents.

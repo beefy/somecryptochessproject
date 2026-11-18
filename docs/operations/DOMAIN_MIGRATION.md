@@ -267,12 +267,10 @@ suggests a second origin still exists.
 
 ## See also
 
-- [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md) -- the same resources, built
-  from nothing, section by section.
-- [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) -- what the deploy workflow
-  does on every merge, and the monthly cost.
 - [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md) -- the nginx/Caddy pair,
   rolling back a bundle, the certificate and SSH hardening.
+- [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) -- what the deploy workflow
+  does on every merge, and the monthly cost.
 - [`RUNBOOK.md`](RUNBOOK.md) -- health checks and incident steps after the move.
 
-
+All pages, by task: [`docs/README.md`](../README.md).

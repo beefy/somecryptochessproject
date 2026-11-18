@@ -360,7 +360,7 @@ def ed25519_public_key_hex(value: str) -> str:
 
     Every account is hybrid, and two high-volume streams stay Ed25519: seat move
     signatures and clock-witness receipts. Both are anchored by a hybrid
-    signature over a commitment (docs/PROTOCOL.md section 8.5), so verification
+    signature over a commitment (docs/design/PROTOCOL.md section 8.5), so verification
     of those streams reads the 32 bytes right after the scheme byte. Anything
     that is not a hybrid blob is returned unchanged, so a malformed key still
     fails closed inside the verifier rather than being silently rewritten here.

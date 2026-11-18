@@ -1,4 +1,4 @@
-"""Immutable network parameters (docs/PROTOCOL.md section 15).
+"""Immutable network parameters (docs/design/PROTOCOL.md section 15).
 
 Amounts are integer base units: ``1 coin = 100_000_000 units``. No floating
 point value is ever accepted by this module. ``NetworkParams`` validates its own

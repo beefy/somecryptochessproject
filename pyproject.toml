@@ -23,11 +23,11 @@ classifiers = [
 ]
 
 # Runtime dependencies. python-chess is pinned to the 1.11 behaviour line
-# (dist version 1.999) because docs/PROTOCOL.md section 3 depends on its exact
+# (dist version 1.999) because docs/design/PROTOCOL.md section 3 depends on its exact
 # PGN semantics.
 dependencies = [
   "python-chess>=1.11,<2",
-  # The Glicko-2 one-period update (docs/PROTOCOL.md section 14.4). Ratings are
+  # The Glicko-2 one-period update (docs/design/PROTOCOL.md section 14.4). Ratings are
   # a derived view, never consensus state, but the arithmetic is still pinned:
   # an upgrade can move displayed numbers, so it should be a deliberate change.
   "glicko2>=2.1,<3",

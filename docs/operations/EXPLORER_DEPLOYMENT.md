@@ -1,7 +1,7 @@
 # Deploying the web app and landing page
 
 Every merge that touches `src/web`, `src/landing` or `deploy/explorer` runs
-[`deploy-explorer.yml`](../.github/workflows/deploy-explorer.yml), which publishes
+[`deploy-explorer.yml`](../../.github/workflows/deploy-explorer.yml), which publishes
 two static origins from the same commit:
 
 ```text
@@ -24,7 +24,7 @@ certificate, sit in front of two nginx listeners in the same container.
 The deploy never touches the chain. It uploads two new release directories,
 moves two symlinks and leaves the node, the relay and the SQLite file alone —
 unlike
-[`deploy-testnet-miners.yml`](../.github/workflows/deploy-testnet-miners.yml),
+[`deploy-testnet-miners.yml`](../../.github/workflows/deploy-testnet-miners.yml),
 which resets the chain.
 
 ## Why a proxy instead of just files
@@ -57,7 +57,7 @@ certificate for each, redirects `http://` to `https://`, and proxies
 
 Both containers run with `network_mode: host`, so they share the host's network
 namespace: Caddy binds `80`/`443`, nginx binds `8080` and `8081`, and both reach
-the loopback ports that [`docker-compose.yml`](../docker-compose.yml) already
+the loopback ports that [`docker-compose.yml`](../../docker-compose.yml) already
 publishes. They need no Docker network in common with the chain's stack and no
 credentials.
 
@@ -339,9 +339,9 @@ password fallback to make an old client work.
 ## TLS
 
 TLS is part of the deployment, not an option. The `tls` service in
-[`deploy/explorer/docker-compose.yml`](../deploy/explorer/docker-compose.yml) runs
+[`deploy/explorer/docker-compose.yml`](../../deploy/explorer/docker-compose.yml) runs
 Caddy with
-[`deploy/explorer/Caddyfile`](../deploy/explorer/Caddyfile), which on first start
+[`deploy/explorer/Caddyfile`](../../deploy/explorer/Caddyfile), which on first start
 asks Let's Encrypt for a certificate for each name in the file
 (`proofofchess.com` and `app.proofofchess.com`), renews them in the background,
 redirects `http://` to `https://`, and proxies to the nginx origins on
@@ -371,7 +371,7 @@ Let's Encrypt rate-limits duplicate certificates per name and week.
 To run without TLS on a throwaway VM, drop the `tls` service and the `volumes`
 block from the compose file, and change the app listener to `listen 80` and the
 landing listener to `listen 81` in
-[`deploy/explorer/nginx.conf`](../deploy/explorer/nginx.conf). Keep `/v1` and
+[`deploy/explorer/nginx.conf`](../../deploy/explorer/nginx.conf). Keep `/v1` and
 `/relay` on the app origin either way — splitting them across hosts brings back
 the CORS problem this design removes.
 
@@ -465,13 +465,13 @@ releases are a couple of megabytes.
 
 ## See also
 
-- [`src/web/README.md`](../src/web/README.md) — building the bundle, the dev
+- [`src/web/README.md`](../../src/web/README.md) — building the bundle, the dev
   server, `VITE_SCCP_API`/`VITE_SCCP_RELAY` and the failure modes in the page
   itself.
-- [`EXPLORE_THE_CHAIN.md`](EXPLORE_THE_CHAIN.md) — what the pages show and how to
-  read them.
+- [`EXPLORE_THE_CHAIN.md`](../guides/EXPLORE_THE_CHAIN.md) — what the pages show
+  and how to read them.
 - [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) — the chain deploy this one
   sits beside.
-- [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md) — the VM, network and deploy
-  user both workflows use.
+
+All pages, by task: [`docs/README.md`](../README.md).
 

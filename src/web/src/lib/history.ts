@@ -5,7 +5,7 @@
  * transactions that produced it. What it does expose is `GET /v1/blocks` and one
  * block by height, so the wallet walks backwards from the tip, reads the blocks
  * and keeps the transactions that touch one address. That is the plan in
- * `docs/BIG_PICTURE.md` section 4.3, and it is honest about its limits: a scan is
+ * `docs/design/BIG_PICTURE.md` section 4.3, and it is honest about its limits: a scan is
  * a window, not an index, so the view always says which heights it covered.
  *
  * Results are cached in IndexedDB per `network:address`, together with the

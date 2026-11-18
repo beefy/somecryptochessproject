@@ -15,7 +15,7 @@ rather than a guess.
 The segwit-style helpers in the ``bech32`` package are not usable here: they
 hard-code witness program lengths and reject the programs this protocol needs,
 so we use the primitives ``bech32_encode``/``bech32_decode``/``convertbits``
-directly (docs/PROTOCOL.md section 2).
+directly (docs/design/PROTOCOL.md section 2).
 """
 
 from __future__ import annotations

@@ -12,7 +12,7 @@
  * Two key types live here, and the difference matters:
  *
  * - {@link Keypair} is the Ed25519 *half*. Moves, clock receipts and gossip are
- *   Ed25519 (`docs/PROTOCOL.md` section 8.5), so those are signed with it.
+ *   Ed25519 (`docs/design/PROTOCOL.md` section 8.5), so those are signed with it.
  * - {@link HybridKeypair} is the account: it holds both halves. Anything the
  *   ledger or the relay checks as a hybrid signature — transactions,
  *   certificates, results — is signed with it.
@@ -147,7 +147,7 @@ const HYBRID_MESSAGE_TAG = new TextEncoder().encode("sccp/v1/pq-hybrid\u0000");
  * The Ed25519 half of a hybrid account, from its 32-byte master seed.
  *
  * This is the key that signs moves, clock receipts and gossip — the streams
- * `docs/PROTOCOL.md` section 8.5 keeps classical because they are anchored by a
+ * `docs/design/PROTOCOL.md` section 8.5 keeps classical because they are anchored by a
  * hybrid signature elsewhere. Use {@link hybridKeypairFromSeed} when the full
  * account is needed; this helper exists so a caller that only publishes moves
  * does not pay for an ML-DSA keygen.

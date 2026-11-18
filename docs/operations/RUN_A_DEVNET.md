@@ -237,8 +237,8 @@ a settlement miner. What each part does:
 
 - **The API.** `GET /v1/status` is the health check; `/v1/blocks`, `/v1/games`,
   `/v1/accounts/{address}`, `/v1/epochs/{epoch}`, `/v1/mempool` and the rest are
-  documented in [`PROTOCOL.md`](PROTOCOL.md) section 13. The OpenAPI document is
-  served at `/docs` and `/openapi.json`.
+  documented in [`PROTOCOL.md`](../design/PROTOCOL.md) section 13. The OpenAPI
+  document is served at `/docs` and `/openapi.json`.
 - **`--web`.** Mounts the built explorer (`src/web/dist`) at `/`. Section 5.
 - **The faucet.** Enabled by default on any test network whose genesis funds a
   faucet key — both `testnet` and `devnet`. `--no-faucet` turns the HTTP
@@ -381,7 +381,7 @@ refresh forgets it, which is the point. It derives both halves of the hybrid key
 so the tab registers the seat, commits and reveals availability, joins with a
 hybrid start signature, signs moves with the Ed25519 half and co-signs the result
 with both halves — every signature is accepted by the node and the relay as-is.
-[`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) section 2 has the key details, and
+[`OPEN_A_WALLET.md`](../guides/OPEN_A_WALLET.md) section 2 has the key details, and
 `sccp wallet sign-result` is still there for a key that lives outside a browser.
 
 ---
@@ -450,9 +450,10 @@ hidden input, which needs a terminal: a piped phrase is not read, because the
 hidden prompt goes to the controlling terminal. The restored keyfile holds the
 same seed, so it is the same address.
 
-[`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) is the long version of this section, and
-[`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) the testnet-specific
-one.
+[`OPEN_A_WALLET.md`](../guides/OPEN_A_WALLET.md) is the long version of this
+section, and
+[`CREATE_A_TESTNET_WALLET.md`](../guides/CREATE_A_TESTNET_WALLET.md) the
+testnet-specific one.
 
 ### 6.2 Read its balance from the node
 
@@ -908,18 +909,11 @@ them, which is why the examples above look inconsistent at a glance.
 
 ## 11. Where to go next
 
-- [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — play on the devnet chain, then
-  export every game in a block as PGN with `scripts/export_block_games.py`.
-- [`TEST_DEVNET_BRIDGE_DEX.md`](TEST_DEVNET_BRIDGE_DEX.md) — the full devnet
+- [`PLAY_AND_EXPORT.md`](../guides/PLAY_AND_EXPORT.md) — play on the devnet chain, then
+  export every game in a block as PGN.
+- [`TEST_DEVNET_BRIDGE_DEX.md`](../guides/TEST_DEVNET_BRIDGE_DEX.md) — the full devnet
   bridge, DEX and Chess960/C960 test, with both `sccp` and web UI steps.
-- [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) — keyfiles, the 24-word backup, the
-  hybrid signing rules and `sccp wallet sign-result`.
-- [`SEND_COINS.md`](SEND_COINS.md) and
-  [`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md) — the same flows with
-  testnet addresses and numbers.
-- [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) — the two-process stack: a
-  relay config, two engine miners, availability over many epochs.
-- [`EXPLORE_THE_CHAIN.md`](EXPLORE_THE_CHAIN.md) — the explorer, the API and the
-  deploy story behind it.
-- [`PROTOCOL.md`](PROTOCOL.md) — what the blocks, proofs, beacons and rosters in
-  all of the above actually mean; section 13 is the API reference.
+- [`PROTOCOL.md`](../design/PROTOCOL.md) — what the blocks, proofs, beacons and
+  rosters in all of the above actually mean; section 13 is the API reference.
+
+All pages, by task: [`docs/README.md`](../README.md).

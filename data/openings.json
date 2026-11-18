@@ -2,7 +2,7 @@
   "format": 1,
   "books": {
     "v1": {
-      "description": "Mainnet book: balanced, legal opening lines of at most 12 plies. Selected from the epoch beacon; see docs/PROTOCOL.md section 4.",
+      "description": "Mainnet book: balanced, legal opening lines of at most 12 plies. Selected from the epoch beacon; see docs/design/PROTOCOL.md section 4.",
       "lines": [
         {
           "name": "Italian Game: Giuoco Piano",

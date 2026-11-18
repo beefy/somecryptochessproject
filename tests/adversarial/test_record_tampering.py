@@ -7,7 +7,7 @@ default suite deselects:
     make adversarial
 
 The quality-panel cases that used to live beside them were removed with the
-quality layer itself; `docs/PROTOCOL.md` section 9.2 records why.
+quality layer itself; `docs/design/PROTOCOL.md` section 9.2 records why.
 """
 
 from __future__ import annotations

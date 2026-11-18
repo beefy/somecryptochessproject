@@ -20,7 +20,7 @@ name: deploy-explorer
 # relay proxy also means `#/play` works without opening 8646 to browsers or
 # passing `--origin` to `sccp matchmaker run`.
 #
-# Setup (DNS, firewall, GitHub wiring) is in docs/EXPLORER_DEPLOYMENT.md.
+# Setup (DNS, firewall, GitHub wiring) is in docs/operations/EXPLORER_DEPLOYMENT.md.
 #
 # Required repository configuration, in the existing `testnet` environment:
 #   vars.EXPLORER_DEPLOY_HOST    user@host of the VM; falls back to TESTNET_DEPLOY_HOST

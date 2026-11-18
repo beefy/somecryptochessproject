@@ -14,6 +14,19 @@ not itemised here.
   lock, claim and refund lifecycles, another covers pool creation, liquidity changes and
   swaps with the SCCP named in each payload, and the closing snapshot counts both.
 
+### Changed
+
+- **The docs are grouped by task.** `docs/` is now three folders plus an index:
+  `design/` (protocol, whitepaper, big picture, threat model, implementation
+  plan), `guides/` (install, wallet, transfers, play/export, explorer,
+  bridge/DEX) and `operations/` (devnet, miner, runbook, deployment, GCP setup,
+  explorer deploy, domain migration). `docs/README.md` lists every page by what
+  it is for and marks `PROTOCOL.md` as the normative one. The install block that
+  four pages repeated now lives once in `docs/guides/INSTALL.md`, the see-also
+  footers point at the index instead of restating it, and the root README, the
+  landing-page footer and every code comment that names a document were updated
+  to the new paths.
+
 ### Fixed
 
 - **The balance reconstruction's drift check can fail again.** It compared the rebuilt
@@ -97,7 +110,7 @@ not itemised here.
   every action to the app. Two Caddy site blocks and two certificates replace the
   five name-based blocks, and the deploy publishes both releases from one commit.
   Old subdomain URLs are not redirected; the cutover and rollback are in
-  `docs/DOMAIN_MIGRATION.md`.
+  `docs/operations/DOMAIN_MIGRATION.md`.
 
 ## [0.25.0] - 2026-11-16
 
@@ -290,7 +303,7 @@ not itemised here.
   `deploy-testnet-miners.yml`, the relay fixture in
   `src/web/src/lib/relay.test.ts`, and every `curl`, `--node`, `--peer` and
   `dig` example in `README.md`, `deploy/`, `docs/` and `analysis/`. New
-  `docs/DOMAIN_MIGRATION.md` records the cutover in the order it has to run --
+  `docs/operations/DOMAIN_MIGRATION.md` records the cutover in the order it has to run --
   billing and the Compute API, VPC and firewall, static address and VM, DNS
   records, the GitHub variables and the host-key secret, the two deploys,
   verification, rollback, and decommissioning the old VM without deleting the
@@ -306,7 +319,7 @@ not itemised here.
 
 ### Added
 
-- **`docs/BIG_PICTURE.md`, the plan for a browser wallet, an ETH<->SCCP bridge
+- **`docs/design/BIG_PICTURE.md`, the plan for a browser wallet, an ETH<->SCCP bridge
   and a native DEX.** The chain settles games and mints SCCP, but there is still
   no way to sign from a browser beyond the playable table, nowhere to trade one
   asset for another, and no path between mined coins and ETH. The document plans
@@ -400,7 +413,7 @@ not itemised here.
   `deploy/synthetic_quality_events.py` with its test. The
   `resignation_check` hook on `validate_pgn` stays, but no caller in the node
   supplies one, and `resignation_is_hopeless` went with the analyser.
-  The reason is recorded in `docs/PROTOCOL.md` §9.2, the whitepaper (§12.5,
+  The reason is recorded in `docs/design/PROTOCOL.md` §9.2, the whitepaper (§12.5,
   §16.7) and the threat model: consensus only ever required the summary's
   *presence*, never validated its contents; panel verdicts were attested rather
   than re-derived; a refundable challenger bond made smearing cheap; the panel's
@@ -475,7 +488,7 @@ not itemised here.
   workflow's `Show service state` step now runs `docker compose ps -a` and dumps
   `init`, `node`, `relay` and `bootstrap` logs; `node` was absent from that dump
   even though its log is the one that explains a boot failure.
-  `docs/RUNBOOK.md` gained a "The stack will not start" section that separates an
+  `docs/operations/RUNBOOK.md` gained a "The stack will not start" section that separates an
   exit-2 address validation error from a chain problem, and its health checklist
   no longer pins the relay's epoch to 3 (the epoch follows the node: 4 once the
   first post-bootstrap block settles).
@@ -651,10 +664,10 @@ by side, and this one removes the classical path entirely.*
   key reveal, cross-scheme spend rejection, scheme-tagged signature sizes,
   keyfile and mnemonic round trips, unchanged version-1 keyfile, the long-passphrase
   rule and the header/address mismatch guard.
-- `docs/PROTOCOL.md` section 10.5 and `docs/WHITEPAPER.md` section 6.5 document
+- `docs/design/PROTOCOL.md` section 10.5 and `docs/design/WHITEPAPER.md` section 6.5 document
   the layouts, the address version and the deliberately narrow scope;
-  `docs/THREAT_MODEL.md` gains a quantum adversary, an attack row and a residual
-  risk, and `docs/OPEN_A_WALLET.md` a post-quantum wallet walkthrough.
+  `docs/design/THREAT_MODEL.md` gains a quantum adversary, an attack row and a residual
+  risk, and `docs/guides/OPEN_A_WALLET.md` a post-quantum wallet walkthrough.
 
 ### Changed
 
@@ -662,7 +675,7 @@ by side, and this one removes the classical path entirely.*
   length instead of assuming Ed25519, and the ledger stores the classical half of
   a hybrid key in the paths that only need Ed25519 (transcripts, clock receipts,
   roster) while keeping the full blob for the balance check.
-- `docs/WHITEPAPER.md` component and residual-risk tables now name hybrid keys.
+- `docs/design/WHITEPAPER.md` component and residual-risk tables now name hybrid keys.
 
 ### Security
 
@@ -718,7 +731,7 @@ and a proofless block must carry exactly one transaction.
   listener on `443` answers that with `ERR_CONNECTION_TIMED_OUT`; `#/play` also
   signs with a key made in the page, which plain HTTP would put on the wire. The
   certificate lives in a `caddy_data` volume, so a deploy never re-issues it.
-- `docs/EXPLORER_DEPLOYMENT.md`: what the deploy does, the GCP firewall rules
+- `docs/operations/EXPLORER_DEPLOYMENT.md`: what the deploy does, the GCP firewall rules
   (`tcp:80,tcp:443`) and
   `A` record it needs, the GitHub variables (all falling back to `TESTNET_*`),
   how TLS is issued and renewed, rollback and a troubleshooting table.
@@ -753,7 +766,7 @@ and a proofless block must carry exactly one transaction.
   each weight, but nodes must agree on the credit rule: upgrade them together
   (and before the mainnet genesis freeze, since post-genesis this needs an
   activation height).
-- `docs/THREAT_MODEL.md` and `docs/PROTOCOL.md` now document the heartbeat
+- `docs/design/THREAT_MODEL.md` and `docs/design/PROTOCOL.md` now document the heartbeat
   trade-off, the seal-only fork residual risk and the unenforced `reorg_depth`.
 
 ## [0.14.0] - 2026-11-12
@@ -785,7 +798,7 @@ and the node serves it itself with `sccp node run --web`.
   match id, the colour draw, the move and result payloads and the game hash
   (`src/web/src/lib`), pinned to the Python implementation by
   `scripts/make_web_vectors.py` and `tests/unit/test_web_vectors.py`.
-- `docs/EXPLORE_THE_CHAIN.md`.
+- `docs/guides/EXPLORE_THE_CHAIN.md`.
 
 ### Fixed
 
@@ -893,7 +906,7 @@ transfer reads as the amount you typed.
   passing the URL of the node that holds the coins as `--node` is the fix (a copy
   taken while the node runs also needs `chain.sqlite-wal`, since a copy of
   `chain.sqlite` alone opens at height 0). See
-  [`docs/SEND_COINS.md`](docs/SEND_COINS.md), which also documents the case of two
+  [`docs/guides/SEND_COINS.md`](docs/guides/SEND_COINS.md), which also documents the case of two
   chains started from the same genesis, where both sides look the same to a wallet
   but only one holds the coins.
 
@@ -1035,9 +1048,9 @@ protocol and testnet directly, without construction-phase labels.
 ### Changed
 
 - Documentation and code comments now describe the shipped protocol and testnet
-  directly instead of construction-phase labels. `docs/IMPLEMENTATION_PLAN.md`
+  directly instead of construction-phase labels. `docs/design/IMPLEMENTATION_PLAN.md`
   is now a forward-looking list of next steps, acceptance criteria and
-  improvement areas; protocol details remain normative in `docs/PROTOCOL.md`.
+  improvement areas; protocol details remain normative in `docs/design/PROTOCOL.md`.
 
 ### Fixed
 
@@ -1070,11 +1083,11 @@ and an automated deployment workflow.
   image for CI while local runs build it.
 - `.github/workflows/deploy-testnet-miners.yml`: builds and publishes the image
   to GHCR, then deploys it over SSH to the testnet VM without GCP credentials.
-- Operator documentation: `docs/RUNBOOK.md` (restart, faucet, mining and
-  incident procedures), `docs/TESTNET_DEPLOYMENT.md` (CI deployment and cost
-  overview), `docs/CREATE_A_TESTNET_WALLET.md` (wallet and faucet quickstart),
-  `docs/GCP_RESOURCE_SETUP.md` (VM, network, firewall and GitHub wiring), and an
-  expanded `docs/RUN_A_TESTNET_MINER.md`.
+- Operator documentation: `docs/operations/RUNBOOK.md` (restart, faucet, mining and
+  incident procedures), `docs/operations/TESTNET_DEPLOYMENT.md` (CI deployment and cost
+  overview), `docs/guides/CREATE_A_TESTNET_WALLET.md` (wallet and faucet quickstart),
+  `docs/operations/GCP_RESOURCE_SETUP.md` (VM, network, firewall and GitHub wiring), and an
+  expanded `docs/operations/RUN_A_TESTNET_MINER.md`.
 - Tests for the faucet, node miner, faucet CLI, deterministic bootstrap and
   cross-thread block persistence.
 
@@ -1096,7 +1109,7 @@ and an automated deployment workflow.
 
 - This release completes the planned protocol and testnet scope. A block
   explorer, metrics and a 72-hour soak are follow-on operational work, tracked in
-  [`docs/IMPLEMENTATION_PLAN.md`](docs/IMPLEMENTATION_PLAN.md).
+  [`docs/design/IMPLEMENTATION_PLAN.md`](docs/design/IMPLEMENTATION_PLAN.md).
 
 ## [0.8.0] - 2026-11-12
 
@@ -1126,11 +1139,11 @@ operator guides for wallets, transfers and miners.
     (blunder counting on each side, the reply-based fallback for moves outside
     MultiPV, decided positions, resignation bounds, the bounded LRU cache,
     strict engine-output parsing and `summary_matches`).
-  - `docs/THREAT_MODEL.md`: assets, adversaries, attack → mitigation → residual
+  - `docs/design/THREAT_MODEL.md`: assets, adversaries, attack → mitigation → residual
     risk tables, attack trees and explicit non-goals, with code references.
-  - Operator guides: `docs/OPEN_A_WALLET.md` (create, back up, restore and
-    inspect a keyfile), `docs/SEND_COINS.md` (faucet funding, transfers, fees,
-    mempool settlement and troubleshooting) and `docs/RUN_A_TESTNET_MINER.md`
+  - Operator guides: `docs/guides/OPEN_A_WALLET.md` (create, back up, restore and
+    inspect a keyfile), `docs/guides/SEND_COINS.md` (faucet funding, transfers, fees,
+    mempool settlement and troubleshooting) and `docs/operations/RUN_A_TESTNET_MINER.md`
     (relay + miner quickstart, real engines, roster edits, registration,
     availability/reveal and operational safety), linked from the README.
 
@@ -1141,7 +1154,7 @@ clearer export and refusal diagnostics.
 
 ### Added
 
-- `docs/WHITEPAPER.md`: a descriptive end-to-end whitepaper covering the chain,
+- `docs/design/WHITEPAPER.md`: a descriptive end-to-end whitepaper covering the chain,
   chess proof layer, matchmaking, mining, node/gossip, storage and operations,
   with implemented and planned behaviour kept explicit.
 - `scripts/play_miner.py --on-chain`: runs now **resume** an existing
@@ -1160,7 +1173,7 @@ clearer export and refusal diagnostics.
   before the exported block, and warns when it exports genesis because the node
   it reached serves no games. This makes the common `--network`/`--data-dir`
   mismatch (or an old node still holding port 8645) visible in the output.
-- `docs/PLAY_AND_EXPORT.md`: a step-by-step guide for playing a game with
+- `docs/guides/PLAY_AND_EXPORT.md`: a step-by-step guide for playing a game with
   `scripts/play_miner.py --on-chain`, starting a node on the resulting chain and
   exporting the block's PGN and manifest with
   `scripts/export_block_games.py`, including resume/multi-game and wrong-node
@@ -1436,7 +1449,7 @@ The chain, the wallet service and the block builder.
 - `genesis/devnet.json`, refreshed `genesis/testnet.json` and
   `genesis/mainnet.json`, regenerated deterministically by
   `scripts/make_genesis.py`.
-- `docs/PROTOCOL.md` sections 10–13: transaction envelopes and payloads,
+- `docs/design/PROTOCOL.md` sections 10–13: transaction envelopes and payloads,
   bonded timeout settlement, ledger state, blocks, difficulty, fork choice and
   genesis documents.
 

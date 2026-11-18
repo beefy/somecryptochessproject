@@ -51,7 +51,7 @@ For charts rather than raw JSON, `analysis/testnet_stats.ipynb` reads the same p
 API: throughput and block intervals, the token distribution, the ten traffic wallets'
 balances over time, and the wallet and miner graphs. It is read-only, caches its
 snapshots under `analysis/cache/`, and is documented in
-[`../analysis/README.md`](../analysis/README.md).
+[`analysis/README.md`](../../analysis/README.md).
 
 ## Synthetic traffic
 
@@ -211,7 +211,7 @@ deployment must not give away coins.
 
 For a copy-paste walkthrough that creates a keyfile, calls the faucet and checks
 the resulting balance, see
-[`CREATE_A_TESTNET_WALLET.md`](CREATE_A_TESTNET_WALLET.md).
+[`CREATE_A_TESTNET_WALLET.md`](../guides/CREATE_A_TESTNET_WALLET.md).
 
 ## Mining and the bootstrap window
 

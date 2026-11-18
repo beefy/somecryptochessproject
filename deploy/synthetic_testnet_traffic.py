@@ -27,7 +27,7 @@ Two properties keep the loop solvent and accepted by consensus:
   nothing against the genesis faucet's 1,000,000 coins);
 * every sender's nonce is tracked locally. ``GET /v1/accounts`` reports committed
   state, not the mempool projection, so several grants or transfers from one
-  account must be numbered by the client -- the same rule ``docs/RUNBOOK.md``
+  account must be numbered by the client -- the same rule ``docs/operations/RUNBOOK.md``
   gives an operator sending two transactions in a row.
 
 Only this cycle's own transactions are waited on, never an empty pool:
@@ -43,7 +43,7 @@ script exists to make.
 The public faucet allows five grants per client per hour and one per address, and
 every request here leaves one container IP. A cycle that seats more wallets than
 the budget therefore falls back to signing the same transfer with the published
-faucet key, the operator path ``docs/RUNBOOK.md`` documents for recovering a test
+faucet key, the operator path ``docs/operations/RUNBOOK.md`` documents for recovering a test
 wallet. The fallback is logged, and the endpoint is tried again next cycle, so
 the faucet itself stays in the loop whenever it has budget.
 
@@ -529,7 +529,7 @@ class FaucetGateway:
     cycle that seats more wallets than that cannot fund them all over HTTP. When
     the endpoint answers 429 this gateway signs the same transfer with the
     published faucet key and submits it to ``POST /v1/tx`` -- the operator path
-    ``docs/RUNBOOK.md`` documents. Both paths spend from the same account, so the
+    ``docs/operations/RUNBOOK.md`` documents. Both paths spend from the same account, so the
     gateway numbers every grant itself: it reads the committed nonce once per
     cycle, after the pool has drained, then counts its own submissions.
     """

@@ -8,7 +8,7 @@ their variants, commits/reveals availability, opens a matchable epoch, plays one
 game per variant per round and settles the winning proofs on chain. `sccp devnet
 up` remains the fast in-process demo; this stack exercises the real
 multi-process, HTTP and SQLite path. The merge-to-deploy workflow and its monthly
-cost are in [`docs/TESTNET_DEPLOYMENT.md`](../docs/TESTNET_DEPLOYMENT.md).
+cost are in [`docs/operations/TESTNET_DEPLOYMENT.md`](../docs/operations/TESTNET_DEPLOYMENT.md).
 
 The current hosted deployment is at
 `http://app.proofofchess.com:8645`; the commands below use
@@ -16,7 +16,7 @@ The current hosted deployment is at
 separate Compose deploy, in `explorer/`, published at
 `https://app.proofofchess.com`, while the project overview from `src/landing` is
 at `https://proofofchess.com/`; see
-[`docs/EXPLORER_DEPLOYMENT.md`](../docs/EXPLORER_DEPLOYMENT.md).
+[`docs/operations/EXPLORER_DEPLOYMENT.md`](../docs/operations/EXPLORER_DEPLOYMENT.md).
 
 ```bash
 docker compose up --build
@@ -96,7 +96,7 @@ funded from the faucet, transfers between them, then 1-5 minutes of quiet -- so 
 testnet nobody is watching still exercises the paths a client takes. Neither holds
 a roster slot or builds a block. `traffic` keeps its coins inside its own wallet
 pool, so it circulates them instead of draining the faucet; the
-[runbook](../docs/RUNBOOK.md#synthetic-traffic) has the arithmetic.
+[runbook](../docs/operations/RUNBOOK.md#synthetic-traffic) has the arithmetic.
 
 `seed` is now an idempotent check rather than the source of the demo state.
 Testnet genesis already creates the SCCP/C960 pool (5 coins per side) and a
@@ -231,7 +231,7 @@ iterating on the test.
   the relay opens one round every minute, so a miner's quota can run out for the
   epoch; the next epoch's roster restores it.
 - The faucet's limits are in memory and reset with the node. See
-  [`docs/RUNBOOK.md`](../docs/RUNBOOK.md) for the exact policy.
+  [`docs/operations/RUNBOOK.md`](../docs/operations/RUNBOOK.md) for the exact policy.
 
 ## Clocks and witnesses
 
@@ -262,4 +262,4 @@ The second command prints the node, relay and miner commands for those files.
 Both stacks publish their seeds and passphrase on purpose; devnet has no value to
 protect and a reproducible stack is what makes the files work without a
 coordination step. `--fresh` rebuilds the devnet chain and never touches the keys.
-[`docs/RUN_A_DEVNET.md`](../docs/RUN_A_DEVNET.md) section 9.3 walks through it.
+[`docs/operations/RUN_A_DEVNET.md`](../docs/operations/RUN_A_DEVNET.md) section 9.3 walks through it.

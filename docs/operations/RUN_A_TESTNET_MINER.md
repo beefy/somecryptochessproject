@@ -14,7 +14,7 @@ There are three ways to see a miner run:
 | Relay + miner processes | `sccp matchmaker run` and `sccp miner run` | The real multi-process wiring, over HTTP, with real clocks. |
 
 > **Status.** Relay play, engine mining, win-proof construction, faucet funding
-> and on-chain proof settlement work today. [`deploy/README.md`](../deploy/README.md)
+> and on-chain proof settlement work today. [`deploy/README.md`](../../deploy/README.md)
 > runs the whole loop with two standard and two Chess960 Stockfish miners, and
 > [`RUNBOOK.md`](RUNBOOK.md) covers operating it. Use `sccp devnet up` for the
 > fast in-process demo, and the relay flow below for a miner you run yourself.
@@ -46,16 +46,10 @@ authoritative and every accepted move gets a signed receipt.
 
 ## 2. Prepare
 
-```bash
-cd somecryptochessproject
-source .venv/bin/activate
-pip install -e ".[dev]"
-sccp --version
-```
-
-You need Python 3.11 or newer. A real engine also needs a binary (section 4.4);
-the `mock` profile needs none. Always pass `--network` to `miner run`: without
-it the CLI falls back to `testnet`, not to the keyfile's network.
+The install is in [`INSTALL.md`](../guides/INSTALL.md#install); this page assumes
+`sccp` is already on your `PATH`. A real engine also needs a binary (section
+4.4); the `mock` profile needs none. Always pass `--network` to `miner run`:
+without it the CLI falls back to `testnet`, not to the keyfile's network.
 
 ---
 
@@ -100,7 +94,8 @@ last proof opened, at blocks 25 and 30.
 
 That is the closest you can get to the deployed flow without deploying it: the
 same blocks, the same transactions, the same proof, only the node's HTTP API and
-a real engine are missing. [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md#the-same-game-on-testnet-parameters)
+a real engine are missing.
+[`PLAY_AND_EXPORT.md`](../guides/PLAY_AND_EXPORT.md#the-same-game-on-testnet-parameters)
 has the exact heights and why a game costs five blocks.
 
 ---
@@ -538,7 +533,7 @@ usage.
 ## 9. Operational safety
 
 - **The bond is real.** Registration locks coins; slashing can take them. Read
-  [`THREAT_MODEL.md`](THREAT_MODEL.md) before running a miner with value at
+  [`THREAT_MODEL.md`](../design/THREAT_MODEL.md) before running a miner with value at
   stake.
 - **Stack keys are public.** `deploy/init_testnet_stack.py` derives its keys from
   fixed seeds and publishes the passphrase. Never use them on mainnet.
@@ -549,7 +544,7 @@ usage.
   the claim unverifiable and cost the bond.
 - **Protect the availability secret** until the reveal is in a block, and keep
   the keyfile passphrase in a mode-0600 file or the environment, as described in
-  [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md).
+  [`OPEN_A_WALLET.md`](../guides/OPEN_A_WALLET.md).
 - **Watch maturity.** Mining rewards are `immature` until `coinbase_maturity`
   blocks pass (20 on testnet, 100 on mainnet); they cannot pay a bond before
   then.
@@ -558,12 +553,11 @@ usage.
 
 ## See also
 
-- [`OPEN_A_WALLET.md`](OPEN_A_WALLET.md) — create and back up the miner's
+- [`OPEN_A_WALLET.md`](../guides/OPEN_A_WALLET.md) — create and back up the miner's
   keyfile.
-- [`SEND_COINS.md`](SEND_COINS.md) — fund the bond and understand spendable vs
-  bonded coins.
-- [`PLAY_AND_EXPORT.md`](PLAY_AND_EXPORT.md) — play a relay match by hand.
-- [`deploy/README.md`](../deploy/README.md) — the docker-compose testnet stack
+- [`deploy/README.md`](../../deploy/README.md) — the docker-compose testnet stack
   and what it deliberately does not do yet.
-- [`THREAT_MODEL.md`](THREAT_MODEL.md) — adversaries, slashing and self-play.
-- [`PROTOCOL.md`](PROTOCOL.md) — match, proof and clock formats.
+- [`THREAT_MODEL.md`](../design/THREAT_MODEL.md) — adversaries, slashing and
+  self-play.
+
+All pages, by task: [`docs/README.md`](../README.md).

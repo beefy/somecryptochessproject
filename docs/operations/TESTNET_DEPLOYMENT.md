@@ -1,7 +1,7 @@
 # Deploying the four-miner testnet
 
 Every merge to `main` runs
-[`.github/workflows/deploy-testnet-miners.yml`](../.github/workflows/deploy-testnet-miners.yml):
+[`deploy-testnet-miners.yml`](../../.github/workflows/deploy-testnet-miners.yml):
 
 1. build the stack image and push it to GHCR as
    `ghcr.io/<owner>/<repo>:testnet`;
@@ -23,7 +23,7 @@ Every merge to `main` runs
 The traffic generators add no new port, host, firewall rule or DNS record: they
 talk to the node over the Compose network and run beside the miners on the same
 VM. Their lifetime is the chain's, which is why they are services in this project
-rather than a second workflow like the explorer. `docs/RUNBOOK.md` describes the
+rather than a second workflow like the explorer. `docs/operations/RUNBOOK.md` describes the
 loop and why it cannot drain the faucet.
 
 The deploy job is skipped until a host is configured, so the image build is
@@ -72,7 +72,7 @@ for anything of value. The deploy workflow connects to the apex name over SSH
 (`sccp@proofofchess.com`); clients only need the node port.
 
 The browser client is a separate deploy:
-[`deploy-explorer.yml`](../.github/workflows/deploy-explorer.yml) publishes
+[`deploy-explorer.yml`](../../.github/workflows/deploy-explorer.yml) publishes
 `src/web/dist` at `https://app.proofofchess.com`, on the same VM, behind Caddy
 (TLS) and an nginx proxy that puts `/v1` and `/relay` on the page's own origin.
 The explorer, wallet, Play, DEX and bridge are hash routes (`#/`, `#/wallet`,
