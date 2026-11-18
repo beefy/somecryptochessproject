@@ -7,6 +7,15 @@ not itemised here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The landing page's chess board is no longer mirrored.** The hero board's
+  `repeating-conic-gradient` put the light stop first, which painted the top-left
+  square with it, so a8 and h1 — both light on a real board — came out dark. Dark
+  first restores "white on the right".
+- **The landing footer names the real license.** It credited the MIT license; the
+  repository is released into the public domain under the Unlicense (`LICENSE`).
+
 ## [0.28.0] - 2026-11-17
 
 ### Changed
