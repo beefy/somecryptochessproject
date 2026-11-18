@@ -12,14 +12,36 @@
  * heights already read, so reopening the tab reads only the blocks that appeared
  * since. A scan reads `concurrency` blocks at a time: enough to be quick on a
  * testnet, few enough not to look like a flood to the node.
+ *
+ * One row is one transaction, even when a transaction moves coins both ways. A
+ * `swap` is that case: one transition spends `amount_in` of one asset and pays
+ * out the other, so its row carries both legs. The input is exact; the received
+ * side is the minimum the chain enforced, because a block records the bound
+ * (`min_amount_out`) and not the fill.
  */
 
 import { fetchBlock } from "../api";
 import type { Block, Transaction } from "../types";
 import { txId, type TxType } from "./tx";
 
-/** Which side of the ledger the address was on. */
-export type HistoryDirection = "in" | "out" | "self" | "reward";
+/**
+ * Which side of the ledger the address was on.
+ *
+ * `swap` is both sides at once, which is why its row names two assets: the DEX
+ * settles the input and the output in one transition.
+ */
+export type HistoryDirection = "in" | "out" | "self" | "reward" | "swap";
+
+/** The pool a swap routed through, and the output floor its signer accepted. */
+export interface SwapDetail {
+  poolId: string;
+  /**
+   * `min_amount_out`: the chain rejects a fill below it. It is the one exact
+   * number a swap's received leg can be described with, because a block keeps
+   * the bound and not the fill.
+   */
+  minAmountOut: number | null;
+}
 
 /** One transaction that touched the account, with the block that holds it. */
 export interface HistoryEntry {
@@ -38,6 +60,8 @@ export interface HistoryEntry {
   nonce: number;
   /** `H("sccp/v1/tx", body)`, which the explorer and the CLI both use. */
   txid: string;
+  /** Set on a `swap` row; `null` for every other type. */
+  swap: SwapDetail | null;
 }
 
 /** What one scan covered and what it found. */
@@ -65,7 +89,7 @@ export interface CachedHistory {
 }
 
 const DB_NAME = "sccp-wallet-history";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const STORE = "accounts";
 
 /** How many entries a cache keeps before dropping the oldest. */
@@ -78,9 +102,11 @@ function openDatabase(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     request.onupgradeneeded = () => {
       const database = request.result;
-      if (!database.objectStoreNames.contains(STORE)) {
-        database.createObjectStore(STORE, { keyPath: "id" });
-      }
+      // Version 2 starts the cache over. Rows written before it describe a swap
+      // as a single unreadable leg, and only a fresh scan of those heights can
+      // repair them. The cache is a cache: one window scan refills it.
+      if (database.objectStoreNames.contains(STORE)) database.deleteObjectStore(STORE);
+      database.createObjectStore(STORE, { keyPath: "id" });
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(new Error("cannot open the history database"));
@@ -219,8 +245,9 @@ function payloadText(tx: Transaction, field: string): string | null {
   return typeof value === "string" ? value : null;
 }
 
-function payloadAmount(tx: Transaction): number | null {
-  const value = tx.payload.amount;
+/** A payload field that has to be a safe integer, or `null` when it is not one. */
+function payloadInt(tx: Transaction, field: string): number | null {
+  const value = tx.payload[field];
   return typeof value === "number" && Number.isSafeInteger(value) ? value : null;
 }
 
@@ -250,9 +277,22 @@ function entryFor(
 ): HistoryEntry | null {
   const to = payloadText(tx, "to");
   let direction: HistoryDirection;
+  let amount = payloadInt(tx, "amount");
+  let asset = payloadText(tx, "asset");
+  let swap: SwapDetail | null = null;
   if (coinbase) {
     if (tx.from !== address) return null;
     direction = "reward";
+  } else if (tx.type === "swap") {
+    // A swap names its two sides `amount_in`/`asset_in` and touches nobody but
+    // its sender: the pool is not an account, so this row has no counterparty
+    // address, and `min_amount_out` is all the block says about the payout.
+    if (tx.from !== address) return null;
+    direction = "swap";
+    amount = payloadInt(tx, "amount_in");
+    asset = payloadText(tx, "asset_in");
+    const poolId = payloadText(tx, "pool_id");
+    if (poolId !== null) swap = { poolId, minAmountOut: payloadInt(tx, "min_amount_out") };
   } else if (tx.from === address) {
     direction = to === address ? "self" : "out";
   } else if (to === address) {
@@ -268,11 +308,12 @@ function entryFor(
     direction,
     from: tx.from,
     to,
-    amount: payloadAmount(tx),
-    asset: payloadText(tx, "asset"),
+    amount,
+    asset,
     fee: tx.fee,
     nonce: tx.nonce,
     txid: safeTxId(tx),
+    swap,
   };
 }
 
@@ -287,3 +328,28 @@ export function mergeHistory(...groups: HistoryEntry[][]): HistoryEntry[] {
     .sort((left, right) => right.height - left.height || left.nonce - right.nonce)
     .slice(0, HISTORY_LIMIT);
 }
+
+/** A pool's two assets, in the order consensus stores them; `null` is native SCCP. */
+export type PoolPair = readonly [string | null, string | null];
+
+/**
+ * The asset a `swap` row received, or `undefined` when it cannot be named.
+ *
+ * Today's pools answer for a swap mined long ago: `pool_id` hashes the pair, and
+ * a pair is fixed when the pool is created — only the reserves move. The amount is
+ * not recoverable the same way, so the row falls back to `min_amount_out`.
+ */
+export function swappedAsset(
+  entry: HistoryEntry,
+  pools: ReadonlyMap<string, PoolPair>,
+): string | null | undefined {
+  if (entry.swap === null) return undefined;
+  const pair = pools.get(entry.swap.poolId);
+  if (pair === undefined) return undefined;
+  const spent = entry.asset ?? "";
+  const [assetA, assetB] = pair;
+  if ((assetA ?? "") === spent) return assetB;
+  if ((assetB ?? "") === spent) return assetA;
+  return undefined;
+}
+

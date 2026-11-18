@@ -1042,6 +1042,12 @@ The review screen shows the pool, pay amount, estimated receive, minimum
 receive, slippage, SCCP fee and nonce. The minimum output is signed; a pool that
 moves past it rejects the transaction.
 
+The swap is one row in `#/wallet/history`, marked `swap`: the exact input, the
+asset the pool paid out and the minimum that was signed, as in
+`10 SCCP → ≥… C960`, with the pool id and the txid each behind a copy button. The
+received side is a floor and not the fill, because a block records the bound the
+chain enforced rather than what the pool actually paid.
+
 ---
 
 

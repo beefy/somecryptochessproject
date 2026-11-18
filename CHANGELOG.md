@@ -13,6 +13,10 @@ not itemised here.
   now reads the HTLC and pool transaction types the traffic bot emits: one panel covers
   lock, claim and refund lifecycles, another covers pool creation, liquidity changes and
   swaps with the SCCP named in each payload, and the closing snapshot counts both.
+- **The wallet's history rows copy what they name.** Every row in `#/wallet/history`
+  has a copy button for its txid and one for the address on the other side (the pool id
+  on a swap), so a hash or an address leaves the page without selecting text by hand.
+  The pending rows above the scan get the same two buttons.
 
 ### Changed
 
@@ -29,6 +33,14 @@ not itemised here.
 
 ### Fixed
 
+- **A swap shows up in the wallet's history.** The tab read `payload.amount`, which a
+  `swap` does not have — it names its sides `amount_in` and `asset_in` — so the row
+  read `-` and the coins the pool paid appeared in no row at all. One swap is now one
+  row with both legs: the exact input, the asset the pool paid out (a pool's pair is
+  hashed into its id, so today's `/v1/pools` answers for a swap mined long ago) and the
+  `min_amount_out` floor the chain enforced, because a block keeps the bound and not
+  the fill. The IndexedDB cache starts over at version 2, since rows written in the old
+  shape can only be repaired by scanning their heights again.
 - **The balance reconstruction's drift check can fail again.** It compared the rebuilt
   series with `GET /v1/accounts` *after* shifting the series to match, so it always read
   zero. The gap is now measured before the opening-balance anchor is applied, and the

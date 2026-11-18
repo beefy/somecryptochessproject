@@ -306,9 +306,13 @@ What the page does:
   backwards from the tip (200 blocks to start), keeps the transactions that touch
   the address, and caches the window in IndexedDB. It names the heights it covered
   and offers "newer", "older" and "rescan" rather than pretending to be complete.
-  Transfers this browser signed but no block has carried yet appear above the scan
-  until the committed nonce passes them, and counterparties show their nickname
-  when there is one.
+  Every row carries a copy button for its txid and one for the address it names (the
+  pool id on a swap). A swap is one row with both of its legs: the exact `amount_in`,
+  the asset the pool paid out (from the pool's immutable pair, which `pool_id`
+  hashes) and the `min_amount_out` floor the chain enforced, because a block keeps
+  the bound and not the fill. Transfers this browser signed but no block has carried
+  yet appear above the scan until the committed nonce passes them, and
+  counterparties show their nickname when there is one.
 - **Export** — the keyfile, byte-compatible with the CLI's JSON layout, for
   `sccp wallet balance --key` and `wallet import-mnemonic`.
 
