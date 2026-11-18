@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-17
+
 ### Changed
 
 - **The header no longer shows the chain height.** The top-right corner is down
