@@ -63,15 +63,14 @@ services:
       - sccpt1q87tje79rytrvlasq2g4g86c09yzalk3g4hlepzkz7p95hdlemdxgwqrd9g
       - --no-mine-bootstrap
       - --mine-poll-seconds
-      - "2"
+      - "1"
       # Pace blocks at the network's target spacing. A block's timestamp is the
-      # wall clock and the difficulty retarget reads it: settling on every 2s
-      # poll makes the chain look 30x too fast, so the schedule raises
-      # `wins_required` past what the four-miner roster can win per epoch and the
-      # chain stops. At one block per `target_block_seconds` the retarget is
-      # neutral.
+      # wall clock and the difficulty retarget reads it: settling on every poll
+      # makes the chain look far faster, so the schedule raises `wins_required`
+      # past what the four-miner roster can win per epoch and the chain stops.
+      # At one block per `target_block_seconds` the retarget is neutral.
       - --mine-interval-seconds
-      - "60"
+      - "30"
     # The bridge environment is testnet -> Sepolia. Leave these unset to keep
     # the bridge visible but disabled in the web UI; set them in the deploy
     # host's environment after deploying `contracts/EthHtlc.sol`.

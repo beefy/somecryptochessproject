@@ -9,6 +9,23 @@ not itemised here.
 
 ### Changed
 
+- **Testnet confirms transactions in 30 s instead of 60 s without adding
+  infrastructure.** `TESTNET.target_block_seconds` halves, the compose settler
+  paces at 30 s with a 1 s poll, and the block-denominated windows that protect
+  liveness double with it (`claim_window`, `mempool_ttl_blocks`,
+  `snapshot_interval`), so a proof, a pending transaction and a snapshot keep
+  their previous wall-clock lifetime. Epochs stay five blocks, so bootstrap
+  heights, rosters and relay rounds are unchanged. The retarget reads
+  `target_block_seconds`, so an existing testnet volume must be rebuilt from a
+  fresh data directory rather than replayed under the new schedule.
+- **The mempool no longer scans the whole pool to admit a transaction, and no
+  longer re-verifies every PQ signature on every block.** An explicit `(sender, nonce)`
+  index replaces the scan, and a re-base or selection pass reuses the signature
+  check performed at admission for the same immutable txid. Block validation
+  still runs the full checklist from scratch; a corrupted signature is rejected
+  by `connect_block` even when it was admitted. A 400-transaction pool re-bases
+  in ~70-85 ms instead of ~380 ms, and selecting 95 transactions drops from
+  ~360 ms to ~11-15 ms in a 400-transaction benchmark.
 - **The documentation is split by tense: `docs/setup/` builds it, `docs/operations/`
   repairs it.** The six pages that make something exist — `RUN_A_DEVNET.md`,
   `RUN_A_TESTNET_MINER.md`, `TESTNET_DEPLOYMENT.md`, `GCP_RESOURCE_SETUP.md`,

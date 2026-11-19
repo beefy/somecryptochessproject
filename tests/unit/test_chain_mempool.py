@@ -152,6 +152,25 @@ def test_removal_and_expiry_rebuild_the_projection(
     assert pool.projection.account(alice).balance == 0
 
 
+def test_removing_a_nonce_gap_reprojects_the_later_transaction(
+    devnet_chain: Any, protocol_accounts: Any
+) -> None:
+    """A later nonce cannot stay pending once its predecessor is gone."""
+    chain = devnet_chain
+    pool = _pool(chain)
+    first = _transfer(chain, protocol_accounts["alice"].address)
+    pool.add_transaction(first)
+    second = WalletService(chain.params, pool.projection).build_transfer(
+        faucet_keypair("devnet"), protocol_accounts["bob"].address, 1 * COINS
+    )
+    pool.add_transaction(second)
+    assert len(pool) == 2
+    pool.remove_transaction(txid(first))
+    assert len(pool) == 0
+    pool.remove_transaction("00" * 32)  # unknown txid is a no-op
+    assert len(pool) == 0
+
+
 def test_reset_drops_what_the_new_tip_already_contains(
     devnet_chain: Any, protocol_accounts: Any
 ) -> None:
@@ -284,3 +303,59 @@ def test_reset_keeps_only_proofs_the_next_block_can_settle(
     assert kept(last) is True, "the next block opens epoch 4"
     assert kept(last + window - 1) is True, "the claim window is still open"
     assert kept(last + window) is False, "the claim window has closed"
+
+
+def test_rebasing_and_selection_reuse_admission_signature_verification(
+    devnet_chain: Any, protocol_accounts: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pool entry is immutable and was verified on the way in.
+
+    Re-checking the hybrid signature on every block re-base and every selection
+    pass was the dominant cost of a deep pool. The consensus path still verifies
+    (see ``test_connect_still_verifies_a_signature_swapped_after_admission``).
+    """
+    chain = devnet_chain
+    pool = _pool(chain)
+    tx = _transfer(chain, protocol_accounts["alice"].address)
+    pool.add_transaction(tx)
+
+    def forbidden(*args: Any, **kwargs: Any) -> bool:
+        raise AssertionError("mempool maintenance must not re-verify the signature")
+
+    monkeypatch.setattr("sccp.chain.tx.hybrid_verify", forbidden)
+    pool.reset(chain.state)
+    assert pool.has_transaction(txid(tx)) is True
+    assert [txid(chosen) for chosen in pool.select_transactions(height=1)] == [txid(tx)]
+    assert pool.projection.account(protocol_accounts["alice"].address).balance == 10 * COINS
+
+
+def test_the_nonce_index_survives_removal_and_rebasing(
+    devnet_chain: Any, protocol_accounts: Any
+) -> None:
+    chain = devnet_chain
+    pool = _pool(chain)
+    first = _transfer(chain, protocol_accounts["alice"].address)
+    pool.add_transaction(first)
+    pool.remove_transaction(txid(first))
+    replacement = _transfer(chain, protocol_accounts["bob"].address)
+    assert pool.add_transaction(replacement) == txid(replacement)
+
+    pool.reset(chain.state)
+    clash = _transfer(chain, protocol_accounts["alice"].address)
+    with pytest.raises(MempoolError, match="nonce 0"):
+        pool.add_transaction(clash)
+
+
+def test_a_payload_changed_after_admission_is_dropped_on_rebase(
+    devnet_chain: Any, protocol_accounts: Any
+) -> None:
+    """A frozen model still exposes its nested payload; the txid guard covers it."""
+    chain = devnet_chain
+    pool = _pool(chain)
+    tx = _transfer(chain, protocol_accounts["alice"].address)
+    pool.add_transaction(tx)
+    tx.payload["amount"] = 2 * COINS
+    assert pool.select_transactions(height=1) == []
+    assert len(pool) == 0
+    pool.reset(chain.state)
+    assert len(pool) == 0

@@ -24,7 +24,7 @@ curl -fsS $NODE/v1/games | jq -r '.games[:5][] | "\(.result) plies=\(.plies) epo
 ```
 
 Call `/v1/status` twice a minute apart and compare `height`. Then read the block
-timestamps: if the last ten intervals are all near 60 s, the chain is healthy and
+timestamps: if the last ten intervals are all near 30 s, the chain is healthy and
 you are watching a gap between games. If the intervals before the gap were
 trending up — 90 s, 200 s, 400 s — the stack is losing the ability to find a proof,
 and that is the real symptom.
@@ -94,7 +94,7 @@ which are wall clocks. Blocks produced faster than `target_block_seconds` make t
 chain look fast, the retarget raises `wins_required`, and once it is above what
 four seats can win per epoch, no epoch closes and the chain cannot continue — a
 halt that looks identical to "no games", except the difficulty document shows a
-`wins_required` no roster could meet. `--mine-interval-seconds 60` exists to keep
+`wins_required` no roster could meet. `--mine-interval-seconds 30` exists to keep
 this neutral; a hand-run node without it is the usual way in.
 
 The remedy is the *pacing*, not the difficulty: restart the node with the compose
@@ -161,7 +161,7 @@ exits non-zero on the first block that no longer validates, which is
 
 ## Verifying a recovery
 
-One block is not a recovery — the pacing is 60 s and the next game may take
+One block is not a recovery — the pacing is 30 s and the next game may take
 minutes. Watch two blocks land, then confirm the invariants:
 
 ```bash

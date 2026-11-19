@@ -61,10 +61,13 @@ class Mempool:
     transactions: dict[str, MempoolEntry] = field(default_factory=dict)
     proofs: dict[str, WinProof] = field(default_factory=dict)
     _game_hashes: set[str] = field(default_factory=set)
+    _nonces: dict[tuple[str, int], str] = field(default_factory=dict)
     _projection: State | None = None
 
     def __post_init__(self) -> None:
         self._projection = self.tip_state.copy()
+        for digest, entry in self.transactions.items():
+            self._nonces[(entry.tx.sender, entry.tx.nonce)] = digest
 
     @property
     def projection(self) -> State:
@@ -94,30 +97,59 @@ class Mempool:
 
     # -- transactions -------------------------------------------------------
 
-    def add_transaction(self, tx: Transaction, *, height: int | None = None) -> str:
-        """Admit a transaction and return its txid."""
+    def add_transaction(
+        self,
+        tx: Transaction,
+        *,
+        height: int | None = None,
+        verify_signature: bool = True,
+        size: int | None = None,
+    ) -> str:
+        """Admit a transaction and return its txid.
+
+        ``verify_signature=False`` and ``size`` are for re-admitting an entry the
+        pool already validated at this or an earlier tip: the transaction is
+        frozen, and :meth:`reset` checks its txid before taking this path. Public
+        admission always verifies the signature.
+        """
         height = self.next_height if height is None else height
         digest = txid(tx)
         if digest in self.transactions:
             raise MempoolError(f"transaction {digest} is already in the mempool")
-        for entry in self.transactions.values():
-            if entry.tx.sender == tx.sender and entry.tx.nonce == tx.nonce:
-                raise MempoolError(
-                    f"{tx.sender} already has a pending transaction with nonce {tx.nonce}"
-                )
+        key = (tx.sender, tx.nonce)
+        existing = self._nonces.get(key)
+        if existing is not None and existing in self.transactions:
+            raise MempoolError(
+                f"{tx.sender} already has a pending transaction with nonce {tx.nonce}"
+            )
         try:
-            validate_transaction(tx, self.params, self.projection, height=height, for_mempool=True)
+            validate_transaction(
+                tx,
+                self.params,
+                self.projection,
+                height=height,
+                for_mempool=True,
+                verify_signature=verify_signature,
+                size=size,
+            )
         except TxValidationError as exc:
             raise MempoolError(f"transaction rejected ({exc.reason}): {exc}") from exc
-        size = tx_size(tx)
+        if size is None:
+            size = tx_size(tx)
         self.transactions[digest] = MempoolEntry(tx=tx, txid=digest, added_height=height, size=size)
+        self._nonces[key] = digest
         apply_transaction(self.projection, tx, height=height)
         return digest
 
     def remove_transaction(self, digest: str) -> None:
         """Drop a transaction by txid; re-project the remaining pool."""
-        if self.transactions.pop(digest, None) is not None:
-            self._reproject()
+        entry = self.transactions.pop(digest, None)
+        if entry is None:
+            return
+        key = (entry.tx.sender, entry.tx.nonce)
+        if self._nonces.get(key) == digest:
+            self._nonces.pop(key, None)
+        self._reproject()
 
     def has_transaction(self, digest: str) -> bool:
         """Whether this txid is pending."""
@@ -247,8 +279,24 @@ class Mempool:
             if used + entry.size > cap:
                 queues.pop(entry.tx.sender, None)
                 continue
+            if txid(entry.tx) != entry.txid:
+                # A frozen transaction cannot normally change after admission;
+                # this guard keeps a mutated payload from reusing that check.
+                queues.pop(entry.tx.sender, None)
+                self.transactions.pop(entry.txid, None)
+                key = (entry.tx.sender, entry.tx.nonce)
+                if self._nonces.get(key) == entry.txid:
+                    self._nonces.pop(key, None)
+                continue
             try:
-                validate_transaction(entry.tx, self.params, work, height=height)
+                validate_transaction(
+                    entry.tx,
+                    self.params,
+                    work,
+                    height=height,
+                    verify_signature=False,
+                    size=entry.size,
+                )
             except TxValidationError:
                 deferred.add(entry.tx.sender)
                 continue
@@ -285,19 +333,30 @@ class Mempool:
             if height - entry.added_height > ttl
         ]
         for digest in expired:
-            self.transactions.pop(digest, None)
+            entry = self.transactions.pop(digest, None)
+            if entry is not None:
+                key = (entry.tx.sender, entry.tx.nonce)
+                if self._nonces.get(key) == digest:
+                    self._nonces.pop(key, None)
         if expired:
             self._reproject()
         return tuple(expired)
 
     def reset(self, tip_state: State) -> None:
-        """Re-base the pool on a new tip, dropping whatever no longer applies."""
+        """Re-base the pool on a new tip, dropping whatever no longer applies.
+
+        Entries are immutable and were signature-checked when they entered the
+        pool, so re-admission repeats the state, nonce, balance and window checks
+        but reuses that verification. That is what makes a full re-base cheap
+        enough to run on every block even when the pool is deep.
+        """
         survivors = sorted(
-            (entry.tx for entry in self.transactions.values()),
-            key=lambda tx: (tx.sender, tx.nonce),
+            self.transactions.values(),
+            key=lambda entry: (entry.tx.sender, entry.tx.nonce),
         )
         self.tip_state = tip_state
         self.transactions.clear()
+        self._nonces.clear()
         next_height = tip_state.height + 1
         stale = [
             proof_id
@@ -308,9 +367,16 @@ class Mempool:
             self.proofs.pop(proof_id, None)
         self._game_hashes = {proof.game_hash for proof in self.proofs.values()}
         self._projection = tip_state.copy()
-        for tx in survivors:
+        for entry in survivors:
+            if txid(entry.tx) != entry.txid:
+                continue
             try:
-                self.add_transaction(tx, height=self.next_height)
+                self.add_transaction(
+                    entry.tx,
+                    height=next_height,
+                    verify_signature=False,
+                    size=entry.size,
+                )
             except MempoolError:
                 continue
 
@@ -345,11 +411,27 @@ class Mempool:
         for entry in sorted(
             self.transactions.values(), key=lambda item: (item.tx.sender, item.tx.nonce)
         ):
+            if txid(entry.tx) != entry.txid:
+                self.transactions.pop(entry.txid, None)
+                key = (entry.tx.sender, entry.tx.nonce)
+                if self._nonces.get(key) == entry.txid:
+                    self._nonces.pop(key, None)
+                continue
             try:
-                validate_transaction(entry.tx, self.params, projection, height=height)
+                validate_transaction(
+                    entry.tx,
+                    self.params,
+                    projection,
+                    height=height,
+                    verify_signature=False,
+                    size=entry.size,
+                )
                 apply_transaction(projection, entry.tx, height=height)
             except TxValidationError:
                 self.transactions.pop(entry.txid, None)
+                key = (entry.tx.sender, entry.tx.nonce)
+                if self._nonces.get(key) == entry.txid:
+                    self._nonces.pop(key, None)
         self._projection = projection
 
 
