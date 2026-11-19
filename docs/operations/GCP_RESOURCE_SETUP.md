@@ -231,11 +231,29 @@ gcloud compute firewall-rules create sccp-edge-iap-ssh \
     --source-ranges=35.235.240.0/20 \
     --target-tags="$EDGE_TAG" \
     --project="$PROJECT_ID"
+
+# Optional, and only if deploy-edge.yml runs on a GitHub-hosted runner: the
+# mirror has no public 22, so the workflow jumps through the primary VM. This
+# rule is what lets that hop reach the mirror.
+gcloud compute firewall-rules create sccp-edge-ssh-from-primary \
+    --network="$NETWORK" \
+    --direction=INGRESS \
+    --action=ALLOW \
+    --rules=tcp:22 \
+    --source-tags="$NODE_TAG" \
+    --target-tags="$EDGE_TAG" \
+    --project="$PROJECT_ID"
 ```
 
+Create the instance **in `$NETWORK`**: the rules above are scoped to it, and an
+instance that lands in `default` (the `gcloud compute instances create` default)
+is silently unexposed, with a node that is healthy on loopback and unreachable
+from the internet.
+
 Do not add a `8645` rule for `$EDGE_TAG`: the node binds loopback and only the
-proxy on that host reaches it. The instance, address record, Compose file and
-smoke checks are in [`deploy/edge/README.md`](../../deploy/edge/README.md).
+proxy on that host reaches it. The instance, address record, Compose file,
+workflow variables and smoke checks are in
+[`deploy/edge/README.md`](../../deploy/edge/README.md).
 
 ### SSH
 

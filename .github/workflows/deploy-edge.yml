@@ -1,0 +1,282 @@
+name: deploy-edge
+
+# Publishes the read-only mirror node (deploy/edge/) to its own VM.
+#
+# This runs *after* deploy-testnet-miners rather than beside it. The mirror has
+# to run the image that deployment just published, and `workflow_run` is the only
+# trigger that knows the build finished: a second path-triggered workflow on the
+# same push would race the image push and could pull a tag that does not exist
+# yet (or, worse, the previous commit's). The commit it deploys is therefore
+# `workflow_run.head_sha`, not whatever `main` points at when the job starts.
+#
+# Nothing here creates the VM, its address or its firewall: those stay manual and
+# deliberate (deploy/edge/README.md). This job ships the project, pulls the tag
+# the primary just built, resets the replica only when the primary's chain was
+# replaced, and proves the mirror advanced.
+#
+# Required repository configuration. Set the `vars.` entries at the repository
+# level, next to TESTNET_DEPLOY_HOST: the job-level `if` below is evaluated
+# before this job's `environment:` is applied, so an environment-scoped variable
+# would leave the gate reading an empty string and skip the deploy.
+#   vars.EDGE_DEPLOY_HOST     user@host of the mirror VM; unset = no mirror and
+#                             this job is skipped
+#   vars.EDGE_DOMAIN          the mirror's public name, e.g. mirror.proofofchess.com
+#   secrets.EDGE_SSH_KEY      private key for that user; falls back to TESTNET_SSH_KEY
+#   secrets.EDGE_KNOWN_HOSTS  optional pinned host key; falls back to
+#                             TESTNET_KNOWN_HOSTS, else ssh-keyscan
+#   vars.EDGE_DEPLOY_DIR      optional; defaults to /srv/sccp-edge
+#   vars.EDGE_DEPLOY_PORT     optional; defaults to 22
+#   vars.EDGE_PRIMARY_URL     optional; defaults to https://app.proofofchess.com
+#   vars.EDGE_SSH_PROXY_JUMP  optional; "1" reaches the mirror through
+#                             TESTNET_DEPLOY_HOST, so the mirror needs no public
+#                             SSH rule (see the ProxyJump section below)
+on:
+  workflow_run:
+    workflows: ["deploy-testnet-miners"]
+    types: [completed]
+    # Only main: a dispatched deploy of a feature branch must not repoint the
+    # public mirror at an unmerged commit.
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag to deploy (default: testnet)"
+        type: string
+        required: false
+        default: testnet
+
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: deploy-edge
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: redeploy the mirror node
+    # A repository without a mirror stays green: the job exists, and only runs
+    # when a target is configured. A failed primary deploy leaves the mirror on
+    # its previous image rather than pointing it at a commit that never shipped.
+    if: >-
+      ${{ vars.EDGE_DEPLOY_HOST != '' &&
+          (github.event_name == 'workflow_dispatch' ||
+           github.event.workflow_run.conclusion == 'success') }}
+    runs-on: ubuntu-latest
+    environment:
+      name: testnet
+    env:
+      TARGET: ${{ vars.EDGE_DEPLOY_HOST }}
+      DEPLOY_DIR: ${{ vars.EDGE_DEPLOY_DIR || '/srv/sccp-edge' }}
+      DEPLOY_PORT: ${{ vars.EDGE_DEPLOY_PORT || '22' }}
+      DOMAIN: ${{ vars.EDGE_DOMAIN }}
+      PRIMARY_URL: ${{ vars.EDGE_PRIMARY_URL || 'https://app.proofofchess.com' }}
+      JUMP: ${{ vars.EDGE_SSH_PROXY_JUMP }}
+      # The primary deploy builds `:${sha}` and `:testnet` from the same commit.
+      # Preferring the sha keeps this mirror exactly on the commit that shipped
+      # even if `:testnet` has since moved.
+      IMAGE_TAG: ${{ github.event.inputs.image_tag || github.event.workflow_run.head_sha || 'testnet' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Resolve the image reference
+        run: |
+          set -eu
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+          if [ -z "${DOMAIN:-}" ]; then
+            echo "::error::vars.EDGE_DOMAIN is not configured; Caddy has no certificate name"
+            exit 1
+          fi
+
+      # --- SSH -----------------------------------------------------------------
+      # The mirror VM has no public 22 by design (deploy/edge/README.md): its
+      # only inbound rules are 80/443 plus IAP. Two ways to reach it from a
+      # GitHub-hosted runner:
+      #
+      #   * vars.EDGE_SSH_PROXY_JUMP=1: jump through TESTNET_DEPLOY_HOST over the
+      #     VPC's internal address. The same key must be authorized on both hosts,
+      #     and one more firewall rule (primary tag -> mirror tag, tcp:22) has to
+      #     exist. That is the default posture this repository documents.
+      #   * otherwise EDGE_DEPLOY_HOST is reachable directly, which means a
+      #     self-hosted runner inside the network or a deliberately widened rule.
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.EDGE_SSH_KEY || secrets.TESTNET_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.EDGE_KNOWN_HOSTS || secrets.TESTNET_KNOWN_HOSTS }}
+          PRIMARY_TARGET: ${{ vars.TESTNET_DEPLOY_HOST }}
+          PRIMARY_PORT: ${{ vars.TESTNET_DEPLOY_PORT || '22' }}
+        run: |
+          set -eu
+          if [ -z "${SSH_KEY:-}" ]; then
+            echo "::error::neither EDGE_SSH_KEY nor TESTNET_SSH_KEY is configured"
+            exit 1
+          fi
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_edge"
+          chmod 600 "$HOME/.ssh/id_edge"
+
+          # alias, user@host, port, extra config line
+          host_block() {
+            user="${2%%@*}"; name="${2#*@}"
+            if [ "$user" = "$2" ]; then user=root; fi
+            {
+              echo "Host $1"
+              echo "  HostName $name"
+              echo "  User $user"
+              echo "  Port $3"
+              echo "  IdentityFile $HOME/.ssh/id_edge"
+              echo "  IdentitiesOnly yes"
+              echo "  StrictHostKeyChecking yes"
+              if [ -n "$4" ]; then echo "  $4"; fi
+            } >> "$HOME/.ssh/config"
+          }
+
+          host_block primary "${PRIMARY_TARGET:-placeholder@127.0.0.1}" "$PRIMARY_PORT" ""
+          host_block edge "$TARGET" "$DEPLOY_PORT" "${JUMP:+ProxyJump primary}"
+
+          if [ -n "${KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            edge_host="${TARGET#*@}"
+            # The jump host is scanned directly; the mirror is scanned *through*
+            # it, because its address only means something inside the VPC.
+            ssh-keyscan -p "$PRIMARY_PORT" -H "${PRIMARY_TARGET#*@}" \
+              >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+            if [ -n "${JUMP:-}" ]; then
+              ssh primary "ssh-keyscan -p $DEPLOY_PORT -H '$edge_host'" \
+                >> "$HOME/.ssh/known_hosts"
+            else
+              ssh-keyscan -p "$DEPLOY_PORT" -H "$edge_host" >> "$HOME/.ssh/known_hosts"
+            fi
+          fi
+          chmod 600 "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
+
+      # --- Ship the stack ------------------------------------------------------
+      - name: Upload the Compose project
+        run: |
+          set -eu
+          ssh edge "mkdir -p '$DEPLOY_DIR'"
+          scp deploy/edge/docker-compose.yml deploy/edge/Caddyfile edge:"$DEPLOY_DIR/"
+
+      # Written rather than exported into every remote command: `.env` next to
+      # docker-compose.yml is what an operator's manual run uses, so the two
+      # paths deploy the same project with the same values.
+      - name: Write .env on the mirror
+        run: |
+          set -eu
+          payload="$(printf 'SCCP_IMAGE=%s\nSCCP_EDGE_DOMAIN=%s\nSCCP_PRIMARY_URL=%s\n' \
+            "$IMAGE" "$DOMAIN" "$PRIMARY_URL" | base64 | tr -d '\n')"
+          ssh edge "printf '%s' '$payload' | base64 -d > '$DEPLOY_DIR/.env' \
+            && chmod 600 '$DEPLOY_DIR/.env'"
+          echo "mirror settings: $IMAGE -> https://$DOMAIN, replicating $PRIMARY_URL"
+
+      - name: Pull the image and restart the stack
+        env:
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          printf '%s' "$GHCR_TOKEN" |
+            ssh edge "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
+          # `--no-build` is not style: this VM is a 1 GB e2-micro with no source
+          # tree, and falling back to a build there fails slowly and opaquely.
+          ssh edge "cd '$DEPLOY_DIR' \
+            && docker compose pull node \
+            && docker compose up -d --no-build --remove-orphans"
+
+      # A changed Caddyfile in a bind mount is not picked up by `up -d`, and
+      # Caddy does not watch the file.
+      - name: Reload the TLS terminator
+        run: |
+          ssh edge "cd '$DEPLOY_DIR' \
+            && (docker compose exec -T tls caddy reload \
+                  --config /etc/caddy/Caddyfile --adapter caddyfile \
+                || docker compose restart tls)"
+
+      # The primary's redeploy is destructive: `docker compose down --volumes`
+      # there starts a new chain from the same genesis. A mirror that had already
+      # adopted the old chain would sit at a height the primary no longer has,
+      # serving blocks nobody follows — and `sync_from` only ever asks for blocks
+      # above its own height, so it would never notice on its own. Block 1 is
+      # enough to tell: same genesis, different first block means different
+      # chains.
+      - name: Re-sync after a primary chain reset
+        run: |
+          set -eu
+          mirror="https://$DOMAIN"
+          primary_height="$(curl -fsS "$PRIMARY_URL/v1/status" | jq -r .height)"
+          if [ "$primary_height" -lt 1 ]; then
+            echo "the primary is at height 0; there is nothing to compare"
+            exit 0
+          fi
+          primary_block="$(curl -fsS "$PRIMARY_URL/v1/blocks/1" | jq -r .hash)"
+          mirror_block="$(curl -sS --retry 6 --retry-delay 5 --retry-connrefused --max-time 20 \
+            "$mirror/v1/blocks/1" | jq -r '.hash // empty' 2>/dev/null || true)"
+          echo "primary block 1: $primary_block"
+          echo "mirror  block 1: ${mirror_block:-<none>}"
+          if [ -z "$mirror_block" ] || [ "$mirror_block" = "$primary_block" ]; then
+            exit 0
+          fi
+          echo "the mirror holds a chain the primary discarded; resetting its data"
+          # Only the node's own volume. A project-wide `down --volumes` would
+          # take caddy_data with it and re-issue the certificate on every chain
+          # reset, which is a Let's Encrypt rate limit away from an outage.
+          ssh edge "cd '$DEPLOY_DIR' \
+            && docker compose stop node \
+            && docker compose run --rm --no-deps --entrypoint sh node -c 'rm -rf /data/*' \
+            && docker compose up -d --no-build"
+
+      # --- Prove it ------------------------------------------------------------
+      # Three separate claims, because a 200 from the proxy proves none of them:
+      # TLS and GET reach the node, writes are refused, and the replica adopted
+      # the primary's chain after this deploy.
+      - name: Smoke-test the mirror
+        run: |
+          set -eu
+          mirror="https://$DOMAIN"
+          status="$(curl -fsS --retry 12 --retry-delay 5 --retry-connrefused --max-time 20 \
+            "$mirror/v1/status")"
+          echo "$status" | jq -e '.network == "testnet"' > /dev/null
+
+          # The genesis hash is the strongest cheap claim: this is the same chain
+          # as the primary, not a fresh bootstrap that happens to answer.
+          remote_genesis="$(curl -fsS "$PRIMARY_URL/v1/status" | jq -r .genesis_hash)"
+          local_genesis="$(echo "$status" | jq -r .genesis_hash)"
+          echo "primary genesis: $remote_genesis"
+          echo "mirror  genesis: $local_genesis"
+          [ "$remote_genesis" = "$local_genesis" ]
+
+          code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$mirror/v1/tx" -d '{}')"
+          echo "POST /v1/tx -> $code"
+          [ "$code" = "405" ]
+
+          allow="$(curl -s -o /dev/null -D - -X POST "$mirror/v1/tx" -d '{}' |
+            tr -d '\r' | awk 'tolower($1) == "allow:" { $1=""; print }')"
+          echo "Allow:$allow"
+          echo "$allow" | grep -qi 'GET'
+
+          # Pull-sync is not instant: the first poll is up to
+          # SCCP_PEER_POLL_SECONDS away, so wait for the height this deploy saw
+          # on the primary rather than for equality with a moving target.
+          target="$(curl -fsS "$PRIMARY_URL/v1/status" | jq -r .height)"
+          echo "waiting for the mirror to reach height $target"
+          for attempt in $(seq 1 20); do
+            height="$(curl -fsS "$mirror/v1/status" | jq -r .height)"
+            echo "  attempt $attempt: mirror height $height"
+            if [ "$height" -ge "$target" ]; then
+              echo "mirror replicated past height $target"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::the mirror did not adopt the primary's chain"
+          exit 1
+
+      - name: Show the mirror state
+        if: always()
+        run: |
+          ssh edge "cd '$DEPLOY_DIR' && docker compose ps" || true
+          ssh edge "cd '$DEPLOY_DIR' && docker compose logs --tail=60 node tls" || true

@@ -30,8 +30,10 @@
 		max_size 64KB
 	}
 
+	# The node's routes answer GET only — FastAPI registers no HEAD, so the node
+	# itself returns 405 for one — and this proxy does not pretend otherwise.
 	@read {
-		method GET HEAD
+		method GET
 	}
 
 	handle @read {
@@ -45,6 +47,9 @@
 	}
 
 	handle {
+		# 405 must name the methods that are allowed, or a client cannot tell
+		# "wrong method" from "no such endpoint".
+		header Allow "GET"
 		respond "this node is a read-only mirror; submit transactions to the primary node" 405
 	}
 }
