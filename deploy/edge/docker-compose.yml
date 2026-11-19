@@ -12,7 +12,7 @@
 #     the ACME challenge and redirect, :443 for TLS);
 #   * `--no-faucet` and no `--mine`: the mirror holds no faucet key and builds no
 #     blocks, so it cannot spend or mint;
-#   * Caddy allows GET and HEAD only and answers every other method with 405, so
+#   * Caddy allows GET only and answers every other method with 405, so
 #     an exposed mirror cannot be used to submit transactions or spam the mempool;
 #   * the container runs as the image's unprivileged user with a read-only root,
 #     no added capabilities and `no-new-privileges`;
@@ -23,9 +23,16 @@
 # primary must not touch the mirror's data, and the mirror must survive a redeploy
 # of the primary.
 #
-#   SCCP_EDGE_DOMAIN=mirror.example.com \
-#   SCCP_PRIMARY_URL=https://app.example.com \
-#   SCCP_IMAGE=<published image> docker compose up -d
+# The three settings live in `.env` next to this file (see `.env.example`), so
+# the deploy workflow and an operator run the same command:
+#
+#   cp .env.example .env && $EDITOR .env
+#   docker compose pull node && docker compose up -d --no-build
+#
+# `--no-build` matters on the VM: the `build:` key below is for local runs, and
+# an `e2-micro` that starts compiling this image runs out of memory long before
+# it produces a container. `docker compose pull` is what puts the published tag
+# in place; see deploy/edge/README.md.
 name: sccp-edge
 
 services:
@@ -51,8 +58,11 @@ services:
       # node onto another chain.
       - --peer
       - ${SCCP_PRIMARY_URL:?set SCCP_PRIMARY_URL to the primary node's public URL}
+      # Every poll asks the primary for its height and adopts the blocks it is
+      # missing; this is the whole of replication. 30s keeps a 1 GB mirror far
+      # below the primary's CPU cost while still trailing by only a few blocks.
       - --peer-poll-seconds
-      - "30"
+      - "${SCCP_PEER_POLL_SECONDS:-30}"
     ports:
       # Loopback only. Caddy on this host is the only client that should reach
       # the API, and no firewall rule publishes 8645.
@@ -62,6 +72,9 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    # SQLite closes its WAL on SIGTERM; a 10s default can cut that short on a
+    # busy mirror and leave the journal for the next boot to replay.
+    stop_grace_period: 30s
     cap_drop:
       - ALL
     security_opt:

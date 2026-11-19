@@ -128,9 +128,11 @@ runs them at 0.5 s polling with 5 000 nodes per move; the witnesses are cheap
 tens of megabytes each. A 4 vCPU / 8 GB VM leaves more headroom, and is only
 worth paying for if 0.1 s miner responsiveness is a product requirement.
 
-A second, `e2-micro` VM hosts the public read-only mirror
+A second, `e2-micro` VM hosts the optional public read-only mirror
 ([`deploy/edge/`](../../deploy/edge/README.md)): one node replicating the primary
-over HTTPS, no miner, no relay, no faucet.
+over HTTPS, no miner, no relay, no faucet. It costs the line below only when it
+exists; `.github/workflows/deploy-edge.yml` redeploys it after this deployment
+when `EDGE_DEPLOY_HOST` is set, and does nothing when it is not.
 
 | Line item | Assumption | Monthly estimate |
 | --- | --- | ---: |

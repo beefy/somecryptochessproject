@@ -9,7 +9,8 @@ This deployment is the second failure domain: an `e2-micro` running one node in
 a separate Compose project, pull-syncing the primary, serving the same JSON API
 at its own HTTPS name, and refusing every write. It is the smallest host that can
 hold the chain, and it is deliberately boring: no miner, no relay, no faucet, no
-Docker socket, no inbound port except 443 (and 80 for the ACME challenge).
+Docker socket, no inbound port from the internet except 443 (and 80 for the ACME
+challenge).
 
 ## What it is for
 
@@ -18,8 +19,9 @@ Docker socket, no inbound port except 443 (and 80 for the ACME challenge).
   parent chain and the proof rules before adopting anything.
 - **Reads survive the primary.** Blocks, matches, proofs and status stay
   answerable while the primary is down or being redeployed.
-- **Public exposure is one narrow surface.** The proxy speaks TLS, allows GET and
-  HEAD, caps request bodies and answers everything else with 405.
+- **Public exposure is one narrow surface.** The proxy speaks TLS, allows GET,
+  caps request bodies and answers every other method — HEAD and all writes
+  included — with 405 and `Allow: GET`.
 
 It is *not* a second authority: it never mines, never signs, and never accepts a
 transaction. Writes go to the primary node (the app already reaches it through
@@ -28,10 +30,14 @@ transaction. Writes go to the primary node (the app already reaches it through
 ## Create the VM
 
 The firewall for this VM is separate from the primary's: only 80/443 are open and
-SSH is over IAP, so there is no inbound `22`, `8645` or `8646`.
+SSH is over IAP, so there is no inbound `22`, `8645` or `8646`. Pass `--network`
+explicitly: the rules below are created in `$NETWORK`, and an instance created
+without it lands in `default`, where none of them apply — the symptom is a mirror
+that is up, healthy on loopback and unreachable from the internet.
 
 ```bash
 export PROJECT_ID="sccp-testnet"
+export NETWORK="sccp-testnet"      # the VPC the primary VM and these rules use
 export REGION="us-central1"
 export ZONE="us-central1-a"
 export EDGE="sccp-edge"
@@ -43,6 +49,7 @@ gcloud compute addresses create "$EDGE_IP" --region="$REGION" --project="$PROJEC
 gcloud compute instances create "$EDGE" \
     --project="$PROJECT_ID" \
     --zone="$ZONE" \
+    --network="$NETWORK" \
     --machine-type=e2-micro \
     --image-family=debian-12 \
     --image-project=debian-cloud \
@@ -59,17 +66,17 @@ gcloud compute instances create "$EDGE" \
 # 443 for the mirror, 80 for the certificate challenge and its redirect.
 gcloud compute firewall-rules create sccp-edge-web \
     --project="$PROJECT_ID" \
-    --network=sccp-testnet \
+    --network="$NETWORK" \
     --direction=INGRESS \
     --action=ALLOW \
     --rules=tcp:80,tcp:443 \
     --source-ranges=0.0.0.0/0 \
     --target-tags="$EDGE_TAG"
 
-# No 22: IAP tunnels SSH, so there is no SSH port for the internet to find.
+# No 22 from the internet: IAP tunnels SSH, so there is no SSH port to find.
 gcloud compute firewall-rules create sccp-edge-iap-ssh \
     --project="$PROJECT_ID" \
-    --network=sccp-testnet \
+    --network="$NETWORK" \
     --direction=INGRESS \
     --action=ALLOW \
     --rules=tcp:22 \
@@ -79,46 +86,131 @@ gcloud compute firewall-rules create sccp-edge-iap-ssh \
 gcloud compute ssh "$EDGE" --zone="$ZONE" --project="$PROJECT_ID" --tunnel-through-iap
 ```
 
+### Let the deploy workflow in (optional)
+
+`deploy-edge.yml` runs on GitHub-hosted runners. It can reach this VM over an
+IAP tunnel only with a GCP service account, so the repository takes the cheaper
+route: it jumps through the primary deployment host, which already has SSH from
+CI. That needs one rule and one key, and no public port on the mirror:
+
+```bash
+# The primary's tag -> the mirror's tag, tcp:22, inside the VPC only.
+gcloud compute firewall-rules create sccp-edge-ssh-from-primary \
+    --project="$PROJECT_ID" \
+    --network="$NETWORK" \
+    --direction=INGRESS \
+    --action=ALLOW \
+    --rules=tcp:22 \
+    --source-tags="$PRIMARY_TAG" \
+    --target-tags="$EDGE_TAG"
+```
+
+`$PRIMARY_TAG` is the primary VM's network tag. The deploy key that
+`TESTNET_SSH_KEY` already holds also has to be authorized on this VM, and the
+user in `EDGE_DEPLOY_HOST` has to be the one that key names. GCP rewrites
+`authorized_keys` from instance metadata, so add it there rather than by hand:
+
+```bash
+# deploy.pub holds one `user:ssh-ed25519 AAAA... comment` line, the same key
+# pair TESTNET_SSH_KEY holds. The user must be one that exists on a stock
+# Debian image (for example the operator account created by OS Login).
+gcloud compute instances add-metadata "$EDGE" \
+    --zone="$ZONE" --project="$PROJECT_ID" \
+    --metadata-from-file ssh-keys=deploy.pub
+```
+
+Then set `vars.EDGE_SSH_PROXY_JUMP=1` and `vars.EDGE_DEPLOY_HOST=<user>@<internal IP>`;
+without the jump flag, `EDGE_DEPLOY_HOST` must be directly reachable from the
+runner (a self-hosted runner, or a deliberately widened rule — the same
+trade-off `docs/operations/GCP_RESOURCE_SETUP.md` describes for the primary).
+
 Point an `A` record for the mirror's name at `EDGE_IP` before starting the stack:
 Caddy cannot finish the HTTP-01 challenge until the name resolves to this VM.
 
 ## Deploy
 
 The VM needs Docker Engine and the Compose plugin (the primary's
-`docs/operations/GCP_RESOURCE_SETUP.md` section 5 has the Debian commands), plus the
-three files in this directory.
+`docs/operations/GCP_RESOURCE_SETUP.md` section 5 has the Debian commands). The
+stack itself is two files — `docker-compose.yml` and `Caddyfile` — plus a `.env`
+that names the image, the mirror's domain and the primary URL.
+
+### Automatically, after every primary deploy
+
+`.github/workflows/deploy-edge.yml` waits for `deploy-testnet-miners` to finish,
+then ships this directory, writes `.env`, pulls the tag that deployment built and
+proves the replica advanced. Configuration, as repository-level variables and
+secrets next to the primary's (the job gate reads `vars` before the `testnet`
+environment is applied, so an environment-scoped variable would not be seen):
+
+| Kind | Name | Value |
+| --- | --- | --- |
+| var | `EDGE_DEPLOY_HOST` | `user@host` of the mirror; unset disables the deploy |
+| var | `EDGE_DOMAIN` | the mirror's public name, e.g. `mirror.proofofchess.com` |
+| var | `EDGE_PRIMARY_URL` | optional; defaults to `https://app.proofofchess.com` |
+| var | `EDGE_DEPLOY_DIR` | optional; defaults to `/srv/sccp-edge` |
+| var | `EDGE_SSH_PROXY_JUMP` | optional; `1` to jump through `TESTNET_DEPLOY_HOST` |
+| secret | `EDGE_SSH_KEY` | optional; falls back to `TESTNET_SSH_KEY` |
+| secret | `EDGE_KNOWN_HOSTS` | optional; falls back to `TESTNET_KNOWN_HOSTS` |
+
+The job is idempotent, and it only destroys the replica on purpose: the primary's
+own redeploy resets its chain, so the workflow compares block 1 with the
+primary's and, when the mirror is holding a chain the primary discarded, deletes
+the node's data and resyncs. The certificate and its volume are never touched. To
+move the mirror to a different tag by hand, run the workflow with `image_tag=<sha>`.
+
+### Manually, on the VM
 
 ```bash
 # on the edge VM, as the deploy user, in /srv/sccp-edge
-export SCCP_IMAGE="<the image the primary deploy published>"
-export SCCP_EDGE_DOMAIN="mirror.example.com"
-export SCCP_PRIMARY_URL="https://app.proofofchess.com"
-
-docker compose pull
-docker compose up -d
+cp .env.example .env && $EDITOR .env   # image, domain, primary URL
+set -a && . ./.env && set +a           # the same values, for the checks below
+# If the registry package is private, log in first; the workflow uses its job
+# token for exactly this:
+#   printf '%s' "$TOKEN" | docker login ghcr.io -u <user> --password-stdin
+docker compose pull node
+docker compose up -d --no-build
 docker compose ps
 curl -fsS "https://$SCCP_EDGE_DOMAIN/v1/status"
 curl -sS -o /dev/null -w '%{http_code}\n' -X POST \
     "https://$SCCP_EDGE_DOMAIN/v1/tx" -d '{}'   # 405, by design
+curl -sS -o /dev/null -D - -X POST \
+    "https://$SCCP_EDGE_DOMAIN/v1/tx" -d '{}' | grep -i '^allow: GET'
 ```
 
-The image is public in the same registry the primary deploy uses, so the mirror
-does not need the source tree. The `build:` key in the Compose file is for local
-runs; `docker compose pull` wins when `SCCP_IMAGE` names a registry image and
-BuildKit is not asked to build.
+The mirror does not need the source tree: `docker compose pull` is the only step
+that talks to the registry, and `--no-build` keeps Compose from trying to build a
+500 MB image on a 1 GB VM if the tag is missing. `docker compose up -d` after a
+`SCCP_IMAGE` change recreates the node container and keeps the volume.
 
 ### What to watch
 
 ```bash
 docker compose logs -f node      # "replicated <peer>: +N blocks to height H"
 docker compose logs -f tls       # certificate and request log
-docker compose exec node sccp chain status --data-dir /data   # if it stops advancing
+docker compose exec node sccp --data-dir /data chain info   # if it stops advancing
 ```
+
+`--data-dir` is a global option, so it goes before `chain`; `chain status` is not
+a command.
 
 A mirror whose height trails the primary by more than a couple of blocks is
 either failing to reach `SCCP_PRIMARY_URL` or being refused by it (the log line
 names which). It is safe to delete `node-data` and start over: the chain is
 rebuildable from the primary in one sync.
+
+### Roll back
+
+The image tag is the only moving part. Pin the previous one in `.env` and
+recreate the node; the volume and the certificate are untouched:
+
+```bash
+# Edit SCCP_IMAGE in .env to the previous tag, then:
+docker compose pull node && docker compose up -d --no-build
+```
+
+Docker keeps the previous image locally, so a rollback on the VM does not need
+the registry at all. `caddy_data` is what stops a redeploy from re-issuing a
+certificate and burning Let's Encrypt's weekly limit.
 
 ## Why the API is read-only here
 
