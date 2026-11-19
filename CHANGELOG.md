@@ -7,6 +7,61 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.30.0] - 2026-11-18
+
+### Added
+
+- **The testnet runs clock witnesses, and a flagged game becomes a bonded
+  claim.** The relay is clock witness 1 (it signs a receipt for every move it
+  accepts), and two more witnesses (`witness-2`, `witness-3`) poll the relay,
+  re-run the protocol's clock verifier over those receipts and publish a bundle
+  they signed themselves. The testnet quorum is one, so any single witness can
+  settle a timeout, and three is the smallest set in which two conflicting
+  signatures can even exist for `slash_evidence` to punish. Without the keys a
+  flagged game had nothing to verify against, so the whole timeout path was dead
+  on the deployment.
+- **Two extra miners with fixed roles ride along with the traffic bot.**
+  `synthetic-miner-1` is deliberately slow (110 s per move) so its 30+0 clock
+  really runs out, and `synthetic-miner-2` plays GNU Chess from
+  `/usr/games/gnuchess` so the roster is not one engine six times. They are
+  children of the `traffic` container, budgeted by `host_capacity` against the
+  host and kept online (`--no-extra-miner-churn`) so their identities are stable
+  from round to round.
+- **A deploy gate that proves both seats on every merge.** The traffic bot
+  publishes what it seated to `/stack/synthetic-fleet.json`;
+  `deploy/check_testnet_stack.py` grew `--fleet`, `--fleet-only`,
+  `--expect-seats` and `--expect-roles`, and the deploy workflow runs it inside
+  the traffic container as "Verify the two extra seats". `docker compose ps`
+  cannot see these processes, so before this a deploy that failed to seat one
+  looked exactly like one that worked.
+- **The read-only mirror is documented end to end** (`deploy/edge`): a Caddy
+  front end over a replica node, 80/443 only, SSH over IAP, and what to watch
+  when its height falls behind.
+
+### Changed
+
+- **The seat check says what it is waiting for instead of going quiet.** It
+  prints the report's own phase and seat count every 30 s, fails at once on a
+  cause waiting cannot clear (a host budget below the two seats, or a missing
+  engine binary), and names the chain when the seats are still registering --
+  their grants are transactions, so a chain that has stopped producing blocks is
+  what "still seating" means. The step's budget is 30 minutes.
+- The fleet's report is published before the first seat is registered (and at
+  generator start-up), so a seat that never confirms still leaves a readable
+  report saying so.
+
+### Fixed
+
+- **A fresh deploy no longer sits at height 19 for ~19 minutes.** The bootstrap
+  stamped its blocks walking forward at one block per `target_block_seconds` from
+  the wall clock, which put the last bootstrap block a full window into the
+  future; the node's settler paces itself with
+  `clock() - tip_timestamp >= mine_interval`, so it could not build the first
+  real block until the wall clock had caught up. The window is now backdated to
+  end at the clock, so spacing is unchanged and the first post-bootstrap block
+  lands within one block interval. On a fresh chain that stall also held every
+  registration in the mempool, which is what left the new seat gate waiting.
+
 ## [0.29.0] - 2026-11-18
 
 ### Added

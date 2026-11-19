@@ -301,27 +301,34 @@ def test_heartbeat_blocks_carry_a_proofless_epoch_across(tmp_path: Path) -> None
         service.close()
 
 
-def test_bootstrap_blocks_are_stamped_with_the_wall_clock(tmp_path: Path) -> None:
-    """The setup window must not be dated from the genesis constant.
+def test_bootstrap_blocks_end_at_the_wall_clock(tmp_path: Path) -> None:
+    """The setup window must be dated from the deploy, and must end there.
 
-    ``genesis/testnet.json`` is stamped 2023-11-14 and the bootstrap used to walk
-    forward from it, so a stack deployed today mined its first twenty blocks
-    "in 2023": the explorer labelled them "1095d ago" and the analysis
-    notebook's time axes spanned three years, which made throughput read
-    zero. Every bootstrap block is now built at max(now, tip + target), so the
-    chain starts when it is deployed while the genesis stamp stays untouched.
+    Two failure modes to keep apart. ``genesis/testnet.json`` is stamped
+    2023-11-14, and walking forward from it dated a fresh stack's first twenty
+    blocks "in 2023": the explorer labelled them "1095d ago" and the analysis
+    notebook's time axes spanned three years. Stamping block 1 at the wall clock
+    instead put the *last* block a full window (19 minutes on testnet) into the
+    future, and the node's settler paces itself with ``clock() - tip_timestamp >=
+    mine_interval``, so no real block could be built until the clock caught up: a
+    fresh deploy sat at height 19 with registrations and proofs queued in the
+    mempool. The window is now backdated to end at the wall clock.
     """
     write_stack(tmp_path, passphrase="test-stack-passphrase")
     miners = bootstrap.load_stack(tmp_path)
-    started = unix_now()
     service, blocks, _relay = bootstrap.build_chain(miners, engine="ab" * 32)
     try:
         stamps = [block.header.timestamp for block in blocks]
         assert len(stamps) == bootstrap.BOOTSTRAP_HEIGHT
-        assert min(stamps) >= started, "bootstrap blocks are dated before the deploy"
+        assert min(stamps) > service.chain.genesis_block.header.timestamp, (
+            "the bootstrap must not be dated from the 2023 genesis stamp"
+        )
         assert stamps == sorted(stamps), "timestamps must stay monotonic"
         gaps = [later - earlier for earlier, later in pairwise(stamps)]
         assert min(gaps) >= service.params.target_block_seconds - 1
+        assert abs(stamps[-1] - unix_now()) <= 2 * service.params.target_block_seconds, (
+            "the bootstrap window must end at the clock, not run a window ahead of it"
+        )
         assert service.chain.genesis_block.header.timestamp == 1_700_000_000, (
             "the genesis stamp is consensus data and must not move"
         )

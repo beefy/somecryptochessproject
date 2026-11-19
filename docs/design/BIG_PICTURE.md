@@ -1,6 +1,6 @@
 # The big picture: a wallet, a bridge and a DEX
 
-> **Status (tree at 0.29.0).** Implemented except for the optional `wETH`
+> **Status (tree at 0.30.0).** Implemented except for the optional `wETH`
 > federation and the items marked **not built**. The browser wallet (section 4),
 > variant assets (section 5), the native DEX (section 6) and the trustless
 > ETH<->SCCP HTLC bridge (section 7) are in the tree; the bridge contract is
@@ -41,12 +41,12 @@ That gives four deliverables, in dependency order:
 | Native DEX | pools, LP positions and swaps between on-chain assets | new transaction types, `pools` in state | 0.24.0, shipped |
 | ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | new transaction types, `htlcs` in state, one Ethereum contract | 0.24.0, shipped |
 
-All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.29.0. The
+All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.30.0. The
 `sccp/v2` fork this document assumed did not happen: `PROTOCOL_VERSION` is still
 1, the domains stayed `sccp/v1/...`, and `PROTOCOL.md` documents the new
 transaction types as part of v1 (section 5.1).
 
-Optionally, 0.30.0 adds a `wETH` asset so that ETH itself can be traded in the
+Optionally, 0.31.0 adds a `wETH` asset so that ETH itself can be traded in the
 native DEX; that is a bonded federation and is explicitly out of the critical
 path (section 7.7).
 
@@ -163,7 +163,7 @@ No consensus change. This is the piece that turns `src/web` from an explorer wit
 a playable seat into a wallet, and it is first because everything else needs a
 way to sign in a browser.
 
-**Status (0.22.0, extended through 0.29.0).** Shipped: the keystore port (§4.1),
+**Status (0.22.0, extended through 0.30.0).** Shipped: the keystore port (§4.1),
 every transaction builder (§4.2), the review screen and local nonce tracking
 (§4.3), the create/restore/open, receive, send, faucet, history and settings
 views (§4.4) and the DEX and Bridge pages (§6.4, §7.6), deployed at
@@ -792,7 +792,7 @@ automation is added later it should sign with the same keyfile and reuse
 `bridge/orders.py` rather than re-implement the protocol; nothing in the chain
 changes.
 
-### 7.7 Later, and optional: wrapped ETH (0.30.0)
+### 7.7 Later, and optional: wrapped ETH (0.31.0)
 
 If users want ETH itself traded inside the native DEX (rather than swapped
 peer-to-peer), add a `wETH` asset backed by a **bonded federation**: N operators
@@ -836,7 +836,8 @@ The remaining rows are the open ones.
 | 0.27.0 | Chess960 miners start and settle; explorer loses Live, "Ratings" naming | C960 start through a real Stockfish; a signed C960 proof in a block | shipped |
 | 0.28.0 | whole PGNs, slimmer header | vitest; C960 and standard game pages render their moves | shipped |
 | 0.29.0 | keyfile import from disk, honest swap rows, bridge/DEX notebook panels | vitest; a CLI keyfile opens from the picker; a swap names both legs | shipped |
-| 0.30.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure | not started |
+| 0.30.0 | clock witnesses and bonded timeout claims, two extra role seats (slow, GNU Chess), a deploy gate that proves them | vitest; pytest; a redeploy seats both roles through `/stack/synthetic-fleet.json` | shipped |
+| 0.31.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure | not started |
 | 1.0.0 | mainnet | the go/no-go in `IMPLEMENTATION_PLAN.md`, plus the bridge audit | open |
 
 Each release keeps `make check` green, regenerates the vectors and OpenAPI
