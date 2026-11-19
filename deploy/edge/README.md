@@ -138,9 +138,10 @@ that names the image, the mirror's domain and the primary URL.
 
 `.github/workflows/deploy-edge.yml` waits for `deploy-testnet-miners` to finish,
 then ships this directory, writes `.env`, pulls the tag that deployment built and
-proves the replica advanced. Configuration, as repository-level variables and
-secrets next to the primary's (the job gate reads `vars` before the `testnet`
-environment is applied, so an environment-scoped variable would not be seen):
+proves the replica advanced. Configure it as repository variables and secrets next
+to the primary's, or on the `testnet` environment — the workflow reads them inside
+a step, so either scope is seen (a job-level `if` would not be, and the job would
+skip with nothing in the log):
 
 | Kind | Name | Value |
 | --- | --- | --- |
@@ -151,6 +152,11 @@ environment is applied, so an environment-scoped variable would not be seen):
 | var | `EDGE_SSH_PROXY_JUMP` | optional; `1` to jump through `TESTNET_DEPLOY_HOST` |
 | secret | `EDGE_SSH_KEY` | optional; falls back to `TESTNET_SSH_KEY` |
 | secret | `EDGE_KNOWN_HOSTS` | optional; falls back to `TESTNET_KNOWN_HOSTS` |
+
+A pinned `EDGE_KNOWN_HOSTS` covers the *primary* — the fallback is the primary's
+own pin — so the mirror's host key is scanned through the jump on every run. If
+you would rather pin it, put both keys in `EDGE_KNOWN_HOSTS`; the scan is an
+append, never a replacement.
 
 The job is idempotent, and it only destroys the replica on purpose: the primary's
 own redeploy resets its chain, so the workflow compares block 1 with the

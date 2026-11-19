@@ -168,10 +168,41 @@ def test_the_mirror_deploy_resets_only_a_diverged_chain() -> None:
     assert "caddy reload" in commands, "a changed Caddyfile needs a reload"
 
 
-def test_the_mirror_deploy_is_opt_in() -> None:
-    """No mirror VM in a project must not fail the primary's deploy."""
+def test_a_missing_mirror_is_reported_rather_than_skipped() -> None:
+    """A job stopped by `if` is invisible: no steps, no log, no reason.
+
+    This workflow first shipped with `vars.EDGE_DEPLOY_HOST != ''` in the
+    job-level `if`, and its first real run showed up as "skipped" with an empty
+    step list — indistinguishable from a workflow that never worked. The decision
+    belongs in a step, which also means variables scoped to the `testnet`
+    environment are visible (job-level contexts resolve before `environment:`).
+    """
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert "vars.EDGE_DEPLOY_HOST != ''" in workflow
+    job = workflow.split("\njobs:\n", 1)[1].split("\n    steps:\n", 1)[0]
+
+    assert "vars." not in job, "configuration must not gate the job itself"
+    assert "steps.target.outputs.deploy == 'true'" in workflow
+    assert "deploy=false" in workflow
+    assert "::notice" in workflow, "the run has to say why nothing happened"
+    assert "GITHUB_STEP_SUMMARY" in workflow
+
+
+def test_the_mirror_host_key_is_verified_even_when_one_is_pinned() -> None:
+    """The pinned file covers the primary, so it cannot cover the mirror.
+
+    `EDGE_KNOWN_HOSTS` falls back to `TESTNET_KNOWN_HOSTS`, which pins the host
+    the fallback was written for. Using it as-is would make
+    `StrictHostKeyChecking yes` refuse the mirror — the one host this job exists
+    to reach — so the mirror's key is scanned outside the pinned-file branch.
+    """
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    pinned = workflow.index('if [ -n "${KNOWN_HOSTS:-}" ]; then')
+    scan = workflow.index('if [ -n "${JUMP:-}" ]; then')
+    assert pinned < scan
+    assert '"$edge_host"' not in workflow[pinned:scan], "the scan is not nested in the pin"
+    assert "ssh primary \"ssh-keyscan -p $DEPLOY_PORT -H '$edge_host'\"" in workflow
+    assert 'ssh-keyscan -p "$DEPLOY_PORT" -H "$edge_host"' in workflow
 
 
 def test_the_deploy_proves_replication_and_read_only_access() -> None:
