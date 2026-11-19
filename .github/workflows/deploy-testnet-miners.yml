@@ -173,4 +173,4 @@ jobs:
         if: always()
         run: |
           ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose ps -a" || true
-          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 init node relay bootstrap seed drip traffic miner-1 miner-2 miner-3 miner-4" || true
+          ssh testnet "cd '$DEPLOY_DIR' && SCCP_IMAGE='$IMAGE' docker compose logs --tail=80 init node relay bootstrap seed drip traffic miner-1 miner-2 miner-3 miner-4 witness-2 witness-3" || true

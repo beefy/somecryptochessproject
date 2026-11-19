@@ -1021,6 +1021,94 @@ def test_miner_run_passes_the_resignation_policy_through(
     assert json.loads(result.stdout)["resignations"] == ["m1"]
 
 
+def test_relay_witness_keys_can_come_from_files(tmp_path: Path) -> None:
+    """A hybrid key is 3 970 hex characters: the stack passes paths, not literals."""
+    from sccp.cli import _witness_keys
+
+    keypair = generate_hybrid_keypair()
+    path = tmp_path / "witness-2.pub"
+    path.write_text(keypair.public_key_hex + "\n", encoding="utf-8")
+
+    pairs = _witness_keys(DEVNET, (), (path,))
+    assert pairs == [(encode_address(keypair.public_key_bytes, DEVNET), keypair.public_key_hex)]
+
+
+def test_node_run_needs_a_peer_before_it_polls_one(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app, ["--data-dir", str(tmp_path), "node", "run", "--peer-poll-seconds", "5"]
+    )
+    assert result.exit_code == 2
+    assert "--peer-poll-seconds needs --peer" in result.output
+
+
+def test_miner_run_refuses_a_negative_move_delay(tmp_path: Path, env: dict[str, str]) -> None:
+    """A negative delay is a typo, not a faster miner."""
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    result = runner.invoke(
+        app,
+        [
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--engine-profile",
+            "mock",
+            "--move-delay-seconds",
+            "-1",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 2
+    assert "--move-delay-seconds cannot be negative" in result.output
+
+
+def test_miner_run_passes_the_slow_seat_role_through(
+    tmp_path: Path, env: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delay, the witness keys and the witness URLs all reach the miner."""
+    from sccp.miner.engine_miner import EngineMiner, MinerTick
+
+    assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
+    seen: list[tuple[float, tuple[str, ...], tuple[str, ...]]] = []
+
+    def capture(self: EngineMiner) -> MinerTick:
+        seen.append(
+            (self.config.move_delay_seconds, self.config.witness_urls, self.config.witness_keys)
+        )
+        return MinerTick()
+
+    monkeypatch.setattr(EngineMiner, "run_once", capture)
+    result = runner.invoke(
+        app,
+        [
+            "miner",
+            "run",
+            "--network",
+            "devnet",
+            "--key",
+            str(tmp_path / "wallet.key"),
+            "--engine-profile",
+            "mock",
+            "--move-delay-seconds",
+            "110",
+            "--witness-url",
+            "http://witness-2:8647",
+            "--iterations",
+            "1",
+            "--poll-seconds",
+            "0.01",
+        ],
+        env=env,
+    )
+    assert result.exit_code == 0, result.output
+    delay, urls, keys = seen[0]
+    assert delay == 110.0
+    assert urls == ("http://witness-2:8647",)
+    assert keys == ()
+
+
 def test_miner_run_refuses_a_bad_relay_witness_key(tmp_path: Path, env: dict[str, str]) -> None:
     assert _new(tmp_path, env, "--network", "devnet").exit_code == 0
     result = runner.invoke(

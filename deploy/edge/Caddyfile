@@ -1,0 +1,50 @@
+# The mirror's only public listener. Caddy holds the certificate for
+# $SCCP_EDGE_DOMAIN over HTTP-01, so the A record has to point at this VM and
+# port 80 has to be reachable before the first start.
+#
+# It is a read-only proxy on purpose: the node behind it is a replica with no
+# faucet and no miner, and a public mirror has no business accepting writes. A
+# wallet that needs to submit a transaction uses the primary node; this name is
+# for reads (status, blocks, matches, proofs).
+{$SCCP_EDGE_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		# The node's JSON is public chain data; nothing here is per-user.
+		Cache-Control "no-store"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+
+	# Every endpoint this proxy serves is a GET. A body limit keeps a malformed
+	# request from becoming a memory story even though the node would reject it.
+	request_body {
+		max_size 64KB
+	}
+
+	@read {
+		method GET HEAD
+	}
+
+	handle @read {
+		reverse_proxy 127.0.0.1:8645 {
+			header_up X-Real-IP {remote_host}
+			transport http {
+				dial_timeout 5s
+				response_header_timeout 15s
+			}
+		}
+	}
+
+	handle {
+		respond "this node is a read-only mirror; submit transactions to the primary node" 405
+	}
+}

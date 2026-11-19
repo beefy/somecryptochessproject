@@ -27,7 +27,8 @@ commands; see [Cost guardrails](#9-cost-guardrails) for the shape of that work.
 | Cloud DNS API and zone | Publishes the one public name. | `dns.googleapis.com`, public zone `proofofchess-com`. |
 | VPC network and subnet | Isolates the VM from the default network. | Custom-mode VPC, one regional subnet. |
 | Firewall rules | Allow node API, operator SSH and optionally the relay. | Ingress `8645`, `22`, optional `8646`. |
-| VM instance | Runs Docker Compose: one node, one relay, four miners (two standard, two Chess960) and the synthetic wallet traffic. The extra-miner churn is disabled because four miners fill the CPU budget. | Debian 12, `e2-standard-2` (the existing miners VM), 20–30 GB disk. |
+| VM instance | Runs Docker Compose: one node, one relay, three clock witnesses, six miners (four fixed plus a slow seat and a GNU Chess seat) and the synthetic wallet traffic. | Debian 12, `e2-standard-2` (the existing miners VM), 20–30 GB disk. |
+| Mirror VM | A second, `e2-micro` host running one node with `--no-faucet` behind a GET-only Caddy proxy, replicating the primary every 30 s. | Debian 12, `e2-micro`, 20 GB disk, only `80`/`443` open, SSH over IAP. |
 | Static external IP | Optional stable address for DNS and GitHub variables. | Regional address attached to the VM. |
 | Deploy user and SSH key | Lets the workflow reach the host without GCP credentials. | `sccp` user, key-only SSH. |
 | Docker Engine + Compose plugin | Runs the node, relay and miners. | Installed from Docker's apt repository. |
@@ -202,6 +203,39 @@ The deployment itself — DNS record, deploy directory, GitHub variables, TLS
 options and rollback — is in [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md).
 Skip both if you only need the JSON API or serve the page with
 `sccp node run --web`.
+
+### The read-only mirror, on its own VM
+
+The second node is a separate instance with its own tag and its own two rules, so
+it cannot inherit the primary's `8645`/`8646` exposure. It publishes `443` for
+TLS and `80` for the certificate challenge, takes SSH only over IAP, and runs a
+node with `--no-faucet` behind a GET-only Caddy proxy:
+
+```bash
+export EDGE_TAG="sccp-edge"
+
+gcloud compute firewall-rules create sccp-edge-web \
+    --network="$NETWORK" \
+    --direction=INGRESS \
+    --action=ALLOW \
+    --rules=tcp:80,tcp:443 \
+    --source-ranges=0.0.0.0/0 \
+    --target-tags="$EDGE_TAG" \
+    --project="$PROJECT_ID"
+
+gcloud compute firewall-rules create sccp-edge-iap-ssh \
+    --network="$NETWORK" \
+    --direction=INGRESS \
+    --action=ALLOW \
+    --rules=tcp:22 \
+    --source-ranges=35.235.240.0/20 \
+    --target-tags="$EDGE_TAG" \
+    --project="$PROJECT_ID"
+```
+
+Do not add a `8645` rule for `$EDGE_TAG`: the node binds loopback and only the
+proxy on that host reaches it. The instance, address record, Compose file and
+smoke checks are in [`deploy/edge/README.md`](../../deploy/edge/README.md).
 
 ### SSH
 

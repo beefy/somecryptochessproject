@@ -51,11 +51,12 @@ Two further kinds of activity ride along, because a deployed chain that only eve
 sees well-behaved wallets never exercises them:
 
 * ``--extra-miners`` seats that many ``sccp miner run`` children from fixed seeds
-  (``synthetic_miner_creation``) and churns one per cycle, so registrations,
-  availability commitments and roster changes happen on a chain nobody is
-  watching. The host's CPU and memory decide how many may actually run; a small
-  VM simply gets none. One pool member plays at 16 nodes a move on purpose, so
-  the chain also sees a weak engine that loses and earns nothing.
+  (``synthetic_miner_creation``) and keeps them seated, so registrations,
+  availability commitments and roster roles happen on a chain nobody is
+  watching. The host's CPU and memory decide how many may actually run. The two
+  seats have fixed jobs: one is deliberately slow, so its clock really runs out
+  and the signed flag plus the bonded timeout claim are exercised; the other runs
+  GNU Chess, so the roster is not a monoculture of one engine.
 
 Those miners spend from the same faucet as the wallets, through the same gateway,
 so all of a cycle's nonces are numbered in one place. They are one flag away from
@@ -128,10 +129,37 @@ POLL_SECONDS: Final = 5.0
 SEED_NAMESPACE: Final = b"sccp/testnet/traffic-wallet/"
 
 EXTRA_MINERS: Final = 2
-"""How many extra miners the pool holds. ``0`` seats none and disables the churn."""
+"""How many extra miners the pool holds: the slow seat and the alternate engine.
 
-MAX_EXTRA_ONLINE: Final = 1
-"""How many of that pool may run at once: one, so the churn keeps swapping them."""
+``0`` seats none and disables the role seating entirely.
+"""
+
+MAX_EXTRA_ONLINE: Final = 2
+"""How many of that pool may run at once.
+
+Both roles are permanent parts of the testnet: the slow seat is what produces a
+real flag, and the alternate engine is what keeps the roster from being one
+binary. The host budget still caps it -- on a two-vCPU box ``host_capacity``
+allows exactly two, which is why the pool is this size.
+"""
+
+EXTRA_MINER_CHURN: Final = False
+"""Whether the pool is meant to churn seats or to stay seated.
+
+The churn is a demonstration of roster turnover; the testnet's two extra seats
+are fixed roles, so they are started once and kept up.
+"""
+
+EXTRA_WITNESS_KEY_FILES: Final = (
+    Path("/stack/keys/witness-1.pub"),
+    Path("/stack/keys/witness-2.pub"),
+    Path("/stack/keys/witness-3.pub"),
+)
+"""Every clock witness the extra seats trust, so a flag can become a claim.
+
+``deploy/init_testnet_stack.py`` writes one file per witness. Missing files are
+skipped: a stack without witnesses still plays, it just cannot settle a timeout.
+"""
 
 EXTRA_MINER_DIRECTORY: Final = Path("/data/synthetic-miners")
 """Where extra miners keep keyfiles. Inside the container on purpose: every
@@ -747,6 +775,9 @@ class Options:
     relay: str = "http://relay:8646"
     extra_miners: int = EXTRA_MINERS
     max_extra_online: int = MAX_EXTRA_ONLINE
+    extra_miner_churn: bool = EXTRA_MINER_CHURN
+    witness_key_files: tuple[Path, ...] = ()
+    witness_urls: tuple[str, ...] = ()
     bridge: bool = True
     dex: bool = True
     bridge_coins: int = BRIDGE_COINS
@@ -770,6 +801,8 @@ class Extras:
     """
 
     fleet: miners.ExtraMinerFleet | None = None
+    persistent: bool = False
+    """Seat the whole pool and keep it up instead of churning seats."""
 
     def close(self) -> None:
         """Stop the miners this process started."""
@@ -798,6 +831,7 @@ def extras_for(
     budget = capacity
     if budget is None:
         budget = miners.host_capacity(max_extra=options.extra_miners)
+    witness_files = tuple(path for path in options.witness_key_files if path.is_file())
     fleet = miners.ExtraMinerFleet(
         client,
         EXTRA_MINER_DIRECTORY,
@@ -808,9 +842,11 @@ def extras_for(
         max_online=options.max_extra_online,
         wait_seconds=options.wait_seconds,
         poll_seconds=options.poll_seconds,
+        witness_key_files=witness_files,
+        witness_urls=options.witness_urls,
         capacity=budget,
     )
-    return Extras(fleet=fleet)
+    return Extras(fleet=fleet, persistent=not options.extra_miner_churn)
 
 
 def _seat(pool: Sequence[Wallet], seats: int, rng: random.Random) -> list[Wallet]:
@@ -1415,7 +1451,12 @@ def run_cycle(
     gateway.start_cycle()
     churn = ""
     if extras.fleet is not None:
-        churn = extras.fleet.churn(rng, grant=gateway.grant).as_line()
+        report = (
+            extras.fleet.start_all(grant=gateway.grant)
+            if extras.persistent
+            else extras.fleet.churn(rng, grant=gateway.grant)
+        )
+        churn = report.as_line()
     funding = _fund(
         client,
         targets,
@@ -1675,6 +1716,35 @@ def _parser() -> argparse.ArgumentParser:
         help="how many extra miners may run at once (default: %(default)s)",
     )
     parser.add_argument(
+        "--extra-miner-churn",
+        dest="extra_miner_churn",
+        action="store_true",
+        default=EXTRA_MINER_CHURN,
+        help="swap pool members in and out instead of seating them permanently",
+    )
+    parser.add_argument(
+        "--no-extra-miner-churn",
+        dest="extra_miner_churn",
+        action="store_false",
+        help="keep every pool member seated (the testnet's fixed roles)",
+    )
+    parser.add_argument(
+        "--witness-key-file",
+        type=Path,
+        action="append",
+        default=None,
+        help=(
+            "clock witness public key file the extra miners trust "
+            "(repeatable; default: the stack's three)"
+        ),
+    )
+    parser.add_argument(
+        "--witness-url",
+        action="append",
+        default=None,
+        help="independent witness base URL the extra miners may ask for evidence",
+    )
+    parser.add_argument(
         "--no-bridge",
         dest="bridge",
         action="store_false",
@@ -1760,6 +1830,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         relay=args.relay,
         extra_miners=args.extra_miners,
         max_extra_online=args.max_extra_online,
+        extra_miner_churn=args.extra_miner_churn,
+        witness_key_files=(
+            EXTRA_WITNESS_KEY_FILES
+            if args.witness_key_file is None
+            else tuple(args.witness_key_file)
+        ),
+        witness_urls=tuple(args.witness_url or ()),
         bridge=args.bridge,
         dex=args.dex,
         bridge_coins=args.bridge_coins,

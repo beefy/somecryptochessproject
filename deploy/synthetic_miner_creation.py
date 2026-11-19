@@ -1,11 +1,11 @@
-"""Keep a pool of extra testnet miners that come online and go offline.
+"""Keep a pool of extra testnet miners with fixed roles.
 
 The compose stack runs the four miners ``init_testnet_stack.py`` creates (two
-standard, two Chess960), which fills its VM's CPU budget. The traffic service
-therefore starts with ``--extra-miners 0``. On a larger host this module adds a
-small, deterministic pool of *extra* miners that the traffic generator starts and
-stops while the chain runs, so a deployment exercises registration, the
-availability lead and roster churn as well as wallet traffic.
+standard, two Chess960). On top of them this module seats a small, deterministic
+pool of *extra* miners that play the two roles the fixed four do not: a ``slow``
+seat that spends its own clock so a match is really flagged (the evidence a
+bonded ``timeout_claim`` needs), and a ``gnuchess`` seat so the roster is not six
+copies of one engine.
 
 Everything is derived from published seeds, exactly like the traffic wallets and
 the four stack miners: these are testnet identities with no value. A miner is not
@@ -23,15 +23,15 @@ invisible to the relay:
   a pause is re-registered with another ``register`` (the same transaction the
   bootstrap uses) before it is started, so it can commit availability again.
 
-Churn has a budget: every miner is a Stockfish process next to the node, the
-relay, the four fixed miners and the traffic generator itself.
+Seating has a budget: every miner is an engine process next to the node, the
+relay, the four fixed miners, the witnesses and the traffic generator itself.
 :func:`host_capacity` derives how many fit from the host's cores and free memory,
-and the fleet never exceeds it. A miner here searches 5 000 nodes per move, which
-is milliseconds of one thread with the process idle in between, so the budget is
-a *share* of a core rather than a whole one. On the deployment's two-core VM the
-four fixed miners consume that budget, which is why Compose passes
-`--extra-miners 0`; a larger host can seat the pool. A host that cannot be
-measured is not capped; one that cannot fit a miner logs why and seats none.
+and the fleet never exceeds it. The two roles above are permanent parts of the
+testnet rather than a churn demo, so the traffic generator keeps the pool seated
+(``--no-extra-miner-churn``) and the fleet repairs a child that exits; the
+original churn is still available with ``--extra-miner-churn``. A host that
+cannot be measured is not capped; one that cannot fit a miner logs why and seats
+none.
 """
 
 from __future__ import annotations
@@ -95,10 +95,11 @@ still bounds two miners' overlapping searches to one core.
 """
 
 RESERVED_CORES: Final = 1
-"""Cores kept for the node and the relay, which must answer while a miner searches."""
+"""Cores kept for the node, the relay and the witnesses, which must answer while
+a miner searches."""
 
 PER_MINER_MEMORY_MB: Final = 256
-RESERVED_MEMORY_MB: Final = 512
+RESERVED_MEMORY_MB: Final = 1024
 
 WAIT_SECONDS: Final = 900.0
 """How long to wait for the grant and registration blocks. One block is a minute."""
@@ -107,20 +108,52 @@ POLL_SECONDS: Final = 5.0
 NODES_PER_MOVE: Final = 5_000
 """The fixed miners' search budget, so extra miners play at the same strength."""
 
+MINER_POLL_SECONDS: Final = 0.5
+"""How often an extra miner asks the relay for work.
+
+The fixed miners use 0.1s. Six seats polling a relay that answers in
+milliseconds is the binding CPU cost on a two-vCPU host, so the extra seats pick
+their work up half a second later instead of competing with the four that cap
+the round.
+"""
+
 RESIGN_AFTER_PLIES: Final = 60
 """Resign on our own turn after this many plies, as the fixed miners do."""
 
-WEAK_INDEX: Final = 0
-"""The pool member that plays badly on purpose.
+SLOW_INDEX: Final = 0
+"""The pool member that deliberately loses on time.
 
-It searches 16 nodes a move, which is a genuinely poor game: it loses most
-matches against a 5 000-node opponent and earns no subsidy, because only a win
-pays. That is the demonstration this pool is for -- strength is priced by the
-scoreboard, so nobody needs to adjudicate how well a game was played.
+Every honest miner finishes a 30+0 game long before a clock runs out, so the
+flag receipt, the bonded ``timeout_claim`` and the witness checkpoint they
+depend on are never produced by normal play. This seat waits
+:data:`SLOW_MOVE_DELAY_SECONDS` before searching on every one of its turns: the
+relay charges that wait to its own clock, and after about seventeen of its moves
+the clock is gone. It resigns nothing -- resigning would end the game before the
+flag -- so the opponent gets exactly the timeout the protocol has to settle.
 """
 
-WEAK_NODES_PER_MOVE: Final = 16
-"""The weak miner's search budget: strong enough to move, weak enough to lose."""
+SLOW_MOVE_DELAY_SECONDS: Final = 110.0
+"""Long enough to spend 30 minutes of clock in about seventeen own moves."""
+
+ALTERNATE_INDEX: Final = 1
+"""The pool member that runs a different engine from the rest of the roster.
+
+Six copies of one binary prove very little about engine diversity. This seat
+plays GNU Chess, which ships in Debian beside Stockfish and speaks UCI once it is
+told to.
+"""
+
+ALTERNATE_ENGINE: Final = "gnuchess"
+ALTERNATE_ENGINE_PATH: Final = Path("/usr/games/gnuchess")
+"""Where Debian's ``gnuchess`` package installs the binary in the image."""
+
+ALTERNATE_DEPTH: Final = 5
+"""GNU Chess' search budget.
+
+It ignores ``go nodes`` (it searches until told to stop, so a node limit never
+returns a move) and honours ``go depth``; depth 5 is a few thousand nodes -- a
+real opponent, not a random mover.
+"""
 
 NONCE_CONFLICT: Final = "already has a pending transaction with nonce"
 """The node's refusal when the next nonce of an account is already in the pool."""
@@ -130,23 +163,40 @@ NONCE_CONFLICT: Final = "already has a pending transaction with nonce"
 class MinerLineUp:
     """How one pool member is told to play."""
 
-    nodes_per_move: int
     label: str
-    """A short name for the log line: ``weak`` for the deliberate bad engine."""
+    """A short name for the log line: ``slow`` or ``gnuchess``."""
+
+    engine_profile: str = "stockfish-19"
+    engine_path: Path = Path("/usr/games/stockfish")
+    nodes_per_move: int = NODES_PER_MOVE
+    depth: int | None = None
+    """A fixed depth instead of a node limit, for engines without one."""
+    move_delay_seconds: float = 0.0
+    resign_after_plies: int | None = RESIGN_AFTER_PLIES
 
 
 def miner_line_up(index: int) -> MinerLineUp:
     """The role of pool member ``index``.
 
-    One member is deliberately weak: it plays at 16 nodes a move, so its games
-    are poor and it usually loses. Everyone else plays like the fixed miners.
-    No member attaches a quality summary, because the protocol has no such field
-    and no arbitration to feed; a bad engine is visible where it matters, in the
-    win/loss column.
+    Two roles beyond the honest default, and no others: one seat is deliberately
+    slow so its clock runs out (the only way a timeout claim gets its flag), and
+    one runs a different engine so the roster is not a monoculture. Extra members
+    beyond the pool play like the fixed miners.
     """
-    if index == WEAK_INDEX:
-        return MinerLineUp(nodes_per_move=WEAK_NODES_PER_MOVE, label="weak")
-    return MinerLineUp(nodes_per_move=NODES_PER_MOVE, label="honest")
+    if index == SLOW_INDEX:
+        return MinerLineUp(
+            label="slow",
+            move_delay_seconds=SLOW_MOVE_DELAY_SECONDS,
+            resign_after_plies=None,
+        )
+    if index == ALTERNATE_INDEX:
+        return MinerLineUp(
+            label=ALTERNATE_ENGINE,
+            engine_profile=ALTERNATE_ENGINE,
+            engine_path=ALTERNATE_ENGINE_PATH,
+            depth=ALTERNATE_DEPTH,
+        )
+    return MinerLineUp(label="honest")
 
 
 class ExtraMinerError(RuntimeError):
@@ -391,21 +441,26 @@ def miner_command(
     passphrase_file: Path,
     relay: str,
     node: str,
-    engine_path: str | Path,
-    engine_profile: str = "stockfish-19",
-    poll_seconds: float = 0.1,
-    nodes_per_move: int = NODES_PER_MOVE,
-    resign_after_plies: int = RESIGN_AFTER_PLIES,
+    line_up: MinerLineUp,
+    poll_seconds: float = MINER_POLL_SECONDS,
+    witness_key_files: Sequence[Path] = (),
+    witness_urls: Sequence[str] = (),
     params: NetworkParams = TESTNET,
 ) -> list[str]:
     """The ``sccp miner run`` command line for ``miner``.
 
-    The arguments mirror the compose file's miners: same engine profile, same
-    resign policy, plus this module's keyfile and availability secret so the miner
-    commits and reveals on its own every epoch. The search budget comes from
-    :func:`miner_line_up`, which gives one pool member a deliberately weak engine.
+    The arguments mirror the compose file's miners -- same network, same relay
+    and node, same resign policy -- plus this module's keyfile and availability
+    secret so the miner commits and reveals on its own every epoch. What differs
+    per seat comes from :func:`miner_line_up`: the search budget (nodes, or a
+    depth for an engine that ignores node limits), an optional move delay, and
+    the engine itself.
+
+    ``witness_key_file`` pins the clock witnesses the seat trusts, without which
+    a flagged match cannot become a timeout claim; ``witness_urls`` let the seat
+    ask those witnesses for evidence when the relay has none.
     """
-    return [
+    command = [
         *sccp_command(),
         "--passphrase-file",
         str(passphrase_file),
@@ -418,13 +473,24 @@ def miner_command(
         "--nonce-secret-file",
         str(miner.nonce_file),
         "--engine-profile",
-        engine_profile,
+        line_up.engine_profile,
         "--engine-path",
-        str(engine_path),
-        "--nodes-per-move",
-        str(nodes_per_move),
-        "--resign-after-plies",
-        str(resign_after_plies),
+        str(line_up.engine_path),
+    ]
+    if line_up.depth is not None:
+        command += ["--depth", str(line_up.depth)]
+    else:
+        command += ["--nodes-per-move", str(line_up.nodes_per_move)]
+    if line_up.resign_after_plies is not None:
+        command += ["--resign-after-plies", str(line_up.resign_after_plies)]
+    if line_up.move_delay_seconds > 0:
+        command += ["--move-delay-seconds", str(line_up.move_delay_seconds)]
+    for path in witness_key_files:
+        command += ["--relay-witness-key-file", str(path)]
+    for url in witness_urls:
+        command += ["--witness-url", url]
+    return [
+        *command,
         "--relay",
         relay,
         "--node",
@@ -604,18 +670,27 @@ class ExtraMinerFleet:
     params: NetworkParams = TESTNET
     relay: str = "http://relay:8646"
     node: str = "http://node:8645"
-    engine_path: Path = Path("/usr/games/stockfish")
-    engine_profile: str = "stockfish-19"
     pool_size: int = MAX_EXTRA_MINERS
     max_online: int = MAX_ONLINE_AT_ONCE
     passphrase: str = DEFAULT_PASSPHRASE
     wait_seconds: float = WAIT_SECONDS
     poll_seconds: float = POLL_SECONDS
+    miner_poll_seconds: float = MINER_POLL_SECONDS
+    witness_key_files: tuple[Path, ...] = ()
+    """The clock witnesses' public keys, as ``miner run`` reads them.
+
+    Without them an extra miner can play and win, but it refuses every timeout
+    claim: the flag receipt cannot be checked against a key it does not have.
+    """
+    witness_urls: tuple[str, ...] = ()
+    """Independent witnesses the seats may ask for a claim's evidence."""
+    line_up: Callable[[int], MinerLineUp] = miner_line_up
+    """How pool member ``index`` plays: the production roles, injectable in tests."""
     capacity: HostCapacity = field(default_factory=host_capacity)
     spawn: Spawn = _spawn
     _pool: tuple[ExtraMiner, ...] = field(init=False, default=(), repr=False)
     _running: dict[int, RunningMiner] = field(init=False, default_factory=dict, repr=False)
-    _engine: str | None = field(init=False, default=None, repr=False)
+    _engines: dict[Path, str] = field(init=False, default_factory=dict, repr=False)
     _passphrase_file: Path = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -652,7 +727,8 @@ class ExtraMinerFleet:
             raise ExtraMinerError(
                 f"{self.online_limit} extra miner(s) already run: {self.capacity.reason}"
             )
-        engine = self._engine_digest()
+        line_up = self.line_up(miner.index)
+        engine = self._engine_digest(line_up)
         self._write_passphrase()
         materialise(miner, params=self.params, passphrase=self.passphrase)
         self._register(miner, grant=grant, engine=engine)
@@ -661,10 +737,10 @@ class ExtraMinerFleet:
             passphrase_file=self._passphrase_file,
             relay=self.relay,
             node=self.node,
-            engine_path=self.engine_path,
-            engine_profile=self.engine_profile,
-            poll_seconds=self.poll_seconds,
-            nodes_per_move=miner_line_up(miner.index).nodes_per_move,
+            line_up=line_up,
+            poll_seconds=self.miner_poll_seconds,
+            witness_key_files=self.witness_key_files,
+            witness_urls=self.witness_urls,
             params=self.params,
         )
         log_path = self.directory / "logs" / f"{miner.name}.log"
@@ -727,6 +803,37 @@ class ExtraMinerFleet:
             failed=tuple(failed),
         )
 
+    def start_all(self, *, grant: Grant | None = None) -> ChurnReport:
+        """Seat the whole pool and keep it seated.
+
+        The churn demonstrates roster turnover; the deployment's fixed roles need
+        the opposite. ``start_all`` reaps miners that exited, then starts every
+        pool member the host budget allows and leaves it running. A crash is
+        repaired on the next cycle rather than waiting for a coin flip, and the
+        slow seat and the alternate engine keep their identities from round to
+        round -- which is the point of having them.
+        """
+        exited = self.reap()
+        started: list[str] = []
+        failed = [f"{name} exited with code {code}" for name, code in exited]
+        for miner in self._pool:
+            if len(self._running) >= self.online_limit:
+                break
+            if miner.index in self._running:
+                continue
+            try:
+                self.start(miner, grant=grant)
+            except (ExtraMinerError, httpx.HTTPError) as exc:
+                failed.append(f"{miner.name}: {exc}")
+                continue
+            started.append(miner.name)
+        return ChurnReport(
+            started=tuple(started),
+            online=tuple(item.name for item in self.online),
+            failed=tuple(failed),
+            reason=self.capacity.reason if self.online_limit == 0 else "",
+        )
+
     def close(self) -> None:
         """Stop every miner this fleet started."""
         for index in list(self._running):
@@ -734,16 +841,19 @@ class ExtraMinerFleet:
 
     # -- registration -------------------------------------------------------
 
-    def _engine_digest(self) -> str:
-        """The engine fingerprint the miner registers, computed once."""
-        if self._engine is None:
-            if not self.engine_path.is_file():
-                raise ExtraMinerError(
-                    f"no engine binary at {self.engine_path}; the extra miners need "
-                    "the same Stockfish the fixed miners run"
-                )
-            self._engine = engine_fingerprint(self.engine_path)
-        return self._engine
+    def _engine_digest(self, line_up: MinerLineUp) -> str:
+        """The engine fingerprint ``line_up``'s miner registers, computed once."""
+        cached = self._engines.get(line_up.engine_path)
+        if cached is not None:
+            return cached
+        if not line_up.engine_path.is_file():
+            raise ExtraMinerError(
+                f"no engine binary at {line_up.engine_path}; the {line_up.label} seat "
+                "needs the engine its profile names"
+            )
+        digest = engine_fingerprint(line_up.engine_path)
+        self._engines[line_up.engine_path] = digest
+        return digest
 
     def _write_passphrase(self) -> None:
         """Write the published passphrase file the child's ``--passphrase-file`` reads."""

@@ -13,8 +13,11 @@ From the VM or a local Compose stack:
 
 ```bash
 curl -fsS http://127.0.0.1:8645/v1/status   # node height, tip, mempool
-curl -fsS http://127.0.0.1:8646/v1/status   # beacon epoch, matches, round
+curl -fsS http://127.0.0.1:8646/v1/status   # beacon epoch, matches, round, witness
 curl -fsS http://127.0.0.1:8646/v1/matches  # per-game status and ply count
+# The witnesses are not published on the host; ask them from inside the network.
+docker compose exec -T witness-2 python -c \
+  "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8647/v1/status').read().decode())"
 docker compose ps
 docker compose logs --tail=100 node bootstrap relay miner-1 miner-2 drip traffic
 ```
@@ -36,10 +39,15 @@ Healthy after a deploy means:
 - node `height` is at least 19 (the bootstrap chain);
 - relay `matches` is at least 1, and its `epoch` follows the node (3 right after
   the bootstrap, 4 once the first post-bootstrap block settles);
+- relay `/v1/status` reports a `witness` address, not `null`: a relay without a
+  witness key signs no receipts, so no timeout can be claimed;
+- each witness `/v1/status` reports `audited` matches with no `refusals` once a
+  game has been flagged, and `quorum` 1 on testnet;
 - `miner-1`/`miner-2` log an engine fingerprint (the Stockfish SHA-256), not an
-  engine crash;
+  engine crash; `synthetic-miner-2` logs GNU Chess's binary hash;
 - `drip` logs an occasional `dripped` line and `traffic` logs a `cycle N: ...`
-  line every few minutes;
+  line every few minutes, including the extra-miner line
+  (`miners: started ...; online: synthetic-miner-1, synthetic-miner-2`);
 - when a game is decisive, the node log contains `mined height 20: 1 proof(s) ...`
   (draws produce no proof).
 
@@ -324,6 +332,75 @@ python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645
 The bootstrap is idempotent when the node is already past height 19: it rebuilds
 the deterministic chain in memory and rewrites the relay config without posting
 duplicate blocks.
+
+## Clock witnesses and time forfeits
+
+Three witnesses are registered in the bootstrap chain: the relay itself
+(`witness-1`) and two independent services (`witness-2` on 8647, `witness-3` on
+8648). All three bond one coin and record the same hybrid key files in
+`/stack/keys/witness-*.key`/`.pub`.
+
+```bash
+docker compose logs -f relay witness-2 witness-3
+curl -fsS http://127.0.0.1:8646/v1/status | jq '{witness, matches, open}'
+# Neither witness publishes a host port: they are evidence sources for the
+# miners inside the compose network, not a public API.
+docker compose exec -T witness-2 python -c \
+  "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8647/v1/status').read().decode())" | jq '{address, polls, matches, audited, refusals}'
+docker compose exec -T witness-2 python -c \
+  "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8647/v1/matches').read().decode())" | jq '.[] | {status, flagged, audited, audit}'
+```
+
+What each piece does:
+
+- the **relay** signs a receipt per accepted move and a flag receipt when a clock
+  reaches zero (`--witness-key`). This is what makes a `timeout_claim` possible
+  at all; without the key, receipts are unsigned and every claim is refused.
+- the **two witnesses** poll the relay every two seconds, verify the relay's
+  signature, re-run the protocol's clock arithmetic, and co-sign each receipt and
+  the evidence checkpoint with their own keys. They serve the bundle at
+  `GET /v1/matches/{id}/receipts`, so a miner can settle a timeout even if the
+  relay cannot produce its own bundle. Their `audit` endpoint answers whether the
+  bundle they signed verifies under the protocol's verifier.
+
+Race and reporting:
+
+- **a claim the chain refuses** means quorum was not met or a receipt did not
+  verify: read the miner log for `the match was flagged but no witness has a
+  complete bundle` (no witness polled the flag) or `evidence does not verify`
+  on the witness itself.
+- **`refusals` mentioning `unsigned`** means the relay was restarted without
+  `--witness-key`. Fix the config; the witnesses keep auditing but their bundles
+  are the only attestations.
+- **`refusals` mentioning `no registered public key`** means a witness was given
+  the wrong `--relay-witness-key-file`.
+
+The deliberate time forfeit comes from the extra fleet: `synthetic-miner-1`
+waits 110 seconds before every move, so a 30+0 clock runs out after about
+seventeen of its own moves. Do not expect a flag before roughly half an hour
+after the match starts. When it happens the opponent files a bonded claim and
+the node settles it; check with:
+
+```bash
+docker compose logs --tail=50 traffic | grep -E 'claim|slow'
+docker compose logs --tail=50 miner-1 miner-2 | grep -i timeout
+curl -fsS http://127.0.0.1:8645/v1/status | jq '.mempool'
+```
+
+## The read-only mirror
+
+A second VM (`deploy/edge/`) runs a node that pull-syncs this chain and serves it
+over HTTPS with GET-only access. It is a separate Compose project:
+
+```bash
+curl -fsS "https://mirror.example.com/v1/status" | jq '{height, tip_hash, peers}'
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://mirror.example.com/v1/tx" -d '{}'
+```
+
+`405` is correct: the edge refuses every write by design. A mirror whose `height`
+stops advancing is failing to reach `SCCP_PRIMARY_URL`; its node log names the
+peer and the reason. The mirror is disposable — delete `node-data` and let one
+sync rebuild it.
 
 ## Engine crashes
 

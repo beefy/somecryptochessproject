@@ -134,6 +134,26 @@ class MinerConfig:
     checked locally and the claim is refused rather than guessed at.
     """
 
+    witness_urls: tuple[str, ...] = ()
+    """Independent clock witnesses to fall back on for a claim's evidence.
+
+    Each entry is the base URL of a ``sccp witness run`` service. When the
+    relay has no checkpoint for a flagged match -- it restarted without a store,
+    or it never had a witness key -- the miner asks these witnesses for their
+    own signed bundle instead of giving up the claim. The bundle is verified
+    against ``witness_keys`` exactly like the relay's, so a witness can only
+    help by producing evidence the protocol accepts.
+    """
+
+    move_delay_seconds: float = 0.0
+    """Seconds to wait before searching on our turn.
+
+    Zero is the honest miner. A positive value is a deployment role: a seat that
+    spends its own clock slowly enough to be flagged, which is the only way to
+    produce the flag receipts a ``timeout_claim`` needs. The relay is
+    authoritative for time, so the delay cannot buy the seat anything.
+    """
+
     @classmethod
     def for_network(
         cls,
@@ -147,8 +167,10 @@ class MinerConfig:
         max_games_per_epoch: int = 1,
         nonce_secret: str | None = None,
         witness_keys: Sequence[tuple[str, str]] = (),
+        witness_urls: Sequence[str] = (),
         resign_after_plies: int | None = None,
         variant: str = "standard",
+        move_delay_seconds: float = 0.0,
     ) -> MinerConfig:
         """Build a config from a network id and a wallet keypair."""
         params = get_network(network)
@@ -165,6 +187,8 @@ class MinerConfig:
             nonce_secret=nonce_secret,
             resign_after_plies=resign_after_plies,
             witness_keys=tuple(witness_keys),
+            witness_urls=tuple(witness_urls),
+            move_delay_seconds=move_delay_seconds,
         )
 
     @property
@@ -528,6 +552,7 @@ class EngineMiner:
         self.pending_proofs: dict[str, WinProof] = {}
         self.claims: dict[str, TimeoutClaim] = {}
         self.books: dict[str, ReceiptBook] = {}
+        self._witness_clients: dict[str, RelayClient] = {}
         self.refusals: list[str] = []
 
     # -- identity and wallet plans -----------------------------------------
@@ -585,6 +610,30 @@ class EngineMiner:
         """The witness receipts stored for ``match_id``."""
         book = self.books.get(match_id)
         return () if book is None else book.ordered()
+
+    def _witness_bundle(self, match_id: str) -> ClockBundle | None:
+        """Ask each configured witness for its own signed evidence bundle.
+
+        A witness serves the relay's own path (``/v1/matches/{id}/receipts``)
+        with receipts and a checkpoint it signed itself, so the miner can settle
+        a timeout even when the relay cannot produce one. Nothing here is
+        trusted: :meth:`build_timeout_claim` verifies the bundle against
+        ``witness_keys`` before the claim is signed.
+        """
+        for url in self.config.witness_urls:
+            client = self._witness_clients.get(url)
+            if client is None:
+                client = RelayClient(url)
+                self._witness_clients[url] = client
+            try:
+                bundle = client.receipts(match_id)
+            except RelayError as exc:
+                self._refuse(f"{match_id}: witness {url} did not answer: {exc}")
+                continue
+            if bundle is not None and bundle.flag is not None and bundle.checkpoint is not None:
+                return bundle
+            self._refuse(f"{match_id}: witness {url} has no complete bundle yet")
+        return None
 
     def _refuse(self, reason: str) -> None:
         if reason not in self.refusals:
@@ -884,6 +933,15 @@ class EngineMiner:
         if state.board.is_game_over():
             self._refuse(f"{state.match_id}: board is over but the relay has no result")
             return []
+        if self.config.move_delay_seconds > 0:
+            # A deployment role, not a shortcut: the relay owns the clock and
+            # has already charged this seat for the wait. See
+            # ``MinerConfig.move_delay_seconds``.
+            time.sleep(self.config.move_delay_seconds)
+            now = self.clock_ms()
+            if state.clock.flag(now) is not None:
+                self._refuse(f"{state.match_id}: the delay used up our clock")
+                return []
         move = self.engine.choose_move(state.board, self.config.limit)
         if not state.board.is_legal(move):
             raise MinerError(f"engine returned the illegal move {move.uci()}")
@@ -973,9 +1031,11 @@ class EngineMiner:
                 )
             return [], [], []
         bundle = self.relay.receipts(state.match_id)
+        if bundle is None or bundle.flag is None or bundle.checkpoint is None:
+            bundle = self._witness_bundle(state.match_id)
         if bundle is None or bundle.flag is None:
             state.refused = True
-            raise MinerError("relay ended the match on time without a flag receipt")
+            raise MinerError("the match was flagged but no witness has a complete bundle")
         state.relay_flag = bundle.flag
         state.finished = True
         claim = self.build_timeout_claim(view, bundle=bundle)
