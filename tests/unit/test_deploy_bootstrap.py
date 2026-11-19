@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import sys
 from itertools import pairwise
 from pathlib import Path
+from typing import Any
 
 from deploy import bootstrap_testnet_stack as bootstrap
 from deploy.init_testnet_stack import write_stack
@@ -36,6 +38,115 @@ def test_the_stack_publishes_an_availability_secret_per_miner(tmp_path: Path) ->
         assert path == tmp_path / "keys" / f"{entry['name']}.nonce"
         assert path.read_text(encoding="utf-8").strip() == secret
         assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_the_stack_writes_three_clock_witnesses(tmp_path: Path) -> None:
+    """Three witnesses: the relay and two independent services, all registered.
+
+    Their hybrid public keys go to files: 3 970 hex characters is not a sane
+    command-line argument, and every miner needs the same bytes.
+    """
+    summary = write_stack(tmp_path, passphrase="test-stack-passphrase")
+    entries = summary["witnesses"]
+    assert isinstance(entries, list)
+    assert [entry["name"] for entry in entries] == ["witness-1", "witness-2", "witness-3"]
+    assert [entry["endpoint"] for entry in entries] == [
+        "http://relay:8646",
+        "http://witness-2:8647",
+        "http://witness-3:8648",
+    ]
+    for entry in entries:
+        assert isinstance(entry, dict)
+        keyfile = Path(str(entry["keyfile"]))
+        assert keyfile.is_file()
+        public_file = Path(str(entry["public_key_file"]))
+        assert public_file.read_text(encoding="utf-8").strip() == entry["public_key"]
+        assert public_file.stat().st_mode & 0o777 == 0o644
+        assert len(str(entry["public_key"])) == 2 * 1985
+
+
+def test_the_bootstrap_registers_every_witness_on_chain(tmp_path: Path) -> None:
+    write_stack(tmp_path, passphrase="test-stack-passphrase")
+    miners = bootstrap.load_stack(tmp_path)
+    witnesses = bootstrap.load_witnesses(tmp_path)
+    assert [witness.name for witness in witnesses] == ["witness-1", "witness-2", "witness-3"]
+
+    service, blocks, relay = bootstrap.build_chain(miners, engine="ab" * 32, witnesses=witnesses)
+    try:
+        registered = service.chain.state.witnesses
+        assert set(registered) == {witness.address for witness in witnesses}
+        for witness in witnesses:
+            record = registered[witness.address]
+            assert record.public_key == witness.public_key
+            assert record.endpoint == witness.endpoint
+            assert record.bond == bootstrap.TESTNET.clock_witness_bond
+        # Block 4 is the registration block; block 1 funded them first.
+        assert [tx.type for tx in blocks[3].transactions] == [TxType.REGISTER_WITNESS] * len(
+            witnesses
+        )
+        assert TxType.TRANSFER in {tx.type for tx in blocks[0].transactions}
+        published = relay["witnesses"]
+        assert isinstance(published, dict)
+        assert set(published) == {witness.address for witness in witnesses}
+    finally:
+        service.close()
+
+
+def test_a_stack_without_witnesses_still_bootstraps(tmp_path: Path) -> None:
+    """The role is additive: an older stack.json keeps working, unattested."""
+    summary = write_stack(tmp_path, passphrase="test-stack-passphrase")
+    document = tmp_path / "stack.json"
+    payload = document.read_text(encoding="utf-8")
+    document.write_text(payload.replace('"witnesses"', '"legacy-witnesses"'), encoding="utf-8")
+    assert summary["witnesses"]
+    assert bootstrap.load_witnesses(tmp_path) == ()
+    miners = bootstrap.load_stack(tmp_path)
+    service, _blocks, relay = bootstrap.build_chain(miners, engine="ab" * 32)
+    try:
+        assert service.chain.state.witnesses == {}
+        assert "witnesses" not in relay
+    finally:
+        service.close()
+
+
+def test_a_rerun_keeps_the_published_relay_config(
+    tmp_path: Path, monkeypatch: Any, capsys: Any
+) -> None:
+    """A second bootstrap must not repoint the relay at a chain that never existed.
+
+    ``build_chain`` dates its blocks from the wall clock, so re-running it on an
+    already-bootstrapped node produces *different* beacons. Writing that config
+    over the live one makes every proof fail with "beacon did not select this
+    opening line".
+    """
+    write_stack(tmp_path, passphrase="test-stack-passphrase")
+    engine = tmp_path / "engine"
+    engine.write_bytes(b"not really an engine")
+    relay = tmp_path / "relay.json"
+    relay.write_text('{"kept": true}\n', encoding="utf-8")
+
+    monkeypatch.setattr(
+        bootstrap,
+        "_node_height",
+        lambda client, wait_seconds=0: bootstrap.BOOTSTRAP_HEIGHT,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "bootstrap_testnet_stack",
+            "--stack",
+            str(tmp_path),
+            "--node",
+            "http://node",
+            "--engine-path",
+            str(engine),
+        ],
+    )
+    bootstrap.main()
+
+    assert relay.read_text(encoding="utf-8").strip() == '{"kept": true}'
+    assert "relay config kept" in capsys.readouterr().out
 
 
 def test_the_stack_builds_a_matchable_chain_and_relay_config(tmp_path: Path) -> None:

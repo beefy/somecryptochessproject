@@ -137,6 +137,11 @@ services:
   relay:
     <<: *sccp-service
     command:
+      # The witness key is a wallet keyfile, so the relay needs the stack
+      # passphrase the same way the miners do. Without it the process blocks on a
+      # passphrase prompt that no container can answer.
+      - --passphrase-file
+      - /stack/passphrase
       - matchmaker
       - run
       - --network
@@ -155,6 +160,14 @@ services:
       - 0.0.0.0
       - --port
       - "8646"
+      # The relay is clock witness 1: it signs a receipt for every move it
+      # accepts and a flag receipt when a clock runs out. Without this key its
+      # receipts carry no signature, so a flagged game cannot become a bonded
+      # timeout_claim and the timeout path is dead on the deployment. The key is
+      # witness-1's, written by the init container from a published seed and
+      # registered on chain by the bootstrap.
+      - --witness-key
+      - /stack/keys/witness-1.key
     ports:
       - "8646:8646"
     volumes:
@@ -171,6 +184,99 @@ services:
     depends_on:
       bootstrap:
         condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Clock witnesses 2 and 3. Each is an independent process with its own key: it
+  # polls the relay, re-runs the protocol's clock verifier over the receipts and
+  # publishes a bundle it signed itself. The testnet quorum is one, so any single
+  # witness can settle a timeout; three means a claim survives two being down, and
+  # it is the smallest set in which two conflicting signatures (equivocation) can
+  # even exist for `slash_evidence` to punish. Neither service is published: they
+  # are evidence sources for the miners inside the compose network, not a public
+  # API.
+  witness-2:
+    <<: *sccp-service
+    command:
+      - --passphrase-file
+      - /stack/passphrase
+      - witness
+      - run
+      - --network
+      - testnet
+      - --key
+      - /stack/keys/witness-2.key
+      - --relay
+      - http://relay:8646
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8647"
+      # The keys it verifies before adding its own signature: the relay's
+      # (witness 1) and its peers'. `init` writes one file per witness, so no
+      # 3 970-character hybrid key has to be pasted into this file.
+      - --relay-witness-key-file
+      - /stack/keys/witness-1.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-2.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-3.pub
+      - --poll-seconds
+      - "2"
+    volumes:
+      - stack:/stack
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8647/v1/status', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      relay:
+        condition: service_healthy
+    restart: unless-stopped
+
+  witness-3:
+    <<: *sccp-service
+    command:
+      - --passphrase-file
+      - /stack/passphrase
+      - witness
+      - run
+      - --network
+      - testnet
+      - --key
+      - /stack/keys/witness-3.key
+      - --relay
+      - http://relay:8646
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8648"
+      - --relay-witness-key-file
+      - /stack/keys/witness-1.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-2.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-3.pub
+      - --poll-seconds
+      - "2"
+    volumes:
+      - stack:/stack
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8648/v1/status', timeout=2)"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      relay:
+        condition: service_healthy
     restart: unless-stopped
 
   drip:
@@ -204,19 +310,44 @@ services:
       # minutes. It holds no roster slot and builds no blocks; the node admits every
       # transfer like any wallet's.
       #
-      # The extra-miner churn is off. The VM is sized for the four fixed miners
-      # (two standard, two Chess960), and a fifth churned miner competed with them
-      # for the same CPU budget. `--extra-miners 0` keeps only wallet traffic; the
-      # fixed miners already commit availability and reveal every epoch.
+      # It also seats the two extra miners, with fixed roles rather than a churn:
+      # `synthetic-miner-1` is deliberately slow, so a 30+0 game really is flagged
+      # and the timeout claim path runs against live evidence, and
+      # `synthetic-miner-2` plays GNU Chess, so the roster is not one engine six
+      # times. `host_capacity` budgets both against this VM (two vCPUs after the
+      # node, the relay and the three witnesses are reserved); `--no-extra-miner-churn`
+      # keeps them online so their identities are stable from round to round.
       #
       # It runs beside the miners rather than on its own VM because its lifetime is
       # the chain's: the deploy starts from empty volumes, so a generator that
       # outlived `docker compose down -v` would send with stale nonces and balances.
       - --extra-miners
-      - "0"
+      - "2"
+      - --max-extra-online
+      - "2"
+      - --no-extra-miner-churn
+      # The clock witnesses the extra seats trust, so a flag on a game they played
+      # can become a claim, and the two independent witness services as fallback
+      # evidence sources.
+      - --witness-key-file
+      - /stack/keys/witness-1.pub
+      - --witness-key-file
+      - /stack/keys/witness-2.pub
+      - --witness-key-file
+      - /stack/keys/witness-3.pub
+      - --witness-url
+      - http://witness-2:8647
+      - --witness-url
+      - http://witness-3:8648
+    volumes:
+      - stack:/stack
     depends_on:
       bootstrap:
         condition: service_completed_successfully
+      witness-2:
+        condition: service_healthy
+      witness-3:
+        condition: service_healthy
     restart: unless-stopped
 
   miner-1:
@@ -253,8 +384,25 @@ services:
       - http://relay:8646
       - --node
       - http://node:8645
+      # Trust all three clock witnesses. Without their keys a flagged game cannot
+      # become a bonded timeout claim, because the flag receipt has nothing to be
+      # verified against. The witness URLs are the fallback evidence source for
+      # the case the relay itself has no bundle.
+      - --relay-witness-key-file
+      - /stack/keys/witness-1.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-2.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-3.pub
+      - --witness-url
+      - http://witness-2:8647
+      - --witness-url
+      - http://witness-3:8648
+      # 0.5s rather than 0.1s: six seats share two vCPUs with the node, the
+      # relay, three witnesses and the traffic generator, and polling is what
+      # those seats actually cost when a search is milliseconds long.
       - --poll-seconds
-      - "0.1"
+      - "0.5"
     volumes:
       - stack:/stack
     depends_on:
@@ -290,8 +438,25 @@ services:
       - http://relay:8646
       - --node
       - http://node:8645
+      # Trust all three clock witnesses. Without their keys a flagged game cannot
+      # become a bonded timeout claim, because the flag receipt has nothing to be
+      # verified against. The witness URLs are the fallback evidence source for
+      # the case the relay itself has no bundle.
+      - --relay-witness-key-file
+      - /stack/keys/witness-1.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-2.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-3.pub
+      - --witness-url
+      - http://witness-2:8647
+      - --witness-url
+      - http://witness-3:8648
+      # 0.5s rather than 0.1s: six seats share two vCPUs with the node, the
+      # relay, three witnesses and the traffic generator, and polling is what
+      # those seats actually cost when a search is milliseconds long.
       - --poll-seconds
-      - "0.1"
+      - "0.5"
     volumes:
       - stack:/stack
     depends_on:
@@ -330,8 +495,25 @@ services:
       - http://relay:8646
       - --node
       - http://node:8645
+      # Trust all three clock witnesses. Without their keys a flagged game cannot
+      # become a bonded timeout claim, because the flag receipt has nothing to be
+      # verified against. The witness URLs are the fallback evidence source for
+      # the case the relay itself has no bundle.
+      - --relay-witness-key-file
+      - /stack/keys/witness-1.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-2.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-3.pub
+      - --witness-url
+      - http://witness-2:8647
+      - --witness-url
+      - http://witness-3:8648
+      # 0.5s rather than 0.1s: six seats share two vCPUs with the node, the
+      # relay, three witnesses and the traffic generator, and polling is what
+      # those seats actually cost when a search is milliseconds long.
       - --poll-seconds
-      - "0.1"
+      - "0.5"
     volumes:
       - stack:/stack
     depends_on:
@@ -366,8 +548,25 @@ services:
       - http://relay:8646
       - --node
       - http://node:8645
+      # Trust all three clock witnesses. Without their keys a flagged game cannot
+      # become a bonded timeout claim, because the flag receipt has nothing to be
+      # verified against. The witness URLs are the fallback evidence source for
+      # the case the relay itself has no bundle.
+      - --relay-witness-key-file
+      - /stack/keys/witness-1.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-2.pub
+      - --relay-witness-key-file
+      - /stack/keys/witness-3.pub
+      - --witness-url
+      - http://witness-2:8647
+      - --witness-url
+      - http://witness-3:8648
+      # 0.5s rather than 0.1s: six seats share two vCPUs with the node, the
+      # relay, three witnesses and the traffic generator, and polling is what
+      # those seats actually cost when a search is milliseconds long.
       - --poll-seconds
-      - "0.1"
+      - "0.5"
     volumes:
       - stack:/stack
     depends_on:

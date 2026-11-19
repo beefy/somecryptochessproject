@@ -7,12 +7,14 @@ Every merge to `main` runs
    `ghcr.io/<owner>/<repo>:testnet`;
 2. over SSH, copy `docker-compose.yml` to the deployment host;
 3. run `docker compose down -v` (fresh chain), pull the new image and start the
-   node, bootstrap, genesis demo check (`seed`), relay, four miners (two
-   standard, two Chess960) and the two traffic generators (`drip` and `traffic`,
-   with extra-miner churn disabled);
+   node, bootstrap, genesis demo check (`seed`), relay, three clock witnesses,
+   two extra role miners (a deliberately slow seat and a GNU Chess seat), four
+   fixed miners (two standard, two Chess960) and the two traffic generators
+   (`drip` and `traffic`, which seats the extra miners);
 4. run `deploy/check_testnet_stack.py` inside the node container and fail the
-   workflow if the node has not reached the bootstrap height or the relay has no
-   match;
+   workflow if the node has not reached the bootstrap height, the relay has no
+   match, or the relay has no clock witness key (unsigned receipts cannot settle
+   a timeout);
 5. request `/v1/status` from the public URL and fail if the node is not serving
    `testnet` through DNS;
 6. print the `traffic` and `seed` container logs so the deploy record shows both
@@ -119,21 +121,27 @@ start at height 0. Do not point this workflow at a chain whose history matters.
 
 ## Monthly cost estimate
 
-The stack is four Stockfish miners (two standard, two Chess960) plus one node and
-one relay, all small single-threaded processes. The existing 2 vCPU / 8 GB VM
-runs the four at 5 000 nodes per move; a 4 vCPU / 8 GB VM leaves more headroom.
-The synthetic extra-miner churn stays off so it cannot compete with the fixed
-seats.
+The stack is six miners (four fixed plus two role seats: a deliberately slow one
+and a GNU Chess one), three clock witnesses, one node, one relay and the traffic
+generator, all small single-threaded processes. The existing 2 vCPU / 8 GB VM
+runs them at 0.5 s polling with 5 000 nodes per move; the witnesses are cheap
+tens of megabytes each. A 4 vCPU / 8 GB VM leaves more headroom, and is only
+worth paying for if 0.1 s miner responsiveness is a product requirement.
+
+A second, `e2-micro` VM hosts the public read-only mirror
+([`deploy/edge/`](../../deploy/edge/README.md)): one node replicating the primary
+over HTTPS, no miner, no relay, no faucet.
 
 | Line item | Assumption | Monthly estimate |
 | --- | --- | ---: |
-| Compute | 4 vCPU / 8 GB, always on, about $0.066/hour | $48 |
-| Block storage | 20 GB SSD | $2 |
+| Compute | 2 vCPU / 8 GB, always on, about $0.066/hour | $48 |
+| Mirror VM | 1 shared vCPU / 1 GB (`e2-micro`), always on | $7 |
+| Block storage | 20 GB SSD each (primary + mirror) | $3 |
 | Egress | 100 GB (status polling, faucet use, proof traffic) | $1 |
 | Snapshots/backups | 20 GB | $2 |
 | GHCR image storage | under 1 GB, one retained testnet tag | $0 (free tier) |
 | GitHub Actions | build + deploy, roughly 10 minutes per merge | $0 (free tier) |
-| **Total** | excluding domain/TLS | **about $53/month** |
+| **Total** | excluding domain/TLS | **about $61/month** |
 
 That is the mainstream-cloud estimate. A budget VPS with equivalent resources
 (Hetzner, OVH, a small provider) is commonly **$10–$20/month**, and a

@@ -1,0 +1,117 @@
+# A public, read-only mirror of the testnet chain, on its own small VM.
+#
+# The primary stack (../docker-compose.yml) owns the chain: it mines, plays,
+# settles and runs the faucet. This deployment is a *second failure domain*: it
+# keeps its own SQLite chain by pull-syncing the primary, serves it at one HTTPS
+# name, and never writes anything. If the primary VM dies the mirror still
+# answers reads, and if the mirror dies the primary does not notice.
+#
+# Security posture, because this is the one node exposed to the open internet:
+#
+#   * the node binds 127.0.0.1 only; Caddy is the sole public listener (:80 for
+#     the ACME challenge and redirect, :443 for TLS);
+#   * `--no-faucet` and no `--mine`: the mirror holds no faucet key and builds no
+#     blocks, so it cannot spend or mint;
+#   * Caddy allows GET and HEAD only and answers every other method with 405, so
+#     an exposed mirror cannot be used to submit transactions or spam the mempool;
+#   * the container runs as the image's unprivileged user with a read-only root,
+#     no added capabilities and `no-new-privileges`;
+#   * the VM's firewall opens 443 (and 80 for ACME) and nothing else; SSH is over
+#     IAP. See docs/operations/GCP_RESOURCE_SETUP.md.
+#
+# It is a separate Compose project on purpose: `docker compose down -v` on the
+# primary must not touch the mirror's data, and the mirror must survive a redeploy
+# of the primary.
+#
+#   SCCP_EDGE_DOMAIN=mirror.example.com \
+#   SCCP_PRIMARY_URL=https://app.example.com \
+#   SCCP_IMAGE=<published image> docker compose up -d
+name: sccp-edge
+
+services:
+  node:
+    image: ${SCCP_IMAGE:-sccp-testnet:local}
+    build: ../..
+    command:
+      - --data-dir
+      - /data
+      - node
+      - run
+      - --network
+      - testnet
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8645"
+      # A mirror has no faucet: the key is in the primary's stack volume and must
+      # never travel to a host that answers the public internet.
+      - --no-faucet
+      # Pull the primary's blocks forever. `sync_peers` verifies the genesis hash
+      # before adopting anything, so a wrong or hostile peer cannot fork this
+      # node onto another chain.
+      - --peer
+      - ${SCCP_PRIMARY_URL:?set SCCP_PRIMARY_URL to the primary node's public URL}
+      - --peer-poll-seconds
+      - "30"
+    ports:
+      # Loopback only. Caddy on this host is the only client that should reach
+      # the API, and no firewall rule publishes 8645.
+      - "127.0.0.1:8645:8645"
+    volumes:
+      - node-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8645/v1/status', timeout=2)"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+
+  # The public face. `network_mode: host` keeps Caddy's bind mounts simple and
+  # lets it reach the node's loopback port; caddy_data holds the certificate, so
+  # re-issuing is not part of every deploy (Let's Encrypt rate limits).
+  tls:
+    image: caddy:2-alpine
+    network_mode: host
+    environment:
+      SCCP_EDGE_DOMAIN: ${SCCP_EDGE_DOMAIN:?set SCCP_EDGE_DOMAIN to the mirror's DNS name}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      node:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  node-data:
+  caddy_data:
+  caddy_config:

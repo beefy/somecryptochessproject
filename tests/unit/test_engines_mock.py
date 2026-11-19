@@ -105,12 +105,24 @@ def test_engine_fingerprint_hashes_the_file(tmp_path: Path) -> None:
 
 
 def test_profiles() -> None:
-    assert set(ENGINE_PROFILES) == {"mock", "stockfish-19", "stockfish-18"}
+    assert set(ENGINE_PROFILES) == {"mock", "stockfish-19", "stockfish-18", "gnuchess"}
     assert get_profile("mock").kind == "mock"
     custom = EngineProfile(name="custom", kind="mock")
     assert get_profile(custom) is custom
     with pytest.raises(EngineError, match="unknown engine profile"):
         get_profile("stockfish-99")
+
+
+def test_the_gnuchess_profile_starts_the_protocol_it_needs() -> None:
+    """GNU Chess needs ``--uci``; without it the binary never answers UCI.
+
+    Its option set is its own: it has no ``Threads`` option, so inheriting the
+    Stockfish defaults would make ``configure`` fail on every start.
+    """
+    profile = get_profile("gnuchess")
+    assert profile.args == ("--uci",)
+    assert "Threads" not in profile.options
+    assert profile.options["OwnBook"] is False
 
 
 def test_open_engine_needs_a_binary_for_uci_profiles(tmp_path: Path) -> None:

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import random
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
@@ -152,11 +152,19 @@ class UciEngine:
         *,
         name: str | None = None,
         options: Mapping[str, chess.engine.ConfigValue] | None = None,
+        args: Sequence[str] = (),
     ) -> UciEngine:
-        """Start ``binary`` over UCI and record its fingerprint."""
+        """Start ``binary`` over UCI and record its fingerprint.
+
+        ``args`` are handed to the process after the binary path, which is how a
+        profile turns on a protocol the binary does not speak by default (GNU
+        Chess needs ``--uci``). The fingerprint stays the hash of the binary: two
+        profiles over one binary are the same mover, and the certificate should
+        say so.
+        """
         fingerprint = engine_fingerprint(binary)
         try:
-            engine = chess.engine.SimpleEngine.popen_uci(str(binary))
+            engine = chess.engine.SimpleEngine.popen_uci([str(binary), *args])
         except (OSError, chess.engine.EngineError) as exc:
             raise EngineError(f"cannot start engine {binary}: {exc}") from None
         try:
@@ -242,6 +250,12 @@ class EngineProfile:
 
     ``kind`` says how to obtain the binary: ``mock`` needs none, ``uci`` needs
     ``--engine-path`` (or a binary fetched by ``scripts/fetch_engine.py``).
+
+    ``args`` are extra argv entries before the binary starts speaking UCI. Most
+    engines need none; GNU Chess only enables UCI when it is told to with
+    ``--uci``, and refuses the protocol otherwise. ``options`` must match what
+    the binary advertises: configuring an option an engine does not have is an
+    error at start-up, so the profiles below list only real ones.
     """
 
     name: str
@@ -251,6 +265,7 @@ class EngineProfile:
     options: Mapping[str, chess.engine.ConfigValue] = field(
         default_factory=lambda: _DEFAULT_OPTIONS
     )
+    args: tuple[str, ...] = ()
 
 
 ENGINE_PROFILES: Final[Mapping[str, EngineProfile]] = MappingProxyType(
@@ -258,6 +273,15 @@ ENGINE_PROFILES: Final[Mapping[str, EngineProfile]] = MappingProxyType(
         "mock": EngineProfile(name="mock", kind="mock", options=MappingProxyType({})),
         "stockfish-19": EngineProfile(name="stockfish-19"),
         "stockfish-18": EngineProfile(name="stockfish-18"),
+        # A genuinely different engine in the testnet fleet, so the roster is
+        # not six copies of Stockfish. No ``Threads`` option (GNU Chess has
+        # none) and a 16 MiB hash, which is what ``open_engine`` used to set for
+        # Stockfish anyway.
+        "gnuchess": EngineProfile(
+            name="gnuchess",
+            options=MappingProxyType({"Hash": 16, "OwnBook": False}),
+            args=("--uci",),
+        ),
     }
 )
 """Profiles pinned to binaries in ``data/engines.json``."""
@@ -301,7 +325,12 @@ def open_engine(
             f"engine profile {selected.name!r} needs an explicit binary; "
             f"pass an engine path or run scripts/fetch_engine.py"
         )
-    engine = UciEngine.popen(binary, name=selected.name, options=dict(selected.options))
+    engine = UciEngine.popen(
+        binary,
+        name=selected.name,
+        options=dict(selected.options),
+        args=selected.args,
+    )
     if chess960 and not engine.supports_chess960():
         engine.close()
         raise EngineError(

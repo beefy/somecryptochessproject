@@ -6,6 +6,7 @@ import json
 import random
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 import pytest
@@ -626,6 +627,27 @@ def test_the_churn_seats_the_pool_the_options_ask_for() -> None:
         assert (fleet.pool_size, fleet.max_online) == (3, 1)
         assert len(fleet.pool) == 3
         assert fleet.online_limit == 1
+        assert fleet.status_path is None  # only ``run`` asks for the deploy report
+    finally:
+        extras.close()
+
+
+def test_the_churn_publishes_where_the_caller_asks(tmp_path: Path) -> None:
+    """The fleet writes its report only where it is told to."""
+    capacity = miners.HostCapacity(
+        cpu_count=8, available_memory_mb=4096, allowed=1, reason="one core free"
+    )
+    report = tmp_path / "synthetic-fleet.json"
+    with _offline_client() as client:
+        extras = traffic.extras_for(
+            client,
+            options=traffic.Options(extra_miners=1),
+            capacity=capacity,
+            status_path=report,
+        )
+    try:
+        assert extras.fleet is not None
+        assert extras.fleet.status_path == report
     finally:
         extras.close()
 
@@ -949,6 +971,7 @@ def test_run_builds_the_extras_from_its_options(
 ) -> None:
     """``run`` owns the extras when the caller passes none, and closes them either way."""
     built: list[traffic.Options] = []
+    reported: list[Path | None] = []
     fleet = _RecordingFleet(seen={}, admitted=lambda: 0)
 
     def extras_for(
@@ -957,8 +980,10 @@ def test_run_builds_the_extras_from_its_options(
         options: traffic.Options,
         params: object = TESTNET,
         capacity: miners.HostCapacity | None = None,
+        status_path: Path | None = None,
     ) -> traffic.Extras:
         built.append(options)
+        reported.append(status_path)
         return traffic.Extras(fleet=fleet)
 
     monkeypatch.setattr(traffic, "extras_for", extras_for)
@@ -971,6 +996,9 @@ def test_run_builds_the_extras_from_its_options(
 
     assert len(reports) == 1
     assert built == [options]
+    # The seats publish what they hold where the deploy workflow looks for it:
+    # they are children of this container, so nothing else can observe them.
+    assert reported == [traffic.FLEET_STATUS_PATH]
     assert fleet.closed == 1
 
 

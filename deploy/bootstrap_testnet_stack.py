@@ -61,6 +61,9 @@ BOOTSTRAP_HEIGHT: Final = epoch_start_height(BOOTSTRAP_EPOCH + 1, TESTNET) - 1
 FUNDING: Final = coins_to_units(100)
 """Coins sent to each stack miner; the minimum bond is ten coins."""
 
+WITNESS_FUNDING: Final = coins_to_units(5)
+"""Coins sent to each clock witness: the 1-coin testnet witness bond plus fees."""
+
 DEFAULT_ENGINE_PATH: Final = Path("/usr/games/stockfish")
 """Where Debian's ``stockfish`` package installs the binary in the image."""
 
@@ -81,6 +84,89 @@ class BootstrapMiner:
     address: str
     keypair: HybridKeypair
     nonce_secret: str
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapWitness:
+    """One stack clock witness, loaded from the keyfile ``init`` wrote."""
+
+    name: str
+    address: str
+    keypair: HybridKeypair
+    public_key: str
+    endpoint: str
+
+
+def _stack_document(directory: Path) -> tuple[Mapping[str, object], str]:
+    """Read ``stack.json`` and the stack passphrase."""
+    summary_path = directory / "stack.json"
+    passphrase_path = directory / "passphrase"
+    try:
+        document = json.loads(summary_path.read_text(encoding="utf-8"))
+        passphrase = passphrase_path.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise BootstrapError(f"cannot read the stack in {directory}: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise BootstrapError(f"{summary_path} is not valid JSON: {exc}") from exc
+    if not isinstance(document, Mapping):
+        raise BootstrapError(f"{summary_path} must contain an object")
+    if document.get("network") != TESTNET.network_id:
+        raise BootstrapError(f"{summary_path} is not a {TESTNET.network_id} stack")
+    if not passphrase:
+        raise BootstrapError(f"{passphrase_path} is empty")
+    return document, passphrase
+
+
+def load_witnesses(directory: Path) -> tuple[BootstrapWitness, ...]:
+    """Read the clock witnesses ``init`` wrote, if the stack has any.
+
+    A stack without a ``witnesses`` list predates the witness role: the bootstrap
+    then builds no ``register_witness`` transaction and the relay runs without a
+    signing key, which is a valid (unattested) testnet.
+    """
+    document, passphrase = _stack_document(directory)
+    raw_witnesses = document.get("witnesses")
+    if raw_witnesses is None:
+        return ()
+    if not isinstance(raw_witnesses, list) or not raw_witnesses:
+        raise BootstrapError("the stack's witnesses entry must be a non-empty list")
+    witnesses: list[BootstrapWitness] = []
+    for raw in raw_witnesses:
+        if not isinstance(raw, Mapping):
+            raise BootstrapError("each stack witness must be an object")
+        name = raw.get("name")
+        address = raw.get("address")
+        keyfile = raw.get("keyfile")
+        public_key = raw.get("public_key")
+        endpoint = raw.get("endpoint")
+        fields = (name, address, keyfile, public_key, endpoint)
+        if not all(isinstance(item, str) and item for item in fields):
+            raise BootstrapError(
+                "each stack witness needs a name, address, keyfile, public key and endpoint"
+            )
+        assert isinstance(name, str)
+        assert isinstance(address, str)
+        assert isinstance(keyfile, str)
+        assert isinstance(public_key, str)
+        assert isinstance(endpoint, str)
+        try:
+            wallet = load_wallet(Path(keyfile), passphrase)
+        except SccpError as exc:
+            raise BootstrapError(f"cannot unlock {keyfile}: {exc}") from exc
+        if wallet.address != address:
+            raise BootstrapError(f"{keyfile} holds {wallet.address}, stack.json says {address}")
+        if wallet.signer.public_key_hex != public_key:
+            raise BootstrapError(f"{keyfile}'s public key does not match stack.json")
+        witnesses.append(
+            BootstrapWitness(
+                name=name,
+                address=address,
+                keypair=wallet.signer,
+                public_key=public_key,
+                endpoint=endpoint,
+            )
+        )
+    return tuple(witnesses)
 
 
 def load_stack(directory: Path) -> tuple[BootstrapMiner, ...]:
@@ -179,6 +265,7 @@ def _transactions_for(
     miners: Sequence[BootstrapMiner],
     faucet: HybridKeypair,
     engine: str,
+    witnesses: Sequence[BootstrapWitness] = (),
 ) -> list[Transaction]:
     """The deterministic transactions that belong in bootstrap block ``height``."""
     params = service.params
@@ -190,6 +277,12 @@ def _transactions_for(
     def transfer() -> None:
         for miner in miners:
             tx = wallet().build_transfer(faucet, miner.address, FUNDING, fee=params.min_fee)
+            _add(pool, tx)
+            transactions.append(tx)
+        for witness in witnesses:
+            tx = wallet().build_transfer(
+                faucet, witness.address, WITNESS_FUNDING, fee=params.min_fee
+            )
             _add(pool, tx)
             transactions.append(tx)
 
@@ -221,10 +314,30 @@ def _transactions_for(
             _add(pool, tx)
             transactions.append(tx)
 
+    def register_witnesses() -> None:
+        """Register the clock witnesses now that block 1 funded them.
+
+        The bond is locked in this block and the chain records each witness's
+        hybrid public key, which is what a timeout claim verifies receipts and
+        checkpoints against. Registration lasts ``registration_epochs`` like a
+        miner's; the stack's witnesses are re-registered by the same block policy
+        when the bootstrap window is rebuilt.
+        """
+        for witness in witnesses:
+            tx = wallet().build_register_witness(
+                witness.keypair,
+                endpoint=witness.endpoint,
+                bond=params.clock_witness_bond,
+                fee=params.min_fee,
+            )
+            _add(pool, tx)
+            transactions.append(tx)
+
     actions = {
         1: transfer,
         2: register,
         3: availability,
+        4: register_witnesses,
         5: reveal,
         6: availability,
         10: reveal,
@@ -243,6 +356,7 @@ def build_chain(
     *,
     engine: str,
     params: NetworkParams = TESTNET,
+    witnesses: Sequence[BootstrapWitness] = (),
 ) -> tuple[NodeService, tuple[Block, ...], dict[str, object]]:
     """Build the bootstrap blocks offline and return the relay config they imply."""
     service = NodeService.open(params)
@@ -257,6 +371,7 @@ def build_chain(
             miners=miners,
             faucet=faucet,
             engine=engine,
+            witnesses=witnesses,
         )
         if not transactions and height in (1, 2, 3, 5, 6, 10, 11, 15, 16):
             raise BootstrapError(f"bootstrap height {height} produced no transactions")
@@ -296,6 +411,14 @@ def build_chain(
         "round_seconds": ROUND_SECONDS,
         "open_round": 0,
     }
+    if witnesses:
+        relay["witnesses"] = {
+            witness.address: {
+                "public_key": witness.public_key,
+                "endpoint": witness.endpoint,
+            }
+            for witness in witnesses
+        }
     return service, tuple(blocks), relay
 
 
@@ -325,13 +448,20 @@ def publish_blocks(
     *,
     base_url: str,
     wait_seconds: float = 180.0,
-) -> None:
-    """Submit ``blocks`` in order to a fresh node, or verify it already has them."""
+) -> bool:
+    """Submit ``blocks`` to a fresh node; ``False`` if it already has the chain.
+
+    The return value matters: a re-run builds the bootstrap blocks again *in
+    memory*, and their timestamps come from the wall clock, so the second build's
+    beacons are not the ones the live chain opened. The caller must keep the
+    published relay config rather than overwrite it with a config for a chain that
+    does not exist.
+    """
     with httpx.Client(base_url=base_url, timeout=30) as client:
         height = _node_height(client, wait_seconds=wait_seconds)
         if height >= BOOTSTRAP_HEIGHT:
             print(f"node is already at height {height}; bootstrap blocks are in place")
-            return
+            return False
         if height != 0:
             raise BootstrapError(
                 f"node is at height {height}; reset the node-data volume before bootstrapping"
@@ -348,6 +478,7 @@ def publish_blocks(
         final = _node_height(client, wait_seconds=30)
         if final != BOOTSTRAP_HEIGHT:
             raise BootstrapError(f"node ended at height {final}, expected {BOOTSTRAP_HEIGHT}")
+    return True
 
 
 def write_relay(document: Mapping[str, Any], path: Path) -> None:
@@ -395,7 +526,8 @@ def main() -> None:
     except EngineError as exc:
         raise SystemExit(str(exc)) from exc
     miners = load_stack(arguments.stack)
-    service, blocks, relay = build_chain(miners, engine=engine)
+    witnesses = load_witnesses(arguments.stack)
+    service, blocks, relay = build_chain(miners, engine=engine, witnesses=witnesses)
     try:
         print(
             f"built {len(blocks)} bootstrap blocks: height {service.height}, tip {service.tip_hash}"
@@ -405,14 +537,25 @@ def main() -> None:
         roster = relay["roster"]
         assert isinstance(roster, Mapping)
         print(f"relay epoch {beacon['epoch']} with {len(roster)} roster entries")
+        if witnesses:
+            print(f"registered {len(witnesses)} clock witnesses")
         if arguments.dry_run:
             return
-        publish_blocks(blocks, base_url=arguments.node, wait_seconds=arguments.wait_seconds)
         relay_out = (
             arguments.relay_out
             if arguments.relay_out is not None
             else arguments.stack / "relay.json"
         )
+        published = publish_blocks(
+            blocks, base_url=arguments.node, wait_seconds=arguments.wait_seconds
+        )
+        if not published and relay_out.is_file():
+            # The live chain was built by an earlier run. Its beacons come from
+            # that run's timestamps, so this run's config describes a chain that
+            # does not exist; overwriting the file would point the relay at
+            # epochs the node will reject every proof from.
+            print(f"relay config kept: {relay_out} already describes this chain")
+            return
         write_relay(relay, relay_out)
         print(f"relay config written to {relay_out}")
     finally:

@@ -19,6 +19,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from deploy import check_testnet_stack
 from deploy import synthetic_miner_creation as miners
 
 from sccp.chain.state import State
@@ -76,15 +77,17 @@ class _FleetFactory:
         max_online: int = 2,
         wait_seconds: float = 0.0,
     ) -> miners.ExtraMinerFleet:
-        engine = self.root / "stockfish"
-        engine.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        # One fake binary per engine the line-ups name: the fleet hashes the file
+        # its role points at, so the path has to exist for a start to succeed.
+        for name in ("stockfish", "gnuchess"):
+            binary = self.root / name
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         client = httpx.Client(transport=transport, base_url=NODE)
         self.clients.append(client)
         return miners.ExtraMinerFleet(
             client=client,
             directory=self.root / "miners",
             params=TESTNET,
-            engine_path=engine,
             pool_size=pool_size,
             max_online=max_online,
             wait_seconds=wait_seconds,
@@ -96,7 +99,13 @@ class _FleetFactory:
                 reason="a test budget",
             ),
             spawn=self._spawn,
+            line_up=self.line_up,
         )
+
+    def line_up(self, index: int) -> miners.MinerLineUp:
+        """The production role with its engine path redirected into the fixture."""
+        role = miners.miner_line_up(index)
+        return replace(role, engine_path=self.root / Path(role.engine_path).name)
 
     def _spawn(self, command: Sequence[str], log_path: Path) -> miners.ChildProcess:
         self.commands.append(tuple(command))
@@ -295,9 +304,12 @@ def test_the_miner_command_matches_the_compose_miners(tmp_path: Path) -> None:
         passphrase_file=tmp_path / "passphrase",
         relay="http://relay:8646",
         node=NODE,
-        engine_path=Path("/usr/games/stockfish"),
+        line_up=miners.MinerLineUp(
+            label="honest", engine_path=Path("/usr/games/stockfish"), nodes_per_move=1234
+        ),
         poll_seconds=0.25,
-        nodes_per_move=1234,
+        witness_key_files=(tmp_path / "witness-1.pub",),
+        witness_urls=("http://witness-2:8647",),
     )
     entry = miners.sccp_command()
     passphrase_file = str(tmp_path / "passphrase")
@@ -314,6 +326,8 @@ def test_the_miner_command_matches_the_compose_miners(tmp_path: Path) -> None:
     assert "--nodes-per-move 1234" in tail
     assert f"--resign-after-plies {miners.RESIGN_AFTER_PLIES}" in tail
     assert "--quality-summary" not in tail
+    assert f"--relay-witness-key-file {tmp_path / 'witness-1.pub'}" in tail
+    assert "--witness-url http://witness-2:8647" in tail
     assert "--relay http://relay:8646" in tail
     assert f"--node {NODE}" in tail
     assert "--poll-seconds 0.25" in tail
@@ -383,37 +397,137 @@ def test_a_grant_funds_the_registration(fleet: _FleetFactory) -> None:
     assert extra.online == (miner,)
 
 
-def test_the_pool_carries_a_deliberately_weak_engine() -> None:
-    """A bad engine is visible in the scoreboard, not in an attached summary."""
-    weak = miners.miner_line_up(miners.WEAK_INDEX)
-    assert (weak.nodes_per_move, weak.label) == (miners.WEAK_NODES_PER_MOVE, "weak")
-    assert weak.nodes_per_move < miners.NODES_PER_MOVE
+def test_start_all_publishes_the_seats_it_holds(fleet: _FleetFactory, tmp_path: Path) -> None:
+    """The deploy can only see the seats through the report they write.
 
-    honest = miners.miner_line_up(1)
-    assert (honest.nodes_per_move, honest.label) == (miners.NODES_PER_MOVE, "honest")
-    assert miners.miner_line_up(7) == honest
+    They are children of the traffic container, so nothing outside it can list
+    them; ``check_testnet_stack.py --fleet`` reads this file instead.
+    """
+    node = _Node(registered=True)
+    extra = fleet(node.transport())
+    extra.status_path = tmp_path / "synthetic-fleet.json"
+
+    report = extra.start_all()
+
+    assert report.online == ("synthetic-miner-1", "synthetic-miner-2")
+    payload = json.loads(extra.status_path.read_text(encoding="utf-8"))
+    assert [seat["name"] for seat in payload["online"]] == [
+        "synthetic-miner-1",
+        "synthetic-miner-2",
+    ]
+    assert [seat["role"] for seat in payload["online"]] == ["slow", "gnuchess"]
+    assert payload["capacity"]["allowed"] == 2
+    assert payload["failed"] == []
+    assert payload["updated"] > 0
 
 
-def test_the_weak_miner_is_seated_with_its_own_search_budget(tmp_path: Path) -> None:
-    miner = miners.extra_miner(miners.WEAK_INDEX, tmp_path)
+def test_a_starved_host_is_published_with_its_reason(fleet: _FleetFactory, tmp_path: Path) -> None:
+    """A seat the budget refuses is reported, not silently missing."""
+    node = _Node(registered=True)
+    extra = fleet(node.transport(), allowed=0)
+    extra.status_path = tmp_path / "synthetic-fleet.json"
+
+    report = extra.start_all()
+
+    assert report.online == ()
+    payload = json.loads(extra.status_path.read_text(encoding="utf-8"))
+    assert payload["online"] == []
+    assert payload["reason"] == "a test budget"
+    assert fleet.commands == []
+
+
+def test_a_missing_report_directory_does_not_stop_a_seat(
+    fleet: _FleetFactory, tmp_path: Path
+) -> None:
+    """The report is diagnostics: a read-only or absent volume must not matter."""
+    node = _Node(registered=True)
+    extra = fleet(node.transport())
+    extra.status_path = tmp_path / "missing" / "synthetic-fleet.json"
+
+    assert extra.start_all().online == ("synthetic-miner-1", "synthetic-miner-2")
+    assert not (tmp_path / "missing").exists()
+
+
+def test_the_published_report_is_what_the_deploy_check_reads(
+    fleet: _FleetFactory, tmp_path: Path
+) -> None:
+    """The writer and the reader agree on the shape of the file."""
+    node = _Node(registered=True)
+    extra = fleet(node.transport())
+    extra.status_path = tmp_path / "synthetic-fleet.json"
+    extra.start_all()
+
+    status = check_testnet_stack.wait_for_fleet(
+        extra.status_path,
+        wait_seconds=0,
+        expect_seats=2,
+        expect_roles=("slow", "gnuchess"),
+    )
+
+    assert check_testnet_stack.fleet_roles(status) == ("slow", "gnuchess")
+    assert check_testnet_stack.describe_fleet(status).startswith("2 extra seat(s) online")
+
+
+def test_the_pool_carries_the_slow_seat_and_a_second_engine() -> None:
+    """The two extra roles: a clock that runs out and an engine that is not Stockfish."""
+    slow = miners.miner_line_up(miners.SLOW_INDEX)
+    assert slow.label == "slow"
+    assert slow.move_delay_seconds == miners.SLOW_MOVE_DELAY_SECONDS
+    assert slow.resign_after_plies is None, "resigning would end the game before the flag"
+    # 30 minutes of clock at 110 s a move: ~17 of its own turns before the flag.
+    assert slow.move_delay_seconds * 17 > 30 * 60
+
+    alternate = miners.miner_line_up(miners.ALTERNATE_INDEX)
+    assert alternate.label == miners.ALTERNATE_ENGINE
+    assert alternate.engine_profile == "gnuchess"
+    assert alternate.engine_path == miners.ALTERNATE_ENGINE_PATH
+    assert alternate.depth is not None, "GNU Chess ignores `go nodes` and needs a depth"
+    assert alternate.nodes_per_move == miners.NODES_PER_MOVE  # unused, but sane
+
+    honest = miners.miner_line_up(7)
+    assert (honest.label, honest.engine_profile) == ("honest", "stockfish-19")
+    assert honest.move_delay_seconds == 0.0
+
+
+def test_the_slow_seat_is_seated_with_its_delay(tmp_path: Path) -> None:
+    miner = miners.extra_miner(miners.SLOW_INDEX, tmp_path)
     line_up = miners.miner_line_up(miner.index)
     command = miners.miner_command(
         miner,
         passphrase_file=tmp_path / "passphrase",
         relay="http://relay:8646",
         node=NODE,
-        engine_path=Path("/usr/games/stockfish"),
-        nodes_per_move=line_up.nodes_per_move,
+        line_up=line_up,
     )
     tail = " ".join(command)
-    assert "--quality-summary" not in tail
-    assert f"--nodes-per-move {miners.WEAK_NODES_PER_MOVE}" in tail
+    assert f"--move-delay-seconds {miners.SLOW_MOVE_DELAY_SECONDS}" in tail
+    assert "--resign-after-plies" not in tail, "a resigning seat never reaches its flag"
+    assert "--nodes-per-move" in tail
 
 
-def test_a_weak_search_budget_is_not_a_whole_core(fleet: _FleetFactory) -> None:
-    """The weak miner's 16-node budget is why one extra miner fits a two-core host."""
-    assert miners.WEAK_NODES_PER_MOVE < miners.NODES_PER_MOVE
-    assert miners.MAX_ONLINE_AT_ONCE == 1
+def test_the_alternate_seat_asks_for_a_depth_not_a_node_count(tmp_path: Path) -> None:
+    miner = miners.extra_miner(miners.ALTERNATE_INDEX, tmp_path)
+    line_up = miners.miner_line_up(miner.index)
+    command = miners.miner_command(
+        miner,
+        passphrase_file=tmp_path / "passphrase",
+        relay="http://relay:8646",
+        node=NODE,
+        line_up=line_up,
+    )
+    tail = " ".join(command)
+    assert "--engine-profile gnuchess" in tail
+    assert f"--engine-path {miners.ALTERNATE_ENGINE_PATH}" in tail
+    assert f"--depth {miners.ALTERNATE_DEPTH}" in tail
+    assert "--nodes-per-move" not in tail
+    assert "--move-delay-seconds" not in tail
+
+
+def test_two_extra_seats_fit_after_the_node_relay_and_witnesses() -> None:
+    """The pool size is the host budget, not a round number."""
+    capacity = miners.host_capacity(max_extra=miners.MAX_EXTRA_MINERS, cpu_count=2, memory_mb=7168)
+    assert capacity.allowed == 2
+    assert miners.MAX_EXTRA_MINERS == 2
 
 
 def test_a_grant_that_never_confirms_stops_the_start(fleet: _FleetFactory) -> None:
@@ -514,7 +628,9 @@ def test_the_constructor_refuses_unusable_settings(fleet: _FleetFactory) -> None
 
 def test_a_missing_engine_binary_is_one_clear_error(fleet: _FleetFactory, tmp_path: Path) -> None:
     extra = fleet(_Node().transport())
-    extra.engine_path = tmp_path / "missing-stockfish"
+    extra.line_up = lambda index: replace(
+        miners.miner_line_up(index), engine_path=tmp_path / "missing-stockfish"
+    )
 
     with pytest.raises(miners.ExtraMinerError, match="no engine binary"):
         extra.start(extra.pool[0])

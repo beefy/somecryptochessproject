@@ -9,11 +9,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Debian's packaged Stockfish is the testnet stack's engine. The bootstrap and
-# both miners use this exact binary, so the registered engine fingerprint is the
-# one the running miners report. The package installs /usr/games/stockfish.
+# Debian's packaged engines. Stockfish is the stack's engine: the bootstrap and
+# the four fixed miners use this exact binary, so the registered engine
+# fingerprint is the one the running miners report (the package installs
+# /usr/games/stockfish). GNU Chess is the extra fleet's alternate engine: a
+# genuinely different mover in the roster, speaking UCI once started with
+# `--uci` (the `gnuchess` profile passes that; /usr/games/gnuchess).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends stockfish \
+    && apt-get install -y --no-install-recommends stockfish gnuchess \
     && rm -rf /var/lib/apt/lists/*
 
 # Only what the wheel build and the runtime commands need.

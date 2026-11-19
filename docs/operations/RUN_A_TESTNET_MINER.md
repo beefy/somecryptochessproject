@@ -129,7 +129,10 @@ value. Never reuse them on another network.
 
 Two roster entries of the same variant are the minimum for a match. The bootstrap
 rewrites `stack/relay.json` after it has funded/registered all four miners for
-their variants and opened a matchable epoch.
+their variants, registered the three clock witnesses and opened a matchable
+epoch; on a node that is already bootstrapped it leaves the existing file alone
+(a second build has different beacons, so overwriting it would point the relay at
+a chain that does not exist).
 
 A fresh testnet has no proofs to mine, so start a local node and run the
 deterministic bootstrap once:

@@ -135,7 +135,41 @@ def test_the_traffic_command_speaks_the_flags_the_generator_accepts(
     options = captured["options"]
     assert isinstance(options, traffic.Options)
     assert (options.node, options.relay) == ("http://node:8645", "http://relay:8646")
-    # Four fixed miners fill the VM, so the compose stack disables the extra
-    # miner churn explicitly rather than relying on host capacity measurement.
-    assert options.extra_miners == 0
-    assert options.max_extra_online == traffic.MAX_EXTRA_ONLINE >= 1
+    # The two extra roles are seated, kept up, and given the witness keys a claim
+    # needs: the slow seat produces flags and the alternate engine diversifies the
+    # roster, so neither is a churn demo here.
+    assert options.extra_miners == 2
+    assert options.max_extra_online == 2
+    assert options.extra_miner_churn is False
+    assert options.witness_key_files == traffic.EXTRA_WITNESS_KEY_FILES
+    assert options.witness_urls == ("http://witness-2:8647", "http://witness-3:8648")
+
+
+def test_the_stack_runs_three_clock_witnesses() -> None:
+    """The relay signs, and two independent services audit and co-sign.
+
+    Without the relay's ``--witness-key`` no receipt is signed, so a flagged game
+    cannot become a bond-backed timeout claim: the whole timeout path is dead on
+    the deployment. The two extra witnesses are what make the role redundant.
+    """
+    text = COMPOSE.read_text(encoding="utf-8")
+    assert "- --witness-key" in text
+    assert "/stack/keys/witness-1.key" in text
+    for name in ("witness-2:", "witness-3:"):
+        assert name in text, f"{name} service is missing"
+    for index in (1, 2, 3):
+        # Four miners, two witness services and the extra miner fleet each read
+        # the public key file.
+        assert text.count(f"/stack/keys/witness-{index}.pub") == 7
+    assert text.count("- --relay-witness-key-file") == 18
+    assert (
+        _option_arguments(text, "--witness-url")
+        == [
+            "http://witness-2:8647",
+            "http://witness-3:8648",
+        ]
+        * 5
+    )
+    assert "8647:8647" not in text and "8648:8648" not in text, (
+        "the witnesses are internal evidence sources, not a published API"
+    )

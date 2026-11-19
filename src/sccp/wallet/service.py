@@ -738,6 +738,50 @@ class WalletService:
         )
         return sign_transaction(keypair, tx)
 
+    def build_register_witness(
+        self,
+        keypair: HybridKeypair,
+        *,
+        endpoint: str,
+        bond: int | None = None,
+        fee: int | None = None,
+        nonce: int | None = None,
+    ) -> Transaction:
+        """Build and sign a ``register_witness`` locking a clock-witness bond.
+
+        The chain stores the sender's hybrid public key beside the endpoint and
+        bond, so a later claim can verify receipt and checkpoint signatures
+        against the witness registry instead of trusting whoever presents them.
+        A witness cannot register twice: the transaction layer rejects a second
+        registration from the same address.
+        """
+        sender = self.address_for(keypair)
+        resolved_bond = self.params.clock_witness_bond if bond is None else bond
+        if resolved_bond < self.params.clock_witness_bond:
+            raise WalletServiceError(
+                f"witness bond {resolved_bond} is below the minimum "
+                f"{self.params.clock_witness_bond}"
+            )
+        resolved_fee = self.required_fee(fee)
+        if self.state.spendable(sender) < resolved_bond + resolved_fee:
+            raise WalletServiceError(
+                f"{sender} cannot cover a {format_coins(resolved_bond)} witness bond plus a "
+                f"{format_coins(resolved_fee)} fee"
+            )
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.REGISTER_WITNESS,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload={
+                "public_key": keypair.public_key_hex,
+                "endpoint": endpoint,
+                "bond": resolved_bond,
+            },
+        )
+        return sign_transaction(keypair, tx)
+
     def build_availability(
         self,
         keypair: HybridKeypair,

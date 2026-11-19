@@ -1,14 +1,20 @@
-# The four-miner testnet stack
+# The testnet stack
 
 `docker-compose.yml` runs the testnet deployment on one machine: a full node, the
-matchmaking relay, one deterministic bootstrap job, a demo seeder, a traffic drip
-and four Stockfish miners -- two standard-chess seats and two Chess960 seats. It
-starts from the pinned `testnet` genesis, funds and registers all four miners for
-their variants, commits/reveals availability, opens a matchable epoch, plays one
-game per variant per round and settles the winning proofs on chain. `sccp devnet
-up` remains the fast in-process demo; this stack exercises the real
-multi-process, HTTP and SQLite path. The merge-to-deploy workflow and its monthly
-cost are in [`docs/operations/TESTNET_DEPLOYMENT.md`](../docs/operations/TESTNET_DEPLOYMENT.md).
+matchmaking relay, one deterministic bootstrap job, a demo seeder, a traffic drip,
+four Stockfish miners -- two standard-chess seats and two Chess960 seats -- plus
+three clock witnesses and two extra role miners (a deliberately slow seat and a
+GNU Chess seat). It starts from the pinned `testnet` genesis, funds and registers
+all four fixed miners for their variants, registers the witnesses, commits/reveals
+availability, opens a matchable epoch, plays one game per variant per round and
+settles the winning proofs on chain. `sccp devnet up` remains the fast in-process
+demo; this stack exercises the real multi-process, HTTP and SQLite path. The
+merge-to-deploy workflow and its monthly cost are in
+[`docs/operations/TESTNET_DEPLOYMENT.md`](../docs/operations/TESTNET_DEPLOYMENT.md).
+
+A second, `e2-micro` VM can host a public read-only mirror of the chain; that
+deployment lives in [`edge/`](edge/README.md) and is a separate Compose project on
+purpose.
 
 The current hosted deployment is at
 `http://app.proofofchess.com:8645`; the commands below use
@@ -75,15 +81,16 @@ proof to settle.
 
 | Service | Command | Purpose |
 | --- | --- | --- |
-| `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the four keyfiles, their availability secrets, the passphrase file and `stack.json` |
+| `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the four miner keyfiles, the three witness keyfiles (and their public-key files), the availability secrets, the passphrase file and `stack.json` |
 | `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 60 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
-| `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers all four miners for their variants, commits and reveals availability, writes `relay.json` from epoch 3 |
+| `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers all four miners for their variants, funds and registers the three clock witnesses, commits and reveals availability, writes `relay.json` from epoch 3 (and keeps it on a re-run) |
 | `seed` | `python -m deploy.seed_testnet_demo --stack /stack --node http://node:8645` | verifies the genesis-seeded SCCP/C960 pool and completed SCCP HTLC; falls back to creating them on a custom chain whose genesis does not |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
-| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 0` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; the extra-miner churn is off because the VM holds the four fixed miners |
-| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645` | opens round 0, pairs within each variant, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
+| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 2 --no-extra-miner-churn` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; it also keeps the two extra role miners seated (`synthetic-miner-1` slow, `synthetic-miner-2` GNU Chess) |
+| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645 --witness-key /stack/keys/witness-1.key` | opens round 0, pairs within each variant, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
 | `miner-1`, `miner-2` | `sccp miner run --variant standard --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | standard-chess pair: join, play, co-sign, announce win proofs and commit/reveal their own availability |
 | `miner-3`, `miner-4` | `sccp miner run --variant chess960 --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | Chess960 pair: replay the beacon-selected start position, play with `UCI_Chess960`, and settle C960 proofs |
+| `witness-2`, `witness-3` | `sccp witness run --relay http://relay:8646 --key /stack/keys/witness-N.key` | independent clock witnesses: poll the relay, verify its receipts, co-sign each receipt and the flag checkpoint, and serve their own bundle at `/v1/matches/{id}/receipts` |
 
 The bootstrap is deliberately separate from mining. It builds each block with
 the same `BlockBuilder` a miner uses and submits it through the node's public
@@ -109,14 +116,23 @@ node's normal admission path. The Ethereum leg remains an operator deployment:
 the node holds no Ethereum key by design, so deploying `EthHtlc` for Sepolia
 still needs a funded deployer key and `SCCP_ETH_HTLC_CONTRACT`.
 
-The `traffic` container can also churn extra miners
-(`deploy/synthetic_miner_creation.py`), but the Compose deployment disables it
-with `--extra-miners 0`. The VM's CPU budget is reserved for the four fixed
-miners, and a fifth churned identity competed with them for the same cores. The
-fixed roster already registers, commits availability and reveals every epoch, so
-nothing about roster turnover is left untested. Set `--extra-miners` on the
-`traffic` service if a larger host later has room for the weak-engine path; its
-keyfiles live under `/data/synthetic-miners`, an anonymous volume.
+The `traffic` container also seats the two extra role miners
+(`deploy/synthetic_miner_creation.py`), and that is not optional in the Compose
+deployment: the fast four all resign on polite drawn games, so nothing else
+produces a *timeout*. `synthetic-miner-1` is deliberately slow (110 s a move, no
+resignation), so a 30+0 game really runs out of clock and the signed flag becomes
+a bonded `timeout_claim`; `synthetic-miner-2` plays GNU Chess (`--depth 5`, its
+own fingerprint), so the roster is not six copies of one binary. Both are fixed
+roles rather than a churn (`--no-extra-miner-churn`): their identities are
+derived from published seeds, and a seat that exits is repaired on the next
+cycle.
+
+The seats are children of the `traffic` process, not Compose services, so
+`docker compose ps` cannot show them. The fleet writes what it holds to
+`/stack/synthetic-fleet.json` at the start of every cycle, and the deploy
+workflow gates on it with `--fleet-only --expect-roles slow,gnuchess` (run inside
+the `traffic` container, which has both `/app` and `/stack`). A host that cannot
+fit them says so in that file, with the measured reason.
 
 ## The keys and engine are reproducible on purpose
 

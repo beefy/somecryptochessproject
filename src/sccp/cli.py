@@ -86,6 +86,7 @@ from sccp.protocol.verification import (
 )
 from sccp.serialization import Domain
 from sccp.wallet.service import WalletService
+from sccp.witness import WitnessService, create_witness_app
 
 DEFAULT_NETWORK = "testnet"
 PASSPHRASE_ENV = "SCCP_WALLET_PASSPHRASE"
@@ -110,6 +111,8 @@ node_app = typer.Typer(no_args_is_help=True, help="Run and query a full node.")
 app.add_typer(node_app, name="node")
 miner_app = typer.Typer(no_args_is_help=True, help="Run a miner and manage its on-chain keys.")
 app.add_typer(miner_app, name="miner")
+witness_app = typer.Typer(no_args_is_help=True, help="Run an independent clock witness.")
+app.add_typer(witness_app, name="witness")
 chain_app = typer.Typer(no_args_is_help=True, help="Read the chain stored in --data-dir.")
 app.add_typer(chain_app, name="chain")
 devnet_app = typer.Typer(no_args_is_help=True, help="Run a whole network in one process.")
@@ -252,10 +255,25 @@ def _passphrase(ctx: typer.Context, *, confirm: bool) -> str:
     return str(typer.prompt("Passphrase", hide_input=True, confirmation_prompt=confirm))
 
 
-def _witness_keys(params: NetworkParams, keys: Sequence[str]) -> list[tuple[str, str]]:
-    """Turn ``--relay-witness-key`` hex values into ``(address, key)`` pairs."""
+def _witness_keys(
+    params: NetworkParams, keys: Sequence[str], files: Sequence[Path] = ()
+) -> list[tuple[str, str]]:
+    """Turn ``--relay-witness-key`` values into ``(address, key)`` pairs.
+
+    Values are full hybrid public keys in hex, or the path of a file holding one
+    (``--relay-witness-key-file``). The file form exists because a hybrid key is
+    3 970 hex characters: the stack writes one file per witness and passes the
+    path.
+    """
+    values = list(keys)
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            _fail(f"cannot read {path}: {exc}")
+        values.append(text)
     pairs: list[tuple[str, str]] = []
-    for key_hex in keys:
+    for key_hex in values:
         try:
             raw = bytes.fromhex(key_hex)
         except ValueError:
@@ -1270,6 +1288,16 @@ def node_run(
         list[str] | None,
         typer.Option("--peer", help="Peer base URL to pull-sync from at startup (repeatable)."),
     ] = None,
+    peer_poll_seconds: Annotated[
+        float,
+        typer.Option(
+            "--peer-poll-seconds",
+            help=(
+                "Keep pulling from --peer every N seconds (0 syncs once at startup). "
+                "A read replica needs this; a startup sync alone goes stale."
+            ),
+        ),
+    ] = 0.0,
     no_faucet: Annotated[
         bool,
         typer.Option("--no-faucet", help="Do not expose the testnet faucet endpoint."),
@@ -1310,6 +1338,10 @@ def node_run(
 ) -> None:
     """Serve the node API over HTTP, replaying the chain in ``--data-dir``."""
     params = _resolve_network(ctx, network)
+    if peer_poll_seconds < 0:
+        _fail("--peer-poll-seconds cannot be negative", code=2)
+    if peer_poll_seconds > 0 and not peer:
+        _fail("--peer-poll-seconds needs --peer", code=2)
     if mine:
         if miner_address is None:
             _fail("--mine needs --miner-address", code=2)
@@ -1339,6 +1371,8 @@ def node_run(
     )
     stop: Event | None = None
     thread: Thread | None = None
+    peer_stop: Event | None = None
+    peer_thread: Thread | None = None
     try:
         if no_faucet:
             service.faucet = None
@@ -1368,6 +1402,27 @@ def node_run(
                 typer.echo(
                     f"synced {report.peer}: +{report.adopted} blocks to height {report.height}"
                 )
+        if peer and peer_poll_seconds > 0:
+            peer_stop = Event()
+
+            def replicate() -> None:  # pragma: no cover - runs in the node process
+                while not peer_stop.wait(peer_poll_seconds):
+                    try:
+                        pulled = sync_peers(service, tuple(peer))
+                    except SccpError as exc:
+                        typer.echo(f"peer sync failed: {exc}", err=True)
+                        continue
+                    for report in pulled:
+                        if report.adopted:
+                            typer.echo(
+                                f"replicated {report.peer}: +{report.adopted} blocks "
+                                f"to height {report.height}",
+                                err=True,
+                            )
+
+            peer_thread = Thread(target=replicate, name="sccp-peer-sync", daemon=True)
+            peer_thread.start()
+            typer.echo(f"replicating from {', '.join(peer)} every {peer_poll_seconds:g}s")
         if mine:
             assert miner_address is not None
             node_miner = NodeMiner(
@@ -1399,6 +1454,89 @@ def node_run(
             stop.set()
         if thread is not None:
             thread.join(timeout=5)
+        if peer_stop is not None:
+            peer_stop.set()
+        if peer_thread is not None:
+            peer_thread.join(timeout=5)
+        service.close()
+
+
+@witness_app.command("run")
+def witness_run(
+    ctx: typer.Context,
+    key: Annotated[Path, typer.Option("--key", help="Keyfile the witness signs with.")],
+    relay: Annotated[
+        str,
+        typer.Option("--relay", help="Matchmaking relay to observe."),
+    ] = "http://127.0.0.1:8646",
+    host: Annotated[str, typer.Option("--host", help="Interface to bind.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", help="Port to bind.")] = 8647,
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Require the keyfile to belong to this network."),
+    ] = None,
+    relay_witness_key: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--relay-witness-key",
+            help="Public key (hex) of a witness whose receipts to verify (repeatable).",
+        ),
+    ] = None,
+    relay_witness_key_file: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--relay-witness-key-file",
+            help="File holding a witness's hybrid public key (repeatable).",
+        ),
+    ] = None,
+    poll_seconds: Annotated[
+        float,
+        typer.Option("--poll-seconds", help="Seconds between relay polls."),
+    ] = 2.0,
+) -> None:
+    """Observe a relay and publish evidence signed with this key.
+
+    The witness is read-only towards the relay: it fetches every open match's
+    receipts, checks the clock arithmetic with the protocol's own verifier, and
+    co-signs what it observed. Its bundle is served on
+    ``GET /v1/matches/{id}/receipts``, so ``sccp miner run --witness-url`` can
+    settle a timeout even when the relay cannot produce the evidence itself.
+
+    ``--relay-witness-key``/``--relay-witness-key-file`` name the keys whose
+    signatures the witness checks before adding its own. A receipt carrying no
+    signature at all is signed anyway and reported: that is a relay running
+    without ``--witness-key``, which attests to nothing on its own.
+    """
+    if poll_seconds <= 0:
+        _fail("--poll-seconds must be positive", code=2)
+    params = _resolve_network(ctx, network)
+    passphrase = _passphrase(ctx, confirm=False)
+    wallet = _run(lambda: load_wallet(key, passphrase))
+    _check_network(ctx, network, wallet.network)
+    trusted = dict(_witness_keys(params, relay_witness_key or [], relay_witness_key_file or []))
+    service = WitnessService(params, wallet.signer, relay_url=relay, relay_keys=trusted)
+    state = service.status()
+    typer.echo(
+        f"witness {state['address']} on {params.network_id} watching {relay} "
+        f"({len(trusted)} trusted key(s), quorum {params.clock_witness_quorum})"
+    )
+    stop = Event()
+
+    def follow() -> None:  # pragma: no cover - runs in the uvicorn process
+        while not stop.wait(poll_seconds):
+            for match_id in service.poll():
+                typer.echo(f"signed receipts for {match_id}", err=True)
+
+    service.poll()
+    thread = Thread(target=follow, name="witness-poll", daemon=True)
+    thread.start()
+    import uvicorn
+
+    try:
+        uvicorn.run(create_witness_app(service), host=host, port=port)
+    finally:
+        stop.set()
+        thread.join(timeout=5)
         service.close()
 
 
@@ -1521,6 +1659,33 @@ def miner_run(
             help="Public key (hex) of the relay's clock witness, to verify its receipts.",
         ),
     ] = None,
+    relay_witness_key_file: Annotated[
+        list[Path] | None,
+        typer.Option(
+            "--relay-witness-key-file",
+            help="File holding a clock witness's hybrid public key (repeatable).",
+        ),
+    ] = None,
+    witness_url: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--witness-url",
+            help=(
+                "Independent witness base URL to fall back on for a timeout claim's "
+                "evidence (repeatable)."
+            ),
+        ),
+    ] = None,
+    move_delay_seconds: Annotated[
+        float,
+        typer.Option(
+            "--move-delay-seconds",
+            help=(
+                "Wait this long before searching on our turn, so the seat can be "
+                "flagged (default: 0, an honest pace)."
+            ),
+        ),
+    ] = 0.0,
     resign_after_plies: Annotated[
         int | None,
         typer.Option(
@@ -1550,6 +1715,8 @@ def miner_run(
         _fail("--iterations cannot be negative", code=2)
     if resign_after_plies is not None and resign_after_plies < 1:
         _fail("--resign-after-plies must be at least 1 ply", code=2)
+    if move_delay_seconds < 0:
+        _fail("--move-delay-seconds cannot be negative", code=2)
     secret = _nonce_secret(nonce_secret, nonce_secret_file)
     params = _resolve_network(ctx, network)
     _run(lambda: params.variant(variant))
@@ -1563,7 +1730,7 @@ def miner_run(
             chess960=is_chess960(variant),
         )
     )
-    witness_keys = _witness_keys(params, relay_witness_key or [])
+    witness_keys = _witness_keys(params, relay_witness_key or [], relay_witness_key_file or [])
     config = MinerConfig.for_network(
         params,
         wallet.signer,
@@ -1574,8 +1741,10 @@ def miner_run(
         max_games_per_epoch=max_games_per_epoch or params.rounds_per_epoch,
         nonce_secret=secret,
         witness_keys=witness_keys,
+        witness_urls=tuple(witness_url or ()),
         resign_after_plies=resign_after_plies,
         variant=variant,
+        move_delay_seconds=move_delay_seconds,
     )
     miner = EngineMiner(config, engine=engine)
     if not _options(ctx).json_output:
