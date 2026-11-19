@@ -31,15 +31,19 @@ transaction. Writes go to the primary node (the app already reaches it through
 
 The firewall for this VM is separate from the primary's: only 80/443 are open and
 SSH is over IAP, so there is no inbound `22`, `8645` or `8646`. Pass `--network`
-explicitly: the rules below are created in `$NETWORK`, and an instance created
-without it lands in `default`, where none of them apply — the symptom is a mirror
-that is up, healthy on loopback and unreachable from the internet.
+*and* `--subnet` explicitly: the rules below are created in `$NETWORK`, and an
+instance created without them lands in `default`, where none of them apply — the
+symptom is a mirror that is up, healthy on loopback and unreachable from the
+internet. The VPC is custom-mode (one subnet per region), so naming the network
+alone is not enough either.
 
 ```bash
-export PROJECT_ID="sccp-testnet"
-export NETWORK="sccp-testnet"      # the VPC the primary VM and these rules use
+export PROJECT_ID="chessproofofwork"   # the project the primary VM runs in
+export NETWORK="sccp-testnet"          # the VPC the primary VM and these rules use
 export REGION="us-central1"
 export ZONE="us-central1-a"
+export SUBNET="sccp-testnet-${REGION}" # custom-mode VPC: one subnet per region
+export PRIMARY_TAG="sccp-node"         # the primary VM's network tag
 export EDGE="sccp-edge"
 export EDGE_TAG="sccp-edge"
 export EDGE_IP="sccp-edge-ip"
@@ -50,6 +54,7 @@ gcloud compute instances create "$EDGE" \
     --project="$PROJECT_ID" \
     --zone="$ZONE" \
     --network="$NETWORK" \
+    --subnet="$SUBNET" \
     --machine-type=e2-micro \
     --image-family=debian-12 \
     --image-project=debian-cloud \
@@ -123,6 +128,12 @@ Then set `vars.EDGE_SSH_PROXY_JUMP=1` and `vars.EDGE_DEPLOY_HOST=<user>@<interna
 without the jump flag, `EDGE_DEPLOY_HOST` must be directly reachable from the
 runner (a self-hosted runner, or a deliberately widened rule — the same
 trade-off `docs/operations/GCP_RESOURCE_SETUP.md` describes for the primary).
+
+```bash
+# the mirror's internal address: what EDGE_DEPLOY_HOST points at when jumping
+gcloud compute instances describe "$EDGE" --zone="$ZONE" --project="$PROJECT_ID" \
+    --format='value(networkInterfaces[0].networkIP)'
+```
 
 Point an `A` record for the mirror's name at `EDGE_IP` before starting the stack:
 Caddy cannot finish the HTTP-01 challenge until the name resolves to this VM.
