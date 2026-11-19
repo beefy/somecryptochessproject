@@ -52,8 +52,11 @@ Healthy after a deploy means:
   (draws produce no proof).
 
 `deploy/check_testnet_stack.py` automates the first two checks. The deploy
-workflow runs it inside the node container and then prints the `traffic` log;
-the generator paces itself, so it is watched rather than gated on.
+workflow runs it inside the node container, then runs it a second time inside the
+`traffic` container with `--fleet-only`, which waits for
+`/stack/synthetic-fleet.json` to report both extra seats
+(`--expect-seats 2 --expect-roles slow,gnuchess`). The generator's wallet
+traffic is still watched rather than gated on: it paces itself in minutes.
 
 For charts rather than raw JSON, `analysis/testnet_stats.ipynb` reads the same public
 API: throughput and block intervals, the token distribution, the ten traffic wallets'
@@ -109,21 +112,23 @@ cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | brid
   The generator needs a variant asset to seed the first pool, so an early chain
   with no C960 reports `dex: skipped (...)` without failing the cycle.
 - `| miners: ...` comes from `deploy/synthetic_miner_creation.py`. The generator
-  keeps up to `--extra-miners` (2) extra miners derived from published seeds under
-  `/data/synthetic-miners`, and starts or stops one per cycle so the roster keeps
-  changing; `--max-extra-online` (1) caps how many run at once. They are real
+  keeps the two extra seats derived from published seeds under
+  `/data/synthetic-miners`, with fixed roles rather than a churn
+  (`--no-extra-miner-churn`): `synthetic-miner-1` is deliberately **slow**
+  (110 s a move, no resignation) so a 30+0 game is really flagged and the
+  timeout path runs on live evidence, and `synthetic-miner-2` plays **GNU Chess**
+  (`--depth 5`) so the roster is not six copies of one engine. They are real
   `sccp miner run` children: they register, commit availability, play what the
   relay assigns and announce their proofs, and the generator funds them through
-  the same faucet gateway as the wallets. `synthetic-miner-1` is deliberately
-  **weak** (16 nodes a move): it loses most games and earns nothing, which is the
-  whole story a bad engine tells on a chain that only pays for wins.
+  the same faucet gateway as the wallets. A seat that exits is repaired at the
+  start of the next cycle, and
+  `/stack/synthetic-fleet.json` is rewritten with what is seated.
   Capacity is measured, not assumed: half a core and 256 MiB per miner, one core
-  reserved for the node and relay, so an `e2-standard-2` (2 vCPU, 8 GB) fits the
-  pool and `--max-extra-online` (1) runs one at a time. A host that
+  reserved for the node and relay, so an `e2-standard-2` (2 vCPU, 8 GB) fits both
+  seats. A host that
   cannot fit one logs
   `miners: no change; online: none (the host has ... leave room for 0)` and runs
-  wallet traffic only; `--extra-miners 0` removes the churn entirely. The
-  Compose deployment sets `0`, because its four fixed miners already fill the VM.
+  wallet traffic only; `--extra-miners 0` removes the seats entirely.
 
 The loop cannot drain the faucet. Transfers run between the pool's own wallets, so
 the coins circulate; the faucet is tapped only for new wallets (at most

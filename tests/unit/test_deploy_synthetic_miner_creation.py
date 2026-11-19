@@ -19,6 +19,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from deploy import check_testnet_stack
 from deploy import synthetic_miner_creation as miners
 
 from sccp.chain.state import State
@@ -394,6 +395,77 @@ def test_a_grant_funds_the_registration(fleet: _FleetFactory) -> None:
     assert granted == [(miner.address, miners.GRANT_COINS)]
     assert [tx.sender for tx in node.submitted] == [miner.address]
     assert extra.online == (miner,)
+
+
+def test_start_all_publishes_the_seats_it_holds(fleet: _FleetFactory, tmp_path: Path) -> None:
+    """The deploy can only see the seats through the report they write.
+
+    They are children of the traffic container, so nothing outside it can list
+    them; ``check_testnet_stack.py --fleet`` reads this file instead.
+    """
+    node = _Node(registered=True)
+    extra = fleet(node.transport())
+    extra.status_path = tmp_path / "synthetic-fleet.json"
+
+    report = extra.start_all()
+
+    assert report.online == ("synthetic-miner-1", "synthetic-miner-2")
+    payload = json.loads(extra.status_path.read_text(encoding="utf-8"))
+    assert [seat["name"] for seat in payload["online"]] == [
+        "synthetic-miner-1",
+        "synthetic-miner-2",
+    ]
+    assert [seat["role"] for seat in payload["online"]] == ["slow", "gnuchess"]
+    assert payload["capacity"]["allowed"] == 2
+    assert payload["failed"] == []
+    assert payload["updated"] > 0
+
+
+def test_a_starved_host_is_published_with_its_reason(fleet: _FleetFactory, tmp_path: Path) -> None:
+    """A seat the budget refuses is reported, not silently missing."""
+    node = _Node(registered=True)
+    extra = fleet(node.transport(), allowed=0)
+    extra.status_path = tmp_path / "synthetic-fleet.json"
+
+    report = extra.start_all()
+
+    assert report.online == ()
+    payload = json.loads(extra.status_path.read_text(encoding="utf-8"))
+    assert payload["online"] == []
+    assert payload["reason"] == "a test budget"
+    assert fleet.commands == []
+
+
+def test_a_missing_report_directory_does_not_stop_a_seat(
+    fleet: _FleetFactory, tmp_path: Path
+) -> None:
+    """The report is diagnostics: a read-only or absent volume must not matter."""
+    node = _Node(registered=True)
+    extra = fleet(node.transport())
+    extra.status_path = tmp_path / "missing" / "synthetic-fleet.json"
+
+    assert extra.start_all().online == ("synthetic-miner-1", "synthetic-miner-2")
+    assert not (tmp_path / "missing").exists()
+
+
+def test_the_published_report_is_what_the_deploy_check_reads(
+    fleet: _FleetFactory, tmp_path: Path
+) -> None:
+    """The writer and the reader agree on the shape of the file."""
+    node = _Node(registered=True)
+    extra = fleet(node.transport())
+    extra.status_path = tmp_path / "synthetic-fleet.json"
+    extra.start_all()
+
+    status = check_testnet_stack.wait_for_fleet(
+        extra.status_path,
+        wait_seconds=0,
+        expect_seats=2,
+        expect_roles=("slow", "gnuchess"),
+    )
+
+    assert check_testnet_stack.fleet_roles(status) == ("slow", "gnuchess")
+    assert check_testnet_stack.describe_fleet(status).startswith("2 extra seat(s) online")
 
 
 def test_the_pool_carries_the_slow_seat_and_a_second_engine() -> None:

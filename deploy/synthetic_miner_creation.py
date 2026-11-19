@@ -37,6 +37,7 @@ none.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import random
 import shutil
@@ -686,6 +687,13 @@ class ExtraMinerFleet:
     """Independent witnesses the seats may ask for a claim's evidence."""
     line_up: Callable[[int], MinerLineUp] = miner_line_up
     """How pool member ``index`` plays: the production roles, injectable in tests."""
+    status_path: Path | None = None
+    """Where :meth:`start_all` publishes what it seated, or ``None`` to publish nothing.
+
+    The seats are children of the traffic container, so ``docker compose ps``
+    cannot show them and a deploy that failed to seat one looks identical to a
+    deploy that worked. The deploy workflow reads this file to tell the two apart.
+    """
     capacity: HostCapacity = field(default_factory=host_capacity)
     spawn: Spawn = _spawn
     _pool: tuple[ExtraMiner, ...] = field(init=False, default=(), repr=False)
@@ -718,6 +726,48 @@ class ExtraMinerFleet:
     def online_limit(self) -> int:
         """How many extra miners may run at once."""
         return max(0, min(self.capacity.allowed, self.max_online, len(self._pool)))
+
+    def status(self) -> dict[str, object]:
+        """What is seated right now, in a form a checker can read as JSON.
+
+        The role comes from the line-up rather than the pool, so a report names
+        what the seat is doing (``slow``, ``gnuchess``) and not only its address.
+        """
+        return {
+            "capacity": {"allowed": self.capacity.allowed, "reason": self.capacity.reason},
+            "online_limit": self.online_limit,
+            "online": [
+                {
+                    "name": miner.name,
+                    "index": miner.index,
+                    "role": self.line_up(miner.index).label,
+                    "address": miner.address,
+                }
+                for miner in self.online
+            ],
+        }
+
+    def _publish_status(self, *, failed: Sequence[str] = (), reason: str = "") -> None:
+        """Write :meth:`status` to ``status_path``, best effort.
+
+        Diagnostics only: a volume that is missing or read-only must not stop a
+        seat, so every failure to write is swallowed. The write is atomic so a
+        checker polling the file never reads half of it.
+        """
+        if self.status_path is None or not self.status_path.parent.is_dir():
+            return
+        payload = dict(self.status())
+        payload["failed"] = list(failed)
+        payload["reason"] = reason
+        payload["updated"] = time.time()
+        temporary = self.status_path.with_suffix(".tmp")
+        try:
+            temporary.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            )
+            temporary.replace(self.status_path)
+        except OSError:
+            return
 
     def start(self, miner: ExtraMiner, *, grant: Grant | None = None) -> None:
         """Register ``miner`` if needed, then run it against the relay."""
@@ -827,12 +877,14 @@ class ExtraMinerFleet:
                 failed.append(f"{miner.name}: {exc}")
                 continue
             started.append(miner.name)
-        return ChurnReport(
+        report = ChurnReport(
             started=tuple(started),
             online=tuple(item.name for item in self.online),
             failed=tuple(failed),
             reason=self.capacity.reason if self.online_limit == 0 else "",
         )
+        self._publish_status(failed=report.failed, reason=report.reason)
+        return report
 
     def close(self) -> None:
         """Stop every miner this fleet started."""

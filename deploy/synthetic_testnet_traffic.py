@@ -165,6 +165,15 @@ EXTRA_MINER_DIRECTORY: Final = Path("/data/synthetic-miners")
 """Where extra miners keep keyfiles. Inside the container on purpose: every
 identity comes from a published seed, so nothing here has to outlive a redeploy."""
 
+FLEET_STATUS_PATH: Final = Path("/stack/synthetic-fleet.json")
+"""Where the fleet publishes the seats it holds.
+
+``check_testnet_stack.py --fleet`` reads it after a deploy: the two extra miners
+run as children of this container, so the only way to prove they came up is the
+report they write here. ``/stack`` is already mounted, and the file is rewritten
+at the start of every cycle so it also shows a seat that died and was repaired.
+"""
+
 BRIDGE_COINS: Final = 1
 """Coins in one HTLC. Small: the bridge traffic exercises the path, not the float."""
 
@@ -820,11 +829,13 @@ def extras_for(
     options: Options = DEFAULT_OPTIONS,
     params: NetworkParams = TESTNET,
     capacity: miners.HostCapacity | None = None,
+    status_path: Path | None = None,
 ) -> Extras:
     """Build the churn ``options`` asks for.
 
     ``capacity`` is injectable so a test can decide the host's budget; when it is
-    omitted the host is measured.
+    omitted the host is measured. ``status_path`` is where the fleet publishes
+    what it seated; the generator passes it so a deploy can check the seats.
     """
     if options.extra_miners <= 0:
         return NO_EXTRAS
@@ -845,6 +856,7 @@ def extras_for(
         witness_key_files=witness_files,
         witness_urls=options.witness_urls,
         capacity=budget,
+        status_path=status_path,
     )
     return Extras(fleet=fleet, persistent=not options.extra_miner_churn)
 
@@ -1607,7 +1619,7 @@ def run(
         flush=True,
     )
     if extras is None:
-        extras = extras_for(client, options=options, params=params)
+        extras = extras_for(client, options=options, params=params, status_path=FLEET_STATUS_PATH)
     reports: list[CycleReport] = []
     completed = 0
     try:

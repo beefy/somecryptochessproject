@@ -2,7 +2,8 @@ name: deploy-testnet-miners
 
 # Runs on every merge to main: builds the stack image, then (when a target is
 # configured) resets and redeploys the four-miner testnet (two standard, two
-# Chess960) over SSH.
+# Chess960) plus the two extra role miners the traffic container seats (slow and
+# GNU Chess) over SSH.
 #
 # Required repository configuration:
 #   vars.TESTNET_DEPLOY_HOST     user@host of the deployment VM
@@ -153,6 +154,21 @@ jobs:
                 --node http://127.0.0.1:8645 \
                 --relay http://relay:8646 \
                 --wait-seconds 300"
+
+      - name: Verify the two extra seats
+        # The slow seat and the GNU Chess seat are children of the traffic
+        # container, not compose services, so `docker compose ps` cannot show them
+        # and a deploy that failed to seat one looks exactly like one that worked.
+        # The generator publishes what it seated to /stack at the start of every
+        # cycle; this waits for the first cycle to register both roles.
+        run: |
+          set -eu
+          ssh testnet "cd '$DEPLOY_DIR' \
+            && SCCP_IMAGE='$IMAGE' docker compose exec -T traffic \
+              python /app/deploy/check_testnet_stack.py \
+                --fleet /stack/synthetic-fleet.json \
+                --expect-seats 2 --expect-roles slow,gnuchess \
+                --fleet-only --wait-seconds 900"
 
       - name: Verify the public testnet endpoint
         run: |

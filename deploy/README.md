@@ -116,14 +116,23 @@ node's normal admission path. The Ethereum leg remains an operator deployment:
 the node holds no Ethereum key by design, so deploying `EthHtlc` for Sepolia
 still needs a funded deployer key and `SCCP_ETH_HTLC_CONTRACT`.
 
-The `traffic` container can also churn extra miners
-(`deploy/synthetic_miner_creation.py`), but the Compose deployment disables it
-with `--extra-miners 0`. The VM's CPU budget is reserved for the four fixed
-miners, and a fifth churned identity competed with them for the same cores. The
-fixed roster already registers, commits availability and reveals every epoch, so
-nothing about roster turnover is left untested. Set `--extra-miners` on the
-`traffic` service if a larger host later has room for the weak-engine path; its
-keyfiles live under `/data/synthetic-miners`, an anonymous volume.
+The `traffic` container also seats the two extra role miners
+(`deploy/synthetic_miner_creation.py`), and that is not optional in the Compose
+deployment: the fast four all resign on polite drawn games, so nothing else
+produces a *timeout*. `synthetic-miner-1` is deliberately slow (110 s a move, no
+resignation), so a 30+0 game really runs out of clock and the signed flag becomes
+a bonded `timeout_claim`; `synthetic-miner-2` plays GNU Chess (`--depth 5`, its
+own fingerprint), so the roster is not six copies of one binary. Both are fixed
+roles rather than a churn (`--no-extra-miner-churn`): their identities are
+derived from published seeds, and a seat that exits is repaired on the next
+cycle.
+
+The seats are children of the `traffic` process, not Compose services, so
+`docker compose ps` cannot show them. The fleet writes what it holds to
+`/stack/synthetic-fleet.json` at the start of every cycle, and the deploy
+workflow gates on it with `--fleet-only --expect-roles slow,gnuchess` (run inside
+the `traffic` container, which has both `/app` and `/stack`). A host that cannot
+fit them says so in that file, with the measured reason.
 
 ## The keys and engine are reproducible on purpose
 

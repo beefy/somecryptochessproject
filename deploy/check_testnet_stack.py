@@ -3,7 +3,9 @@
 The deploy workflow calls this inside the node container after ``docker compose
 up``: it waits for the bootstrap height, then for the relay to expose the epoch
 the bootstrap wrote, and finally that the relay is attesting (it has a clock
-witness key). It is also useful locally::
+witness key). A second invocation, inside the traffic container, checks the two
+extra seats with ``--fleet`` and ``--fleet-only``: those miners are children of
+that container, so nothing else can see them. It is also useful locally::
 
     python deploy/check_testnet_stack.py --node http://127.0.0.1:8645 \
         --relay http://127.0.0.1:8646
@@ -16,9 +18,11 @@ match, and the relay signs its receipts. It does not wait for a game to finish
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 import httpx
 
@@ -87,6 +91,97 @@ def check_witness(relay_status: Mapping[str, object], *, required: bool = True) 
     return None
 
 
+def read_fleet(path: Path) -> Mapping[str, object] | None:
+    """The fleet's status file, or ``None`` when it is missing or unreadable.
+
+    ``synthetic_testnet_traffic`` rewrites the file at the start of every cycle,
+    so a missing or half-written file is an ordinary state to poll through.
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, Mapping) else None
+
+
+def fleet_seats(status: Mapping[str, object]) -> tuple[dict[str, object], ...]:
+    """The seats ``status`` reports as running, with the fields a check needs."""
+    online = status.get("online")
+    if not isinstance(online, list):
+        return ()
+    return tuple(seat for seat in online if isinstance(seat, dict))
+
+
+def fleet_roles(status: Mapping[str, object]) -> tuple[str, ...]:
+    """The line-up labels of the running seats (``slow``, ``gnuchess``, ...)."""
+    roles: list[str] = []
+    for seat in fleet_seats(status):
+        role = seat.get("role")
+        if isinstance(role, str) and role:
+            roles.append(role)
+    return tuple(roles)
+
+
+def describe_fleet(status: Mapping[str, object]) -> str:
+    """One line naming the seats and the host budget underneath them."""
+    seats = fleet_seats(status)
+    names = ", ".join(str(seat.get("name", "?")) for seat in seats) or "none"
+    roles = ", ".join(fleet_roles(status)) or "none"
+    capacity = status.get("capacity")
+    budget = ""
+    if isinstance(capacity, Mapping) and isinstance(capacity.get("allowed"), int):
+        budget = f", budget allows {capacity['allowed']}"
+    return f"{len(seats)} extra seat(s) online: {names} (roles: {roles}{budget})"
+
+
+def wait_for_fleet(
+    path: Path,
+    *,
+    wait_seconds: float,
+    expect_seats: int = 2,
+    expect_roles: Sequence[str] = (),
+    poll_seconds: float = 5.0,
+) -> Mapping[str, object]:
+    """Wait until the traffic generator reports ``expect_seats`` miners running.
+
+    The two extra miners are children of the traffic container and are seated
+    during its first cycle, which waits on registration blocks: a deploy cannot
+    see them in ``docker compose ps`` and they take a minute or two to appear.
+    A timeout reports what the generator said about why -- the host budget, a
+    registration that failed, a missing engine -- instead of a bare timeout.
+    """
+    deadline = time.monotonic() + wait_seconds
+    last: Mapping[str, object] | None = None
+    while True:
+        status = read_fleet(path)
+        if status is not None:
+            last = status
+            seated = len(fleet_seats(status))
+            missing = [role for role in expect_roles if role not in fleet_roles(status)]
+            if seated >= expect_seats and not missing:
+                return status
+        if time.monotonic() >= deadline:
+            break
+        time.sleep(poll_seconds)
+    detail = ""
+    if last is not None:
+        failed = last.get("failed")
+        if isinstance(failed, list) and failed:
+            detail += "; the generator reported: " + "; ".join(str(item) for item in failed)
+        reason = last.get("reason")
+        if isinstance(reason, str) and reason:
+            detail += f"; {reason}"
+        capacity = last.get("capacity")
+        if isinstance(capacity, Mapping):
+            asked = capacity.get("allowed")
+            if isinstance(asked, int) and asked < expect_seats:
+                detail += f"; the host budget allows only {asked} extra miner(s)"
+    raise SystemExit(
+        f"{path} did not report {expect_seats} extra seat(s) "
+        f"(roles: {', '.join(expect_roles) or 'any'}) in {wait_seconds:g}s{detail}"
+    )
+
+
 def main() -> None:
     """Parse arguments and run the readiness checks."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -98,9 +193,45 @@ def main() -> None:
         action="store_true",
         help="accept a relay without a clock witness key (an unattested testnet)",
     )
+    parser.add_argument(
+        "--fleet",
+        type=Path,
+        default=None,
+        help="the traffic generator's seat report, written to /stack by default",
+    )
+    parser.add_argument(
+        "--expect-seats",
+        type=int,
+        default=2,
+        help="extra miners that must be running (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--expect-roles",
+        default="",
+        help="comma-separated line-up labels that must be seated, e.g. slow,gnuchess",
+    )
+    parser.add_argument(
+        "--fleet-only",
+        action="store_true",
+        help="check only the extra seats (for use inside the traffic container)",
+    )
     arguments = parser.parse_args()
     if arguments.wait_seconds <= 0:
         parser.error("--wait-seconds must be positive")
+    if arguments.expect_seats < 0:
+        parser.error("--expect-seats cannot be negative")
+    if arguments.fleet_only and arguments.fleet is None:
+        parser.error("--fleet-only needs --fleet")
+    roles = tuple(role.strip() for role in arguments.expect_roles.split(",") if role.strip())
+    if arguments.fleet is not None and arguments.fleet_only:
+        fleet = wait_for_fleet(
+            arguments.fleet,
+            wait_seconds=arguments.wait_seconds,
+            expect_seats=arguments.expect_seats,
+            expect_roles=roles,
+        )
+        print(f"extra miners ready: {describe_fleet(fleet)}")
+        return
     with httpx.Client(base_url=arguments.node, timeout=10) as node:
         status = wait_for_node(node, wait_seconds=arguments.wait_seconds)
     with httpx.Client(base_url=arguments.relay, timeout=10) as relay:
@@ -115,6 +246,14 @@ def main() -> None:
         f"testnet ready: node height {status['height']}, "
         f"relay epoch {relay_status.get('epoch')} with {matches} match(es){attested}"
     )
+    if arguments.fleet is not None:
+        fleet = wait_for_fleet(
+            arguments.fleet,
+            wait_seconds=arguments.wait_seconds,
+            expect_seats=arguments.expect_seats,
+            expect_roles=roles,
+        )
+        print(f"extra miners ready: {describe_fleet(fleet)}")
 
 
 if __name__ == "__main__":
