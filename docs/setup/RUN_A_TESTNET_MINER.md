@@ -16,7 +16,7 @@ There are three ways to see a miner run:
 > **Status.** Relay play, engine mining, win-proof construction, faucet funding
 > and on-chain proof settlement work today. [`deploy/README.md`](../../deploy/README.md)
 > runs the whole loop with two standard and two Chess960 Stockfish miners, and
-> [`RUNBOOK.md`](RUNBOOK.md) covers operating it. Use `sccp devnet up` for the
+> [`RUNBOOK.md`](../operations/RUNBOOK.md) covers operating it. Use `sccp devnet up` for the
 > fast in-process demo, and the relay flow below for a miner you run yourself.
 >
 > The current public node is at

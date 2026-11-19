@@ -26,7 +26,7 @@ the checkout is the code you run, and `[dev]` adds pytest, hypothesis, ruff and
 mypy — leave it off for the CLI alone. The HTTP examples throughout the docs pipe
 JSON through `jq`; install it separately or drop the `| jq`. A plain
 (non-editable) install and the Node/npm requirements for the web app are in
-[`RUN_A_DEVNET.md`](../operations/RUN_A_DEVNET.md), section 1.
+[`RUN_A_DEVNET.md`](../setup/RUN_A_DEVNET.md), section 1.
 
 ## Point at a node
 

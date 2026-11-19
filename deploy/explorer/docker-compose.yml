@@ -15,7 +15,7 @@
 #
 # The workflow uploads this file, nginx.conf, Caddyfile and two release
 # directories, then switches both `current` symlinks; see
-# docs/operations/EXPLORER_DEPLOYMENT.md.
+# docs/setup/EXPLORER_DEPLOYMENT.md.
 #
 #   docker compose up -d
 #

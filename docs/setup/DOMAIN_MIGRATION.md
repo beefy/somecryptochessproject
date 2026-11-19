@@ -271,6 +271,6 @@ suggests a second origin still exists.
   rolling back a bundle, the certificate and SSH hardening.
 - [`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md) -- what the deploy workflow
   does on every merge, and the monthly cost.
-- [`RUNBOOK.md`](RUNBOOK.md) -- health checks and incident steps after the move.
+- [`RUNBOOK.md`](../operations/RUNBOOK.md) -- health checks and incident steps after the move.
 
 All pages, by task: [`docs/README.md`](../README.md).

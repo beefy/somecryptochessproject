@@ -17,7 +17,7 @@
 #   * the container runs as the image's unprivileged user with a read-only root,
 #     no added capabilities and `no-new-privileges`;
 #   * the VM's firewall opens 443 (and 80 for ACME) and nothing else; SSH is over
-#     IAP. See docs/operations/GCP_RESOURCE_SETUP.md.
+#     IAP. See docs/setup/GCP_RESOURCE_SETUP.md.
 #
 # It is a separate Compose project on purpose: `docker compose down -v` on the
 # primary must not touch the mirror's data, and the mirror must survive a redeploy

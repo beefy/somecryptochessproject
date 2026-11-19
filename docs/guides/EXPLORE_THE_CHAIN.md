@@ -48,7 +48,7 @@ An empty API base and a relative relay path are what a hosted build uses, becaus
 the node sends no CORS headers: `/v1` and `/relay` have to be paths on the origin
 that served the page, which means a reverse proxy in front of the same host. The
 deploy that does exactly this is
-[`EXPLORER_DEPLOYMENT.md`](../operations/EXPLORER_DEPLOYMENT.md).
+[`EXPLORER_DEPLOYMENT.md`](../setup/EXPLORER_DEPLOYMENT.md).
 
 ## What the pages show
 

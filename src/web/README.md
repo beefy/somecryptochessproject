@@ -144,7 +144,7 @@ API on the page's own origin, the relay on a path of it. The apex
 `https://proofofchess.com/` is a separate static landing page in
 [`src/landing`](../landing); it links into the app and has no API proxy. The
 deploy, its firewall rules, its DNS records and its rollback are in
-[`docs/operations/EXPLORER_DEPLOYMENT.md`](../../docs/operations/EXPLORER_DEPLOYMENT.md).
+[`docs/setup/EXPLORER_DEPLOYMENT.md`](../../docs/setup/EXPLORER_DEPLOYMENT.md).
 
 ## Scripts
 

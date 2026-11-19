@@ -10,7 +10,7 @@ availability, opens a matchable epoch, plays one game per variant per round and
 settles the winning proofs on chain. `sccp devnet up` remains the fast in-process
 demo; this stack exercises the real multi-process, HTTP and SQLite path. The
 merge-to-deploy workflow and its monthly cost are in
-[`docs/operations/TESTNET_DEPLOYMENT.md`](../docs/operations/TESTNET_DEPLOYMENT.md).
+[`docs/setup/TESTNET_DEPLOYMENT.md`](../docs/setup/TESTNET_DEPLOYMENT.md).
 
 A second, `e2-micro` VM can host a public read-only mirror of the chain; that
 deployment lives in [`edge/`](edge/README.md) and is a separate Compose project on
@@ -18,13 +18,18 @@ purpose. `.github/workflows/deploy-edge.yml` redeploys it after the primary's
 deploy, from the same image tag, when `EDGE_DEPLOY_HOST` is configured; without
 that variable there is no mirror and nothing waits for one.
 
+This page is about building the stack. When it is already running and something is
+wrong with it, [`docs/operations/`](../docs/operations/README.md) is the triage
+index: severity, the first five minutes, and a runbook per failure.
+
+
 The current hosted deployment is at
 `http://app.proofofchess.com:8645`; the commands below use
 `127.0.0.1` because they are for a local Compose stack. The web application is a
 separate Compose deploy, in `explorer/`, published at
 `https://app.proofofchess.com`, while the project overview from `src/landing` is
 at `https://proofofchess.com/`; see
-[`docs/operations/EXPLORER_DEPLOYMENT.md`](../docs/operations/EXPLORER_DEPLOYMENT.md).
+[`docs/setup/EXPLORER_DEPLOYMENT.md`](../docs/setup/EXPLORER_DEPLOYMENT.md).
 
 ```bash
 docker compose up --build
@@ -280,4 +285,4 @@ The second command prints the node, relay and miner commands for those files.
 Both stacks publish their seeds and passphrase on purpose; devnet has no value to
 protect and a reproducible stack is what makes the files work without a
 coordination step. `--fresh` rebuilds the devnet chain and never touches the keys.
-[`docs/operations/RUN_A_DEVNET.md`](../docs/operations/RUN_A_DEVNET.md) section 9.3 walks through it.
+[`docs/setup/RUN_A_DEVNET.md`](../docs/setup/RUN_A_DEVNET.md) section 9.3 walks through it.
