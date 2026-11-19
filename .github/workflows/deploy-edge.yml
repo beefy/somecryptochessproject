@@ -14,10 +14,10 @@ name: deploy-edge
 # the primary just built, resets the replica only when the primary's chain was
 # replaced, and proves the mirror advanced.
 #
-# Required repository configuration. Set the `vars.` entries at the repository
-# level, next to TESTNET_DEPLOY_HOST: the job-level `if` below is evaluated
-# before this job's `environment:` is applied, so an environment-scoped variable
-# would leave the gate reading an empty string and skip the deploy.
+# Required configuration. Set these as repository variables, or on the `testnet`
+# environment the job declares — the workflow reads them inside a step, so either
+# scope works. Leaving EDGE_DEPLOY_HOST unset is allowed: the job still runs and
+# reports "no mirror configured" instead of skipping with no log at all.
 #   vars.EDGE_DEPLOY_HOST     user@host of the mirror VM; unset = no mirror and
 #                             this job is skipped
 #   vars.EDGE_DOMAIN          the mirror's public name, e.g. mirror.proofofchess.com
@@ -56,40 +56,74 @@ concurrency:
 jobs:
   deploy:
     name: redeploy the mirror node
-    # A repository without a mirror stays green: the job exists, and only runs
-    # when a target is configured. A failed primary deploy leaves the mirror on
-    # its previous image rather than pointing it at a commit that never shipped.
+    # Gated on the event only. A failed primary deploy is a real skip: the mirror
+    # keeps its previous image rather than following a commit that never shipped.
+    # A *missing target* is not a skip. A job stopped by `if` has no steps and no
+    # log, so "no mirror configured" looks exactly like "this workflow is broken";
+    # the configuration step below decides that, and says which variable is unset.
     if: >-
-      ${{ vars.EDGE_DEPLOY_HOST != '' &&
-          (github.event_name == 'workflow_dispatch' ||
-           github.event.workflow_run.conclusion == 'success') }}
+      ${{ github.event_name == 'workflow_dispatch' ||
+          github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     environment:
       name: testnet
     env:
-      TARGET: ${{ vars.EDGE_DEPLOY_HOST }}
-      DEPLOY_DIR: ${{ vars.EDGE_DEPLOY_DIR || '/srv/sccp-edge' }}
-      DEPLOY_PORT: ${{ vars.EDGE_DEPLOY_PORT || '22' }}
-      DOMAIN: ${{ vars.EDGE_DOMAIN }}
-      PRIMARY_URL: ${{ vars.EDGE_PRIMARY_URL || 'https://app.proofofchess.com' }}
-      JUMP: ${{ vars.EDGE_SSH_PROXY_JUMP }}
       # The primary deploy builds `:${sha}` and `:testnet` from the same commit.
       # Preferring the sha keeps this mirror exactly on the commit that shipped
       # even if `:testnet` has since moved.
       IMAGE_TAG: ${{ github.event.inputs.image_tag || github.event.workflow_run.head_sha || 'testnet' }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-
-      - name: Resolve the image reference
+      # Configuration is resolved in a step, never in the job-level `if` or `env`:
+      # those are evaluated before `environment:` is applied, so a variable scoped
+      # to the `testnet` environment reads as empty and the job vanishes silently.
+      - name: Read the mirror configuration
+        id: target
+        env:
+          MIRROR: ${{ vars.EDGE_DEPLOY_HOST }}
+          MIRROR_DOMAIN: ${{ vars.EDGE_DOMAIN }}
+          DIR_VAR: ${{ vars.EDGE_DEPLOY_DIR }}
+          PORT_VAR: ${{ vars.EDGE_DEPLOY_PORT }}
+          PRIMARY_URL_VAR: ${{ vars.EDGE_PRIMARY_URL }}
+          JUMP_VAR: ${{ vars.EDGE_SSH_PROXY_JUMP }}
         run: |
           set -eu
-          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}:${IMAGE_TAG}" >> "$GITHUB_ENV"
-          if [ -z "${DOMAIN:-}" ]; then
-            echo "::error::vars.EDGE_DOMAIN is not configured; Caddy has no certificate name"
+          dir="${DIR_VAR:-/srv/sccp-edge}"
+          port="${PORT_VAR:-22}"
+          # GHCR names are lowercase; `${x,,}` would be shorter but is bash 4+.
+          repo="$(printf '%s' "${GITHUB_REPOSITORY:-}" | tr '[:upper:]' '[:lower:]')"
+          if [ -z "${MIRROR:-}" ]; then
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+            echo "::notice file=deploy/edge/README.md::no mirror configured: vars.EDGE_DEPLOY_HOST is unset, nothing to deploy"
+            {
+              echo "## No mirror node configured"
+              echo
+              echo '`vars.EDGE_DEPLOY_HOST` is empty, so this run had nothing to do.'
+              echo 'Set it and `vars.EDGE_DOMAIN` to deploy `deploy/edge/`; see'
+              echo '[`deploy/edge/README.md`](../blob/main/deploy/edge/README.md).'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          if [ -z "${MIRROR_DOMAIN:-}" ]; then
+            echo "::error::vars.EDGE_DOMAIN is unset, so Caddy has no certificate name"
             exit 1
           fi
+          echo "deploy=true" >> "$GITHUB_OUTPUT"
+          {
+            echo "TARGET=$MIRROR"
+            echo "DEPLOY_DIR=$dir"
+            echo "DEPLOY_PORT=$port"
+            echo "DOMAIN=$MIRROR_DOMAIN"
+            echo "PRIMARY_URL=${PRIMARY_URL_VAR:-https://app.proofofchess.com}"
+            echo "JUMP=${JUMP_VAR:-}"
+            echo "IMAGE=ghcr.io/$repo:${IMAGE_TAG}"
+          } >> "$GITHUB_ENV"
+          echo "mirror: $MIRROR:$port -> https://$MIRROR_DOMAIN, data in $dir"
+          echo "image:  ghcr.io/$repo:${IMAGE_TAG}"
+
+      - uses: actions/checkout@v4
+        if: steps.target.outputs.deploy == 'true'
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # --- SSH -----------------------------------------------------------------
       # The mirror VM has no public 22 by design (deploy/edge/README.md): its
@@ -103,6 +137,7 @@ jobs:
       #   * otherwise EDGE_DEPLOY_HOST is reachable directly, which means a
       #     self-hosted runner inside the network or a deliberately widened rule.
       - name: Configure SSH
+        if: steps.target.outputs.deploy == 'true'
         env:
           SSH_KEY: ${{ secrets.EDGE_SSH_KEY || secrets.TESTNET_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.EDGE_KNOWN_HOSTS || secrets.TESTNET_KNOWN_HOSTS }}
@@ -137,25 +172,31 @@ jobs:
           host_block primary "${PRIMARY_TARGET:-placeholder@127.0.0.1}" "$PRIMARY_PORT" ""
           host_block edge "$TARGET" "$DEPLOY_PORT" "${JUMP:+ProxyJump primary}"
 
+          edge_host="${TARGET#*@}"
           if [ -n "${KNOWN_HOSTS:-}" ]; then
             printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           else
-            edge_host="${TARGET#*@}"
             # The jump host is scanned directly; the mirror is scanned *through*
             # it, because its address only means something inside the VPC.
             ssh-keyscan -p "$PRIMARY_PORT" -H "${PRIMARY_TARGET#*@}" \
               >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
-            if [ -n "${JUMP:-}" ]; then
-              ssh primary "ssh-keyscan -p $DEPLOY_PORT -H '$edge_host'" \
-                >> "$HOME/.ssh/known_hosts"
-            else
-              ssh-keyscan -p "$DEPLOY_PORT" -H "$edge_host" >> "$HOME/.ssh/known_hosts"
-            fi
+          fi
+
+          # The mirror's key is scanned even when a pinned file was supplied. It
+          # has to be: EDGE_KNOWN_HOSTS falls back to TESTNET_KNOWN_HOSTS, which
+          # pins the *primary*, so it cannot contain the mirror's key and
+          # `StrictHostKeyChecking yes` would refuse the one host being deployed.
+          if [ -n "${JUMP:-}" ]; then
+            ssh primary "ssh-keyscan -p $DEPLOY_PORT -H '$edge_host'" \
+              >> "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -p "$DEPLOY_PORT" -H "$edge_host" >> "$HOME/.ssh/known_hosts"
           fi
           chmod 600 "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
 
       # --- Ship the stack ------------------------------------------------------
       - name: Upload the Compose project
+        if: steps.target.outputs.deploy == 'true'
         run: |
           set -eu
           ssh edge "mkdir -p '$DEPLOY_DIR'"
@@ -165,6 +206,7 @@ jobs:
       # docker-compose.yml is what an operator's manual run uses, so the two
       # paths deploy the same project with the same values.
       - name: Write .env on the mirror
+        if: steps.target.outputs.deploy == 'true'
         run: |
           set -eu
           payload="$(printf 'SCCP_IMAGE=%s\nSCCP_EDGE_DOMAIN=%s\nSCCP_PRIMARY_URL=%s\n' \
@@ -174,6 +216,7 @@ jobs:
           echo "mirror settings: $IMAGE -> https://$DOMAIN, replicating $PRIMARY_URL"
 
       - name: Pull the image and restart the stack
+        if: steps.target.outputs.deploy == 'true'
         env:
           GHCR_USER: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -190,6 +233,7 @@ jobs:
       # A changed Caddyfile in a bind mount is not picked up by `up -d`, and
       # Caddy does not watch the file.
       - name: Reload the TLS terminator
+        if: steps.target.outputs.deploy == 'true'
         run: |
           ssh edge "cd '$DEPLOY_DIR' \
             && (docker compose exec -T tls caddy reload \
@@ -204,6 +248,7 @@ jobs:
       # enough to tell: same genesis, different first block means different
       # chains.
       - name: Re-sync after a primary chain reset
+        if: steps.target.outputs.deploy == 'true'
         run: |
           set -eu
           mirror="https://$DOMAIN"
@@ -234,6 +279,7 @@ jobs:
       # TLS and GET reach the node, writes are refused, and the replica adopted
       # the primary's chain after this deploy.
       - name: Smoke-test the mirror
+        if: steps.target.outputs.deploy == 'true'
         run: |
           set -eu
           mirror="https://$DOMAIN"
@@ -276,7 +322,7 @@ jobs:
           exit 1
 
       - name: Show the mirror state
-        if: always()
+        if: always() && steps.target.outputs.deploy == 'true'
         run: |
           ssh edge "cd '$DEPLOY_DIR' && docker compose ps" || true
           ssh edge "cd '$DEPLOY_DIR' && docker compose logs --tail=60 node tls" || true
