@@ -130,6 +130,31 @@ cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | brid
   `miners: no change; online: none (the host has ... leave room for 0)` and runs
   wallet traffic only; `--extra-miners 0` removes the seats entirely.
 
+The deploy reads the same file. The workflow's "Verify the two extra seats" step
+runs `check_testnet_stack.py` inside the traffic container and prints the report
+as it changes:
+
+```bash
+docker compose exec -T traffic python /app/deploy/check_testnet_stack.py \
+    --fleet /stack/synthetic-fleet.json --fleet-only \
+    --expect-seats 2 --expect-roles slow,gnuchess --wait-seconds 1800
+```
+
+```text
+waiting up to 1800s for 2 extra seat(s) (roles: slow, gnuchess) in /stack/synthetic-fleet.json
+30s: seating, 0/2 seat(s) online (roles: none)
+90s: online, 2/2 seat(s) online (roles: slow, gnuchess)
+extra miners ready: 2 extra seat(s) online: ...
+```
+
+`phase` is `starting` before the first cycle, `seating` while the seats register,
+`online` once they run and `starved` when the budget refused them (`failed`
+carries what could not start, `updated` is when the file was written). A cause
+waiting cannot clear -- a budget below two seats, or a missing engine binary --
+ends the check at once instead of spending the whole wait, and a check that times
+out while still `seating` is telling you the registrations never confirmed, which
+is a chain problem and not a seat problem.
+
 The loop cannot drain the faucet. Transfers run between the pool's own wallets, so
 the coins circulate; the faucet is tapped only for new wallets (at most
 `--max-wallets`, ten by default, at 10 coins each) and for fees (1,000 units per
@@ -275,6 +300,19 @@ pool is empty.
 
 ## Stuck chain or mempool
 
+- **Height 19 after a fresh bootstrap, with the mempool filling up:** blocks pace
+  on the chain's own timestamps, not on the wall clock alone. `node run --mine`
+  builds the next block only once
+  `clock() - tip_timestamp >= --mine-interval-seconds`, so a tip stamped *ahead*
+  of the clock freezes the chain until real time catches up -- and nothing can
+  confirm in that window: registrations, availability reveals and grants all wait
+  in the pool. A bootstrap that walked forward from `now` produced exactly that
+  gap (a full window, 19 minutes on testnet, which is what left a fresh deploy
+  sitting at height 19 with its traffic bot's seats unregistered); the bootstrap
+  now backdates its window to end at the wall clock. Compare `date +%s` with the
+  tip's `timestamp` in `GET /v1/blocks?limit=1`: the difference is how long the
+  wait still has to run. The same symptom appears if the host clock is stepped
+  backwards (NTP) after a block was stamped.
 - **Height 19 forever, relay games active:** check the miners are running and
   their logs show moves. CPU-starved miners make slow progress; the 30+0 clock is
   real even on testnet.
@@ -406,6 +444,14 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST "https://mirror.example.com/v1/
 stops advancing is failing to reach `SCCP_PRIMARY_URL`; its node log names the
 peer and the reason. The mirror is disposable — delete `node-data` and let one
 sync rebuild it.
+
+Nothing in CI creates or deploys this VM, and it holds no miners: the deploy
+workflow only touches `TESTNET_DEPLOY_HOST`, and the two extra seats are children
+of the `traffic` container on that primary host. The VM, its static address, its
+firewall rules and the `A` record are the `gcloud` block in
+[`deploy/edge/README.md`](../../deploy/edge/README.md); a missing mirror VM is
+therefore expected on a stack whose owner never ran it, and a deploy gate that
+waits on the seats is not waiting for it.
 
 ## Engine crashes
 

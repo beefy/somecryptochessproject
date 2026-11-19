@@ -700,6 +700,7 @@ class ExtraMinerFleet:
     _running: dict[int, RunningMiner] = field(init=False, default_factory=dict, repr=False)
     _engines: dict[Path, str] = field(init=False, default_factory=dict, repr=False)
     _passphrase_file: Path = field(init=False, repr=False)
+    _phase: str = field(init=False, default="starting", repr=False)
 
     def __post_init__(self) -> None:
         if self.pool_size < 0:
@@ -732,8 +733,11 @@ class ExtraMinerFleet:
 
         The role comes from the line-up rather than the pool, so a report names
         what the seat is doing (``slow``, ``gnuchess``) and not only its address.
+        ``phase`` says how far seating has got -- ``starting``, ``seating``,
+        ``online`` or ``starved`` -- so a reader can tell "not yet" from "never".
         """
         return {
+            "phase": self._phase,
             "capacity": {"allowed": self.capacity.allowed, "reason": self.capacity.reason},
             "online_limit": self.online_limit,
             "online": [
@@ -768,6 +772,19 @@ class ExtraMinerFleet:
             temporary.replace(self.status_path)
         except OSError:
             return
+
+    def announce(self) -> None:
+        """Publish what the pool is *meant* to seat, before it starts trying.
+
+        Registration is a transaction, and until a block includes it the seat
+        exists only in the mempool. A report written only once seating succeeded
+        is therefore absent exactly when a deploy needs it -- a chain that has
+        stopped producing blocks freezes this fleet before it can report
+        anything. The announcement carries the budget and the roles the pool runs,
+        and :meth:`start_all` overwrites it as seats come up.
+        """
+        self._phase = "starting"
+        self._publish_status()
 
     def start(self, miner: ExtraMiner, *, grant: Grant | None = None) -> None:
         """Register ``miner`` if needed, then run it against the relay."""
@@ -866,6 +883,10 @@ class ExtraMinerFleet:
         exited = self.reap()
         started: list[str] = []
         failed = [f"{name} exited with code {code}" for name, code in exited]
+        # Publish the intent before the first registration: a seat that never
+        # confirms leaves no other trace, and the deploy's check reads this file.
+        self._phase = "seating"
+        self._publish_status(failed=failed)
         for miner in self._pool:
             if len(self._running) >= self.online_limit:
                 break
@@ -883,6 +904,7 @@ class ExtraMinerFleet:
             failed=tuple(failed),
             reason=self.capacity.reason if self.online_limit == 0 else "",
         )
+        self._phase = "online" if self._running else "starved"
         self._publish_status(failed=report.failed, reason=report.reason)
         return report
 

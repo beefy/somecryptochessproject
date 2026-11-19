@@ -21,7 +21,7 @@ import argparse
 import json
 import sys
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import httpx
@@ -134,6 +134,80 @@ def describe_fleet(status: Mapping[str, object]) -> str:
     return f"{len(seats)} extra seat(s) online: {names} (roles: {roles}{budget})"
 
 
+PERMANENT_FAILURES = ("no engine binary",)
+"""Generator complaints no further waiting can fix: the seat is missing a file."""
+
+
+def fleet_phase(status: Mapping[str, object]) -> str:
+    """How far seating has got: ``starting``, ``seating``, ``online`` or ``starved``."""
+    phase = status.get("phase")
+    return phase if isinstance(phase, str) and phase else "unknown"
+
+
+def fleet_obstacles(status: Mapping[str, object], expect_seats: int) -> tuple[str, ...]:
+    """Everything the report says stands in the way of ``expect_seats`` seats.
+
+    Shared by the timeout message and the fast-fail path so both name the same
+    causes: the host budget the generator measured, the seats it failed to start,
+    and its own reason for seating nothing.
+    """
+    problems: list[str] = []
+    capacity = status.get("capacity")
+    allowed = capacity.get("allowed") if isinstance(capacity, Mapping) else None
+    if isinstance(allowed, int) and allowed < expect_seats:
+        reason = capacity.get("reason") if isinstance(capacity, Mapping) else None
+        detail = f" ({reason})" if isinstance(reason, str) and reason else ""
+        problems.append(
+            f"the host budget allows only {allowed} of the {expect_seats} extra miner(s){detail}"
+        )
+    failed = status.get("failed")
+    if isinstance(failed, list):
+        problems.extend(f"the generator reported: {item}" for item in failed)
+    reason = status.get("reason")
+    if isinstance(reason, str) and reason:
+        problems.append(reason)
+    return tuple(problems)
+
+
+def permanent_failure(status: Mapping[str, object], expect_seats: int) -> str | None:
+    """The obstacle that waiting cannot clear, or ``None`` when time may still help.
+
+    A budget below the seat count is decided before a miner is even started, and a
+    seat whose engine binary is missing never gets one. Everything else -- a
+    registration still in the mempool, a nonce collision, a miner that crashed and
+    is repaired next cycle -- is transient, so the check keeps polling.
+    """
+    capacity = status.get("capacity")
+    allowed = capacity.get("allowed") if isinstance(capacity, Mapping) else None
+    failed = status.get("failed")
+    missing_engine = isinstance(failed, list) and any(
+        marker in str(item) for item in failed for marker in PERMANENT_FAILURES
+    )
+    starved = isinstance(allowed, int) and allowed < expect_seats
+    if starved or missing_engine:
+        return "; ".join(fleet_obstacles(status, expect_seats))
+    return None
+
+
+def describe_progress(
+    path: Path,
+    status: Mapping[str, object] | None,
+    *,
+    elapsed: float,
+    expect_seats: int,
+) -> str:
+    """A heartbeat line: what the report says now, and how long it has said it."""
+    if status is None:
+        return f"{elapsed:.0f}s: no report at {path} yet"
+    roles = ", ".join(fleet_roles(status)) or "none"
+    problems = "; ".join(fleet_obstacles(status, expect_seats))
+    detail = f"; {problems}" if problems else ""
+    return (
+        f"{elapsed:.0f}s: {fleet_phase(status)}, {len(fleet_seats(status))}/{expect_seats} "
+        f"seat(s) online (roles: {roles}){detail}"
+    )
+
+
 def wait_for_fleet(
     path: Path,
     *,
@@ -141,16 +215,28 @@ def wait_for_fleet(
     expect_seats: int = 2,
     expect_roles: Sequence[str] = (),
     poll_seconds: float = 5.0,
+    progress_seconds: float = 30.0,
+    progress: Callable[[str], None] | None = None,
 ) -> Mapping[str, object]:
     """Wait until the traffic generator reports ``expect_seats`` miners running.
 
     The two extra miners are children of the traffic container and are seated
     during its first cycle, which waits on registration blocks: a deploy cannot
     see them in ``docker compose ps`` and they take a minute or two to appear.
+
+    ``progress`` is called every ``progress_seconds`` with what the report says,
+    because a silent fifteen-minute poll in a CI log is indistinguishable from a
+    hung job -- and the usual reason the seats are late is that the chain has
+    stopped producing blocks, which the report shows as seats that never come
+    online.
+
     A timeout reports what the generator said about why -- the host budget, a
-    registration that failed, a missing engine -- instead of a bare timeout.
+    registration that failed, a missing engine -- instead of a bare timeout, and a
+    cause no amount of waiting can clear ends the wait immediately.
     """
     deadline = time.monotonic() + wait_seconds
+    started = time.monotonic()
+    next_progress = started + progress_seconds
     last: Mapping[str, object] | None = None
     while True:
         status = read_fleet(path)
@@ -160,25 +246,36 @@ def wait_for_fleet(
             missing = [role for role in expect_roles if role not in fleet_roles(status)]
             if seated >= expect_seats and not missing:
                 return status
-        if time.monotonic() >= deadline:
+            hopeless = permanent_failure(status, expect_seats)
+            if hopeless is not None:
+                raise SystemExit(
+                    f"{path} cannot seat {expect_seats} extra seat(s) on this host: {hopeless}"
+                )
+        now = time.monotonic()
+        if progress is not None and now >= next_progress:
+            next_progress = now + progress_seconds
+            progress(
+                describe_progress(path, last, elapsed=now - started, expect_seats=expect_seats)
+            )
+        if now >= deadline:
             break
         time.sleep(poll_seconds)
-    detail = ""
+    problems = "; ".join(fleet_obstacles(last, expect_seats)) if last is not None else ""
+    if last is not None and not problems and fleet_phase(last) == "seating":
+        problems = (
+            "the seats are still registering: a registration is a transaction, so no "
+            "block has included it yet -- check the chain is advancing "
+            "(`docker compose logs --tail=50 node miner-1`)"
+        )
+    detail = f"; {problems}" if problems else ""
+    age = ""
     if last is not None:
-        failed = last.get("failed")
-        if isinstance(failed, list) and failed:
-            detail += "; the generator reported: " + "; ".join(str(item) for item in failed)
-        reason = last.get("reason")
-        if isinstance(reason, str) and reason:
-            detail += f"; {reason}"
-        capacity = last.get("capacity")
-        if isinstance(capacity, Mapping):
-            asked = capacity.get("allowed")
-            if isinstance(asked, int) and asked < expect_seats:
-                detail += f"; the host budget allows only {asked} extra miner(s)"
+        updated = last.get("updated")
+        if isinstance(updated, (int, float)):
+            age = f"; the report was last written {max(0.0, time.time() - updated):.0f}s ago"
     raise SystemExit(
         f"{path} did not report {expect_seats} extra seat(s) "
-        f"(roles: {', '.join(expect_roles) or 'any'}) in {wait_seconds:g}s{detail}"
+        f"(roles: {', '.join(expect_roles) or 'any'}) in {wait_seconds:g}s{detail}{age}"
     )
 
 
@@ -215,20 +312,35 @@ def main() -> None:
         action="store_true",
         help="check only the extra seats (for use inside the traffic container)",
     )
+    parser.add_argument(
+        "--progress-seconds",
+        type=float,
+        default=30.0,
+        help="how often to report what the seat report says while waiting (default: %(default)s)",
+    )
     arguments = parser.parse_args()
     if arguments.wait_seconds <= 0:
         parser.error("--wait-seconds must be positive")
+    if arguments.progress_seconds <= 0:
+        parser.error("--progress-seconds must be positive")
     if arguments.expect_seats < 0:
         parser.error("--expect-seats cannot be negative")
     if arguments.fleet_only and arguments.fleet is None:
         parser.error("--fleet-only needs --fleet")
     roles = tuple(role.strip() for role in arguments.expect_roles.split(",") if role.strip())
     if arguments.fleet is not None and arguments.fleet_only:
+        print(
+            f"waiting up to {arguments.wait_seconds:g}s for {arguments.expect_seats} "
+            f"extra seat(s) (roles: {', '.join(roles) or 'any'}) in {arguments.fleet}",
+            flush=True,
+        )
         fleet = wait_for_fleet(
             arguments.fleet,
             wait_seconds=arguments.wait_seconds,
             expect_seats=arguments.expect_seats,
             expect_roles=roles,
+            progress_seconds=arguments.progress_seconds,
+            progress=print,
         )
         print(f"extra miners ready: {describe_fleet(fleet)}")
         return
@@ -252,6 +364,8 @@ def main() -> None:
             wait_seconds=arguments.wait_seconds,
             expect_seats=arguments.expect_seats,
             expect_roles=roles,
+            progress_seconds=arguments.progress_seconds,
+            progress=print,
         )
         print(f"extra miners ready: {describe_fleet(fleet)}")
 

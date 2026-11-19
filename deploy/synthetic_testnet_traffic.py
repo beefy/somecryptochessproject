@@ -1620,6 +1620,11 @@ def run(
     )
     if extras is None:
         extras = extras_for(client, options=options, params=params, status_path=FLEET_STATUS_PATH)
+    if extras.fleet is not None:
+        # Announce before the first cycle: `/stack/synthetic-fleet.json` is what a
+        # deploy reads to tell a seated fleet from a missing one, and the first
+        # cycle only reaches `start_all` after it has started funding wallets.
+        extras.fleet.announce()
     reports: list[CycleReport] = []
     completed = 0
     try:

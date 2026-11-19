@@ -159,8 +159,16 @@ jobs:
         # The slow seat and the GNU Chess seat are children of the traffic
         # container, not compose services, so `docker compose ps` cannot show them
         # and a deploy that failed to seat one looks exactly like one that worked.
-        # The generator publishes what it seated to /stack at the start of every
-        # cycle; this waits for the first cycle to register both roles.
+        # The generator publishes what it seated to /stack (announced at
+        # start-up, rewritten before and after each seating attempt); this waits
+        # for the first cycle to register both roles.
+        #
+        # A seat registers by sending a transaction, so no seat can come online
+        # until a block includes it, and a block is one per mine interval. The
+        # budget below covers a slow first game on top of that; the checker prints
+        # what the report says every 30s and fails at once on a cause waiting
+        # cannot clear (a host budget under two seats, or a missing engine
+        # binary), so a stall names the reason instead of hanging.
         run: |
           set -eu
           ssh testnet "cd '$DEPLOY_DIR' \
@@ -168,7 +176,7 @@ jobs:
               python /app/deploy/check_testnet_stack.py \
                 --fleet /stack/synthetic-fleet.json \
                 --expect-seats 2 --expect-roles slow,gnuchess \
-                --fleet-only --wait-seconds 900"
+                --fleet-only --wait-seconds 1800 --progress-seconds 30"
 
       - name: Verify the public testnet endpoint
         run: |

@@ -419,6 +419,30 @@ def test_start_all_publishes_the_seats_it_holds(fleet: _FleetFactory, tmp_path: 
     assert payload["capacity"]["allowed"] == 2
     assert payload["failed"] == []
     assert payload["updated"] > 0
+    assert payload["phase"] == "online"
+
+
+def test_announce_publishes_the_plan_before_any_seat_is_tried(
+    fleet: _FleetFactory, tmp_path: Path
+) -> None:
+    """A chain that has stopped mining freezes seating before it can report.
+
+    Registration is a transaction, so a fleet whose first seat never confirms
+    would publish nothing at all -- and the deploy reads this file to tell a
+    missing seat from a slow one. ``announce`` writes the budget and roles up
+    front, and the seats fill in as ``start_all`` seats them.
+    """
+    node = _Node(registered=True)
+    extra = fleet(node.transport())
+    extra.status_path = tmp_path / "synthetic-fleet.json"
+
+    extra.announce()
+
+    payload = json.loads(extra.status_path.read_text(encoding="utf-8"))
+    assert payload["phase"] == "starting"
+    assert payload["online"] == []
+    assert payload["capacity"]["allowed"] == 2
+    assert fleet.commands == []
 
 
 def test_a_starved_host_is_published_with_its_reason(fleet: _FleetFactory, tmp_path: Path) -> None:
@@ -433,6 +457,7 @@ def test_a_starved_host_is_published_with_its_reason(fleet: _FleetFactory, tmp_p
     payload = json.loads(extra.status_path.read_text(encoding="utf-8"))
     assert payload["online"] == []
     assert payload["reason"] == "a test budget"
+    assert payload["phase"] == "starved"
     assert fleet.commands == []
 
 

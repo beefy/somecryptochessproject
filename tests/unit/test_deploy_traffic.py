@@ -580,6 +580,9 @@ class _RecordingFleet:
     started: tuple[str, ...] = ("synthetic-miner-1",)
     closed: int = 0
 
+    def announce(self) -> None:
+        self.seen["announce"] = self.admitted()
+
     def churn(self, rng: random.Random, *, grant: object = None) -> miners.ChurnReport:
         self.seen["churn"] = self.admitted()
         self.seen["grant"] = grant
@@ -964,6 +967,28 @@ def test_run_stops_the_miners_it_was_given(node: NodeService) -> None:
 
     assert len(reports) == 1
     assert fleet.closed == 1
+
+
+def test_run_announces_the_fleet_before_the_first_cycle(node: NodeService) -> None:
+    """The report must exist even if the first cycle never gets to seat a miner.
+
+    A seat registers by transaction, so a chain that has stopped producing blocks
+    freezes `start_all` before it publishes anything. Announcing first leaves the
+    deploy a readable file -- and a phase that says why nothing is online yet.
+    """
+    fleet = _RecordingFleet(seen={}, admitted=lambda: 0)
+    with httpx.Client(transport=_transport(node), base_url="http://node") as client:
+        traffic.run(
+            client,
+            options=_quiet_options(max_wallets=4, extra_miners=0),
+            cycles=1,
+            sleep=lambda seconds: None,
+            extras=traffic.Extras(fleet=fleet),
+        )
+
+    assert list(fleet.seen)[:2] == ["announce", "churn"], (
+        "the fleet was announced after the cycle started"
+    )
 
 
 def test_run_builds_the_extras_from_its_options(

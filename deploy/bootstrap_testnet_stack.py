@@ -231,7 +231,7 @@ def load_stack(directory: Path) -> tuple[BootstrapMiner, ...]:
     return tuple(miners)
 
 
-def _tip_timestamp(service: NodeService) -> int:
+def _tip_timestamp(service: NodeService, *, height: int) -> int:
     """The next block's timestamp: the wall clock, but always after the tip.
 
     Walking forward from the tip alone is what a simulated devnet does, and it dates every
@@ -240,13 +240,20 @@ def _tip_timestamp(service: NodeService) -> int:
     two-year hole at the bottom of an otherwise current chain, which the analysis notebook
     and the explorer both have to explain away.
 
-    The ``tip + target`` floor keeps the bootstrap's spacing at the target, which is what
-    the retarget reads. It runs at most one bootstrap window ahead of the wall clock (20
-    minutes on testnet), well inside ``MAX_FUTURE_SECONDS``, and the first real block only
-    has to be newer than that.
+    The walk is backdated by the blocks still to come, so the window *ends* at the wall
+    clock: block ``height`` is stamped ``now - (BOOTSTRAP_HEIGHT - height) * target``.
+    Stamping block 1 at ``now`` instead would put the last bootstrap block a whole window
+    ahead of the clock (19 minutes on testnet), and the node's settler paces itself with
+    ``clock() - tip_timestamp >= mine_interval``: it could not build the first real block
+    until that window had elapsed, so a fresh deploy would sit at ``BOOTSTRAP_HEIGHT``
+    with registrations and proofs queued in the mempool and no block to include them.
+    Backdating keeps the target spacing the retarget reads -- every gap is still exactly
+    ``target_block_seconds`` -- and never dates a block before the genesis stamp.
     """
     tip = service.chain.state.timestamps[-1]
-    return max(service.clock(), tip + service.params.target_block_seconds)
+    params = service.params
+    ahead = max(0, BOOTSTRAP_HEIGHT - height)
+    return max(service.clock() - ahead * params.target_block_seconds, tip + 1)
 
 
 def _add(pool: Mempool, tx: Transaction) -> None:
@@ -380,7 +387,7 @@ def build_chain(
             chain=service.chain,
             mempool=pool,
             miner_address=zero_address(params),
-        ).build(timestamp=_tip_timestamp(service))
+        ).build(timestamp=_tip_timestamp(service, height=height))
         if block is None:
             raise BootstrapError(f"no block could be built at bootstrap height {height}")
         result = service.ingest_block(block)
