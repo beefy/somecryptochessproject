@@ -21,6 +21,7 @@ directly (docs/design/PROTOCOL.md section 2).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Final
 
 import bech32
@@ -129,14 +130,20 @@ def address_version(address: str) -> int:
     return decode_address(address).version
 
 
-def validate_address(address: str, network: str | NetworkParams) -> bool:
-    """Return whether ``address`` parses and belongs to ``network``."""
-    params = get_network(network)
+@lru_cache(maxsize=8192)
+def _validate_address_cached(address: str, hrp: str) -> bool:
+    """Decode once per distinct address; bech32 checksums are immutable."""
     try:
         decoded = decode_address(address)
     except AddressError:
         return False
-    return decoded.hrp == params.address_hrp
+    return decoded.hrp == hrp
+
+
+def validate_address(address: str, network: str | NetworkParams) -> bool:
+    """Return whether ``address`` parses and belongs to ``network``."""
+    params = get_network(network)
+    return _validate_address_cached(address, params.address_hrp)
 
 
 def address_for_public_key(public_key: bytes | bytearray, network: str | NetworkParams) -> str:

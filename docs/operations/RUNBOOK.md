@@ -280,17 +280,17 @@ same height.
 The other flag a deployment sets is the settler's pace:
 
 ```text
---mine-interval-seconds 60
+--mine-interval-seconds 30
 ```
 
 A block's timestamp is the wall clock, and the difficulty schedule reads those
 timestamps every `retarget_interval` blocks (heights 10, 20, 30 on testnet),
 comparing their span with `target_block_seconds * (retarget_interval - 1)`. A
-settler that builds a block on every poll makes a 60-second chain look
-two-second fast, and the retarget answers by raising `wins_required` -- one block
+settler that builds a block on every poll makes a 30-second chain look
+one-second fast, and the retarget answers by raising `wins_required` -- one block
 then has to carry two verified wins by the same miner, which the roster cannot
-supply in one epoch, so the chain stops there. `60` is testnet's
-`target_block_seconds`: one block per minute keeps the retarget window in its
+supply in one epoch, so the chain stops there. `30` is testnet's
+`target_block_seconds`: one block per half minute keeps the retarget window in its
 neutral band and `wins_required` at `1`. `GET /v1/difficulty` reports the current
 values and the retarget history. The bootstrap script paces its synthesized
 timestamps the same way.
@@ -314,7 +314,7 @@ pool is empty.
   of the clock freezes the chain until real time catches up -- and nothing can
   confirm in that window: registrations, availability reveals and grants all wait
   in the pool. A bootstrap that walked forward from `now` produced exactly that
-  gap (a full window, 19 minutes on testnet, which is what left a fresh deploy
+  gap (a full window, 9.5 minutes on testnet, which is what left a fresh deploy
   sitting at height 19 with its traffic bot's seats unregistered); the bootstrap
   now backdates its window to end at the wall clock. Compare `date +%s` with the
   tip's `timestamp` in `GET /v1/blocks?limit=1`: the difference is how long the
@@ -343,7 +343,7 @@ pool is empty.
   the retarget raised `k` at an epoch boundary, and one block now has to carry `k`
   wins by the same miner at the same height. Blocks with transactions still
   advance (a heartbeat block needs no proof) but no proof can settle, so the
-  stack has to be mined at the target pace: `--mine-interval-seconds 60`. `k`
+  stack has to be mined at the target pace: `--mine-interval-seconds 30`. `k`
   only moves at an epoch boundary and only outside the neutral band, so a chain
   that already raised it needs blocks averaging slower than 4/3 of the target to
   bring it back down; on a stack you control, `docker compose down -v` and a

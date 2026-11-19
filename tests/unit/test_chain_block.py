@@ -394,6 +394,23 @@ def test_a_proofless_block_earns_only_its_seal_work(
     assert heartbeat_connected.work < proof_connected.work
 
 
+def test_connect_still_verifies_a_signature_swapped_after_admission(
+    live_chain: Any, protocol_accounts: Any
+) -> None:
+    """The mempool reuses admission's check; consensus never does."""
+    from sccp.wallet.service import WalletService
+
+    chain = live_chain.chain
+    tx = WalletService(chain.params, chain.state).build_transfer(
+        live_chain.faucet, protocol_accounts["alice"].address, 1
+    )
+    block = _propose(chain, protocol_accounts["carol"].keypair, txs=(tx,))
+    forged = tx.model_copy(update={"signature": "00" * 3374})
+    tampered = block.model_copy(update={"transactions": (forged,)})
+    tampered = _header(tampered, merkle_root=merkle_root_of(tampered))
+    assert _reason(chain, tampered) is BlockFailure.TRANSACTIONS
+
+
 def test_connect_rejects_a_duplicated_transaction(
     live_chain: Any, chain_match: Any, miner_keys: dict[str, Any], protocol_accounts: Any
 ) -> None:

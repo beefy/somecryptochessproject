@@ -299,22 +299,28 @@ TESTNET: Final = NetworkParams(
     wins_required=1,
     k_min=1,
     k_max=5,
-    claim_window=64,
+    claim_window=128,
+    # Testnet blocks are 30 s. Every block- or epoch-denominated window that
+    # protects liveness is doubled from the old 60 s schedule, so a proof, a
+    # pending transaction, a maturity, a dispute and a snapshot keep the same
+    # wall-clock lifetime they had before; only inclusion gets faster.
+    mempool_ttl_blocks=128,
+    snapshot_interval=200,
     # Test networks seat the same small roster over and over; a zero cooldown
     # disables the rematch rule (PROTOCOL.md section 12.2) so every decisive game
     # can settle. Only mainnet enforces a cooldown.
     opponent_cooldown=0,
     seal_bits=0,
-    target_block_seconds=60,
+    target_block_seconds=30,
     retarget_interval=10,
     subsidy=coins_to_units(50),
-    coinbase_maturity=20,
+    coinbase_maturity=40,
     min_bond=coins_to_units(10),
-    registration_epochs=10,
-    unbond_delay=50,
+    registration_epochs=20,
+    unbond_delay=100,
     min_fee=1_000,
     lag_grace_ms=250,
-    timeout_dispute_window=2,
+    timeout_dispute_window=4,
     min_timeout_bond=coins_to_units(1),
     clock_witness_quorum=1,
     clock_witness_bond=coins_to_units(1),
@@ -323,7 +329,7 @@ TESTNET: Final = NetworkParams(
     nodes_per_move=50_000,
     book_version="dev-1",
     variants=(CHESS960,),
-    beacon_grace_blocks=2,
+    beacon_grace_blocks=4,
     max_block_bytes=1_048_576,
     max_pgn_bytes=262_144,
     max_tx_bytes=131_072,
@@ -382,6 +388,16 @@ DEVNET: Final = NetworkParams.model_validate(
         "retarget_enabled": False,
         "wins_required": 1,
         "min_bond": 0,
+        # Devnet is its own deterministic network; pin the windows so changing
+        # testnet's block cadence cannot rewrite a devnet fixture's history.
+        "claim_window": 64,
+        "mempool_ttl_blocks": 64,
+        "snapshot_interval": 100,
+        "coinbase_maturity": 20,
+        "registration_epochs": 10,
+        "unbond_delay": 50,
+        "timeout_dispute_window": 2,
+        "beacon_grace_blocks": 2,
         "genesis_timestamp": 1_700_000_000,
         "genesis_hash": "5e3465524fbf12874f77384baae18eec299068d96aa85ef8a34a3932b0b5f8a4",
     }

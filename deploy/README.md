@@ -89,7 +89,7 @@ proof to settle.
 | Service | Command | Purpose |
 | --- | --- | --- |
 | `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the four miner keyfiles, the three witness keyfiles (and their public-key files), the availability secrets, the passphrase file and `stack.json` |
-| `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 60 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
+| `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 30 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers all four miners for their variants, funds and registers the three clock witnesses, commits and reveals availability, writes `relay.json` from epoch 3 (and keeps it on a re-run) |
 | `seed` | `python -m deploy.seed_testnet_demo --stack /stack --node http://node:8645` | verifies the genesis-seeded SCCP/C960 pool and completed SCCP HTLC; falls back to creating them on a custom chain whose genesis does not |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
@@ -188,10 +188,10 @@ Two further settings make that arithmetic hold even when the games do not:
   proof. It signs what any wallet signs and its transfer goes through
   `POST /v1/tx` like any other, so the node admits or refuses it on the same
   terms. `docker compose logs -f drip` shows `dripped 1 units to sccpt1...`.
-- The node's settler runs with `--mine-interval-seconds 60`, the network's
+- The node's settler runs with `--mine-interval-seconds 30`, the network's
   `target_block_seconds`. A block's timestamp is the wall clock and the
   difficulty retarget reads those timestamps, so a settler that built a block on
-  every two-second poll made the chain look thirty times too fast; the schedule
+  every one-second poll made the chain look thirty times too fast; the schedule
   answered by raising `wins_required` to `2`, which asks one block to carry two
   wins by the same miner -- more than the roster supplies in an epoch -- and the
   chain stopped at the first block that demanded it. At one block per target

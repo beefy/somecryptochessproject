@@ -131,7 +131,7 @@ settlement report. `--fresh` deletes the chain and starts over.
 `--network testnet` bootstraps the published testnet chain instead of the devnet
 one, in the same `--chain-dir`. The relay, your seat, the clocks and the proof
 are unchanged: what changes is consensus — five blocks per epoch instead of one,
-a 60-second block target with difficulty retargeting instead of 1 second and
+a 30-second block target with difficulty retargeting instead of 1 second and
 none, and a 10-coin registration bond instead of none.
 
 ```bash

@@ -240,7 +240,7 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 | --- | --- | --- |
 | Network id / address HRP | `sccpt` | `sccp` |
 | Genesis | `genesis/testnet.json` | `genesis/mainnet.json` |
-| Target block time | 60 s | 600 s |
+| Target block time | 30 s | 600 s |
 | Wins per claim (`k`) | 1 | 3 (retargeted 1..10) |
 | Header seal difficulty | 0 bits | 16 bits (retargeted) |
 | Block subsidy | 50 coins | 50 coins, halves every 210,000 blocks |

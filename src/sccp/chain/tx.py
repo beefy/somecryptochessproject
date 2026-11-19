@@ -152,13 +152,26 @@ def resolve_public_key(state: State, tx: Transaction) -> str:
     )
 
 
-def check_sender_key(state: State, params: NetworkParams, tx: Transaction) -> str:
+def check_sender_key(
+    state: State,
+    params: NetworkParams,
+    tx: Transaction,
+    *,
+    verify_signature: bool = True,
+) -> str:
     """Verify the sender's hybrid signature and return the public key hex it used.
 
     The key must be the 1985-byte hybrid blob that re-encodes to ``tx.sender``;
     a key of any other length is a schema violation rather than a second scheme,
     and a signature is always the hybrid blob. Nothing here dispatches on a
     scheme: there is only one (docs/design/PROTOCOL.md section 2).
+
+    ``verify_signature=False`` still checks the key encoding, the address it
+    derives and the signature's shape, but skips the expensive hybrid
+    verification. It exists for pool maintenance, where the immutable
+    transaction was already verified at admission against the same txid. Block
+    validation never uses it: :func:`sccp.chain.block.apply_block_body` always
+    takes the default, so a mempool bug cannot make an invalid block valid.
     """
     key_hex = resolve_public_key(state, tx)
     try:
@@ -182,7 +195,7 @@ def check_sender_key(state: State, params: NetworkParams, tx: Transaction) -> st
         signature = bytes.fromhex(tx.signature)
     except ValueError:
         _fail(TxFailure.SIGNATURE, "signature is not valid hex")
-    if not hybrid_verify(raw_key, bytes.fromhex(txid(tx)), signature):
+    if verify_signature and not hybrid_verify(raw_key, bytes.fromhex(txid(tx)), signature):
         _fail(TxFailure.SIGNATURE, "hybrid signature does not cover the txid")
     return key_hex
 
@@ -968,12 +981,19 @@ def validate_transaction(
     *,
     height: int,
     for_mempool: bool = False,
+    verify_signature: bool = True,
+    size: int | None = None,
 ) -> None:
     """Run the full transaction checklist for ``tx`` at ``height``.
 
     ``for_mempool`` additionally rejects a transaction that is still valid on
     chain but already superseded in the pool; the pool itself enforces its own
     ``(sender, nonce)`` uniqueness, so the flag only documents intent.
+
+    ``verify_signature=False`` is for re-checking an entry the pool already
+    admitted (the transaction is frozen and its txid is unchanged). ``size``
+    likewise lets the pool reuse the canonical size it measured at admission
+    instead of serializing a multi-kilobyte transaction again.
     """
     if not isinstance(tx, Transaction):
         _fail(TxFailure.SCHEMA, f"expected a Transaction, got {type(tx).__name__}")
@@ -988,7 +1008,7 @@ def validate_transaction(
         _fail(TxFailure.SCHEMA, "payload must be an object")
 
     # Signature before nonce: a forger must not learn whether a nonce is free.
-    key_hex = check_sender_key(state, params, tx)
+    key_hex = check_sender_key(state, params, tx, verify_signature=verify_signature)
 
     account = state.account(tx.sender)
     if tx.nonce < account.nonce:
@@ -1023,9 +1043,9 @@ def validate_transaction(
     else:  # pragma: no cover - the enum is exhaustive
         _fail(TxFailure.TYPE, f"unsupported transaction type {tx.type!r}")
 
-    size = tx_size(tx)
-    if size > params.max_tx_bytes:
-        _fail(TxFailure.SIZE, f"transaction is {size} bytes, cap is {params.max_tx_bytes}")
+    actual_size = tx_size(tx) if size is None else size
+    if actual_size > params.max_tx_bytes:
+        _fail(TxFailure.SIZE, f"transaction is {actual_size} bytes, cap is {params.max_tx_bytes}")
 
     if account.public_key is None and tx.payload.get("public_key") != key_hex:
         _fail(TxFailure.SIGNATURE, "first use must reveal the sender's public key")

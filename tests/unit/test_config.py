@@ -70,7 +70,7 @@ def test_unknown_network_raises() -> None:
 
 def test_clock_and_timeout_parameters() -> None:
     assert TESTNET.lag_grace_ms == 250
-    assert TESTNET.timeout_dispute_window == 2
+    assert TESTNET.timeout_dispute_window == 4
     assert TESTNET.min_timeout_bond == 1 * UNITS_PER_COIN
     assert TESTNET.clock_witness_quorum == 1
     assert TESTNET.clock_witness_bond == 1 * UNITS_PER_COIN
@@ -86,6 +86,21 @@ def test_devnet_is_deterministic() -> None:
     assert DEVNET.wins_required == 1
     assert DEVNET.min_bond == 0
     assert DEVNET.genesis_timestamp == 1_700_000_000
+
+
+def test_testnet_windows_are_scaled_to_its_block_time() -> None:
+    """Halving the block interval must not halve a proof's or a tx's lifetime."""
+    assert TESTNET.target_block_seconds == 30
+    assert TESTNET.epoch_length == 5
+    # These were 64, 64, 100, 20, 50, 2 and 2 on the old 60-second schedule.
+    assert TESTNET.claim_window * TESTNET.target_block_seconds == 64 * 60
+    assert TESTNET.mempool_ttl_blocks * TESTNET.target_block_seconds == 64 * 60
+    assert TESTNET.snapshot_interval * TESTNET.target_block_seconds == 100 * 60
+    assert TESTNET.coinbase_maturity * TESTNET.target_block_seconds == 20 * 60
+    assert TESTNET.unbond_delay * TESTNET.target_block_seconds == 50 * 60
+    assert TESTNET.timeout_dispute_window * TESTNET.target_block_seconds == 2 * 60
+    assert TESTNET.beacon_grace_blocks * TESTNET.target_block_seconds == 2 * 60
+    assert TESTNET.registration_epochs == 20  # ten 5-minute epochs
 
 
 def test_params_are_frozen_and_hashable() -> None:
