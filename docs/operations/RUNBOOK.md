@@ -4,8 +4,15 @@ This is the short, operational companion to the design docs. It covers the
 stack in `docker-compose.yml`: one node, one relay, the deterministic bootstrap,
 two Stockfish miners and the two traffic generators that keep the chain in use.
 For deployment setup and cost, see
-[`TESTNET_DEPLOYMENT.md`](TESTNET_DEPLOYMENT.md). For the cloud-side resource
-checklist, see [`GCP_RESOURCE_SETUP.md`](GCP_RESOURCE_SETUP.md).
+[`../setup/TESTNET_DEPLOYMENT.md`](../setup/TESTNET_DEPLOYMENT.md). For the
+cloud-side resource checklist, see [`../setup/GCP_RESOURCE_SETUP.md`](../setup/GCP_RESOURCE_SETUP.md).
+
+When the stack is *broken* rather than merely busy, this page is the reference for
+how it is put together; [`README.md`](README.md) is the triage index and
+[`INCIDENT_RESPONSE.md`](INCIDENT_RESPONSE.md) is the process around it. Reach for
+those first when something is down: this page explains the stack, they explain
+what to do about it.
+
 
 ## Health checks
 
@@ -320,7 +327,7 @@ pool is empty.
   arrives. The miners' availability/reveal transactions are the heartbeat that
   still produces blocks; if `GET /v1/mempool` is empty, restart the miners with
   `--nonce-secret-file` (section 4.3 of
-  [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md)).
+  [`RUN_A_TESTNET_MINER.md`](../setup/RUN_A_TESTNET_MINER.md)).
 - **The tip stops mid-epoch with an empty mempool:** a block needs a proof or a
   transaction, and a proofless block takes exactly one transaction, so an epoch
   of `epoch_length` blocks needs that much ledger work to end. The two stack

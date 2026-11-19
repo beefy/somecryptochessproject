@@ -490,8 +490,8 @@ each one needs and where it ends, in [`docs/README.md`](docs/README.md):
 | [`guides/SEND_COINS.md`](docs/guides/SEND_COINS.md) | fund, transfer, fees and settlement |
 | [`guides/PLAY_AND_EXPORT.md`](docs/guides/PLAY_AND_EXPORT.md) | play on-chain and export the block's games |
 | [`guides/EXPLORE_THE_CHAIN.md`](docs/guides/EXPLORE_THE_CHAIN.md) | build the web app and play a signed table |
-| [`operations/RUN_A_DEVNET.md`](docs/operations/RUN_A_DEVNET.md) | a whole devnet from source, step by step |
-| [`operations/RUN_A_TESTNET_MINER.md`](docs/operations/RUN_A_TESTNET_MINER.md) | relay, engine miner, registration, availability |
+| [`setup/RUN_A_DEVNET.md`](docs/setup/RUN_A_DEVNET.md) | a whole devnet from source, step by step |
+| [`setup/RUN_A_TESTNET_MINER.md`](docs/setup/RUN_A_TESTNET_MINER.md) | relay, engine miner, registration, availability |
 | [`guides/TEST_DEVNET_BRIDGE_DEX.md`](docs/guides/TEST_DEVNET_BRIDGE_DEX.md) | bridge, DEX and Chess960 end to end |
 
 The browser wallet, native DEX and trustless ETH↔SCCP HTLC bridge are implemented.
@@ -502,12 +502,20 @@ and the remaining work (the optional federated `wETH` asset, more bridge chains
 and an external audit of `contracts/EthHtlc.sol`).
 
 To put the two-miner testnet on a GCP VM and connect the deploy workflow, see
-[`docs/operations/GCP_RESOURCE_SETUP.md`](docs/operations/GCP_RESOURCE_SETUP.md).
+[`docs/setup/GCP_RESOURCE_SETUP.md`](docs/setup/GCP_RESOURCE_SETUP.md).
 The current deployment is published at `http://app.proofofchess.com:8645`; the
 workflow connects to the VM over SSH
 through the apex name (`sccp@proofofchess.com`). Moving a deployment to
 a new project or domain -- the cutover that produced those names -- is
-[`docs/operations/DOMAIN_MIGRATION.md`](docs/operations/DOMAIN_MIGRATION.md).
+[`docs/setup/DOMAIN_MIGRATION.md`](docs/setup/DOMAIN_MIGRATION.md).
+
+Once it is deployed, the pages change tense: [`docs/operations/`](docs/operations/README.md)
+is what to do when something is wrong with it -- the triage table, the severity
+model, and one runbook per failure ([`CHAIN_STALLED.md`](docs/operations/CHAIN_STALLED.md),
+[`DATA_LOSS.md`](docs/operations/DATA_LOSS.md), [`TLS_AND_DNS.md`](docs/operations/TLS_AND_DNS.md),
+[`DEPLOY_FAILURES.md`](docs/operations/DEPLOY_FAILURES.md)) alongside the
+[`RUNBOOK.md`](docs/operations/RUNBOOK.md) for the stack itself.
+
 
 The apex `https://proofofchess.com/` is a static project overview. The explorer
 and wallet are one app deploy on `https://app.proofofchess.com`: nginx serves the
@@ -516,7 +524,7 @@ sends no CORS headers. A Caddy terminator in front holds one certificate per
 name. The hamburger menu in the top-left corner switches between the explorer,
 the wallet, Play, the DEX and the bridge by hash route (`#/`, `#/wallet`,
 `#/play`, `#/dex`, `#/bridge`), so the unlocked key stays in the tab. See
-[`docs/operations/EXPLORER_DEPLOYMENT.md`](docs/operations/EXPLORER_DEPLOYMENT.md).
+[`docs/setup/EXPLORER_DEPLOYMENT.md`](docs/setup/EXPLORER_DEPLOYMENT.md).
 
 A session never starts at move 1: the relay plays the book line the beacon draws
 for the match and hands you the position after it, so the script opens by
@@ -796,8 +804,11 @@ Two tests pin the parts a unit test could otherwise drift from:
 one node, one relay, a deterministic bootstrap and two Stockfish miners on
 testnet. `deploy/README.md` explains the stack and its published keys,
 [`docs/operations/RUNBOOK.md`](docs/operations/RUNBOOK.md) covers operations and
-[`docs/operations/TESTNET_DEPLOYMENT.md`](docs/operations/TESTNET_DEPLOYMENT.md)
-documents the merge-to-deploy workflow and its monthly cost.
+[`docs/setup/TESTNET_DEPLOYMENT.md`](docs/setup/TESTNET_DEPLOYMENT.md)
+documents the merge-to-deploy workflow and its monthly cost. When the deployed
+stack misbehaves, [`docs/operations/`](docs/operations/README.md) is the triage
+index and the per-failure runbooks.
+
 
 ### Releasing
 

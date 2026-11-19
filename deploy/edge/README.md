@@ -127,7 +127,7 @@ gcloud compute instances add-metadata "$EDGE" \
 Then set `vars.EDGE_SSH_PROXY_JUMP=1` and `vars.EDGE_DEPLOY_HOST=<user>@<internal IP>`;
 without the jump flag, `EDGE_DEPLOY_HOST` must be directly reachable from the
 runner (a self-hosted runner, or a deliberately widened rule — the same
-trade-off `docs/operations/GCP_RESOURCE_SETUP.md` describes for the primary).
+trade-off `docs/setup/GCP_RESOURCE_SETUP.md` describes for the primary).
 
 ```bash
 # the mirror's internal address: what EDGE_DEPLOY_HOST points at when jumping
@@ -141,7 +141,7 @@ Caddy cannot finish the HTTP-01 challenge until the name resolves to this VM.
 ## Deploy
 
 The VM needs Docker Engine and the Compose plugin (the primary's
-`docs/operations/GCP_RESOURCE_SETUP.md` section 5 has the Debian commands). The
+`docs/setup/GCP_RESOURCE_SETUP.md` section 5 has the Debian commands). The
 stack itself is two files — `docker-compose.yml` and `Caddyfile` — plus a `.env`
 that names the image, the mirror's domain and the primary URL.
 

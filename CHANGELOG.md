@@ -7,7 +7,47 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The documentation is split by tense: `docs/setup/` builds it, `docs/operations/`
+  repairs it.** The six pages that make something exist — `RUN_A_DEVNET.md`,
+  `RUN_A_TESTNET_MINER.md`, `TESTNET_DEPLOYMENT.md`, `GCP_RESOURCE_SETUP.md`,
+  `EXPLORER_DEPLOYMENT.md` and `DOMAIN_MIGRATION.md` — moved from
+  `docs/operations/` to `docs/setup/` with their links rewritten. `RUNBOOK.md`
+  stayed at its old path, because it is already an operating document and every
+  reference to it keeps working.
+
+### Added
+
+- **An operations folder written for the day after the deploy.** `docs/operations/`
+  now holds only pages that start from a symptom, each with the same five sections:
+  how to identify the fault, which sub-case it is, what to do now, what to do so it
+  does not recur, and how to prove the fix. `README.md` is the index: what is
+  running and what it costs to lose, a severity model (SEV1 consensus to SEV4
+  cosmetic), the five commands of a first triage, and two lists that matter more
+  than the rest — the actions that are always safe, and the ones that turn an
+  outage into data loss (`down -v` on the primary wipes `stack`, which is every key
+  on the network).
+- **`INCIDENT_RESPONSE.md`**: declare, roles, the six-step order of operations,
+  the rollback-versus-reset distinction this repository forces on an operator, a
+  change freeze during SEV1, comms templates and a postmortem outline.
+- **Eight scenario runbooks**, grounded in this deployment's real commands:
+  `PRIMARY_DOWN.md` (the instance/SSH/Docker/container ladder and curl exit codes),
+  `CHAIN_STALLED.md` (a block needs a decisive game — draws mint nothing — plus the
+  difficulty squeeze, rejected proofs, a node without `--mine`, and the
+  genesis-versus-block-1 test that separates a stale mirror from a fork),
+  `DATA_LOSS.md` (`chain.sqlite` cases, WAL-safe backups, restoring as the `sccp`
+  user, rebuilding from the mirror as a peer, and why the testnet's derivable
+  `stack` is a mainnet defect), `TLS_AND_DNS.md` (HTTP-01 needs port 80 forever,
+  the first-issue `tlsv1 alert` that is not a fault, ACME rate limits),
+  `DEPLOY_FAILURES.md` (where each workflow fails, "a green run is not a deploy",
+  three rollbacks of which two are safe), `MIRROR_OUTAGE.md` (rebuild the replica;
+  it owns nothing), `FAUCET_AND_KEYS.md` (the published policy document, refilling,
+  the key inventory, contain-rotate-verify) and `SECURITY_INCIDENT.md` (the
+  exposed-surface table, containment before diagnosis, abuse and volumetric paths).
+
 ## [0.30.0] - 2026-11-18
+
 
 ### Added
 
@@ -186,7 +226,7 @@ not itemised here.
   every action to the app. Two Caddy site blocks and two certificates replace the
   five name-based blocks, and the deploy publishes both releases from one commit.
   Old subdomain URLs are not redirected; the cutover and rollback are in
-  `docs/operations/DOMAIN_MIGRATION.md`.
+  `docs/setup/DOMAIN_MIGRATION.md`.
 
 ## [0.25.0] - 2026-11-16
 
@@ -379,7 +419,7 @@ not itemised here.
   `deploy-testnet-miners.yml`, the relay fixture in
   `src/web/src/lib/relay.test.ts`, and every `curl`, `--node`, `--peer` and
   `dig` example in `README.md`, `deploy/`, `docs/` and `analysis/`. New
-  `docs/operations/DOMAIN_MIGRATION.md` records the cutover in the order it has to run --
+  `docs/setup/DOMAIN_MIGRATION.md` records the cutover in the order it has to run --
   billing and the Compute API, VPC and firewall, static address and VM, DNS
   records, the GitHub variables and the host-key secret, the two deploys,
   verification, rollback, and decommissioning the old VM without deleting the
@@ -807,7 +847,7 @@ and a proofless block must carry exactly one transaction.
   listener on `443` answers that with `ERR_CONNECTION_TIMED_OUT`; `#/play` also
   signs with a key made in the page, which plain HTTP would put on the wire. The
   certificate lives in a `caddy_data` volume, so a deploy never re-issues it.
-- `docs/operations/EXPLORER_DEPLOYMENT.md`: what the deploy does, the GCP firewall rules
+- `docs/setup/EXPLORER_DEPLOYMENT.md`: what the deploy does, the GCP firewall rules
   (`tcp:80,tcp:443`) and
   `A` record it needs, the GitHub variables (all falling back to `TESTNET_*`),
   how TLS is issued and renewed, rollback and a troubleshooting table.
@@ -1160,10 +1200,10 @@ and an automated deployment workflow.
 - `.github/workflows/deploy-testnet-miners.yml`: builds and publishes the image
   to GHCR, then deploys it over SSH to the testnet VM without GCP credentials.
 - Operator documentation: `docs/operations/RUNBOOK.md` (restart, faucet, mining and
-  incident procedures), `docs/operations/TESTNET_DEPLOYMENT.md` (CI deployment and cost
+  incident procedures), `docs/setup/TESTNET_DEPLOYMENT.md` (CI deployment and cost
   overview), `docs/guides/CREATE_A_TESTNET_WALLET.md` (wallet and faucet quickstart),
-  `docs/operations/GCP_RESOURCE_SETUP.md` (VM, network, firewall and GitHub wiring), and an
-  expanded `docs/operations/RUN_A_TESTNET_MINER.md`.
+  `docs/setup/GCP_RESOURCE_SETUP.md` (VM, network, firewall and GitHub wiring), and an
+  expanded `docs/setup/RUN_A_TESTNET_MINER.md`.
 - Tests for the faucet, node miner, faucet CLI, deterministic bootstrap and
   cross-thread block persistence.
 
@@ -1219,7 +1259,7 @@ operator guides for wallets, transfers and miners.
     risk tables, attack trees and explicit non-goals, with code references.
   - Operator guides: `docs/guides/OPEN_A_WALLET.md` (create, back up, restore and
     inspect a keyfile), `docs/guides/SEND_COINS.md` (faucet funding, transfers, fees,
-    mempool settlement and troubleshooting) and `docs/operations/RUN_A_TESTNET_MINER.md`
+    mempool settlement and troubleshooting) and `docs/setup/RUN_A_TESTNET_MINER.md`
     (relay + miner quickstart, real engines, roster edits, registration,
     availability/reveal and operational safety), linked from the README.
 

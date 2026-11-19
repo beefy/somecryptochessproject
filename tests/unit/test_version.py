@@ -34,7 +34,7 @@ def test_the_browser_package_carries_the_same_release() -> None:
 
 
 def test_the_operator_guides_show_the_release_in_their_sample_output() -> None:
-    for name in ("docs/guides/INSTALL.md", "docs/operations/RUN_A_DEVNET.md"):
+    for name in ("docs/guides/INSTALL.md", "docs/setup/RUN_A_DEVNET.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
         assert f"sccp {__version__} (protocol v1)" in text, name
 

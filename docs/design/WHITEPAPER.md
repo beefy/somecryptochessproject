@@ -2064,7 +2064,7 @@ the engine-marked tests.
 - [`OPEN_A_WALLET.md`](../guides/OPEN_A_WALLET.md) — wallet creation, backup and
   restore.
 - [`SEND_COINS.md`](../guides/SEND_COINS.md) — transfers, fees and settlement.
-- [`RUN_A_TESTNET_MINER.md`](../operations/RUN_A_TESTNET_MINER.md) — the relay
+- [`RUN_A_TESTNET_MINER.md`](../setup/RUN_A_TESTNET_MINER.md) — the relay
   and miner operator guide.
 - [`README.md`](../../README.md) — overview, quickstart and command examples.
 - `data/openings.json` — the shipped opening book.

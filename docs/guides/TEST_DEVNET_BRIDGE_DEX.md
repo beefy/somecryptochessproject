@@ -1255,7 +1255,7 @@ sccp --network devnet --passphrase-file .devnet-stack/passphrase miner run \
 
 ## Related documentation
 
-- [`RUN_A_DEVNET.md`](../operations/RUN_A_DEVNET.md) — the base devnet, faucet,
+- [`RUN_A_DEVNET.md`](../setup/RUN_A_DEVNET.md) — the base devnet, faucet,
   wallets, transfers and miner pipeline.
 - [`BIG_PICTURE.md`](../design/BIG_PICTURE.md) — the bridge/DEX/variant design
   and the remaining work.

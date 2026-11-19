@@ -62,8 +62,8 @@ shipped, and are recorded so the lists below stay honest.
 | Variant assets and Chess960 settlement | 0.23.0, 0.25.0, 0.27.0 | `config.py: CHESS960`, `chain/tx.py`, `chain/block.py`, `miner --variant` |
 | Native DEX | 0.24.0 | `chain/dex.py`, `/v1/pools`, `src/web/src/views/dex`, `sccp dex` |
 | ETH↔SCCP HTLC bridge and signed order book | 0.24.0 | `chain/tx.py` (HTLC appliers), `bridge/`, `contracts/EthHtlc.sol`, `src/web/src/views/bridge`, `sccp bridge` |
-| Genesis premine and testnet bootstrap | 0.25.0 | `genesis/`, `docs/operations/TESTNET_DEPLOYMENT.md` |
-| Hosted app, landing page and split origins | 0.26.0 | `.github/workflows/deploy-explorer.yml`, `docs/operations/EXPLORER_DEPLOYMENT.md` |
+| Genesis premine and testnet bootstrap | 0.25.0 | `genesis/`, `docs/setup/TESTNET_DEPLOYMENT.md` |
+| Hosted app, landing page and split origins | 0.26.0 | `.github/workflows/deploy-explorer.yml`, `docs/setup/EXPLORER_DEPLOYMENT.md` |
 
 ---
 

@@ -730,7 +730,7 @@ environment; remove those separately if you are decommissioning the repository.
   details and smoke tests.
 - [`EXPLORER_DEPLOYMENT.md`](EXPLORER_DEPLOYMENT.md) — the web origin's firewall
   rules, the two DNS records, the proxies and both certificates.
-- [`RUNBOOK.md`](RUNBOOK.md) — operating and recovering the testnet.
+- [`RUNBOOK.md`](../operations/RUNBOOK.md) — operating and recovering the testnet.
 
 All pages, by task: [`docs/README.md`](../README.md).
 
