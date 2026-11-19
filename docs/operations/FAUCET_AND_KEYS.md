@@ -115,8 +115,12 @@ gcloud compute firewall-rules list --project=chessproofofwork --filter='name~ssh
 ```
 
 Close every SSH rule that is not needed, then remove keys that should not be
-there. A CI key open to `0.0.0.0/0` is a public door with a lock on it: check
-whether one exists, because a temporary rule has a way of becoming permanent.
+there. A CI key reachable from `0.0.0.0/0` is a door on a public street with a
+good lock: it is key-only, so nobody walks in, but the lock is the only thing
+between the internet and `sshd`. Check whether such a rule exists, including the
+untagged `default-allow-ssh` — a temporary rule has a way of becoming permanent,
+and it can outlive the reason it was created.
+
 
 **Rotate, in the order the blast radius grows.**
 
@@ -153,7 +157,9 @@ old credential once and watch it fail, then run the workflow and watch it pass.
 
 1. Keep SSH rules scoped: `sccp-edge-ssh-from-primary`, IAP for humans, and one
    GitHub rule as narrow as the runner's egress allows. Audit the list monthly —
-   it is four lines of output.
+   it is one command, and it must not be filtered to `name~sccp`, because
+   `default-allow-ssh` is untagged and matches nothing with that name.
+
 2. Watch the faucet balance and the grant rate. A drop with no new recipient
    addresses is a script, not users.
 3. Never let a key exist in two places. The moment `stack` is copied to a second

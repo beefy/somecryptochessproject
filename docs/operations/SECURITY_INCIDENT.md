@@ -20,19 +20,39 @@ is the question every investigation starts with.
 | Surface | Where | Intended exposure |
 | --- | --- | --- |
 | `:8645` node API | primary | public, unauthenticated, read and write — writes are signed transactions, so exposure is not authority |
-| `:8646` relay | primary | loopback only; the browser reaches it through `/relay` on the app origin |
+| `:8646` relay | primary | `sccp-testnet-relay` currently admits `0.0.0.0/0`, though [`../setup/GCP_RESOURCE_SETUP.md`](../setup/GCP_RESOURCE_SETUP.md) says to leave it closed unless external miners connect; the browser reaches it through `/relay` on the app origin, not directly |
 | `:80`/`:443` | primary | public, Caddy → nginx → `/srv`, plus `/v1` and `/relay` proxies |
-| `:22` | primary | `sccp-testnet-ssh`, and IAP |
+| `:22` | primary | reachable from `0.0.0.0/0` via `sccp-testnet-ssh`; authentication is key-only |
 | `:80`/`:443` | mirror | public; GET only, everything else `405` |
 | `:8645` | mirror | loopback only, **no firewall rule**, and there must never be one |
-| `:22` | mirror | `sccp-edge-iap-ssh` and `sccp-edge-ssh-from-primary`; any rule open to the internet is temporary and must be deleted and recorded |
+| `:22` | mirror | IAP (`35.235.240.0/20`), the primary's tag, and `sccp-edge-ssh-github` from `0.0.0.0/0`; plus the untagged `default-allow-ssh`, which no rule named `sccp-*` can close |
 
 ```bash
-gcloud compute firewall-rules list --project=chessproofofwork --filter='name~sccp' \
+gcloud compute firewall-rules list --project=chessproofofwork \
   --format='table(name,sourceRanges,allowed[].map().firewall_rule().list(),targetTags.list())'
 ssh sccp@proofofchess.com 'sudo ss -ltnp'
 ssh sccp@136.119.76.215 'sudo ss -ltnp'
 ```
+
+Do not filter that list by `name~sccp`: `default-allow-ssh` is untagged, so it
+applies to **every** instance in the network, and it does not match the filter.
+Deleting a rule named `sccp-*` and re-running a filtered list is how you convince
+yourself a port is closed while it is still answering on both VMs.
+
+Reachability and authentication are different questions, and this table is about
+the first one. Anyone can open a TCP connection to `:22` and read the banner;
+nobody without a key gets past it, because password and keyboard-interactive
+authentication are off and `PubkeyAuthentication` is on
+([`../setup/EXPLORER_DEPLOYMENT.md`](../setup/EXPLORER_DEPLOYMENT.md) proves both
+halves). That is the accepted trade-off for GitHub-hosted runners with no fixed
+source range — a known decision, not an accident.
+
+What it still costs, so the trade-off stays a decision: pre-authentication bugs in
+OpenSSH or the guest agent are reachable no matter how good the key policy is, and
+the answer to those is patching, not keys; a world-open rule lets a stolen key be
+used from anywhere instead of only from a known range; and the scan traffic that
+fills `auth.log` is the noise that hides the one `Accepted` line you are hunting.
+
 
 Compare those three outputs against the table. Anything listening that is not in
 the table, and anything allowed that the table does not justify, is the start of
@@ -163,8 +183,12 @@ height you checked at; it is the boundary of the investigation.
 ## Prevention
 
 1. **Audit the rule list monthly.** It is one `gcloud` command and it is the
-   difference between a temporary rule and a permanent one. Every rule open to
-   `0.0.0.0/0` should have a comment saying why, and there should be at most two.
+   difference between a temporary rule and a permanent one. For every rule open to
+   `0.0.0.0/0`, write down the one sentence that justifies it — and if a rule has
+   no such sentence, it is not justified. `default-allow-ssh` needs an explicit
+   disposition: delete it, tighten it to the IAP range, or accept it on the record,
+   knowing it exposes `:22` on every instance in the network.
+
 2. **Keep `:8645` on the mirror unpublished.** The mirror's whole design is "one
    HTTP name, GET only"; a rule for its API undoes it.
 3. **No long-lived credentials.** The deploy uses the job's `GITHUB_TOKEN`; humans
