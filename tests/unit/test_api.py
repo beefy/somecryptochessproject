@@ -159,6 +159,27 @@ def test_invalid_and_foreign_transactions_are_refused() -> None:
         service.submit_transaction(foreign)
 
 
+def test_a_payload_canonical_json_cannot_encode_is_a_bad_request() -> None:
+    """Admission hashes the payload before validating it, so both cases are a 400."""
+    service = _node()
+    tx = WalletService(DEVNET, service.chain.state).build_transfer(FAUCET, MINER_ADDRESS, 5_000)
+    as_float = tx.model_copy(update={"payload": {**tx.payload, "memo": 1.5}})
+    as_surrogate = tx.model_copy(update={"payload": {**tx.payload, "memo": "\ud800"}})
+    # json.dumps escapes the lone surrogate, so the request body is valid UTF-8
+    # even though the decoded payload is not, and the terminal would not show it.
+    escaped = json.dumps(as_surrogate.model_dump(mode="json", by_alias=True))
+    with _client(service) as client:
+        float_response = client.post("/v1/tx", json=as_float.model_dump(mode="json", by_alias=True))
+        surrogate_response = client.post(
+            "/v1/tx", content=escaped, headers={"content-type": "application/json"}
+        )
+        pool = client.get("/v1/mempool").json()
+    assert float_response.status_code == 400, float_response.text
+    assert surrogate_response.status_code == 400, surrogate_response.text
+    assert "surrogate" in surrogate_response.json()["detail"]
+    assert pool["transactions"] == []
+
+
 def test_duplicate_pending_transactions_are_refused() -> None:
     service = _node()
     tx = WalletService(DEVNET, service.chain.state).build_transfer(FAUCET, MINER_ADDRESS, 5_000)

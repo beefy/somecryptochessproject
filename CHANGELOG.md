@@ -65,6 +65,16 @@ not itemised here.
 
 ### Fixed
 
+- **A payload that canonical JSON cannot encode is now a typed rejection at every
+  step of the transaction and block checklists.** A float, an out-of-range integer
+  or a string carrying a surrogate code point escaped `validate_transaction`,
+  `apply_block_body` and mempool admission as a bare `SerializationError` -- and a
+  surrogate escaped as an unhandled `UnicodeEncodeError`, which is a 500 from
+  `POST /v1/tx`. The canonical walk now refuses surrogate code points outright, a
+  transaction reports `TxFailure.SCHEMA`, a block `BlockFailure.SCHEMA` and
+  admission a `MempoolError`, so a hostile payload gets the same 400 as any other
+  invalid one. A payload mutated into such a value after admission is dropped by
+  the existing txid guard instead of aborting a selection pass or a re-base.
 - **`scripts/play_miner.py` no longer calls the opponent's first reply a book
   ply.** The announcement read the relay's move list, so a reply that landed
   between joining and the first prompt was printed under "certified book plies:

@@ -98,6 +98,30 @@ def test_keys_colliding_after_nfc_are_rejected() -> None:
         canonical_json({"é": 1, "e\u0301": 2})
 
 
+@pytest.mark.parametrize("value", ["\ud800", "a\udfffz", "\ud83d\ude00"])
+def test_surrogate_code_points_are_rejected(value: str) -> None:
+    """UTF-8 cannot encode a surrogate, so the value has no canonical form.
+
+    ``normalize`` used to pass these through and ``canonical_json`` then failed
+    with a ``UnicodeEncodeError`` that is not an ``SccpError``.
+    """
+    with pytest.raises(SerializationError, match="surrogate"):
+        canonical_json(value)
+    with pytest.raises(SerializationError, match="surrogate"):
+        canonical_json({"value": value})
+    with pytest.raises(SerializationError, match="surrogate"):
+        normalize([{"nested": value}])
+
+
+def test_a_surrogate_key_is_rejected() -> None:
+    with pytest.raises(SerializationError, match="surrogate"):
+        canonical_json({"\ud800": 1})
+
+
+def test_ordinary_unicode_is_still_accepted() -> None:
+    assert canonical_json({"a": "é", "b": "😀"}) == '{"a":"é","b":"😀"}'.encode()
+
+
 def test_domain_hash_matches_golden(vectors: Vectors) -> None:
     golden = vectors["domain_hash"]
     assert domain_hash(golden["domain"], golden["payload"]).hex() == golden["hex"]

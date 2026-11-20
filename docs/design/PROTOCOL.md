@@ -27,7 +27,9 @@ rules; forward work is tracked in [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN
 - **Hash function.** `H(domain, payload) = SHA-256(domain.encode("utf-8") ||
   0x00 || canonical_json(payload))`, where `canonical_json` is sorted-key,
   compact, UTF-8, NFC-normalized JSON with no floats and integers in
-  `[-2**63, 2**64 - 1]`. `src/sccp/serialization.py` is the only encoder.
+  `[-2**63, 2**64 - 1]`. A string carrying a surrogate code point is rejected
+  rather than encoded: UTF-8 has no representation for one, so no such string
+  can have a canonical form. `src/sccp/serialization.py` is the only encoder.
   The beacon and pairing-score constructions in sections 6 and 7 are byte-level
   concatenations instead and specify their own input encoding. Section 8.5
   defines one more non-`H` construction, the stream fold, byte for byte.

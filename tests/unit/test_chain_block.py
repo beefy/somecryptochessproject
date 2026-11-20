@@ -411,6 +411,28 @@ def test_connect_still_verifies_a_signature_swapped_after_admission(
     assert _reason(chain, tampered) is BlockFailure.TRANSACTIONS
 
 
+@pytest.mark.parametrize("bad_value", [1.5, 2**64, "\ud800"], ids=str)
+def test_connect_rejects_a_body_that_cannot_be_canonicalized(
+    live_chain: Any, protocol_accounts: Any, bad_value: object
+) -> None:
+    """An unencodable payload has no merkle root, so the block is a schema failure.
+
+    ``_check_body`` sizes the block before it recomputes the merkle root; letting
+    ``canonical_json`` raise there meant an adversarial block escaped as a bare
+    ``SerializationError`` (or, for a surrogate, ``UnicodeEncodeError``).
+    """
+    from sccp.wallet.service import WalletService
+
+    chain = live_chain.chain
+    tx = WalletService(chain.params, chain.state).build_transfer(
+        live_chain.faucet, protocol_accounts["alice"].address, 1
+    )
+    block = _propose(chain, protocol_accounts["carol"].keypair, txs=(tx,))
+    broken = tx.model_copy(update={"payload": {**tx.payload, "memo": bad_value}})
+    tampered = block.model_copy(update={"transactions": (broken,)})
+    assert _reason(chain, tampered) is BlockFailure.SCHEMA
+
+
 def test_connect_rejects_a_duplicated_transaction(
     live_chain: Any, chain_match: Any, miner_keys: dict[str, Any], protocol_accounts: Any
 ) -> None:

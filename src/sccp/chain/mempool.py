@@ -21,7 +21,7 @@ from sccp.chain.state import State, epoch_end_height
 from sccp.chain.tx import apply_transaction, tx_size, txid, validate_transaction
 from sccp.chess.openings import OpeningBook
 from sccp.config import NetworkParams
-from sccp.errors import LedgerError, MempoolError, TxValidationError
+from sccp.errors import LedgerError, MempoolError, SerializationError, TxValidationError
 from sccp.protocol.models import BlockHeader, Transaction, WinProof
 
 
@@ -49,6 +49,20 @@ class MempoolEntry:
     txid: str
     added_height: int
     size: int
+
+
+def _current_txid(tx: Transaction) -> str | None:
+    """The txid of ``tx`` as it stands, or ``None`` if its payload cannot be encoded.
+
+    A frozen model still exposes its nested payload, so every maintenance path
+    compares the current txid with the admitted one and drops an entry that
+    changed. A payload that no longer canonicalizes is such a change, not a reason
+    to abort a selection pass or a re-base.
+    """
+    try:
+        return txid(tx)
+    except SerializationError:
+        return None
 
 
 @dataclass(slots=True)
@@ -113,7 +127,10 @@ class Mempool:
         admission always verifies the signature.
         """
         height = self.next_height if height is None else height
-        digest = txid(tx)
+        try:
+            digest = txid(tx)
+        except SerializationError as exc:
+            raise MempoolError(f"transaction rejected (schema): {exc}") from exc
         if digest in self.transactions:
             raise MempoolError(f"transaction {digest} is already in the mempool")
         key = (tx.sender, tx.nonce)
@@ -279,7 +296,7 @@ class Mempool:
             if used + entry.size > cap:
                 queues.pop(entry.tx.sender, None)
                 continue
-            if txid(entry.tx) != entry.txid:
+            if _current_txid(entry.tx) != entry.txid:
                 # A frozen transaction cannot normally change after admission;
                 # this guard keeps a mutated payload from reusing that check.
                 queues.pop(entry.tx.sender, None)
@@ -368,7 +385,7 @@ class Mempool:
         self._game_hashes = {proof.game_hash for proof in self.proofs.values()}
         self._projection = tip_state.copy()
         for entry in survivors:
-            if txid(entry.tx) != entry.txid:
+            if _current_txid(entry.tx) != entry.txid:
                 continue
             try:
                 self.add_transaction(
@@ -411,7 +428,7 @@ class Mempool:
         for entry in sorted(
             self.transactions.values(), key=lambda item: (item.tx.sender, item.tx.nonce)
         ):
-            if txid(entry.tx) != entry.txid:
+            if _current_txid(entry.tx) != entry.txid:
                 self.transactions.pop(entry.txid, None)
                 key = (entry.tx.sender, entry.tx.nonce)
                 if self._nonces.get(key) == entry.txid:

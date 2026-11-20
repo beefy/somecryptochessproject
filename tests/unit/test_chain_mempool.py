@@ -359,3 +359,32 @@ def test_a_payload_changed_after_admission_is_dropped_on_rebase(
     assert len(pool) == 0
     pool.reset(chain.state)
     assert len(pool) == 0
+
+
+def test_admission_reports_an_unencodable_payload_as_a_mempool_error(
+    devnet_chain: Any, protocol_accounts: Any
+) -> None:
+    """Admission hashes the tx before validating it, so it translates the failure."""
+    chain = devnet_chain
+    pool = _pool(chain)
+    tx = _transfer(chain, protocol_accounts["alice"].address)
+    tx.payload["memo"] = "\ud800"
+    with pytest.raises(MempoolError, match=r"rejected \(schema\)"):
+        pool.add_transaction(tx)
+    assert len(pool) == 0
+
+
+def test_a_payload_mutated_into_an_unencodable_value_is_dropped(
+    devnet_chain: Any, protocol_accounts: Any
+) -> None:
+    """The maintenance txid guard cannot hash ``1.5`` or a surrogate; it drops instead."""
+    chain = devnet_chain
+    selecting, resetting = _pool(chain), _pool(chain)
+    for pool, mutated in ((selecting, 1.5), (resetting, "\ud800")):
+        tx = _transfer(chain, protocol_accounts["alice"].address)
+        assert pool.add_transaction(tx) == txid(tx)
+        tx.payload["memo"] = mutated
+    assert selecting.select_transactions(height=1) == []
+    assert len(selecting) == 0
+    resetting.reset(chain.state)
+    assert len(resetting) == 0

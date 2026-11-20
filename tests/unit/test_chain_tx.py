@@ -150,6 +150,22 @@ def test_transfer_rejects_unknown_payload_keys(
     assert _reason(extra, ledger) is TxFailure.SCHEMA
 
 
+@pytest.mark.parametrize("bad_value", [1.5, 2**64, "\ud800", {"nested": [1.5]}, b"\x00"], ids=str)
+def test_a_payload_canonical_json_cannot_encode_is_a_schema_failure(
+    ledger: State, protocol_accounts: Mapping[str, Any], bad_value: object
+) -> None:
+    """An unencodable payload must be a ``TxFailure``, not a bare serialization error.
+
+    ``txid`` and ``tx_size`` both walk the payload; letting them raise first meant
+    block validation and mempool admission leaked ``SerializationError`` (or, for
+    a surrogate, an unhandled ``UnicodeEncodeError``) instead of a stable reason.
+    """
+    alice, bob = protocol_accounts["alice"], protocol_accounts["bob"]
+    tx = _wallet(ledger).build_transfer(alice.keypair, bob.address, 1)
+    broken = tx.model_copy(update={"payload": {**tx.payload, "public_key": bad_value}})
+    assert _reason(broken, ledger) is TxFailure.SCHEMA
+
+
 def test_transfer_rejects_a_bad_recipient(
     ledger: State, protocol_accounts: Mapping[str, Any]
 ) -> None:
