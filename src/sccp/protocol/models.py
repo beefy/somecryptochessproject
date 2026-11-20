@@ -246,7 +246,7 @@ class MatchCertificate(ProtocolModel):
     engine_black: EngineFingerprint
     variant: VariantName = STANDARD_VARIANT
     time_control: TimeControl = Field(
-        default_factory=lambda: TimeControl(initial_ms=1_800_000, increment_ms=0)
+        default_factory=lambda: TimeControl(initial_ms=600_000, increment_ms=0)
     )
     start_signatures: dict[Color, LedgerSignatureHex] = Field(default_factory=dict)
 

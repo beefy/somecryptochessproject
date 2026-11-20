@@ -54,6 +54,16 @@ def timeout_state(protocol_params: NetworkParams, protocol_accounts: Mapping[str
     return state
 
 
+def test_active_witnesses_track_epoch_and_bond(timeout_state: State) -> None:
+    """One definition of \"active\": the node's status count and the receipt check."""
+    address = next(iter(timeout_state.witnesses))
+    assert set(timeout_state.active_witnesses(0)) == {address}
+    assert set(timeout_state.active_witnesses(1_000)) == {address}
+    assert timeout_state.active_witnesses(1_001) == {}
+    timeout_state.witnesses[address].bond = 0
+    assert timeout_state.active_witnesses(0) == {}
+
+
 def _owner(match: Any, address: str) -> str:
     """The account name behind a seat address (the pairing decides who is white)."""
     for name, account in match.accounts.items():
@@ -364,6 +374,69 @@ def test_finalising_releases_the_bond_after_the_window(open_claim: tuple[State, 
 def test_finalising_an_unknown_claim_fails(signed_match: Any, timeout_state: State) -> None:
     with pytest.raises(TimeoutClaimError, match="no timeout claim"):
         timeout.finalise_claim(timeout_state, "00" * 32, HEIGHT + 10_000)
+
+
+def test_a_stall_costs_ten_percent_of_the_miner_bond(open_claim: tuple[State, Any, str]) -> None:
+    """The loser on time pays, and the charge is split claimant / witness / burn."""
+    state, match, claim_id = open_claim
+    record = state.timeout_claims[claim_id]
+    staller = state.account(record.accused)
+    staller.bonded = state.params.min_bond
+    slash = timeout.stall_slash_amount(state.params)
+    assert slash == state.params.min_bond * timeout.STALL_SLASH_BPS // 10_000
+    assert slash == state.params.min_bond // 10
+    claimant_before = state.account(record.claimant).balance
+    witness = match.accounts["carol"].address
+    witness_before = state.account(witness).balance
+    burned = slash - slash // 2 - slash * timeout.STALL_QUORUM_BPS // 10_000
+
+    closed = timeout.finalise_claim(state, claim_id, record.deadline_height + 1)
+    supplied = sum(account.balance + account.bonded for account in state.accounts.values())
+    collected = timeout.apply_stall_slash(state, closed, record.accused)
+
+    assert collected == slash
+    assert staller.bonded == state.params.min_bond - slash
+    assert state.account(record.claimant).balance == claimant_before + record.bond + slash // 2
+    assert state.account(witness).balance == witness_before + slash * 3 // 10
+    supply_after = sum(account.balance + account.bonded for account in state.accounts.values())
+    assert supplied - supply_after == burned
+    assert burned == slash * timeout.STALL_BURN_BPS // 10_000
+
+
+def test_the_stall_slash_is_charged_once(open_claim: tuple[State, Any, str]) -> None:
+    state, _match, claim_id = open_claim
+    record = state.timeout_claims[claim_id]
+    state.account(record.accused).bonded = state.params.min_bond
+    timeout.finalise_claim(state, claim_id, record.deadline_height + 1)
+    assert timeout.apply_stall_slash(state, record, record.accused) == timeout.stall_slash_amount(
+        state.params
+    )
+    bond_after_first = state.account(record.accused).bonded
+
+    assert timeout.apply_stall_slash(state, record, record.accused) == 0
+    assert state.account(record.accused).bonded == bond_after_first
+
+
+def test_a_withdrawn_staller_pays_from_its_balance(open_claim: tuple[State, Any, str]) -> None:
+    """Unregistering does not make a stall free: the balance is charged after the bond."""
+    state, _match, claim_id = open_claim
+    record = state.timeout_claims[claim_id]
+    staller = state.account(record.accused)
+    staller.bonded = 0
+    staller.balance = state.params.min_bond // 40  # less than the slash
+    expected = staller.balance
+    timeout.finalise_claim(state, claim_id, record.deadline_height + 1)
+
+    assert timeout.apply_stall_slash(state, record, record.accused) == expected
+    assert staller.balance == 0
+    assert staller.bonded == 0
+
+
+def test_the_stall_slash_must_name_the_accused(open_claim: tuple[State, Any, str]) -> None:
+    state, match, claim_id = open_claim
+    record = state.timeout_claims[claim_id]
+    with pytest.raises(TimeoutClaimError, match="accuses"):
+        timeout.apply_stall_slash(state, record, match.certificate.white)
 
 
 def test_an_equivocating_witness_loses_its_bond(signed_match: Any, timeout_state: State) -> None:

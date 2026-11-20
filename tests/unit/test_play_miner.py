@@ -84,7 +84,7 @@ def test_parse_move_takes_san_uci_and_annotation_variants(play: ModuleType) -> N
 
 
 def test_clocks_and_move_rows_are_rendered_for_a_player(play: ModuleType) -> None:
-    assert play.format_clock(FIXED_TIME_CONTROL.initial_ms) == "30:00.0"
+    assert play.format_clock(FIXED_TIME_CONTROL.initial_ms) == "10:00.0"
     assert play.format_clock(1_850) == "00:01.8"
     assert play.format_clock(-5) == "00:00.0"
     assert play.numbered_moves(["e4", "e5", "Nf3"]) == ["  1. e4 e5", "  2. Nf3"]

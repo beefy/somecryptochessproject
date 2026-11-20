@@ -103,8 +103,8 @@ competing honestly. It is not "cheating is impossible".
 | Sybil pairing | Pairing prefers identity-diverse opponents; bond and funding heuristics live at the operator layer (`protocol/pairing.py`) | Distinct infrastructure and independent funding defeat the heuristic |
 | Opponent shopping | Commit-reveal beacon selects opening and pairing; every node recomputes it (`protocol/beacon.py`, `protocol/pairing.py`) | Last-revealer bias when `drand_used = 0`; no slashing evidence for one bit |
 | Matchmaker censorship | Any node recomputes matchups from the beacon; miners may submit proofs earned elsewhere | Liveness still needs *some* relay |
-| Loser stalls to deny a win | Clocks auto-flag, receipts are signed, a bonded `timeout_claim` has a dispute window (`protocol/clocks.py`, `chain/timeout.py`) | Needs available witnesses; see forged timeout |
-| Forged timeout | Receipt signatures, monotonic plies, later-move dispute, claimant bond (`chain/timeout.py`) | A colluding witness quorum can still fabricate a flag |
+| Loser stalls to deny a win | Clocks auto-flag, receipts are signed, a bonded `timeout_claim` has a dispute window, and finalising charges the staller 10% of the miner bond split claimant/quorum/burn (`protocol/clocks.py`, `chain/timeout.py: apply_stall_slash`) | Needs available witnesses (the relay refuses to pair below quorum); see forged timeout |
+| Forged timeout | Receipt signatures, monotonic plies, later-move dispute, claimant bond (`chain/timeout.py`) | A colluding witness quorum can still fabricate a flag; the bond plus the 10% stall slash make a false claim expensive but not impossible |
 | Replayed game | `game_hash`/`match_id` registries, proof-id uniqueness, registries rebuilt on reorg (`chain/state.py`, `chain/tx.py`) | A game can be reused on a competing fork inside the finality window |
 | Self-assigned or inflated Elo | Ratings are not consensus state: no block field, transaction or route accepts a rating, and the node replays settled proofs with Glicko-2 (`ratings.py`, `node/service.py: ratings`, `tests/unit/test_ratings.py`) | Two colluding seats can trade wins and inflate each other; a rating measures results, not intent, and is provisional until 10 games |
 | Invalid block | Full validation on receipt and on replay, headers-first sync (`chain/block.py`, `chain/chain.py`, `node/service.py: sync_from`, `node/p2p.py: plan_sync`) | A bug in validation code; tested, not proven absent |
@@ -277,7 +277,7 @@ Open items that affect this model:
   cheating costs at least as much as competing; identical strong engines are
   indistinguishable from honest ones.
 - **Sybil resistance without stake.** Identity is economic.
-- **Human tournament rules.** v1 is fixed 30+0, no increments, no negotiation.
+- **Human tournament rules.** v1 is fixed 10+0, no increments, no negotiation.
 - **Sub-second trustless clocks.** Consensus verifies witness-signed receipts.
 - **Proprietary or modified engines.** Engine builds are identified by SHA-256 but
   not enforced by consensus. A weak or padded engine is not a fault the chain can

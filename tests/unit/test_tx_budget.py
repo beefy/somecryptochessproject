@@ -84,8 +84,8 @@ def _claim() -> tuple[Transaction, ClockEvidence]:
             seat=seats["white"] if ply % 2 == 0 else seats["black"],
             san="Nf3",
             received_at_ms=1_000_000 + ply * 4_000,
-            white_ms=1_800_000 - ply * 2_000,
-            black_ms=1_800_000 - ply * 2_000,
+            white_ms=600_000 - ply * 1_000,
+            black_ms=600_000 - ply * 1_000,
         )
         for ply in range(len(OPENING), PLIES)
     )

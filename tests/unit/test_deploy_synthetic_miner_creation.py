@@ -499,8 +499,8 @@ def test_the_pool_carries_the_slow_seat_and_a_second_engine() -> None:
     assert slow.label == "slow"
     assert slow.move_delay_seconds == miners.SLOW_MOVE_DELAY_SECONDS
     assert slow.resign_after_plies is None, "resigning would end the game before the flag"
-    # 30 minutes of clock at 110 s a move: ~17 of its own turns before the flag.
-    assert slow.move_delay_seconds * 17 > 30 * 60
+    # 10 minutes of clock at 36 s a move: ~17 of its own turns before the flag.
+    assert slow.move_delay_seconds * 17 > 10 * 60
 
     alternate = miners.miner_line_up(miners.ALTERNATE_INDEX)
     assert alternate.label == miners.ALTERNATE_ENGINE

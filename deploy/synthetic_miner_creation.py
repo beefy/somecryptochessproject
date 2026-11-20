@@ -124,7 +124,7 @@ RESIGN_AFTER_PLIES: Final = 60
 SLOW_INDEX: Final = 0
 """The pool member that deliberately loses on time.
 
-Every honest miner finishes a 30+0 game long before a clock runs out, so the
+Every honest miner finishes a 10+0 game long before a clock runs out, so the
 flag receipt, the bonded ``timeout_claim`` and the witness checkpoint they
 depend on are never produced by normal play. This seat waits
 :data:`SLOW_MOVE_DELAY_SECONDS` before searching on every one of its turns: the
@@ -133,8 +133,8 @@ the clock is gone. It resigns nothing -- resigning would end the game before the
 flag -- so the opponent gets exactly the timeout the protocol has to settle.
 """
 
-SLOW_MOVE_DELAY_SECONDS: Final = 110.0
-"""Long enough to spend 30 minutes of clock in about seventeen own moves."""
+SLOW_MOVE_DELAY_SECONDS: Final = 36.0
+"""Long enough to spend 10 minutes of clock in about seventeen own moves."""
 
 ALTERNATE_INDEX: Final = 1
 """The pool member that runs a different engine from the rest of the roster.

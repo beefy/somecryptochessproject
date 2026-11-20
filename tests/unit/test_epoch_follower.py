@@ -105,6 +105,31 @@ def _follower(signed_match, node: _StubNode) -> tuple[EpochFollower, Matchmaker]
     return EpochFollower(params=signed_match.params, matchmaker=state, node=node), state
 
 
+def test_the_follower_records_the_node_witness_count(signed_match) -> None:
+    """The relay gates pairing on coverage, so every poll refreshes it (PROTOCOL.md 8.4)."""
+    node = _StubNode(height=0)
+    node.status = lambda: {"height": 0, "witnesses": 3}
+    follower, state = _follower(signed_match, node)
+    assert follower.step() is None
+    assert state.witness_coverage == 3
+
+    # A node that stops reporting the field leaves the last known count alone:
+    # absence is not the same statement as zero.
+    node.status = lambda: {"height": 0}
+    assert follower.step() is None
+    assert state.witness_coverage == 3
+
+
+def test_a_node_witness_count_must_be_a_usable_count(signed_match) -> None:
+    for bad in ("two", True, -1):
+        node = _StubNode(height=0)
+        node.status = lambda bad=bad: {"height": 0, "witnesses": bad}
+        follower, state = _follower(signed_match, node)
+        with pytest.raises(RelayError, match="usable 'witnesses'"):
+            follower.step()
+        assert state.witness_coverage is None
+
+
 def test_missing_height_is_refused(signed_match) -> None:
     node = _StubNode(height=0)
     node.status = lambda: {"network": "devnet"}  # type: ignore[method-assign]

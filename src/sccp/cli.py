@@ -1167,6 +1167,16 @@ def matchmaker_run(
         float,
         typer.Option("--node-poll-seconds", help="How often to ask the node for the tip height."),
     ] = 2.0,
+    allow_unwitnessed_rounds: Annotated[
+        bool,
+        typer.Option(
+            "--allow-unwitnessed-rounds",
+            help=(
+                "Pair even when the epoch has fewer clock witnesses than "
+                "clock_witness_quorum (devnet only: such flags cannot be settled)."
+            ),
+        ),
+    ] = False,
     origin: Annotated[
         list[str] | None,
         typer.Option(
@@ -1187,7 +1197,10 @@ def matchmaker_run(
     With ``--node`` the relay also follows the chain: the config's epoch is only
     the starting point, and each later epoch the chain opens replaces the
     beacon and roster, so matches always reference the epoch whose proofs the
-    chain accepts.
+    chain accepts. It also counts that epoch's clock witnesses and refuses to
+    pair while the count is under ``clock_witness_quorum``, because a flag played
+    there could never be settled on chain; ``--allow-unwitnessed-rounds`` turns
+    the check off for a devnet that has no witness fleet.
     """
     if sweep_seconds <= 0:
         _fail("--sweep-seconds must be positive", code=2)
@@ -1201,6 +1214,8 @@ def matchmaker_run(
         document = {**document, "open_round": round_number}
     if round_seconds is not None:
         document = {**document, "round_seconds": round_seconds}
+    if allow_unwitnessed_rounds:
+        document = {**document, "require_witnesses": False}
     witness = None
     if witness_key is not None:
         passphrase = _passphrase(ctx, confirm=False)

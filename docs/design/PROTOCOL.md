@@ -149,7 +149,7 @@ must agree with it.
 
 A `time_forfeit` PGN is accepted only when its `TimeControl` matches the
 certificate and the accompanying clock evidence verifies. The protocol uses one
-fixed 30+0 control for every match; matchmaking does not offer per-match
+fixed 10+0 control for every match; matchmaking does not offer per-match
 choices. See section 8.2 below and the clock implementation in
 `src/sccp/protocol/clocks.py`.
 
@@ -319,7 +319,7 @@ to check the prefix:
  "opening": {"book_version": "v1", "line_id": 17, "hash": "hex",
              "moves": ["e4", "e5", "Nf3"]},
  "engine_white": "sha256-or-mock-id", "engine_black": "...",
- "time_control": {"initial_ms": 1800000, "increment_ms": 0},
+ "time_control": {"initial_ms": 600000, "increment_ms": 0},
  "start_signatures": {"white": "hex", "black": "hex"}}
 ```
 
@@ -330,7 +330,7 @@ Both seats sign this payload with `H("sccp/v1/certificate", …)`:
  "seats": ["<sorted seat A>", "<sorted seat B>"],
  "colors": {"white": "<address>", "black": "<address>"},
  "opening_hash": "hex",
- "time_control": {"initial_ms": 1800000, "increment_ms": 0},
+ "time_control": {"initial_ms": 600000, "increment_ms": 0},
  "engine_fingerprints": {"white": "...", "black": "..."}}
 ```
 
@@ -342,8 +342,8 @@ each seat's ML-DSA-65 key to the match, so a quantum attacker cannot impersonate
 a player for the moves that follow.
 
 The certificate commits to `time_control = {initial_ms, increment_ms}` and the
-signed payload covers it. Every match uses one protocol-fixed **30+0** control
-(`initial_ms = 1_800_000`, `increment_ms = 0`); matchmaking never offers or
+signed payload covers it. Every match uses one protocol-fixed **10+0** control
+(`initial_ms = 600_000`, `increment_ms = 0`); matchmaking never offers or
 accepts a per-match choice. See section 8.4 for the timed-session API.
 
 ### 8.2 Result attestation
@@ -390,7 +390,7 @@ is included in the move list. A `time_forfeit` PGN without a matching
 
 The relay is untrusted. It derives the round from public data and stores
 signatures; it never signs a result. It does keep the clock: every session runs
-the fixed **30+0** control (`TIMED_SESSIONS` in `sccp.miner.matchmaker`), charged
+the fixed **10+0** control (`TIMED_SESSIONS` in `sccp.miner.matchmaker`), charged
 from the relay's own monotonic clock, and the receipts it issues are the evidence
 the chain's bonded claim lifecycle (section 10.4) settles.
 
@@ -462,7 +462,7 @@ liveness choice, not evidence. Restart-safe state is a JSON document
 replay their SAN list on load and live clocks are re-based as described above.
 
 `sccp matchmaker run --config relay.json [--witness-key relay.key]
-[--round-seconds 900] [--sweep-seconds 1]` reads:
+[--round-seconds 900] [--sweep-seconds 1] [--allow-unwitnessed-rounds]` reads:
 
 ```json
 {"network": "testnet",
@@ -477,7 +477,8 @@ replay their SAN list on load and live clocks are re-based as described above.
  "clock_witness_quorum": 1,
  "clock_witness_bond": 1,
  "round_seconds": 900,
- "open_round": 0}
+ "open_round": 0,
+ "require_witnesses": true}
 ```
 
 `engine` is the fingerprint the seat committed to at registration; `open_round`
@@ -488,6 +489,18 @@ passed, up to `rounds_per_epoch`. `--witness-key` makes the relay sign its
 receipts. A miner given the matching `--relay-witness-key` (the witness's public
 key in hex) verifies those receipts locally before it builds a `timeout_claim`;
 without it the claim is refused rather than guessed at.
+
+`require_witnesses` (default `true`) is also relay policy: a relay started with
+`--node` reads the node's `/v1/status` on every poll, and while the epoch's
+active clock-witness count is *known* to be below the network's
+`clock_witness_quorum` it refuses to open a round. A match played below the
+quorum can produce a flag that no `timeout_claim` can ever settle (step 1 of
+section 10.4 needs `clock_witness_quorum` witness signatures), so the seat that
+would lose on time gains by stalling — refusing to pair is the honest answer,
+and play resumes when coverage returns. An unknown count is not zero: nodes that
+predate the field, and relays that are not following a node, do not gate.
+`--allow-unwitnessed-rounds` (or `"require_witnesses": false`) is the devnet
+escape hatch, where no witness service runs at all.
 
 ### 8.5 Stream commitments
 
@@ -582,7 +595,7 @@ Receipt leaves use the exact payload the witness signs:
 ```json
 {"network": "...", "kind": "move" | "flag", "match_id": "hex", "ply": 12,
  "seat": "<address>", "san": "Nf6", "received_at_ms": 1700000000000,
- "white_ms": 1790000, "black_ms": 1800000}
+ "white_ms": 590000, "black_ms": 600000}
 ```
 
 (`san` is absent on a flag leaf.) The chain-level `timeout_claim` validator
@@ -872,6 +885,20 @@ The lifecycle (implemented in `src/sccp/chain/timeout.py`) is:
    must exist, match the proof's certificate, be opened by the proof's winner
    and be undisputed; the bond then returns to the claimant. A claim may only
    finalise in a block **after** its deadline.
+4. **The stall slash.** The bond makes a *false* claim expensive; the stall
+   slash makes a *real* stall expensive. When finalisation happens, the accused
+   seat pays `min_bond * 1000 / 10000` — 10% of the protocol's miner bond, 50
+   SCCP on mainnet — which is taken from its bond first and from its spendable
+   balance after that, so unregistering before the claim lands does not escape
+   the charge. The record remembers the charge (`slashed`), so re-finalising the
+   same claim cannot debit twice, and a proof whose loser is not the claim's
+   `accused` seat is refused. The proceeds split 50/30/20
+   (`STALL_CLAIMANT_BPS`, `STALL_QUORUM_BPS`, `STALL_BURN_BPS`): half to the
+   claimant, 30% in equal parts to the witnesses whose final flag receipt
+   settled the claim, and the last 20% burned — burned by *not* crediting it, so
+   a scan of the ledger sees supply shrink rather than a burn counter move. A
+   seat with nothing left to take pays what it has, and the claim is still
+   finalised: the slash is a cost, not a precondition.
 
 `slash_evidence` covers clock-witness equivocation only: it carries
 `evidence = {witness, receipts}` with exactly two receipts of the same
@@ -1245,12 +1272,13 @@ amount in escrow, `claimed` debits the sender and credits the beneficiary, and
 that opens its hashlock. Genesis pools and HTLCs are limited to height 0 and are
 part of `state_root`.
 
-Mainnet allocates **10% of the SCCP cap** and **5% of each variant's cap** at
-genesis. The public tranche addresses and basis-point splits live in
-`genesis/mainnet-premine.json`; private keys are not part of the repository.
-Today that is 2,100,000 SCCP and 1,050,000 C960, split across bootstrap,
-liquidity and ecosystem tranches. A newly added variant must add its 500-basis-
-point entry before `scripts/make_genesis.py` will generate a document.
+Mainnet allocates **1 basis point of the SCCP cap** — 2,100 SCCP — at genesis as
+a bootstrap grant, and **no variant supply**: every C960 in existence is mined
+(or, on testnet only, seeded as demo liquidity). The public address and basis
+point live in `genesis/mainnet-premine.json`; the private key is not part of the
+repository. `scripts/make_genesis.py` refuses to generate a document unless the
+manifest's tranches total exactly that one basis point, so neither an accidental
+mint nor a silently dropped grant can change the chain.
 
 Testnet also seeds an SCCP/C960 pool with 5 coins per side and one completed
 1-SCCP HTLC, using published demo keys, so `GET /v1/pools` and `GET /v1/htlcs`
@@ -1276,7 +1304,7 @@ an orphan block on `POST /v1/blocks` → 202.
 
 | Method | Path | Response |
 | --- | --- | --- |
-| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals |
+| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals, and the epoch's active clock-witness count (`witnesses`, which the relay gates pairing on) |
 | GET | `/v1/params` | the network parameters, including each variant and the asset it mints |
 | GET | `/v1/blocks` | `BlockList`: newest first (`?limit=`, default 25, max 200; `?before_height=` for the next page), with proof counts per variant |
 | GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |

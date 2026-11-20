@@ -34,7 +34,7 @@ There are three ways to see a miner run:
    (`miner availability`), then **reveals** the nonce one epoch later
    (`miner reveal`) so the epoch beacon can be derived.
 3. **Polls the relay** for its assigned matches, joins its seat, plays with the
-   engine under a real **30+0** clock, and signs its moves.
+   engine under a real **10+0** clock, and signs its moves.
 4. **Co-signs the result** and turns the relay transcript into a `WinProof`.
 5. **Announces the proof** to a node (`--node`), plus a timeout claim when it won
    on the clock and the relay's receipts are signed by a witness it trusts.
@@ -175,6 +175,13 @@ matchmaker on 127.0.0.1:8646 for testnet epoch 3 (1 matches, round 0, witness no
   `--node` the relay stays on the epoch in the config file.
 - `--round-seconds 900` makes the relay open the next round every 15 minutes.
   Without it, only the round named in `relay.json` (or `--round N`) is opened.
+- The relay also refuses to open a round while the epoch's clock witnesses are
+  below `clock_witness_quorum` (3 on testnet): it reads `witnesses` from
+  `GET /v1/status` on every `--node` poll, and a match played short of the
+  quorum could never settle a flag on chain. `sccp node status` shows the same
+  number, and `sccp witness run` shows a witness going live. Pairing resumes on
+  its own when coverage returns; `--allow-unwitnessed-rounds` turns the gate off
+  (devnet only, where no witness service runs).
 - `--witness-key ./stack/keys/relay.key` signs the clock receipts. Create that
   keyfile first with `sccp wallet new --network testnet --out stack/keys/relay.key`
   and answer the passphrase prompt (or pass the same `--passphrase-file` when

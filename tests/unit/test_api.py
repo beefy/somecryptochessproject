@@ -59,6 +59,8 @@ def test_status_describes_the_chain() -> None:
     assert payload["mempool"] == {"transactions": 0, "proofs": 0}
     assert payload["minted"] >= 0
     assert isinstance(payload["minted_assets"], dict)
+    # The relay's pairing gate reads this: a fresh devnet has no witnesses yet.
+    assert payload["witnesses"] == 0
     service.close()
 
 

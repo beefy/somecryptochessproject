@@ -1,6 +1,6 @@
 # The big picture: a wallet, a bridge and a DEX
 
-> **Status (tree at 0.31.0).** Implemented except for the optional `wETH`
+> **Status (tree at 0.32.0).** Implemented except for the optional `wETH`
 > federation and the items marked **not built**. The browser wallet (section 4),
 > variant assets (section 5), the native DEX (section 6) and the trustless
 > ETH<->SCCP HTLC bridge (section 7) are in the tree; the bridge contract is
@@ -41,14 +41,14 @@ That gives four deliverables, in dependency order:
 | Native DEX | pools, LP positions and swaps between on-chain assets | new transaction types, `pools` in state | 0.24.0, shipped |
 | ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | new transaction types, `htlcs` in state, one Ethereum contract | 0.24.0, shipped |
 
-All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.31.0. The
+All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.32.0. The
 `sccp/v2` fork this document assumed did not happen: `PROTOCOL_VERSION` is still
 1, the domains stayed `sccp/v1/...`, and `PROTOCOL.md` documents the new
 transaction types as part of v1 (section 5.1).
 
-Optionally, 0.31.0 adds a `wETH` asset so that ETH itself can be traded in the
-native DEX; that is a bonded federation and is explicitly out of the critical
-path (section 7.7).
+Optionally, a later release adds a `wETH` asset so that ETH itself can be traded
+in the native DEX; that is a bonded federation and is explicitly out of the
+critical path (section 7.7).
 
 ## 2. Where the project stands
 
@@ -129,9 +129,9 @@ curve are `VariantParams` fields, so they can diverge later only by a fork. Addi
 a third variant is a protocol release plus its own genesis tranche, not a config
 edit.
 
-Mainnet genesis pre-allocates 10% of the SCCP cap (2,100,000 SCCP) and 5% of each
-variant's cap (1,050,000 C960 today) for bootstrap grants, liquidity and
-ecosystem incentives. The split is public in `genesis/mainnet-premine.json`; see
+Mainnet genesis pre-allocates 1 basis point of the SCCP cap (2,100 SCCP) as a
+bootstrap grant and no variant supply: C960 is mined, and only testnet seeds
+demo liquidity. The grant is public in `genesis/mainnet-premine.json`; see
 [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 
 ### 3.3 The token is the games
@@ -792,7 +792,7 @@ automation is added later it should sign with the same keyfile and reuse
 `bridge/orders.py` rather than re-implement the protocol; nothing in the chain
 changes.
 
-### 7.7 Later, and optional: wrapped ETH (0.31.0)
+### 7.7 Later, and optional: wrapped ETH
 
 If users want ETH itself traded inside the native DEX (rather than swapped
 peer-to-peer), add a `wETH` asset backed by a **bonded federation**: N operators
@@ -837,7 +837,7 @@ The remaining rows are the open ones.
 | 0.28.0 | whole PGNs, slimmer header | vitest; C960 and standard game pages render their moves | shipped |
 | 0.29.0 | keyfile import from disk, honest swap rows, bridge/DEX notebook panels | vitest; a CLI keyfile opens from the picker; a swap names both legs | shipped |
 | 0.30.0 | clock witnesses and bonded timeout claims, two extra role seats (slow, GNU Chess), a deploy gate that proves them | vitest; pytest; a redeploy seats both roles through `/stack/synthetic-fleet.json` | shipped |
-| 0.31.0 | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure | not started |
+| unscheduled | `wETH` federation (optional) | second audit; consensus caps; explicit trust disclosure | not started |
 | 1.0.0 | mainnet | the go/no-go in `IMPLEMENTATION_PLAN.md`, plus the bridge audit | open |
 
 Each release keeps `make check` green, regenerates the vectors and OpenAPI

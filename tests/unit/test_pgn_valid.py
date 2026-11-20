@@ -124,7 +124,7 @@ def test_time_forfeit_is_negotiated_by_clock_evidence(
     )
     assert parsed.termination is Termination.TIME_FORFEIT
     assert parsed.result is GameResult.WHITE
-    assert parsed.time_control == "1800+0"
+    assert parsed.time_control == "600+0"
     assert parsed.low_ply is True
 
     untimed = {tag: value for tag, value in tags.items() if tag != "TimeControl"}
@@ -163,7 +163,7 @@ def test_time_control_must_be_whole_seconds_and_match_the_certificate(
     expectations: GameExpectations,
 ) -> None:
     pgn = make_pgn(FOOLS_MATE, match_tags)
-    assert validate_pgn(pgn, params=TESTNET, expected=expectations).time_control == "1800+0"
+    assert validate_pgn(pgn, params=TESTNET, expected=expectations).time_control == "600+0"
 
     missing = {tag: value for tag, value in match_tags.items() if tag != "TimeControl"}
     with pytest.raises(PgnValidationError, match="TimeControl"):
@@ -172,14 +172,14 @@ def test_time_control_must_be_whole_seconds_and_match_the_certificate(
         validate_pgn(make_pgn(FOOLS_MATE, missing), params=_params(min_plies=1))
 
     for bad in (
-        "1800",
-        "1800+5",
-        "1800.5+0",
+        "600",
+        "600+5",
+        "600.5+0",
         "0+0",
         "86401+0",
-        "1800+1000",
-        " 1800+0",
-        "1800+0 ",
+        "600+1000",
+        " 600+0",
+        "600+0 ",
         "1_800+0",
     ):
         tags = {**match_tags, "TimeControl": bad}

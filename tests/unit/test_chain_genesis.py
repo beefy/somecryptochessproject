@@ -389,15 +389,12 @@ def test_the_document_round_trips_pools_and_htlcs() -> None:
     assert next(iter(state.htlcs.values())).status is HtlcStatus.CLAIMED
 
 
-def test_the_committed_mainnet_premine_is_ten_and_five_percent() -> None:
+def test_the_committed_mainnet_premine_is_one_basis_point() -> None:
     _block, state = load_genesis(GENESIS_DIR / "mainnet.json", MAINNET)
     assert MAINNET.max_money is not None
-    variant = MAINNET.variant_for_asset(CHESS960_ASSET_ID)
-    assert variant.max_supply is not None
-    assert state.minted == MAINNET.max_money * 1_000 // 10_000
-    assert state.minted_assets == {
-        CHESS960_ASSET_ID: variant.max_supply * UNITS_PER_COIN * 500 // 10_000
-    }
+    assert state.minted == MAINNET.max_money * 1 // 10_000
+    assert state.minted == 2_100 * COINS
+    assert state.minted_assets == {}
 
 
 def test_testnet_genesis_seeds_a_pool_and_a_completed_bridge() -> None:

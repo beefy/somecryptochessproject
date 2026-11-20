@@ -837,6 +837,20 @@ class State:
             return False
         return self.height >= account.banned_until
 
+    def active_witnesses(self, epoch: int) -> dict[str, WitnessRecord]:
+        """Witnesses whose registration covers ``epoch`` and that still hold a bond.
+
+        This is the set a clock receipt's signature is checked against, and the
+        one the relay counts before it agrees to pair an epoch: below
+        ``clock_witness_quorum`` a flag cannot be settled, so a match played
+        there is a game whose result may never reach the chain.
+        """
+        return {
+            address: witness
+            for address, witness in self.witnesses.items()
+            if witness.until_epoch >= epoch and witness.bond > 0
+        }
+
     # -- commitments --------------------------------------------------------
 
     def state_root(self) -> str:

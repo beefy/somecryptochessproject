@@ -49,6 +49,14 @@ class NodeStatus(ProtocolModel):
     mempool: MempoolStatus
     minted: int = Field(default=0, ge=0)
     minted_assets: dict[str, int] = Field(default_factory=dict)
+    witnesses: int = Field(default=0, ge=0)
+    """Active clock witnesses in the current epoch.
+
+    A relay counts this against ``clock_witness_quorum`` before it pairs: a
+    match played below the quorum can produce a flag that no bonded claim can
+    settle. Nodes that predate the field report nothing, which a reader must
+    treat as *unknown* rather than zero.
+    """
 
 
 class HtlcView(ProtocolModel):

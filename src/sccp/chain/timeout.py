@@ -23,9 +23,10 @@ winner. The full bundle is re-verified when the proof is validated.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import NoReturn
+from typing import Final, NoReturn
 
-from sccp.chain.state import State, TimeoutClaimRecord, WitnessRecord
+from sccp.chain.state import Account, State, TimeoutClaimRecord, WitnessRecord
+from sccp.config import NetworkParams
 from sccp.crypto.keys import verify_domain
 from sccp.crypto.pq import ed25519_public_key
 from sccp.errors import ClockError, KeyEncodingError, TimeoutClaimError, TranscriptError
@@ -56,6 +57,30 @@ SLASH_KEYS = frozenset({"evidence", "proof_id", "public_key"})
 
 EVIDENCE_KEYS = frozenset({"witness", "receipts"})
 """A witness-equivocation bundle: which witness, and the two receipts it signed."""
+
+STALL_SLASH_BPS: Final = 1_000
+"""A loss on time costs the stalling seat 10% of the protocol's miner bond.
+
+The claimant's bond already makes a *false* claim expensive; this charge is what
+makes a *real* stall expensive. Without it the cheapest way to lose a match is to
+stop sending moves: the winner still has to wait out the claim window, and the
+stall itself cost the loser nothing.
+"""
+
+STALL_CLAIMANT_BPS: Final = 5_000
+"""Half of the stall slash goes to the seat that proved the flag."""
+
+STALL_QUORUM_BPS: Final = 3_000
+"""30% is split evenly between the witnesses that signed the flag receipt."""
+
+STALL_BURN_BPS: Final = 2_000
+"""The rest is destroyed: it is never credited to any account.
+
+At the mainnet bond (500 SCCP) the charge is 50 SCCP, so the claimant receives
+25, each of the three signing witnesses 5, and 10 leave circulation. Integer
+rounding stays inside the burned share, so the credits always sum to less than
+the debit.
+"""
 
 
 def _fail(message: str) -> NoReturn:
@@ -105,9 +130,7 @@ def parse_claim(tx: Transaction) -> TimeoutClaim:
 def _active_witnesses(state: State, epoch: int) -> dict[str, str]:
     """The public keys of witnesses registered and unexpired at ``epoch``."""
     return {
-        address: witness.public_key
-        for address, witness in state.witnesses.items()
-        if witness.until_epoch >= epoch and witness.bond > 0
+        address: witness.public_key for address, witness in state.active_witnesses(epoch).items()
     }
 
 
@@ -290,6 +313,56 @@ def finalise_claim(state: State, claim_id: str, height: int) -> TimeoutClaimReco
     return record
 
 
+def stall_slash_amount(params: NetworkParams) -> int:
+    """The stall penalty in base units: 10% of the protocol's miner bond."""
+    return params.min_bond * STALL_SLASH_BPS // 10_000
+
+
+def _debit_for_stall(account: Account, amount: int) -> int:
+    """Take up to ``amount`` from the bond first, then the spendable balance.
+
+    Stalling after unregistering must not be free: the bond is taken first so a
+    slashable registration pays, and whatever the bond no longer covers comes
+    out of the balance the seat still holds.
+    """
+    from_bond = min(amount, account.bonded)
+    account.bonded -= from_bond
+    from_balance = min(amount - from_bond, account.balance)
+    account.balance -= from_balance
+    return from_bond + from_balance
+
+
+def apply_stall_slash(state: State, claim: TimeoutClaimRecord, staller: str) -> int:
+    """Charge a seat that lost on time and share the charge out.
+
+    Runs when a ``time_forfeit`` proof finalises its timeout claim. The staller
+    pays :func:`stall_slash_amount` -- 10% of the protocol's miner bond -- and the
+    proceeds are split :data:`STALL_CLAIMANT_BPS` to the claimant,
+    :data:`STALL_QUORUM_BPS` in equal parts to the witnesses whose signatures
+    settled the claim, and the remainder burned (never credited). Returns the
+    amount collected, which is ``0`` when the seat has nothing left to take.
+
+    A claim is charged at most once: the record remembers the charge, so
+    re-finalising cannot debit the staller twice.
+    """
+    if claim.slashed:
+        return 0
+    if staller != claim.accused:
+        _fail(f"claim {claim.claim_id} accuses {claim.accused}, not {staller}")
+    claim.slashed = True
+    collected = _debit_for_stall(state.ensure(staller), stall_slash_amount(state.params))
+    if collected <= 0:
+        return 0
+    state.ensure(claim.claimant).balance += collected * STALL_CLAIMANT_BPS // 10_000
+    quorum_pool = collected * STALL_QUORUM_BPS // 10_000
+    witnesses = sorted({signature.witness for signature in claim.clock_evidence.final.witnesses})
+    if witnesses:
+        each = quorum_pool // len(witnesses)
+        for address in witnesses:
+            state.ensure(address).balance += each
+    return collected
+
+
 def _receipt_from_payload(value: object) -> MoveReceipt | FlagReceipt:
     if not isinstance(value, Mapping):
         _fail("each slash-evidence receipt must be an object")
@@ -362,10 +435,16 @@ __all__ = [
     "DISPUTE_KEYS",
     "EVIDENCE_KEYS",
     "SLASH_KEYS",
+    "STALL_BURN_BPS",
+    "STALL_CLAIMANT_BPS",
+    "STALL_QUORUM_BPS",
+    "STALL_SLASH_BPS",
     "apply_dispute",
     "apply_slash",
+    "apply_stall_slash",
     "finalise_claim",
     "parse_claim",
+    "stall_slash_amount",
     "validate_claim",
     "validate_dispute",
     "validate_slash",

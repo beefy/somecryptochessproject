@@ -74,6 +74,10 @@ def test_the_stack_builds_a_matchable_chain_and_relay_config(tmp_path: Path) -> 
             assert entry["engine"].startswith("mock-v1:")
             assert entry["public_key"]
         assert relay["open_round"] == 0
+        # The devnet runs no witness service, so the relay's coverage gate is
+        # written off explicitly rather than leaving every round refused.
+        assert DEVNET.clock_witness_quorum >= 1
+        assert relay["require_witnesses"] is False
     finally:
         service.close()
 

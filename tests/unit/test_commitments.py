@@ -112,11 +112,11 @@ def test_receipt_leaves_are_the_signed_payload() -> None:
         seat=BLACK,
         san="e5",
         received_at_ms=1_000,
-        white_ms=1_799_000,
-        black_ms=1_799_000,
+        white_ms=599_000,
+        black_ms=599_000,
     )
     assert receipt_leaf(NETWORK, receipt) == {
-        "black_ms": 1_799_000,
+        "black_ms": 599_000,
         "kind": "move",
         "match_id": MATCH_ID,
         "network": NETWORK,
@@ -124,7 +124,7 @@ def test_receipt_leaves_are_the_signed_payload() -> None:
         "received_at_ms": 1_000,
         "san": "e5",
         "seat": BLACK,
-        "white_ms": 1_799_000,
+        "white_ms": 599_000,
     }
     flag = FlagReceipt(
         match_id=MATCH_ID,
@@ -132,7 +132,7 @@ def test_receipt_leaves_are_the_signed_payload() -> None:
         seat=WHITE,
         received_at_ms=2_000,
         white_ms=0,
-        black_ms=1_799_000,
+        black_ms=599_000,
     )
     assert "san" not in receipt_leaf(NETWORK, flag)
 
@@ -144,15 +144,15 @@ def test_clock_root_covers_the_window_then_the_flag() -> None:
         seat=WHITE,
         san="e4",
         received_at_ms=1_000,
-        white_ms=1_799_000,
-        black_ms=1_800_000,
+        white_ms=599_000,
+        black_ms=600_000,
     )
     flag = FlagReceipt(
         match_id=MATCH_ID,
         ply=1,
         seat=BLACK,
         received_at_ms=2_000,
-        white_ms=1_799_000,
+        white_ms=599_000,
         black_ms=0,
     )
     assert clock_root(NETWORK, (receipt,), flag) == fold(
@@ -170,8 +170,8 @@ def test_clock_evidence_takes_exactly_the_window() -> None:
             seat=WHITE if ply % 2 == 0 else BLACK,
             san="e4",
             received_at_ms=1_000 + ply,
-            white_ms=1_800_000 - ply,
-            black_ms=1_800_000,
+            white_ms=600_000 - ply,
+            black_ms=600_000,
         )
         for ply in range(CLOCK_EVIDENCE_PLIES + 5)
     )
@@ -207,7 +207,7 @@ def test_a_certificate_move_root_skips_the_opening() -> None:
         opening=OpeningRef(book_version="v1", line_id=0, hash="11" * 32, moves=("e4", "e5")),
         engine_white="mock-v1",
         engine_black="mock-v1",
-        time_control=TimeControl(initial_ms=1_800_000, increment_ms=0),
+        time_control=TimeControl(initial_ms=600_000, increment_ms=0),
     )
     san_moves = ["e4", "e5", "Nf3", "Nc6"]
     root = certificate_move_root(certificate, san_moves)

@@ -122,7 +122,7 @@ cycle 7: 6 wallets, funded 6 (2 faucet, 4 key), 5 transfers, 11 confirmed | brid
   keeps the two extra seats derived from published seeds under
   `/data/synthetic-miners`, with fixed roles rather than a churn
   (`--no-extra-miner-churn`): `synthetic-miner-1` is deliberately **slow**
-  (110 s a move, no resignation) so a 30+0 game is really flagged and the
+  (36 s a move, no resignation) so a 10+0 game is really flagged and the
   timeout path runs on live evidence, and `synthetic-miner-2` plays **GNU Chess**
   (`--depth 5`) so the roster is not six copies of one engine. They are real
   `sccp miner run` children: they register, commit availability, play what the
@@ -321,7 +321,7 @@ pool is empty.
   wait still has to run. The same symptom appears if the host clock is stepped
   backwards (NTP) after a block was stamped.
 - **Height 19 forever, relay games active:** check the miners are running and
-  their logs show moves. CPU-starved miners make slow progress; the 30+0 clock is
+  their logs show moves. CPU-starved miners make slow progress; the 10+0 clock is
   real even on testnet.
 - **Height 19 forever, relay games drawn:** draws earn nothing, so no proof
   arrives. The miners' availability/reveal transactions are the heartbeat that
@@ -415,6 +415,16 @@ What each piece does:
 
 Race and reporting:
 
+- **the relay refuses to open a round** with a message like `epoch 12 has 2
+  active clock witness(es) and needs 3; refusing to pair`. That is the pairing
+  gate, not a bug: a flag signed by fewer witnesses than `clock_witness_quorum`
+  can never settle a `timeout_claim`, so the relay stops instead of producing
+  unplayable games. `curl -fsS http://127.0.0.1:8645/v1/status | jq .witnesses`
+  shows the count it is reading. Bring a witness back (`docker compose up -d
+  witness-2 witness-3`) or re-run the stack bootstrap, which re-posts the
+  `register_witness` transactions, and the next poll opens the round by itself.
+  Never "fix" this on testnet or mainnet with `--allow-unwitnessed-rounds`; that
+  flag is for a devnet, which runs no witness service at all.
 - **a claim the chain refuses** means quorum was not met or a receipt did not
   verify: read the miner log for `the match was flagged but no witness has a
   complete bundle` (no witness polled the flag) or `evidence does not verify`
@@ -426,8 +436,8 @@ Race and reporting:
   the wrong `--relay-witness-key-file`.
 
 The deliberate time forfeit comes from the extra fleet: `synthetic-miner-1`
-waits 110 seconds before every move, so a 30+0 clock runs out after about
-seventeen of its own moves. Do not expect a flag before roughly half an hour
+waits 36 seconds before every move, so a 10+0 clock runs out after about
+seventeen of its own moves. Do not expect a flag before roughly ten minutes
 after the match starts. When it happens the opponent files a bonded claim and
 the node settles it; check with:
 

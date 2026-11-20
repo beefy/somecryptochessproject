@@ -51,7 +51,7 @@ On the first run this:
 1. creates the devnet chain in `./data-play`,
 2. starts the relay and opponent in-process,
 3. seats you,
-4. plays a real 30+0 timed game, and
+4. plays a real 10+0 timed game, and
 5. co-signs the result and mines the winner's proof into a block.
 
 On a fresh chain the first game is usually **block 4**.
