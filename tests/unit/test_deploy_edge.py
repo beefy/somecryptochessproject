@@ -229,15 +229,67 @@ def test_the_mirror_host_key_is_verified_even_when_one_is_pinned() -> None:
     the fallback was written for. Using it as-is would make
     `StrictHostKeyChecking yes` refuse the mirror — the one host this job exists
     to reach — so the mirror's key is scanned outside the pinned-file branch.
+    A deliberate `EDGE_KNOWN_HOSTS` that already holds the mirror is the
+    exception: that probe is skipped, because a run holding the key does not
+    need a route to read it again.
     """
-    workflow = WORKFLOW.read_text(encoding="utf-8")
+    step = _step(WORKFLOW.read_text(encoding="utf-8"), "Configure SSH")
 
-    pinned = workflow.index('if [ -n "${KNOWN_HOSTS:-}" ]; then')
-    scan = workflow.index('if [ -n "${JUMP:-}" ]; then')
-    assert pinned < scan
-    assert '"$edge_host"' not in workflow[pinned:scan], "the scan is not nested in the pin"
-    assert "ssh primary \"ssh-keyscan -p $DEPLOY_PORT -H '$edge_host'\"" in workflow
-    assert 'ssh-keyscan -p "$DEPLOY_PORT" -H "$edge_host"' in workflow
+    write_pin = step.index('if [ -n "${KNOWN_HOSTS:-}" ]; then')
+    end_of_pin = step.index("fi\n", write_pin)
+    assert '"$edge_host"' not in step[write_pin:end_of_pin], "the scan is not nested in the pin"
+    assert "ssh primary \"ssh-keyscan -p $DEPLOY_PORT -H '$edge_host'\"" in step
+    assert 'ssh-keyscan -T 10 -p "$DEPLOY_PORT" -H "$edge_host"' in step
+    assert 'if [ -n "${EDGE_PIN:-}" ] && pinned "$edge_host" "$DEPLOY_PORT"; then' in step
+
+
+def test_no_host_key_probe_can_fail_without_saying_why() -> None:
+    """This step's first real run was five seconds and "exit code 1", nothing else.
+
+    `ssh-keyscan` gives up after five seconds, and the step ended on an
+    unguarded one: under `set -e` an unreachable mirror turned into a bare exit
+    code, which reads like a broken workflow rather than an unset variable. Every
+    probe now has a `fail` on its failure path, and every wrong setting has a
+    message naming itself, so the log says what to change.
+    """
+    step = _step(WORKFLOW.read_text(encoding="utf-8"), "Configure SSH")
+    lines = step.splitlines()
+
+    probes = [
+        index
+        for index, line in enumerate(lines)
+        if not line.strip().startswith("#")
+        and ("ssh-keyscan" in line or line.strip().startswith("ssh primary"))
+    ]
+    assert len(probes) == 3, "one jump-host scan and the two mirror scans"
+    for index in probes:
+        window = "\n".join(lines[index : index + 4])
+        assert "fail" in window, f"the probe at line {index + 1} fails silently"
+
+    for expected in (
+        "neither EDGE_SSH_KEY nor TESTNET_SSH_KEY is configured",
+        "vars.EDGE_DEPLOY_HOST must be user@host",
+        "vars.EDGE_SSH_PROXY_JUMP is set but vars.TESTNET_DEPLOY_HOST is empty",
+        "the jump host",
+        "sccp-edge-ssh-from-primary",
+        "pin its key in secrets.EDGE_KNOWN_HOSTS",
+    ):
+        assert expected in step, expected
+
+
+def test_the_ssh_step_cannot_prompt_or_sit_on_a_dead_connection() -> None:
+    """An unattended runner has to fail, not wait for a keyboard or a timeout.
+
+    `BatchMode` turns a passphrase prompt into an authentication failure, and a
+    `ConnectTimeout` bounds a dropped SYN that would otherwise hold the job open
+    until GitHub's own limit. `ssh-keyscan` is given an explicit `-T` rather than
+    its five-second default, which is the number that used to look arbitrary.
+    """
+    step = _step(WORKFLOW.read_text(encoding="utf-8"), "Configure SSH")
+
+    assert "BatchMode yes" in step
+    assert "ConnectTimeout 15" in step
+    assert "ssh-keyscan -T 10" in step
 
 
 def test_the_deploy_proves_replication_and_read_only_access() -> None:

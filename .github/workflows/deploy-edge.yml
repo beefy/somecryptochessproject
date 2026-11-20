@@ -140,15 +140,46 @@ jobs:
         if: steps.target.outputs.deploy == 'true'
         env:
           SSH_KEY: ${{ secrets.EDGE_SSH_KEY || secrets.TESTNET_SSH_KEY }}
+          # The pinned file falls back to the primary's, so the fallback says
+          # nothing about the mirror; only a deliberate EDGE_KNOWN_HOSTS can.
+          EDGE_PIN: ${{ secrets.EDGE_KNOWN_HOSTS }}
           KNOWN_HOSTS: ${{ secrets.EDGE_KNOWN_HOSTS || secrets.TESTNET_KNOWN_HOSTS }}
           PRIMARY_TARGET: ${{ vars.TESTNET_DEPLOY_HOST }}
           PRIMARY_PORT: ${{ vars.TESTNET_DEPLOY_PORT || '22' }}
         run: |
           set -eu
-          if [ -z "${SSH_KEY:-}" ]; then
-            echo "::error::neither EDGE_SSH_KEY nor TESTNET_SSH_KEY is configured"
+
+          # Every failure below names its cause. This step first shipped as a
+          # straight run of commands under `set -e` ending in an unguarded
+          # `ssh-keyscan`, so a mirror with no route failed the job five seconds
+          # later -- ssh-keyscan's default timeout -- with "exit code 1" and no
+          # other text: indistinguishable from a broken workflow rather than a
+          # missing variable, and the reason this job looked unreliable.
+          fail() {
+            echo "::error::$1"
             exit 1
+          }
+
+          [ -n "${SSH_KEY:-}" ] ||
+            fail "neither EDGE_SSH_KEY nor TESTNET_SSH_KEY is configured"
+
+          # `user@host` is what the readers below split; a bare host would be
+          # written out as a user with no HostName, and ssh would then look for
+          # a machine called "root".
+          case "${TARGET:-}" in
+            *@?*) ;;
+            *) fail "vars.EDGE_DEPLOY_HOST must be user@host, not '${TARGET:-}'" ;;
+          esac
+          edge_host="${TARGET#*@}"
+          case "$edge_host" in
+            \[*\]) ;;
+            *:*) fail "vars.EDGE_DEPLOY_HOST must not carry a port ('$TARGET'); set vars.EDGE_DEPLOY_PORT" ;;
+          esac
+
+          if [ -n "${JUMP:-}" ] && [ -z "${PRIMARY_TARGET:-}" ]; then
+            fail "vars.EDGE_SSH_PROXY_JUMP is set but vars.TESTNET_DEPLOY_HOST is empty, so there is no host to jump through"
           fi
+
           install -m 700 -d "$HOME/.ssh"
           printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_edge"
           chmod 600 "$HOME/.ssh/id_edge"
@@ -165,6 +196,11 @@ jobs:
               echo "  IdentityFile $HOME/.ssh/id_edge"
               echo "  IdentitiesOnly yes"
               echo "  StrictHostKeyChecking yes"
+              # A runner has nobody at the keyboard: fail on a passphrase rather
+              # than wait for one, and bound a connect that would otherwise sit
+              # on a dropped SYN until the job times out.
+              echo "  BatchMode yes"
+              echo "  ConnectTimeout 15"
               if [ -n "$4" ]; then echo "  $4"; fi
             } >> "$HOME/.ssh/config"
           }
@@ -172,27 +208,52 @@ jobs:
           host_block primary "${PRIMARY_TARGET:-placeholder@127.0.0.1}" "$PRIMARY_PORT" ""
           host_block edge "$TARGET" "$DEPLOY_PORT" "${JUMP:+ProxyJump primary}"
 
-          edge_host="${TARGET#*@}"
+          # `ssh-keygen -F` reads hashed entries, which is what `ssh-keyscan -H`
+          # writes, so it is the honest way to ask "is this host pinned?" -- and
+          # the only way to check that a scan produced something usable.
+          pinned() {
+            ssh-keygen -F "$1" -f "$HOME/.ssh/known_hosts" > /dev/null 2>&1 ||
+              ssh-keygen -F "[$1]:$2" -f "$HOME/.ssh/known_hosts" > /dev/null 2>&1
+          }
+
           if [ -n "${KNOWN_HOSTS:-}" ]; then
             printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
-          else
-            # The jump host is scanned directly; the mirror is scanned *through*
-            # it, because its address only means something inside the VPC.
-            ssh-keyscan -p "$PRIMARY_PORT" -H "${PRIMARY_TARGET#*@}" \
+          fi
+
+          # The jump host is scanned directly; the mirror is scanned *through*
+          # it, because its address only means something inside the VPC. Both
+          # scans are verified with `pinned` instead of trusted: ssh-keyscan
+          # exits 0 having printed nothing when a responder answers without a
+          # key, and `|| true` is only safe because of the check that follows.
+          if [ -n "${JUMP:-}" ] && ! pinned "${PRIMARY_TARGET#*@}" "$PRIMARY_PORT"; then
+            ssh-keyscan -T 10 -p "$PRIMARY_PORT" -H "${PRIMARY_TARGET#*@}" \
               >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+            pinned "${PRIMARY_TARGET#*@}" "$PRIMARY_PORT" ||
+              fail "could not learn the host key of ${PRIMARY_TARGET#*@} on port $PRIMARY_PORT, the jump host: pin it in TESTNET_KNOWN_HOSTS, or check that it still accepts SSH from GitHub runners"
           fi
 
           # The mirror's key is scanned even when a pinned file was supplied. It
           # has to be: EDGE_KNOWN_HOSTS falls back to TESTNET_KNOWN_HOSTS, which
           # pins the *primary*, so it cannot contain the mirror's key and
           # `StrictHostKeyChecking yes` would refuse the one host being deployed.
-          if [ -n "${JUMP:-}" ]; then
+          # A deliberate EDGE_KNOWN_HOSTS is a different thing: it was written
+          # for this host, so a pin there means the probe is unnecessary.
+          if [ -n "${EDGE_PIN:-}" ] && pinned "$edge_host" "$DEPLOY_PORT"; then
+            echo "the mirror's host key is pinned in EDGE_KNOWN_HOSTS"
+          elif [ -n "${JUMP:-}" ]; then
             ssh primary "ssh-keyscan -p $DEPLOY_PORT -H '$edge_host'" \
-              >> "$HOME/.ssh/known_hosts"
+              >> "$HOME/.ssh/known_hosts" || true
+            pinned "$edge_host" "$DEPLOY_PORT" ||
+              fail "could not read the host key of $edge_host on port $DEPLOY_PORT through ${PRIMARY_TARGET#*@}: check the sccp-edge-ssh-from-primary firewall rule (deploy/edge/README.md) and that the deploy key is authorized on the mirror"
           else
-            ssh-keyscan -p "$DEPLOY_PORT" -H "$edge_host" >> "$HOME/.ssh/known_hosts"
+            ssh-keyscan -T 10 -p "$DEPLOY_PORT" -H "$edge_host" \
+              >> "$HOME/.ssh/known_hosts" || true
+            pinned "$edge_host" "$DEPLOY_PORT" ||
+              fail "no host key from $edge_host:$DEPLOY_PORT: the mirror has no public SSH by design, so set vars.EDGE_SSH_PROXY_JUMP=1 to jump through vars.TESTNET_DEPLOY_HOST, or pin its key in secrets.EDGE_KNOWN_HOSTS, or give the runner a route to it"
           fi
+
           chmod 600 "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
+          echo "mirror: ${TARGET%%@*}@$edge_host:$DEPLOY_PORT -> $DOMAIN, data in $DEPLOY_DIR${JUMP:+, jumped through ${PRIMARY_TARGET#*@}}"
 
       # --- Ship the stack ------------------------------------------------------
       - name: Upload the Compose project
@@ -326,11 +387,17 @@ jobs:
           local_genesis="$(echo "$status" | jq -r .genesis_hash)"
           echo "primary genesis: $remote_genesis"
           echo "mirror  genesis: $local_genesis"
-          [ "$remote_genesis" = "$local_genesis" ]
+          [ "$remote_genesis" = "$local_genesis" ] || {
+            echo "::error::the mirror is serving a different chain than the primary"
+            exit 1
+          }
 
           code="$(curl -s -o /dev/null -w '%{http_code}' -X POST "$mirror/v1/tx" -d '{}')"
           echo "POST /v1/tx -> $code"
-          [ "$code" = "405" ]
+          [ "$code" = "405" ] || {
+            echo "::error::the mirror accepted a write (POST /v1/tx -> $code); the proxy must be read-only"
+            exit 1
+          }
 
           allow="$(curl -s -o /dev/null -D - -X POST "$mirror/v1/tx" -d '{}' |
             tr -d '\r' | awk 'tolower($1) == "allow:" { $1=""; print }')"

@@ -127,7 +127,10 @@ gcloud compute instances add-metadata "$EDGE" \
 Then set `vars.EDGE_SSH_PROXY_JUMP=1` and `vars.EDGE_DEPLOY_HOST=<user>@<internal IP>`;
 without the jump flag, `EDGE_DEPLOY_HOST` must be directly reachable from the
 runner (a self-hosted runner, or a deliberately widened rule — the same
-trade-off `docs/setup/GCP_RESOURCE_SETUP.md` describes for the primary).
+trade-off `docs/setup/GCP_RESOURCE_SETUP.md` describes for the primary). The
+workflow checks the pair: an internal address with no jump flag fails in the
+`Configure SSH` step with an `::error::` naming `EDGE_SSH_PROXY_JUMP`, because the
+mirror has no public SSH to read a host key from.
 
 ```bash
 # the mirror's internal address: what EDGE_DEPLOY_HOST points at when jumping
@@ -166,8 +169,9 @@ skip with nothing in the log):
 
 A pinned `EDGE_KNOWN_HOSTS` covers the *primary* — the fallback is the primary's
 own pin — so the mirror's host key is scanned through the jump on every run. If
-you would rather pin it, put both keys in `EDGE_KNOWN_HOSTS`; the scan is an
-append, never a replacement.
+you would rather pin it, put both keys in `EDGE_KNOWN_HOSTS`: that entry is found
+with `ssh-keygen -F` and the probe is skipped, which is the only way the step
+works when the runner has no route to the mirror at all.
 
 The job is idempotent, and it only destroys the replica on purpose. Both resets
 are scoped to `node-data`; `caddy_data` is never touched, because losing it

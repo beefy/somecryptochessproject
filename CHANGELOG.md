@@ -7,6 +7,20 @@ not itemised here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The mirror deploy says why its SSH step failed.** `deploy-edge.yml` ended the
+  step on an unguarded `ssh-keyscan`, so a mirror with no route from the runner
+  failed the job at ssh-keyscan's five-second timeout with "exit code 1" and no
+  other text — which reads like a broken workflow rather than a missing variable.
+  Every probe now reports through `::error::` and names the setting to fix
+  (`EDGE_DEPLOY_HOST` shape, `EDGE_SSH_PROXY_JUMP`, `TESTNET_DEPLOY_HOST`), the
+  jump path refuses to run without a jump host, a mirror pinned in
+  `EDGE_KNOWN_HOSTS` skips the probe instead of demanding a route, and
+  `BatchMode`/`ConnectTimeout` stop a passphrase prompt or a dropped SYN from
+  holding the job open. The smoke test's genesis and read-only assertions name
+  which claim failed instead of exiting on a bare `[ … ]`.
+
 ## [0.32.0] - 2026-11-20
 
 ### Changed
