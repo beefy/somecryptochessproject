@@ -53,7 +53,7 @@ ssh sccp@proofofchess.com "curl -fsS http://127.0.0.1:8646/v1/matches | jq -r '.
 
 
 The deliberate time forfeit in the traffic fleet takes about half an hour by
-design (`synthetic-miner-1` waits 110 s per move); a forfeit that never arrives
+design (`synthetic-miner-1` waits 36 s per move); a forfeit that never arrives
 means the witness quorum is not signing, so no bonded claim can be made. The relay
 must report a `witness` address, not `null` — a relay without one signs no
 receipts and no timeout can ever be claimed.

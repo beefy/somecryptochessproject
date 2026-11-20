@@ -1469,7 +1469,7 @@ def format_clock(ms: int) -> str:
 
 
 def _control_text(control: TimeControl) -> str:
-    """``30+0``, with the units spelled out for a player rather than a bot."""
+    """``10+0``, with the units spelled out for a player rather than a bot."""
     return f"{control.initial_ms // 60_000}+{control.increment_ms // 1_000} per side"
 
 

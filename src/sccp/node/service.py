@@ -410,6 +410,7 @@ class NodeService:
             ),
             minted=self.chain.state.minted,
             minted_assets=dict(sorted(self.chain.state.minted_assets.items())),
+            witnesses=len(self.chain.state.active_witnesses(self.chain.state.current_epoch())),
         )
 
     def block(self, reference: str) -> BlockView:

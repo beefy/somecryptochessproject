@@ -112,7 +112,7 @@ def _flag_game(signed_match) -> tuple[str, ClockEvidence, object]:
             seat=certificate.white,
             san="Qh5",
             received_at_ms=1_000_000,
-            white_ms=1_790_000,
+            white_ms=590_000,
             black_ms=FIXED_TIME_CONTROL.initial_ms,
         ),
         witness,
@@ -124,7 +124,7 @@ def _flag_game(signed_match) -> tuple[str, ClockEvidence, object]:
             ply=move_ply + 1,
             seat=certificate.black,
             received_at_ms=1_000_000 + FIXED_TIME_CONTROL.initial_ms + 250,
-            white_ms=1_790_000,
+            white_ms=590_000,
             black_ms=0,
         ),
         witness,
@@ -152,9 +152,9 @@ def _long_flag_game(signed_match) -> tuple[str, ClockEvidence]:
     network = signed_match.params.network_id
     opening_plies = len(certificate.opening.moves)
     clocks = (
-        (1_790_000, 1_800_000),
-        (1_790_000, 1_799_250),
-        (1_789_250, 1_799_250),
+        (590_000, 600_000),
+        (590_000, 599_250),
+        (589_250, 599_250),
     )
     receipts = tuple(
         sign_receipt(
@@ -179,8 +179,8 @@ def _long_flag_game(signed_match) -> tuple[str, ClockEvidence]:
             match_id=certificate.match_id,
             ply=opening_plies + 3,
             seat=certificate.black,
-            received_at_ms=1_000_000 + 2_000 + 1_799_250 + 250,
-            white_ms=1_789_250,
+            received_at_ms=1_000_000 + 2_000 + 599_250 + 250,
+            white_ms=589_250,
             black_ms=0,
         ),
         witness,
@@ -212,21 +212,21 @@ def _signed_result(signed_match, pgn: str):
 
 
 def test_time_control_tag_is_lossless() -> None:
-    assert time_control_tag(FIXED_TIME_CONTROL) == "1800+0"
-    assert time_control_from_tag("1800+0") == FIXED_TIME_CONTROL
-    assert time_control_from_tag("1800+5") == TimeControl(initial_ms=1_800_000, increment_ms=5_000)
+    assert time_control_tag(FIXED_TIME_CONTROL) == "600+0"
+    assert time_control_from_tag("600+0") == FIXED_TIME_CONTROL
+    assert time_control_from_tag("600+5") == TimeControl(initial_ms=600_000, increment_ms=5_000)
     for bad in (
-        "1800",
-        "1800+",
+        "600",
+        "600+",
         "+0",
-        "1800.5+0",
-        "1800-5",
+        "600.5+0",
+        "600-5",
         "-1+0",
         "0+0",
-        "1_800+0",
-        " 1800+0",
+        "6_00+0",
+        " 600+0",
         "86401+0",
-        "1800+1000",
+        "600+1000",
     ):
         with pytest.raises(ClockError, match="TimeControl"):
             time_control_from_tag(bad)
@@ -543,7 +543,7 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
             **kwargs,
         )
 
-    changed_idle = evidence.receipts[0].model_copy(update={"black_ms": 1_799_999})
+    changed_idle = evidence.receipts[0].model_copy(update={"black_ms": 599_999})
     with pytest.raises(ClockError, match="idle side"):
         _check(
             signed_match,
@@ -554,7 +554,7 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
         )
 
     late_black = evidence.receipts[1].model_copy(
-        update={"received_at_ms": 2_800_250, "black_ms": 0}
+        update={"received_at_ms": 1_600_250, "black_ms": 0}
     )
     with pytest.raises(ClockError, match="flagged before"):
         _check(
@@ -571,7 +571,7 @@ def test_clock_evidence_rejects_out_of_range_and_early_flags(signed_match) -> No
             **kwargs,
         )
 
-    changed_later_idle = evidence.receipts[2].model_copy(update={"black_ms": 1_799_251})
+    changed_later_idle = evidence.receipts[2].model_copy(update={"black_ms": 599_251})
     with pytest.raises(ClockError, match="idle side"):
         _check(
             signed_match,

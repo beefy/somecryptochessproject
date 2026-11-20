@@ -94,7 +94,7 @@ proof to settle.
 | `seed` | `python -m deploy.seed_testnet_demo --stack /stack --node http://node:8645` | verifies the genesis-seeded SCCP/C960 pool and completed SCCP HTLC; falls back to creating them on a custom chain whose genesis does not |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
 | `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 2 --no-extra-miner-churn` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; it also keeps the two extra role miners seated (`synthetic-miner-1` slow, `synthetic-miner-2` GNU Chess) |
-| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645 --witness-key /stack/keys/witness-1.key` | opens round 0, pairs within each variant, runs the 30+0 clock, opens a new round every 60 s and follows the chain's epoch |
+| `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645 --witness-key /stack/keys/witness-1.key` | opens round 0, pairs within each variant, runs the 10+0 clock, opens a new round every 60 s and follows the chain's epoch |
 | `miner-1`, `miner-2` | `sccp miner run --variant standard --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | standard-chess pair: join, play, co-sign, announce win proofs and commit/reveal their own availability |
 | `miner-3`, `miner-4` | `sccp miner run --variant chess960 --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | Chess960 pair: replay the beacon-selected start position, play with `UCI_Chess960`, and settle C960 proofs |
 | `witness-2`, `witness-3` | `sccp witness run --relay http://relay:8646 --key /stack/keys/witness-N.key` | independent clock witnesses: poll the relay, verify its receipts, co-sign each receipt and the flag checkpoint, and serve their own bundle at `/v1/matches/{id}/receipts` |
@@ -126,8 +126,8 @@ still needs a funded deployer key and `SCCP_ETH_HTLC_CONTRACT`.
 The `traffic` container also seats the two extra role miners
 (`deploy/synthetic_miner_creation.py`), and that is not optional in the Compose
 deployment: the fast four all resign on polite drawn games, so nothing else
-produces a *timeout*. `synthetic-miner-1` is deliberately slow (110 s a move, no
-resignation), so a 30+0 game really runs out of clock and the signed flag becomes
+produces a *timeout*. `synthetic-miner-1` is deliberately slow (36 s a move, no
+resignation), so a 10+0 game really runs out of clock and the signed flag becomes
 a bonded `timeout_claim`; `synthetic-miner-2` plays GNU Chess (`--depth 5`, its
 own fingerprint), so the roster is not six copies of one binary. Both are fixed
 roles rather than a churn (`--no-extra-miner-churn`): their identities are
@@ -266,6 +266,15 @@ keyfile to the relay (`--witness-key /stack/relay.key`) and pass the matching
 public key hex to the miners (`sccp miner run --relay-witness-key <hex>`) to run
 the full signed path. Both are one flag each because a witness identity is an
 operator decision, not a network parameter.
+
+The relay also counts them: started with `--node`, it reads `witnesses` from the
+node's `/v1/status` on every poll and refuses to open a round while the epoch's
+active witness count is below the network's `clock_witness_quorum` (3 on
+testnet). A flag that fewer witnesses signed can never settle a `timeout_claim`,
+so the round would only produce games whose losses cannot reach the chain. This
+stack registers all three witnesses in the bootstrap, so the gate is satisfied;
+the devnet stack writes `require_witnesses: false` instead, because it runs no
+witness service.
 
 ## The devnet stack, without Compose
 

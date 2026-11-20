@@ -1,6 +1,6 @@
 """Match clocks, signed moves and clock evidence (PROTOCOL.md section 8.4).
 
-The protocol has exactly one time control: 30+0. A match starts with two clocks
+The protocol has exactly one time control: 10+0. A match starts with two clocks
 at :data:`FIXED_TIME_CONTROL.initial_ms`; only the side to move spends time. A
 move deducts ``max(0, elapsed - lag_grace_ms)`` from the mover and rejects the
 move when the result would be ``<= 0``. The relay is authoritative for live
@@ -61,8 +61,8 @@ from sccp.protocol.models import (
 )
 from sccp.serialization import Domain
 
-FIXED_TIME_CONTROL: Final = TimeControl(initial_ms=1_800_000, increment_ms=0)
-"""The only legal v1 control: 30 minutes per seat, no increment."""
+FIXED_TIME_CONTROL: Final = TimeControl(initial_ms=600_000, increment_ms=0)
+"""The only legal v1 control: 10 minutes per seat, no increment."""
 
 DEFAULT_LAG_GRACE_MS: Final = 250
 """Network-jitter credit granted once per move (PROTOCOL.md section 8.4)."""
@@ -101,7 +101,7 @@ def validate_time_control(
 
 
 def time_control_tag(control: TimeControl) -> str:
-    """Render a control as a lossless PGN ``TimeControl`` tag (``"1800+0"``)."""
+    """Render a control as a lossless PGN ``TimeControl`` tag (``"600+0"``)."""
     return f"{control.initial_ms // 1000}+{control.increment_ms // 1000}"
 
 

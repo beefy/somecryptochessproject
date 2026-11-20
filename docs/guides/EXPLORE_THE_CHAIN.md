@@ -113,7 +113,7 @@ transcript (`build_win_proof`'s exact shape: opening ref, PGN, both result
 signatures, `low_ply`, the proof id) and verifies it in the browser against the
 epoch's real beacon and roster. The rules it runs are the ones in
 `sccp/protocol/verification.py` that need nothing else: network and epoch
-binding, certificate consistency, the match id, the colour draw, the fixed 30+0
+binding, certificate consistency, the match id, the colour draw, the fixed 10+0
 control, the opening hash, the PGN replay and result, the canonical game hash,
 both start signatures, both result signatures, `low_ply` and the proof id. If
 every rule passes, the proof goes to `POST /v1/proofs`; the node's settlement

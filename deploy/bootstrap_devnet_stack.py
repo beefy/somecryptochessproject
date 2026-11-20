@@ -299,6 +299,10 @@ def relay_document(service: NodeService, miners: Sequence[BootstrapMiner]) -> di
         "timeout_seconds": 900,
         "round_seconds": ROUND_SECONDS,
         "open_round": 0,
+        # The devnet has no witness service, so the epoch's active witness count
+        # is zero and the relay's clock-witness gate would refuse every round.
+        # Testnet and mainnet register witnesses and keep the gate on.
+        "require_witnesses": False,
     }
 
 

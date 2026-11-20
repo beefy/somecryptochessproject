@@ -326,6 +326,55 @@ def test_relay_config_document_opens_a_round(signed_match, tmp_path: Path) -> No
         Matchmaker.from_document(broken, params=signed_match.params)
 
 
+def test_the_relay_refuses_to_pair_without_clock_witnesses(signed_match, tmp_path: Path) -> None:
+    """Below quorum a flag can never settle, so no round opens (PROTOCOL.md 8.4, 10.4)."""
+    document: dict[str, object] = {
+        "network": signed_match.params.network_id,
+        "beacon": signed_match.beacon.model_dump(mode="json"),
+        "roster": {
+            address: {
+                "public_key": signed_match.public_keys[address],
+                "engine": f"mock-v1:{index:016d}",
+                "max_games": 3,
+            }
+            for index, address in enumerate(signed_match.roster, start=1)
+        },
+        "timeout_seconds": 60,
+    }
+    quorum = signed_match.params.clock_witness_quorum
+    assert quorum >= 1
+
+    unknown = Matchmaker.from_document(document, params=signed_match.params)
+    assert unknown.witness_coverage is None, "a relay that does not follow a node cannot know"
+    assert unknown.open_round(0), "an unknown count is not zero coverage"
+
+    short = Matchmaker.from_document(document, params=signed_match.params)
+    assert short.set_witness_coverage(quorum - 1) is False
+    with pytest.raises(RelayError, match=f"needs {quorum}; refusing to pair"):
+        short.open_round(0)
+    assert short.matches() == []
+
+    covered = Matchmaker.from_document(document, params=signed_match.params)
+    assert covered.set_witness_coverage(quorum) is True
+    assert covered.open_round(0)
+
+    devnet = Matchmaker.from_document(
+        dict(document, require_witnesses=False), params=signed_match.params
+    )
+    assert devnet.set_witness_coverage(0) is True, "--allow-unwitnessed-rounds pairs anyway"
+    assert devnet.open_round(0)
+
+    store = tmp_path / "relay.json"
+    with pytest.raises(RelayError, match="non-negative integer"):
+        short.set_witness_coverage(-1)
+    with pytest.raises(RelayError, match="non-negative integer"):
+        short.set_witness_coverage(True)
+    with pytest.raises(RelayError, match="require_witnesses must be true or false"):
+        Matchmaker.from_document(
+            dict(document, require_witnesses="yes"), params=signed_match.params, store=store
+        )
+
+
 def test_relay_restarts_over_its_own_store(signed_match, tmp_path: Path) -> None:
     """A relay that restarts must reuse the round it already opened on disk."""
     document = {

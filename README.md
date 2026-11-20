@@ -36,7 +36,7 @@ reward.
 > deployment, so wallets, balances and faucet grants do not survive a redeploy.
 > This endpoint is plain HTTP and carries worthless test coins only.
 
-> **The relay runs timed sessions.** Every session is a real **30+0** clock game:
+> **The relay runs timed sessions.** Every session is a real **10+0** clock game:
 > the second start signature starts both clocks, the relay's monotonic clock is
 > authoritative (a move's `clock_ms` is display data, never trusted), each
 > accepted move is charged to the mover and answered with a signed receipt, and a
@@ -246,7 +246,7 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 | Header seal difficulty | 0 bits | 16 bits (retargeted) |
 | Block subsidy | 50 coins | 50 coins, halves every 210,000 blocks |
 | Max supply | none (test coins) | 21,000,000 SCCP + 21,000,000 per variant |
-| Genesis allocation | 1,000,000 SCCP faucet, a 5 SCCP/5 C960 demo pool and a completed 1-SCCP HTLC | 10% SCCP (2,100,000) + 5% per variant (1,050,000 C960) |
+| Genesis allocation | 1,000,000 SCCP faucet, a 5 SCCP/5 C960 demo pool and a completed 1-SCCP HTLC | 1 bps SCCP (2,100) bootstrap grant; no variant allocation |
 | Coinbase maturity | 20 blocks | 100 blocks |
 | Registration bond | 10 coins | 500 coins |
 | Claim window | 64 blocks | 144 blocks |
@@ -690,7 +690,7 @@ matchups = pair(
 Certificates commit both seats, colours, opening and engine fingerprints; both
 seats sign before the first move and again on the result. `sccp matchmaker run`
 serves the relay (`POST /v1/matches/{id}/join|move|resign|result`,
-`GET /v1/matches/{id}/receipts`), keeps the 30+0 clock, signs a receipt for every
+`GET /v1/matches/{id}/receipts`), keeps the 10+0 clock, signs a receipt for every
 accepted move and flags a clock that reaches zero, and a JSON store survives
 restarts. `sccp verify proof` re-checks the certificate, pairing,
 beacon, signatures and PGN offline. drand quicknet verification is a pluggable

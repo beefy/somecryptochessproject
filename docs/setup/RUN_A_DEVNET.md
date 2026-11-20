@@ -747,7 +747,13 @@ replaces the beacon and the roster, so matches always reference the epoch whose
 proofs the chain will accept. `--witness-key` gives the relay a keyfile so its
 clock flags are witnessed on chain; `--round-seconds` and `--open-round` add the
 round schedule. Passing `--network devnet` is not cosmetic: the config's network
-id and the flag must agree or the relay refuses to start.
+id and the flag must agree or the relay refuses to start. A devnet runs no
+witness service, so the relay's witness gate (it refuses to pair when the epoch
+has fewer clock witnesses than `clock_witness_quorum`) sees zero and stops:
+start a hand-written devnet relay with `--allow-unwitnessed-rounds`, which
+`deploy/bootstrap_devnet_stack.py` already bakes into the `relay.json` it
+writes. The gate is a testnet/mainnet protection; a devnet flag that cannot be
+settled is a wasted game, not a lost bond.
 
 What is still missing for a *two-process* devnet match is the roster: pairing
 needs two miners whose availability was committed and revealed for that epoch,

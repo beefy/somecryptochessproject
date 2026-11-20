@@ -81,7 +81,7 @@ def test_certificate_payload_is_colour_and_network_bound(signed_match) -> None:
         "black": signed_match.certificate.engine_black,
     }
     assert payload["time_control"] == {
-        "initial_ms": 1_800_000,
+        "initial_ms": 600_000,
         "increment_ms": 0,
     }
     assert "start_signatures" not in payload

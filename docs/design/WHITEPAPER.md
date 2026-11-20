@@ -151,7 +151,7 @@ requirement to run two strong engines; it does not claim to eliminate it.
 - **Do not trust the relay.** The relay is a courier and clock observer. Any
   node can recompute the pairing from the beacon and roster, and every signed
   object is verified against registered keys.
-- **Settle stalls without the loser's cooperation.** A 30+0 clock, witness-
+- **Settle stalls without the loser's cooperation.** A 10+0 clock, witness-
   signed move receipts and a bonded timeout claim let a winner prove a flag.
 - **Keep the ledger conventional.** An account model, Ed25519 signatures,
   integer amounts, nonce ordering, Merkle commitments, a mempool, SQLite
@@ -237,7 +237,7 @@ There are three parameter sets:
 | Network | Purpose | Address prefix | Genesis |
 | --- | --- | --- | --- |
 | `testnet` | Public, valueless integration network | `sccpt1...` | Pinned testnet genesis with a faucet allocation, a seeded SCCP/C960 pool and a completed SCCP HTLC |
-| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis with a 10% SCCP and 5% C960 premine |
+| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis with a 1-basis-point (2,100 SCCP) bootstrap grant |
 | `devnet` | Deterministic in-process tests and demos | `sccpt1...` | Pinned deterministic genesis with a faucet allocation |
 
 The network id is inside transaction hashes, game hashes, certificates,
@@ -344,7 +344,7 @@ epoch e-2           availability for e is posted on-chain
 epoch e-1           reveal for e is posted on-chain
 first block of e    beacon(e) = H(network, epoch, parent_hash, valid e reveals)
                     pairing = f(beacon, roster, match_id)
-epoch e             certificate, 30+0 game, signed moves, result, receipts
+epoch e             certificate, 10+0 game, signed moves, result, receipts
 epoch e+1           winner builds WinProof and includes it in a candidate block
                     nodes verify proof, transactions and state root
                     cumulative work selects the branch
@@ -631,7 +631,7 @@ TimeControl, Rules
 ```
 
 `Rules` must be `chess`. `TimeControl` is `<initial>+<increment>` in seconds;
-the v1 policy uses `30+0`. `MatchID`, epoch, round, seats, engines, opening id,
+the v1 policy uses `10+0`. `MatchID`, epoch, round, seats, engines, opening id,
 opening hash and time control are checked against the match certificate, so a
 proof cannot silently describe a different game. Variations are rejected when a
 certificate is supplied.
@@ -927,10 +927,10 @@ A `MatchCertificate` binds:
 Both seats sign the canonical certificate payload. The relay refuses to start
 until both signatures verify. The signatures are over the certificate, not over
 a relay-generated session token, so the same certificate can be checked offline.
-The fixed v1 control is 30 minutes per seat with no increment:
+The fixed v1 control is 10 minutes per seat with no increment:
 
 ```text
-TimeControl(initial_ms = 1_800_000, increment_ms = 0)
+TimeControl(initial_ms = 600_000, increment_ms = 0)
 ```
 
 ### 11.3 Starting the clock
@@ -1017,7 +1017,14 @@ flag. The pieces are:
 4. **Finalisation.** If no valid dispute arrives, a proof with
    `time_forfeit` references the claim. The claim's bond is returned when the
    result is finalised.
-5. **Slashing.** Two conflicting signed receipts from the same witness are
+5. **The stall slash.** Finalising also charges the flagged seat 10% of the
+   protocol's miner bond (`STALL_SLASH_BPS`): half to the claimant, 30% in equal
+   parts to the witnesses whose flag receipt settled the claim, and 20% burned
+   by not crediting it. The charge comes out of the seat's bond first and its
+   balance after that, so a seat cannot unregister its way out of a stall, and it
+   is charged once per claim. Bonding a claim prices a *false* accusation; this
+   prices the *real* stall the claim proves.
+6. **Witness slashing.** Two conflicting signed receipts from the same witness are
    `slash_evidence`. The witness bond is slashed and the witness is removed from
    the active set.
 
@@ -1406,11 +1413,11 @@ root. It is loaded from a pinned document; its hash must equal
 `params.genesis_hash`. A network with no pinned hash still parses the document,
 but production callers are expected to pin it.
 
-The genesis state contains the initial allocations. Mainnet allocates 10% of
-the SCCP cap and 5% of each variant's cap; the known tranches are bootstrap
-grants, liquidity and ecosystem funding, and their public addresses are in
-`genesis/mainnet-premine.json`. Testnet and devnet include a faucet allocation
-under a published deterministic key, and testnet also seeds an SCCP/C960 pool
+The genesis state contains the initial allocations. Mainnet allocates 1 basis
+point of the SCCP cap — 2,100 SCCP — as a bootstrap grant and no variant supply;
+its public address is in `genesis/mainnet-premine.json`. Testnet and devnet
+include a faucet allocation under a published deterministic key, and testnet
+also seeds an SCCP/C960 pool
 and a completed SCCP bridge HTLC. Mainnet has no faucet. Every later block must
 descend from the genesis block; a document with a different genesis hash is a
 different chain.
@@ -1585,12 +1592,19 @@ A block's cost has three parts:
 
 The reward is the block subsidy plus fees. On mainnet the subsidy starts at 50
 coins and halves every 210,000 blocks, with a 21,000,000-coin cap. Genesis
-allocates 10% of that cap (2,100,000 SCCP) and 5% of each variant cap (1,050,000
-C960 today). The SCCP tranches are designated for bootstrap grants, liquidity
-and development/ecosystem funding; the C960 tranches are for liquidity and
-player/ecosystem incentives. The private keys are not in the repository and the
-on-chain split is auditable in `genesis/mainnet-premine.json`. Testnet and
+allocates 1 basis point of that cap (2,100 SCCP) as a bootstrap grant and no
+variant supply, so every C960 in existence is mined. The private key is not in
+the repository and the on-chain grant is auditable in
+`genesis/mainnet-premine.json`. Testnet and
 devnet rewards are valueless.
+
+A stall is the one loss a seat can choose instead of playing on, so it has its
+own price: finalising a `time_forfeit` claim charges the flagged seat 10% of the
+protocol's miner bond (50 SCCP on mainnet). Half goes to the claimant, 30% is
+split between the witnesses whose flag receipt settled the claim, and 20% is
+burned. A fifth of the charge therefore never reaches an account, which is the
+cheapest honest way to burn in a ledger with no burn counter, and the witness
+share is what pays for the flag evidence the claimant needed.
 
 ### 16.2 The central attack: self-play
 

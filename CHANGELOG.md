@@ -7,6 +7,36 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- **Games run 10+0 instead of 30+0.** `FIXED_TIME_CONTROL` is 600,000 ms and
+  `TIME_CONTROL_TAG` is `600+0`, so the protocol's single time control, the PGN
+  header, the web verifier and the synthetic miner's slow-move pacing all agree.
+  A game now lasts at most ten minutes per seat; a seat that runs out is flagged
+  and settled exactly as before.
+- **A stalled clock costs the staller 10% of its miner bond.** `apply_stall_slash`
+  charges `STALL_SLASH_BPS` (1,000) of the bond of the seat named in the claim —
+  bond first, then balance, so unregistering does not escape it — and splits it
+  50/30/20 between the claimant, the epoch's witnessing quorum and a burn that is
+  applied by not crediting it. A claim carries `slashed`, so re-finalising the
+  same claim cannot charge twice, and a claim that names no account is rejected.
+- **The relay refuses to pair when the epoch has too few witnesses.**
+  `matchmaker run --node` reads `NodeStatus.witnesses` on every epoch poll and
+  compares it with `clock_witness_quorum`; a *known* count below quorum makes
+  `open_round()` refuse with a reason that names the shortfall, so a round cannot
+  start that nobody could ever flag. An unknown count (an older node that does
+  not publish the field) still pairs, and `--allow-unwitnessed-rounds` is the
+  devnet escape hatch: `deploy/bootstrap_devnet_stack.py` writes
+  `require_witnesses: false` into its generated `relay.json` because the devnet
+  runs no witness service.
+- **Mainnet's premine is one basis point instead of ten percent.**
+  `genesis/mainnet-premine.json` now holds a single `sccp-bootstrap` tranche of
+  1 basis point — 2,100 SCCP — with no variant tranches, and
+  `scripts/make_genesis.py` pins the manifest total to exactly that. Every C960
+  in existence is therefore mined. `genesis/mainnet.json` and
+  `MAINNET.genesis_hash` were regenerated
+  (`7339dc6f84f80e78f4694246deb9733f93fd22b855ece60a80d0a2bdb087c547`).
+
 ### Added
 
 - **The node's HTTP API documents itself at `/docs`.** FastAPI already generated

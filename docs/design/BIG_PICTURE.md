@@ -129,9 +129,9 @@ curve are `VariantParams` fields, so they can diverge later only by a fork. Addi
 a third variant is a protocol release plus its own genesis tranche, not a config
 edit.
 
-Mainnet genesis pre-allocates 10% of the SCCP cap (2,100,000 SCCP) and 5% of each
-variant's cap (1,050,000 C960 today) for bootstrap grants, liquidity and
-ecosystem incentives. The split is public in `genesis/mainnet-premine.json`; see
+Mainnet genesis pre-allocates 1 basis point of the SCCP cap (2,100 SCCP) as a
+bootstrap grant and no variant supply: C960 is mined, and only testnet seeds
+demo liquidity. The grant is public in `genesis/mainnet-premine.json`; see
 [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 
 ### 3.3 The token is the games

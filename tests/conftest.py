@@ -93,7 +93,7 @@ def match_tags(chess_vectors: dict[str, Any]) -> dict[str, str]:
         "EngineBlack": "mock-v1:2222222222222222",
         "OpeningID": "0",
         "OpeningHash": chess_vectors["opening"]["hash"],
-        "TimeControl": "1800+0",
+        "TimeControl": "600+0",
         "Rules": "chess",
     }
 

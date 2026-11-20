@@ -5,7 +5,7 @@ from the beacon, opens a session per matchup, relays SAN moves after checking
 them, and stores both seats' signatures. Every object it returns can be
 recomputed and checked by anyone with the roster and the beacon.
 
-Sessions are **timed**: each live match carries the protocol's fixed 30+0 clock
+Sessions are **timed**: each live match carries the protocol's fixed 10+0 clock
 (PROTOCOL.md section 8.4). The relay starts both clocks when the second seat joins,
 deducts the mover's elapsed time on every accepted move, signs a receipt for it
 with its witness key, and flags a clock that reaches zero even if the losing
@@ -527,6 +527,21 @@ class Matchmaker:
         self.lag_grace_ms = grace
         self.round_seconds: float = 0.0
         """Relay policy: seconds between scheduled rounds (0 disables ``--round-seconds``)."""
+        self.require_witnesses: bool = True
+        """Relay policy: refuse to pair when the epoch has too few clock witnesses.
+
+        ``clock_witness_quorum`` is the number of witness signatures a flag
+        receipt needs before the chain will open a bonded claim. Pairing below it
+        produces games whose flags cannot be settled, so the default is to stop
+        opening rounds until coverage returns. ``False`` is the devnet escape
+        hatch (``--allow-unwitnessed-rounds``).
+        """
+        self.witness_coverage: int | None = None
+        """Active clock witnesses the followed node last reported, ``None`` if unknown.
+
+        ``None`` means the relay is not following a node (it cannot ask), not that
+        there are none: only a *known* count below the quorum refuses to pair.
+        """
         self._sessions: dict[str, MatchSession] = {}
         self._no_shows: dict[str, int] = {}
         self._rounds_opened: dict[int, int] = {}
@@ -875,9 +890,48 @@ class Matchmaker:
                 for session in self._sessions.values()
             )
 
+    def set_witness_coverage(self, count: int | None) -> bool:
+        """Record how many clock witnesses the epoch has; return whether pairing may run.
+
+        The follower polls the node's status and passes ``witnesses`` here. A
+        ``None`` (the node did not report a count) leaves the relay unable to
+        check coverage, which is not the same as coverage being zero.
+        """
+        if count is not None and (isinstance(count, bool) or count < 0):
+            raise RelayError("witness coverage must be a non-negative integer")
+        with self._lock:
+            self.witness_coverage = count
+            return self._witness_coverage_ok_locked()
+
+    def _witness_coverage_ok_locked(self) -> bool:
+        """Whether the epoch has enough clock witnesses to settle a flag."""
+        if not self.require_witnesses:
+            return True
+        if self.witness_coverage is None:
+            return True
+        return self.witness_coverage >= self.params.clock_witness_quorum
+
+    def _require_witness_coverage_locked(self) -> None:
+        """Refuse to pair an epoch whose witness set cannot settle a flag.
+
+        Below ``clock_witness_quorum`` a flag receipt can never be verified by a
+        ``timeout_claim``, so a stall in this epoch is unsettleable: the game is
+        one whose loss cannot reach the chain, and a seat that loses on the board
+        gains by stalling. Refusing to open the round is the honest answer --
+        play resumes when coverage returns.
+        """
+        if self._witness_coverage_ok_locked():
+            return
+        assert self.witness_coverage is not None  # the gate allows None
+        raise RelayError(
+            f"epoch {self.beacon.epoch} has {self.witness_coverage} active clock "
+            f"witness(es) and needs {self.params.clock_witness_quorum}; refusing to pair"
+        )
+
     def open_round(self, round_number: int) -> list[MatchView]:
         """Derive the pairings for ``round_number`` and create their sessions."""
         with self._lock:
+            self._require_witness_coverage_locked()
             now_ms = self._now_ms()
             if self._sweep_locked(now_ms):
                 self._persist_locked()
@@ -1295,7 +1349,9 @@ class Matchmaker:
 
         The config carries the epoch beacon, the roster with public keys and
         engine fingerprints, and optionally ``timeout_seconds``,
-        ``round_seconds`` and an ``open_round`` number to open immediately. The
+        ``round_seconds``, ``open_round`` (a number to open immediately) and
+        ``require_witnesses`` (``false`` lets a relay pair an epoch whose clock
+        witness count it cannot or need not check). The
         witness keypair is not in the config: the CLI loads it from a keyfile
         and passes it in, so a relay store never contains key material.
         """
@@ -1368,6 +1424,10 @@ class Matchmaker:
             lag_grace_ms=lag_grace_ms,
         )
         matchmaker.round_seconds = float(round_seconds)
+        require_witnesses = document.get("require_witnesses", True)
+        if not isinstance(require_witnesses, bool):
+            raise RelayError("require_witnesses must be true or false")
+        matchmaker.require_witnesses = require_witnesses
         open_round = document.get("open_round")
         if open_round is not None:
             if not isinstance(open_round, int) or isinstance(open_round, bool) or open_round < 0:

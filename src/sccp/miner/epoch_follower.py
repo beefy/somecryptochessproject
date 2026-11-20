@@ -73,12 +73,22 @@ class EpochFollower:
         """Advance the relay to the chain's epoch, when it is matchable.
 
         Returns ``None`` while the chain is on the relay's own epoch, has not
-        opened the next one yet, or has too few matchable miners to pair. A node
-        that cannot be reached raises :class:`~sccp.errors.RelayError`, which the
-        caller turns into a log line and retries on the next poll.
+        opened the next one yet, or has too few matchable miners to pair. The
+        node's clock-witness count is refreshed on every poll, whatever the
+        epoch does. A node that cannot be reached raises
+        :class:`~sccp.errors.RelayError`, which the caller turns into a log line
+        and retries on the next poll.
         """
         status = self.node.status()
         height = _int_field(status, "height", where="/v1/status")
+        # Coverage changes within an epoch too (a witness can be slashed, or a
+        # registration can expire), so it is refreshed on every poll rather than
+        # only when the relay moves.
+        coverage = status.get("witnesses")
+        if coverage is not None:
+            if not isinstance(coverage, int) or isinstance(coverage, bool) or coverage < 0:
+                raise RelayError(f"/v1/status did not return a usable 'witnesses': {coverage!r}")
+            self.matchmaker.set_witness_coverage(coverage)
         target = epoch_of(height, self.params)
         if target <= self.epoch:
             return None

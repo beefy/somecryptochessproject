@@ -66,8 +66,8 @@ function require(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
 }
 
-/** The fixed v1 control: 30 minutes, no increment. */
-const FIXED_INITIAL_MS = 1_800_000;
+/** The fixed v1 control: 10 minutes, no increment. */
+const FIXED_INITIAL_MS = 600_000;
 
 /**
  * Run every locally-checkable proof rule.
@@ -153,9 +153,9 @@ export function verifyProof(
     const control = proof.certificate.time_control;
     require(
       control.initial_ms === FIXED_INITIAL_MS && control.increment_ms === 0,
-      `control is ${control.initial_ms}+${control.increment_ms}, v1 fixes 1800000+0`,
+      `control is ${control.initial_ms}+${control.increment_ms}, v1 fixes 600000+0`,
     );
-    return "1800000+0";
+    return "600000+0";
   });
 
   run("opening commitment", () => {

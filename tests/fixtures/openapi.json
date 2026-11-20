@@ -1867,6 +1867,11 @@
           },
           "tip_hash": {
             "type": "string"
+          },
+          "witnesses": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
           }
         },
         "required": [

@@ -586,7 +586,11 @@ def _apply_proof(
         stats.last_opponent_epoch[proof.loser if delta else proof.winner] = proof.epoch
     if proof.termination == "time_forfeit" and proof.timeout_claim_id is not None:
         try:
-            timeout.finalise_claim(work, proof.timeout_claim_id, header.height)
+            claim = timeout.finalise_claim(work, proof.timeout_claim_id, header.height)
+            # The bond made a false claim expensive; this makes a real stall
+            # expensive. The seat that lost on time pays 10% of the miner bond,
+            # split claimant / signing witnesses / burn.
+            timeout.apply_stall_slash(work, claim, proof.loser)
         except TimeoutClaimError as exc:
             _fail(BlockFailure.PROOFS, f"timeout claim cannot finalise: {exc}")
 
