@@ -12,17 +12,27 @@ from typing import Final, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from sccp.chess.rulesets import (
+    CHESS960_VARIANT as CHESS960_VARIANT,
+)
+from sccp.chess.rulesets import (
+    STANDARD_VARIANT as STANDARD_VARIANT,
+)
+from sccp.chess.rulesets import ruleset_for, supported_rules
 from sccp.errors import ConfigError, NetworkError
 from sccp.serialization import Domain, domain_hex
 
 UNITS_PER_COIN: Final = 100_000_000
 """Base units per coin. All consensus amounts are integers of this unit."""
 
-STANDARD_VARIANT: Final = "standard"
-"""The native SCCP variant. It is first in every network's variant list."""
+MAX_CLOCK_MS: Final = 86_400_000
+"""Hard ceiling for a single clock value: one day, so ``mm`` stays two digits."""
 
-CHESS960_VARIANT: Final = "chess960"
-"""Fischer Random: the same pieces, a shuffled back rank and 960 start positions."""
+DEFAULT_TIME_CONTROL_INITIAL_MS: Final = 600_000
+"""Default main time for a network that does not override it: ten minutes."""
+
+DEFAULT_TIME_CONTROL_INCREMENT_MS: Final = 0
+"""Default per-move increment for a network that does not override it: sudden death."""
 
 CHESS960_ASSET_ID: Final = domain_hex(
     Domain.ASSET,
@@ -94,22 +104,53 @@ class VariantParams(BaseModel):
     min_plies: int = Field(ge=1)
     max_games_per_block: int = Field(default=1, ge=1)
     opening_book: str = Field(default="standard", min_length=1, max_length=64)
+    time_control_initial_ms: int = Field(
+        default=DEFAULT_TIME_CONTROL_INITIAL_MS, ge=1, le=MAX_CLOCK_MS
+    )
+    """Main time each seat starts with, in milliseconds."""
+    time_control_increment_ms: int = Field(
+        default=DEFAULT_TIME_CONTROL_INCREMENT_MS, ge=0, le=MAX_CLOCK_MS
+    )
+    """Time added after every move, in milliseconds."""
 
     @property
     def native(self) -> bool:
         """True when proofs of this variant mint the network's native coin."""
         return self.asset is None
 
+    @property
+    def time_control(self) -> tuple[int, int]:
+        """``(initial_ms, increment_ms)`` for this variant's games."""
+        return self.time_control_initial_ms, self.time_control_increment_ms
+
     @model_validator(mode="after")
     def _check_invariants(self) -> Self:
-        if self.rules not in ("chess", "chess960"):
-            raise ConfigError(f"unsupported variant rules {self.rules!r}")
-        if self.name == STANDARD_VARIANT and (self.asset is not None or self.rules != "chess"):
-            raise ConfigError("the standard variant is native SCCP with standard chess rules")
+        ruleset = ruleset_for(self.name)
+        if self.rules != ruleset.pgn_rules:
+            raise ConfigError(
+                f"variant {self.name!r} is registered with PGN rules "
+                f"{ruleset.pgn_rules!r}, not {self.rules!r}; known rules: "
+                f"{', '.join(sorted(supported_rules()))}"
+            )
+        if self.name == STANDARD_VARIANT and self.asset is not None:
+            raise ConfigError("the standard variant is native SCCP with no derived asset")
         if self.name != STANDARD_VARIANT and self.asset is None:
             raise ConfigError(f"variant {self.name!r} needs a derived asset id")
         if (self.max_supply is None) != (self.halving_interval is None):
             raise ConfigError("a variant sets max_supply and halving_interval together")
+        if self.time_control_initial_ms % 1000 or self.time_control_increment_ms % 1000:
+            raise ConfigError(
+                "variant time controls must be whole seconds, because the PGN "
+                "TimeControl tag is lossless only in whole seconds"
+            )
+        # A clock never exceeds one day even if the game runs to the protocol's
+        # ply ceiling, so ``mm:ss`` formatting cannot overflow.
+        worst_case = self.time_control_initial_ms + self.time_control_increment_ms * MAX_PLIES_LIMIT
+        if worst_case > MAX_CLOCK_MS:
+            raise ConfigError(
+                f"variant {self.name!r} time control can reach {worst_case} ms, "
+                f"above the {MAX_CLOCK_MS} ms clock ceiling"
+            )
         return self
 
 
@@ -261,8 +302,13 @@ class NetworkParams(BaseModel):
 
         # Standard chess is the network's own unit of account. It is always
         # first and always mirrors the network's own schedule, even when a
-        # caller only lists the optional variants or overrides min_plies.
+        # caller only lists the optional variants or overrides min_plies. A
+        # supplied standard entry contributes only its clock, which is the one
+        # standard-token field the network schedule does not already own.
         supplied = tuple(self.variants)
+        supplied_standard = next(
+            (variant for variant in supplied if variant.name == STANDARD_VARIANT), None
+        )
         standard = VariantParams(
             name=STANDARD_VARIANT,
             rules="chess",
@@ -275,6 +321,16 @@ class NetworkParams(BaseModel):
             min_plies=self.min_plies,
             max_games_per_block=1,
             opening_book=self.book_version,
+            time_control_initial_ms=(
+                supplied_standard.time_control_initial_ms
+                if supplied_standard is not None
+                else DEFAULT_TIME_CONTROL_INITIAL_MS
+            ),
+            time_control_increment_ms=(
+                supplied_standard.time_control_increment_ms
+                if supplied_standard is not None
+                else DEFAULT_TIME_CONTROL_INCREMENT_MS
+            ),
         )
         variants = (
             standard,

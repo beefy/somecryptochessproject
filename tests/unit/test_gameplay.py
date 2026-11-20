@@ -12,7 +12,7 @@ from sccp.chess.engines import MockEngine, ScriptedEngine
 from sccp.chess.gameplay import GameHooks, play_game, render_pgn
 from sccp.chess.openings import OpeningLine, load_book
 from sccp.chess.pgn import GameExpectations, GameResult, Termination, validate_pgn
-from sccp.config import DEVNET, TESTNET, NetworkParams
+from sccp.config import DEVNET, TESTNET, NetworkParams, VariantParams
 from sccp.errors import EngineError, GameError, PgnValidationError
 
 LIMIT = chess.engine.Limit(nodes=50)
@@ -219,6 +219,27 @@ def test_render_pgn_lets_headers_win() -> None:
     assert '[Termination "resignation"]' in pgn
     assert 'Result "0-1"' in pgn
     assert pgn.rstrip().endswith("0-1")
+
+
+def test_play_game_uses_the_token_time_control() -> None:
+    standard = VariantParams(
+        name="standard",
+        rules="chess",
+        symbol="SCCP",
+        display_name="SCCP",
+        subsidy=DEVNET.subsidy,
+        min_plies=DEVNET.min_plies,
+        time_control_initial_ms=180_000,
+        time_control_increment_ms=2_000,
+    )
+    params = NetworkParams(**{**DEVNET.model_dump(), "variants": [standard.model_dump()]})
+    game = play_game(
+        ScriptedEngine(["f3", "g4"]),
+        ScriptedEngine(["e5", "Qh4#"]),
+        params=params,
+        limit=LIMIT,
+    )
+    assert '[TimeControl "180+2"]' in game.pgn
 
 
 def test_resigned_game_pgn_validates() -> None:

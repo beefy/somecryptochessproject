@@ -8,12 +8,14 @@ import pytest
 from pydantic import ValidationError
 
 from sccp.config import (
+    CHESS960,
     DEVNET,
     MAINNET,
     NETWORKS,
     TESTNET,
     UNITS_PER_COIN,
     NetworkParams,
+    VariantParams,
     coins_to_units,
     get_network,
     network_ids,
@@ -77,6 +79,64 @@ def test_clock_and_timeout_parameters() -> None:
     assert MAINNET.clock_witness_quorum == 3
     assert MAINNET.min_timeout_bond == 10 * UNITS_PER_COIN
     assert MAINNET.clock_witness_bond == 50 * UNITS_PER_COIN
+
+
+def test_each_variant_declares_its_own_time_control() -> None:
+    """A token controls its clock independently of the network default."""
+    assert TESTNET.variant("standard").time_control == (600_000, 0)
+    assert TESTNET.variant("chess960").time_control == (600_000, 0)
+
+    faster_chess960 = CHESS960.model_copy(
+        update={"time_control_initial_ms": 300_000, "time_control_increment_ms": 5_000}
+    )
+    params = NetworkParams(
+        **{
+            **DEVNET.model_dump(),
+            "variants": [faster_chess960.model_dump()],
+        }
+    )
+    assert params.variant("chess960").time_control == (300_000, 5_000)
+    assert params.variant("standard").time_control == (600_000, 0)
+
+    faster_standard = VariantParams(
+        name="standard",
+        rules="chess",
+        symbol="SCCP",
+        display_name="SCCP",
+        subsidy=DEVNET.subsidy,
+        min_plies=DEVNET.min_plies,
+        time_control_initial_ms=180_000,
+        time_control_increment_ms=2_000,
+    )
+    params = NetworkParams(
+        **{
+            **DEVNET.model_dump(),
+            "variants": [faster_standard.model_dump()],
+        }
+    )
+    assert params.variant("standard").time_control == (180_000, 2_000)
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"time_control_initial_ms": 500},  # PGN tags carry whole seconds only
+        {"time_control_increment_ms": 1_500},
+        {"time_control_initial_ms": 86_400_001},
+        {"time_control_initial_ms": 0},
+        {"time_control_initial_ms": 86_000_000, "time_control_increment_ms": 1_000},
+    ],
+)
+def test_variant_time_controls_are_bounded_and_lossless(override: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        VariantParams.model_validate({**CHESS960.model_dump(), **override})
+
+
+def test_variant_must_be_registered() -> None:
+    with pytest.raises(ValidationError):
+        VariantParams.model_validate(
+            {**CHESS960.model_dump(), "name": "nine-sixty", "rules": "chess960"}
+        )
 
 
 def test_devnet_is_deterministic() -> None:

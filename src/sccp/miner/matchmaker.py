@@ -5,8 +5,9 @@ from the beacon, opens a session per matchup, relays SAN moves after checking
 them, and stores both seats' signatures. Every object it returns can be
 recomputed and checked by anyone with the roster and the beacon.
 
-Sessions are **timed**: each live match carries the protocol's fixed 10+0 clock
-(PROTOCOL.md section 8.4). The relay starts both clocks when the second seat joins,
+Sessions are **timed**: each live match carries the clock its token declares in
+``VariantParams`` (10+0 for the two built-in tokens; PROTOCOL.md section 8.4). The
+relay starts both clocks when the second seat joins,
 deducts the mover's elapsed time on every accepted move, signs a receipt for it
 with its witness key, and flags a clock that reaches zero even if the losing
 seat never sends another message. Moves may carry the clocked body
@@ -38,16 +39,11 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import Field
 
-from sccp.chess.openings import OpeningBook, OpeningLine, book_for
+from sccp.chess.openings import OpeningBook, OpeningLine, book_for, load_book
 from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import Termination, canonical_game_hash, outcome_result
-from sccp.chess.variants import (
-    board_for_variant,
-    chess960_start_fen,
-    is_chess960,
-    select_chess960_start,
-)
-from sccp.config import CHESS960_VARIANT, NetworkParams, get_network
+from sccp.chess.variants import board_for_variant, start_position_for
+from sccp.config import STANDARD_VARIANT, NetworkParams, get_network
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import (
     HybridKeypair,
@@ -64,6 +60,7 @@ from sccp.protocol.clocks import (
     clock_window,
     flag_result,
     sign_receipt,
+    time_control_for,
     verify_move_signature,
 )
 from sccp.protocol.commitments import certificate_move_root, clock_root
@@ -956,31 +953,37 @@ class Matchmaker:
             now = self._now()
             created: list[MatchSession] = []
             for matchup in matchups:
+                variant_params = self.params.variant(matchup.variant)
                 opening: OpeningLine | OpeningRef
-                if is_chess960(matchup.variant):
-                    position = select_chess960_start(beacon_bytes, matchup.match_id)
-                    start_fen = chess960_start_fen(position)
+                selected = start_position_for(matchup.variant, beacon_bytes, matchup.match_id)
+                if selected is not None:
                     opening = OpeningRef(
-                        book_version="none",
-                        line_id=position,
+                        book_version=selected.book_version,
+                        line_id=selected.line_id,
                         hash=opening_hash(
-                            "none",
-                            position,
-                            (),
-                            start_fen=start_fen,
-                            variant=CHESS960_VARIANT,
+                            selected.book_version,
+                            selected.line_id,
+                            selected.moves,
+                            start_fen=selected.start_fen,
+                            variant=matchup.variant,
                         ),
-                        moves=(),
-                        start_fen=start_fen,
-                        variant=CHESS960_VARIANT,
+                        moves=selected.moves,
+                        start_fen=selected.start_fen,
+                        variant=matchup.variant,
                     )
                 else:
-                    opening = self.book.select(beacon_bytes, matchup.match_id)
+                    book = (
+                        self.book
+                        if self.book.version == variant_params.opening_book
+                        else load_book(variant_params.opening_book)
+                    )
+                    opening = book.select(beacon_bytes, matchup.match_id)
                 certificate = create_certificate(
                     matchup,
                     opening,
                     engine_white=self._engines[matchup.white],
                     engine_black=self._engines[matchup.black],
+                    time_control=time_control_for(variant_params),
                 )
                 board = board_for_variant(matchup.variant, certificate.opening.start_fen)
                 san_moves: list[str] = []
@@ -1477,7 +1480,13 @@ def create_app(matchmaker: Matchmaker, *, origins: Sequence[str] = ()) -> FastAP
             "open": sum(view.status in ("pending", "active") for view in views),
             "reputation": matchmaker.reputation(),
             "timed": TIMED_SESSIONS,
-            "time_control": FIXED_TIME_CONTROL.model_dump(mode="json"),
+            "time_control": time_control_for(
+                matchmaker.params.variant(STANDARD_VARIANT)
+            ).model_dump(mode="json"),
+            "time_controls": {
+                name: time_control_for(matchmaker.params.variant(name)).model_dump(mode="json")
+                for name in matchmaker.params.variant_names()
+            },
             "round": matchmaker.current_round,
             "round_seconds": matchmaker.round_seconds,
             "witness": matchmaker.witness,

@@ -32,7 +32,13 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
-from sccp.config import MAX_PLIES_LIMIT, STANDARD_VARIANT
+from sccp.config import (
+    DEFAULT_TIME_CONTROL_INCREMENT_MS,
+    DEFAULT_TIME_CONTROL_INITIAL_MS,
+    MAX_CLOCK_MS,
+    MAX_PLIES_LIMIT,
+    STANDARD_VARIANT,
+)
 from sccp.errors import ProtocolError
 
 DigestHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
@@ -62,9 +68,6 @@ EngineFingerprint = Annotated[
 Color = Literal["white", "black"]
 ResultValue = Literal["1-0", "0-1", "1/2-1/2"]
 TerminationValue = Literal["checkmate", "draw", "resignation", "time_forfeit"]
-
-MAX_CLOCK_MS = 24 * 60 * 60 * 1000
-"""Upper bound for a clock value (24 hours), from PROTOCOL.md section 8.4."""
 
 STANDARD_START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 """The ordinary initial position, repeated here so models need no chess import."""
@@ -247,7 +250,10 @@ class MatchCertificate(ProtocolModel):
     engine_black: EngineFingerprint
     variant: VariantName = STANDARD_VARIANT
     time_control: TimeControl = Field(
-        default_factory=lambda: TimeControl(initial_ms=600_000, increment_ms=0)
+        default_factory=lambda: TimeControl(
+            initial_ms=DEFAULT_TIME_CONTROL_INITIAL_MS,
+            increment_ms=DEFAULT_TIME_CONTROL_INCREMENT_MS,
+        )
     )
     start_signatures: dict[Color, LedgerSignatureHex] = Field(default_factory=dict)
 

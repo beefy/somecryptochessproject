@@ -30,9 +30,9 @@ from sccp.chess.pgn import (
 from sccp.chess.pgn import (
     GameResult as PgnResult,
 )
+from sccp.chess.rulesets import ruleset_for
 from sccp.chess.variants import (
     board_for_variant,
-    is_chess960,
     normalise_start_fen,
     variant_rules,
 )
@@ -58,6 +58,7 @@ from sccp.protocol.models import (
     OpeningRef,
     ResultValue,
     TerminationValue,
+    TimeControl,
     Transcript,
     WinProof,
 )
@@ -121,8 +122,8 @@ def validate_opening_ref(ref: OpeningRef) -> None:
             f"opening {ref.line_id} start FEN is {ref.start_fen}, "
             f"but the variant canonicalises it to {start_fen}"
         )
-    if is_chess960(ref.variant) and ref.moves:
-        raise TranscriptError("a Chess960 opening must not carry book moves")
+    if not ruleset_for(ref.variant).allow_book_moves and ref.moves:
+        raise TranscriptError(f"a {ref.variant} opening must not carry book moves")
     canonical: list[str] = []
     for number, san in enumerate(ref.moves, start=1):
         if board.is_game_over(claim_draw=False):
@@ -161,6 +162,7 @@ def create_certificate(
     *,
     engine_white: str,
     engine_black: str,
+    time_control: TimeControl = FIXED_TIME_CONTROL,
 ) -> MatchCertificate:
     """Build an unsigned certificate for ``matchup``."""
     ref = opening_ref(opening) if isinstance(opening, OpeningLine) else opening
@@ -180,7 +182,7 @@ def create_certificate(
         engine_white=engine_white,
         engine_black=engine_black,
         variant=matchup.variant,
-        time_control=FIXED_TIME_CONTROL,
+        time_control=time_control,
     )
 
 
@@ -385,10 +387,12 @@ def pgn_headers(cert: MatchCertificate) -> dict[str, str]:
         "TimeControl": time_control_tag(cert.time_control),
         "Rules": variant_rules(cert.variant),
     }
-    if is_chess960(cert.variant):
+    rules = ruleset_for(cert.variant)
+    if rules.requires_start_fen:
         headers["FEN"] = cert.opening.start_fen
         headers["SetUp"] = "1"
-        headers["Variant"] = "Chess960"
+    if rules.pgn_variant_header is not None:
+        headers["Variant"] = rules.pgn_variant_header
     return headers
 
 

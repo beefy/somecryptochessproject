@@ -21,6 +21,7 @@ import chess.pgn
 from sccp.chess.engines import Engine
 from sccp.chess.openings import OpeningLine
 from sccp.chess.pgn import GameResult, Termination, outcome_result
+from sccp.chess.rulesets import CHESS960_VARIANT, ruleset_for
 from sccp.chess.variants import board_for_variant, normalise_start_fen
 from sccp.config import STANDARD_VARIANT, NetworkParams
 from sccp.errors import GameError
@@ -28,7 +29,11 @@ from sccp.errors import GameError
 EVENT_TAG: Final = "sccp match"
 RULES_TAG: Final = "chess"
 TIME_CONTROL_TAG: Final = "600+0"
-"""The protocol-fixed 10+0 control; the transcript layer repeats it from the certificate."""
+"""The historical 10+0 default for standalone rendering.
+
+:func:`play_game` overrides it with the token's declared ``TimeControl``; the
+transcript layer repeats that from the certificate.
+"""
 
 MoveHook = Callable[[int, chess.Move, str], None]
 """Called after every pushed move with ``(ply, move, san)``."""
@@ -84,14 +89,20 @@ def render_pgn(
     black: Engine,
     headers: Mapping[str, str] | None = None,
     start_fen: str | None = None,
+    variant: str | None = None,
+    time_control: str = TIME_CONTROL_TAG,
 ) -> str:
     """Render a finished board as PGN, with the sccp tags filled in.
 
-    A Chess960 game carries ``SetUp``, ``Variant`` and a Shredder-FEN start
-    position; standard games keep the protocol-v1 header set unchanged.
+    ``variant`` defaults to the board's own flavour for backwards compatibility.
+    A variant whose rules need a start position carries ``SetUp``, ``FEN`` and
+    the ruleset's canonical ``Variant`` header. ``time_control`` is the token's
+    declared ``TimeControl`` tag, not a protocol-wide constant.
     """
     game = chess.pgn.Game.from_board(board)
-    chess960 = board.chess960
+    if variant is None:
+        variant = CHESS960_VARIANT if board.chess960 else STANDARD_VARIANT
+    rules = ruleset_for(variant)
     merged: dict[str, str] = {
         "Event": EVENT_TAG,
         "Site": "?",
@@ -99,8 +110,8 @@ def render_pgn(
         "Round": "-",
         "White": white.name,
         "Black": black.name,
-        "Rules": "chess960" if chess960 else RULES_TAG,
-        "TimeControl": TIME_CONTROL_TAG,
+        "Rules": rules.pgn_rules,
+        "TimeControl": time_control,
         "Termination": termination.value,
         "EngineWhite": white.fingerprint,
         "EngineBlack": black.fingerprint,
@@ -108,11 +119,12 @@ def render_pgn(
     if headers is not None:
         merged.update(headers)
     merged["Result"] = result.value
-    if chess960:
-        canonical = normalise_start_fen(start_fen, "chess960")
+    if rules.requires_start_fen:
+        canonical = normalise_start_fen(start_fen, variant)
         merged["FEN"] = canonical
         merged["SetUp"] = "1"
-        merged["Variant"] = "Chess960"
+        if rules.pgn_variant_header is not None:
+            merged["Variant"] = rules.pgn_variant_header
     for tag, value in merged.items():
         game.headers[tag] = value
     return str(game)
@@ -144,6 +156,11 @@ def play_game(
     effort = limit if limit is not None else chess.engine.Limit(nodes=params.nodes_per_move)
     canonical_start = normalise_start_fen(start_fen, variant)
     board = board_for_variant(variant, canonical_start)
+    variant_params = params.variant(variant)
+    time_control = (
+        f"{variant_params.time_control_initial_ms // 1000}"
+        f"+{variant_params.time_control_increment_ms // 1000}"
+    )
     san_moves: list[str] = []
     opening_moves = opening.moves if isinstance(opening, OpeningLine) else tuple(opening or ())
 
@@ -205,6 +222,8 @@ def play_game(
             black=black,
             headers=headers,
             start_fen=canonical_start,
+            variant=variant,
+            time_control=time_control,
         ),
         result=result,
         termination=termination,

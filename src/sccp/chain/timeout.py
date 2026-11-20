@@ -29,9 +29,17 @@ from sccp.chain.state import Account, State, TimeoutClaimRecord, WitnessRecord
 from sccp.config import NetworkParams
 from sccp.crypto.keys import verify_domain
 from sccp.crypto.pq import ed25519_public_key
-from sccp.errors import ClockError, KeyEncodingError, TimeoutClaimError, TranscriptError
+from sccp.errors import (
+    ClockError,
+    ConfigError,
+    KeyEncodingError,
+    TimeoutClaimError,
+    TranscriptError,
+)
 from sccp.protocol.clocks import (
     move_payload,
+    time_control_for,
+    validate_time_control,
     verify_checkpoint_signatures,
     verify_move_signature,
     verify_receipt_signatures,
@@ -146,6 +154,15 @@ def validate_claim(state: State, tx: Transaction, height: int) -> TimeoutClaimRe
         _fail("timeout claim does not match its certificate's match id")
     if tx.sender not in (certificate.white, certificate.black):
         _fail(f"{tx.sender} is not a seat of match {claim.match_id}")
+    try:
+        variant_params = params.variant(certificate.variant)
+        validate_time_control(
+            certificate.time_control,
+            max_plies=params.max_plies,
+            required=time_control_for(variant_params),
+        )
+    except (ClockError, ConfigError) as exc:
+        _fail(f"timeout claim certificate has an invalid clock: {exc}")
     if claim.bond < params.min_timeout_bond:
         _fail(f"timeout claim needs a bond of at least {params.min_timeout_bond}, got {claim.bond}")
 
