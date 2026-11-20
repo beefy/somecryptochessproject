@@ -20,6 +20,12 @@ not itemised here.
   takes about ten minutes rather than half an hour, and
   `tests/unit/test_landing_page.py` reads the clock and the testnet block target
   out of the library so the hero stats cannot drift again.
+- **Prose built on the old 60-second block time is gone.** The web README's
+  `--mine` advice, three deploy wait-budget docstrings, the bootstrap window
+  arithmetic (18 blocks is nine minutes at 30 s, not 19) and the mirror page's
+  "thousands of blocks an hour" are corrected. `tests/unit/test_docs_block_pacing.py`
+  re-derives the bootstrap windows from the deploy modules and bans the retired
+  phrasings, so the next drift fails a test instead of shipping.
 - **A stalled clock costs the staller 10% of its miner bond.** `apply_stall_slash`
   charges `STALL_SLASH_BPS` (1,000) of the bond of the seat named in the claim —
   bond first, then balance, so unregistering does not escape it — and splits it

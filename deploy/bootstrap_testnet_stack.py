@@ -243,7 +243,7 @@ def _tip_timestamp(service: NodeService, *, height: int) -> int:
     The walk is backdated by the blocks still to come, so the window *ends* at the wall
     clock: block ``height`` is stamped ``now - (BOOTSTRAP_HEIGHT - height) * target``.
     Stamping block 1 at ``now`` instead would put the last bootstrap block a whole window
-    ahead of the clock (19 minutes on testnet), and the node's settler paces itself with
+    ahead of the clock (nine minutes on testnet), and the node's settler paces itself with
     ``clock() - tip_timestamp >= mine_interval``: it could not build the first real block
     until that window had elapsed, so a fresh deploy would sit at ``BOOTSTRAP_HEIGHT``
     with registrations and proofs queued in the mempool and no block to include them.

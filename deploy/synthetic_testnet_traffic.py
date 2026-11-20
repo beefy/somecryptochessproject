@@ -123,7 +123,7 @@ MIN_BALANCE_COINS: Final = 3
 IDLE_MIN_SECONDS: Final = 60.0
 IDLE_MAX_SECONDS: Final = 300.0
 WAIT_SECONDS: Final = 900.0
-"""How long to wait for a block. The node settles one a minute; 900s is three misses."""
+"""How long to wait for a block. The node settles one every 30 s; 900 s is thirty misses."""
 
 POLL_SECONDS: Final = 5.0
 SEED_NAMESPACE: Final = b"sccp/testnet/traffic-wallet/"

@@ -64,8 +64,8 @@ created for and a node refuses to open it under another id.
 
 A fresh directory is a genesis-only chain, so the header says `height 0` until
 something makes blocks — and nothing mines testnet for you. Either make them
-(`--mine`; testnet's target is one block a minute), or pull the shared chain once
-at startup:
+(`--mine`; testnet's target is one block every 30 seconds), or pull the shared
+chain once at startup:
 
 ```bash
 sccp --network testnet --data-dir data node run \
@@ -466,8 +466,8 @@ src/
 - **The header says `height 0`** — the node's data dir holds no blocks yet: a
   fresh `--data-dir` is a genesis-only chain, so there is nothing to show. The
   page is innocent here — it prints `/v1/status` verbatim. Nothing mines testnet
-  for you either: make blocks (`--mine`, one a minute) or sync once from the
-  hosted node (`--peer http://app.proofofchess.com:8645`, which
+  for you either: make blocks (`--mine`, one every 30 seconds) or sync once from
+  the hosted node (`--peer http://app.proofofchess.com:8645`, which
   prints `synced …: +121 blocks to height 121`). A dir that "went back to 0" is a
   different `--data-dir`, not a lost chain — the SQLite file is bound to one path.
 - **`no built explorer found`** (exit 2) — `sccp node run --web` found no
