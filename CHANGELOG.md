@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.31.0] - 2026-11-19
+
 ### Changed
 
 - **Testnet confirms transactions in 30 s instead of 60 s without adding
