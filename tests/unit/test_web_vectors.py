@@ -23,7 +23,13 @@ from sccp.chess.pgn import GameResult, canonical_game_hash
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import verify_domain
 from sccp.crypto.pq import hybrid_keypair_from_seed, hybrid_verify_domain
-from sccp.crypto.wallet import KeyfileHeader, decrypt_seed, seed_to_mnemonic
+from sccp.crypto.wallet import (
+    FAST_KDF,
+    KeyfileHeader,
+    decrypt_seed,
+    import_seed,
+    seed_to_mnemonic,
+)
 from sccp.protocol.beacon import commitment
 from sccp.protocol.models import GameResult as ProtocolGameResult
 from sccp.protocol.models import MatchCertificate, Transaction, WinProof
@@ -222,6 +228,25 @@ def test_keyfile_vector_describes_this_implementation(vectors: dict[str, object]
         hybrid_keypair_from_seed(seed).public_key_bytes, header.network
     )
     assert seed_to_mnemonic(seed) == keyfile["mnemonic"]
+
+
+def test_seed_import_matches_the_keyfile_vector(vectors: dict[str, object], tmp_path: Path) -> None:
+    """Importing the vector's hex seed reconstructs the same address, as the web does."""
+    keyfile = vectors["keyfile"]
+    assert isinstance(keyfile, dict)
+    document = keyfile["document"]
+    assert isinstance(document, dict)
+    header = KeyfileHeader.from_dict(document)
+    wallet = import_seed(
+        tmp_path / "from-seed.key",
+        keyfile["seed_hex"],
+        header.network,
+        keyfile["passphrase"],
+        kdf=FAST_KDF,
+    )
+    assert wallet.seed.hex() == keyfile["seed_hex"]
+    assert wallet.address == header.address
+    assert wallet.public_key_hex == header.public_key
 
 
 def test_match_vectors_describe_this_implementation(vectors: dict[str, object]) -> None:

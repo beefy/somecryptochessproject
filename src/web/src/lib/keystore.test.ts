@@ -20,6 +20,7 @@ import {
   parseKeyfile,
   unlockKeyfile,
 } from "./keystore";
+import { addressFor, hybridKeypairFromSeedHex } from "./keys";
 import vectors from "./vectors.json";
 
 const pin = vectors.keyfile;
@@ -105,5 +106,30 @@ describe("creating a keyfile", () => {
     });
     const unlocked = await unlockKeyfile(created.document, "a long enough passphrase");
     expect(toHex(unlocked.seed)).toBe(toHex(created.keypair.seed));
+  });
+});
+
+describe("importing a hex seed", () => {
+  it("derives the same key the CLI seed names", async () => {
+    const keypair = hybridKeypairFromSeedHex(pin.seed_hex.toUpperCase());
+    expect(toHex(keypair.seed)).toBe(pin.seed_hex);
+    expect(addressFor(keypair.publicKey, "testnet")).toBe(pin.document.address);
+
+    // The restored keyfile is a fresh envelope around the same seed, so it
+    // unlocks to the vector's address rather than to a new wallet.
+    const { document } = await createKeyfile({
+      network: "testnet",
+      passphrase: "a long enough passphrase",
+      seed: keypair.seed,
+      kdf: { n: 2 ** 10 },
+    });
+    const unlocked = await unlockKeyfile(document, "a long enough passphrase");
+    expect(addressFor(unlocked.publicKey, "testnet")).toBe(pin.document.address);
+  });
+
+  it("refuses anything that is not exactly 32 bytes of hex", () => {
+    expect(() => hybridKeypairFromSeedHex("00ff")).toThrow();
+    expect(() => hybridKeypairFromSeedHex(`${pin.seed_hex}00`)).toThrow();
+    expect(() => hybridKeypairFromSeedHex(`${pin.seed_hex.slice(0, -1)}g`)).toThrow();
   });
 });

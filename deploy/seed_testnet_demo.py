@@ -62,6 +62,7 @@ from sccp.config import (
     format_coins,
 )
 from sccp.crypto.address import encode_address
+from sccp.errors import ConfigError
 from sccp.protocol.models import Transaction, TxType
 
 GRANT_COINS: Final = 20
@@ -115,7 +116,7 @@ class SeedReport:
 def demo_wallet(index: int, params: NetworkParams = TESTNET) -> traffic.Wallet:
     """Derive one deterministic demo wallet from the published seed namespace."""
     if index < 0:
-        raise ValueError("a demo wallet index must be non-negative")
+        raise ConfigError("a demo wallet index must be non-negative")
     keypair = testnet_demo_keypair(index)
     return traffic.Wallet(
         index=-1 - index,

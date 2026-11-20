@@ -29,7 +29,7 @@ from sccp.chain.tx import (
 )
 from sccp.config import CHESS960_ASSET_ID, DEVNET
 from sccp.crypto.address import encode_address
-from sccp.errors import TxValidationError
+from sccp.errors import StateError, TxValidationError
 from sccp.protocol.models import Transaction, TxType
 
 COINS = 100_000_000
@@ -248,7 +248,7 @@ def test_pools_are_committed_by_state_root_and_snapshots(
 
 def test_pool_rejects_an_unordered_or_unbalanced_book() -> None:
     pool_id = derive_pool_id(NATIVE_ASSET, CHESS960_ASSET_ID)
-    with pytest.raises(ValueError):
+    with pytest.raises(StateError):
         Pool(
             pool_id,
             CHESS960_ASSET_ID,
@@ -258,7 +258,7 @@ def test_pool_rejects_an_unordered_or_unbalanced_book() -> None:
             1,
             {"sccpt1alice": 1},
         )
-    with pytest.raises(ValueError):
+    with pytest.raises(StateError):
         Pool(pool_id, NATIVE_ASSET, CHESS960_ASSET_ID, 1, 1, 2, {"sccpt1alice": 1})
 
 
@@ -296,9 +296,9 @@ def test_a_create_pool_transaction_survives_a_real_block(
 def test_the_pure_dex_helpers_cover_zero_and_invalid_inputs() -> None:
     assert normalize_pair("b", 2, "a", 1) == ("a", 1, "b", 2)
     assert normalize_pair("a", 1, "b", 2) == ("a", 1, "b", 2)
-    with pytest.raises(ValueError, match="two different assets"):
+    with pytest.raises(StateError, match="two different assets"):
         normalize_pair("a", 1, "a", 2)
-    with pytest.raises(ValueError, match="two different assets"):
+    with pytest.raises(StateError, match="two different assets"):
         derive_pool_id("a", "a")
 
     assert initial_shares(0, 5) == 0
@@ -314,7 +314,7 @@ def test_the_pure_dex_helpers_cover_zero_and_invalid_inputs() -> None:
     assert swap_output(0, 1, 1, 30) == 0
     assert swap_output(1, 0, 1, 30) == 0
     assert swap_output(1, 1, 0, 30) == 0
-    with pytest.raises(ValueError, match="outside"):
+    with pytest.raises(StateError, match="outside"):
         swap_output(1, 1, 1, 10_000)
     assert proportional_amount(0, 1, 1) == 0
     assert proportional_amount(1, 0, 1) == 0

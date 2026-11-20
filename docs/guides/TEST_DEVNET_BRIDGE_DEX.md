@@ -243,21 +243,19 @@ derived from the chain; no node has to be running while it does that.
 ### 3.1 Write the stack and the bootstrap chain
 
 ```bash
-python deploy/init_devnet_stack.py \
+python deploy/setup_devnet_stack.py \
   --out .devnet-stack \
-  --passphrase "$SCCP_WALLET_PASSPHRASE"
-
-python deploy/bootstrap_devnet_stack.py --stack .devnet-stack --fresh
+  --passphrase "$SCCP_WALLET_PASSPHRASE" \
+  --fresh
 ```
 
 Expected shape:
 
 ```text
-stack for devnet in .devnet-stack
-  miner-1: sccpt1...
-  miner-2: sccpt1...
-built 3 bootstrap blocks: height 3, tip ...
+wrote 2 devnet keyfiles and .devnet-stack/stack.json
+built 3 bootstrap blocks: height 3, epoch 3 matchable
 relay config for epoch 3 written to .devnet-stack/relay.json
+... the node, relay and miner commands for those files
 ```
 
 `--fresh` deletes only the chain database, never the keys. The chain stops at
@@ -1199,8 +1197,8 @@ SCCP_NETWORK=devnet forge script script/Deploy.s.sol:Deploy \
 cd ..
 
 # SCCP chain and web bundle
-python deploy/init_devnet_stack.py --out .devnet-stack --passphrase "$SCCP_WALLET_PASSPHRASE"
-python deploy/bootstrap_devnet_stack.py --stack .devnet-stack --fresh
+python deploy/setup_devnet_stack.py --out .devnet-stack \
+  --passphrase "$SCCP_WALLET_PASSPHRASE" --fresh
 sccp --network devnet --data-dir "$CHAIN" node run \
   --port 8645 --web --mine --miner-address "$ALICE" --no-mine-bootstrap
 sccp --network devnet matchmaker run \

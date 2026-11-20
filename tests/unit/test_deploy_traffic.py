@@ -19,6 +19,7 @@ from sccp.chain.state import Pool
 from sccp.chain.tx import htlc_id
 from sccp.config import CHESS960_ASSET_ID, TESTNET, coins_to_units
 from sccp.crypto.address import encode_address, validate_address
+from sccp.errors import ConfigError
 from sccp.node.app import create_app as create_node_app
 from sccp.node.service import NodeService
 from sccp.protocol.models import Transaction, TxType
@@ -76,6 +77,7 @@ def _transport(
     faucet_status: int | None = None,
     mined_height: int = 20,
     settles_immediately: bool = False,
+    account_source: str = "projection",
     pool_noise: Sequence[str] = (),
     pending_recipients: Sequence[str] = (),
     status_height: int | Callable[[], int] = 0,
@@ -88,6 +90,9 @@ def _transport(
     transactions. Every admission still goes through ``NodeService``.
     ``settles_immediately`` additionally reports an empty pool, standing in for a
     node that mines each cycle before the next one starts.
+    ``account_source`` chooses whether account views come from the mempool
+    projection (what a node settles between phases) or the tip state (what a
+    node without mining reports while transactions are still pending).
     ``pending_recipients`` are the wallets whose transfer stays in the pool, which
     is how a node behaves when a block does not carry the grant this time round.
     ``status_height`` is what ``GET /v1/status`` reports, either a fixed height or
@@ -109,6 +114,20 @@ def _transport(
             return httpx.Response(200, json=node.pools().model_dump(mode="json"))
         if path.startswith("/v1/accounts/"):
             address = path.removeprefix("/v1/accounts/")
+            if account_source == "tip":
+                state = node.chain.state
+                account = state.account(address)
+                body: dict[str, object] = {
+                    "network": TESTNET.network_id,
+                    "address": address,
+                    "balance": account.balance,
+                    "immature": account.immature,
+                    "bonded": account.bonded,
+                    "total": account.total,
+                    "nonce": account.nonce,
+                    "assets": dict(account.assets),
+                }
+                return httpx.Response(200, json=body)
             return httpx.Response(200, json=_account_payload(node, address))
         if path == "/v1/faucet":
             if faucet_status is not None:
@@ -198,7 +217,7 @@ def test_traffic_wallets_are_fixed_testnet_addresses() -> None:
     assert len(traffic.wallet_seed(0)) == 32
     assert validate_address(first.address, TESTNET)
     assert first.address.startswith("sccpt1")
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfigError):
         traffic.wallet_seed(-1)
 
 
@@ -456,6 +475,135 @@ def test_run_waits_between_cycles_and_stops_on_request(
     assert len(pauses) == 1
     assert 60.0 <= pauses[0] <= 300.0
     assert "cycle 2:" in capsys.readouterr().out
+
+
+def test_a_burst_queues_the_whole_spike_before_waiting(node: NodeService) -> None:
+    """A burst tops the pool up, sends in waves and waits only once at the end."""
+    pauses: list[float] = []
+    with httpx.Client(
+        transport=_transport(node, settles_immediately=True), base_url="http://node"
+    ) as client:
+        report = traffic.run_burst(
+            client,
+            after_cycle=4,
+            pool=[traffic.wallet(index) for index in range(3)],
+            rng=random.Random(7),
+            options=_quiet_options(
+                max_transfer_coins=1,
+                burst_transfers=18,
+                burst_rounds=3,
+                burst_interval_seconds=0.5,
+            ),
+            sleep=pauses.append,
+        )
+
+    assert report.burst is True
+    assert (report.cycle, report.wallet_count, report.funded) == (4, 3, 3)
+    assert report.transfers == 18
+    assert report.confirmed == 21  # three grants and eighteen sends
+    assert pauses == [0.5, 0.5]
+
+    # The spike arrives in waves, so more than one wallet sends.
+    transfers = [tx for tx in _admitted(node) if tx.sender != _faucet_address()]
+    assert len(transfers) == 18
+    assert len({tx.sender for tx in transfers}) >= 2
+
+
+def test_a_burst_keeps_its_nonces_across_waves_when_no_block_lands(
+    node: NodeService,
+) -> None:
+    """A node's account view stays on the tip, so a later wave must reuse its own nonces.
+
+    The real node reports ``nonce`` from the tip state, not the mempool: without
+    the burst's booked nonces, wave two would resubmit wave one's and the node
+    would refuse every send in it.
+    """
+    pool = [traffic.wallet(index) for index in range(3)]
+    _seed_accounts(node, [wallet.address for wallet in pool], native_coins=100)
+    with httpx.Client(
+        transport=_transport(node, settles_immediately=True, account_source="tip"),
+        base_url="http://node",
+    ) as client:
+        report = traffic.run_burst(
+            client,
+            after_cycle=1,
+            pool=pool,
+            rng=random.Random(23),
+            options=_quiet_options(
+                max_transfer_coins=1,
+                burst_transfers=18,
+                burst_rounds=3,
+                burst_interval_seconds=0.0,
+                burst_min_balance_coins=1,
+            ),
+        )
+
+    assert report.funded == 0
+    assert report.transfers == 18
+    sends = [tx for tx in _admitted(node) if tx.sender != _faucet_address()]
+    assert len(sends) == 18
+    per_sender: dict[str, list[int]] = {}
+    for tx in sends:
+        per_sender.setdefault(tx.sender, []).append(tx.nonce)
+    for nonces in per_sender.values():
+        assert sorted(nonces) == list(range(len(nonces)))
+
+
+def test_run_fires_a_burst_only_on_the_configured_interval(
+    node: NodeService,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ordinary cycles keep their pacing; the burst is an extra report."""
+    pauses: list[float] = []
+    with httpx.Client(
+        transport=_transport(node, settles_immediately=True), base_url="http://node"
+    ) as client:
+        reports = traffic.run(
+            client,
+            options=_quiet_options(
+                max_wallets=3,
+                max_transfer_coins=1,
+                idle_min_seconds=1.0,
+                idle_max_seconds=1.0,
+                burst_every=2,
+                burst_rounds=1,
+                burst_transfers=2,
+                burst_interval_seconds=0.0,
+            ),
+            rng=random.Random(13),
+            cycles=2,
+            sleep=pauses.append,
+        )
+
+    assert [report.burst for report in reports] == [False, False, True]
+    assert [report.cycle for report in reports] == [1, 2, 2]
+    assert pauses == [1.0]  # one idle between the cycles, no pause in a one-wave burst
+    assert "burst 2:" in capsys.readouterr().out
+
+
+def test_a_burst_does_not_overrun_the_pool_budget(node: NodeService) -> None:
+    """A grant is one top-up, so balances cap a burst instead of the flags lying."""
+    with httpx.Client(
+        transport=_transport(node, settles_immediately=True), base_url="http://node"
+    ) as client:
+        report = traffic.run_burst(
+            client,
+            after_cycle=1,
+            pool=[traffic.wallet(index) for index in range(2)],
+            rng=random.Random(17),
+            options=_quiet_options(
+                max_transfer_coins=5,
+                burst_grant_coins=10,
+                burst_min_balance_coins=9,
+                burst_transfers=100,
+                burst_rounds=2,
+            ),
+            sleep=lambda _: None,
+        )
+
+    # Ten coins cannot fund a hundred sends of one to five coins plus fees.
+    assert 0 < report.transfers < 100
+    assert len([tx for tx in _admitted(node) if tx.sender != _faucet_address()]) == report.transfers
 
 
 def test_a_transaction_the_pool_forgot_is_not_reported_as_mined() -> None:

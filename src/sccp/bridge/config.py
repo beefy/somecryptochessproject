@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from sccp.config import NetworkParams, get_network
+from sccp.errors import ConfigError
 
 ETH_RPC_ENV: Final = "SCCP_ETH_RPC_URL"
 ETH_CONTRACT_ENV: Final = "SCCP_ETH_HTLC_CONTRACT"
@@ -107,9 +108,9 @@ def _positive_int(environ: Mapping[str, str], name: str, default: int) -> int:
     try:
         value = int(raw, 10)
     except ValueError:
-        raise ValueError(f"{name} must be a positive integer, got {raw!r}") from None
+        raise ConfigError(f"{name} must be a positive integer, got {raw!r}") from None
     if value < 1:
-        raise ValueError(f"{name} must be a positive integer, got {value}")
+        raise ConfigError(f"{name} must be a positive integer, got {value}")
     return value
 
 
@@ -118,7 +119,7 @@ def _contract(environ: Mapping[str, str]) -> str | None:
     if raw == "":
         return None
     if not ADDRESS_PATTERN.fullmatch(raw):
-        raise ValueError(f"{ETH_CONTRACT_ENV} must be a 0x-prefixed 20-byte address, got {raw!r}")
+        raise ConfigError(f"{ETH_CONTRACT_ENV} must be a 0x-prefixed 20-byte address, got {raw!r}")
     return raw.lower()
 
 
@@ -136,7 +137,7 @@ def bridge_environment(
     try:
         chain_id, name, explorer, default_rpc, confirmations, margin = _DEFAULTS[params.network_id]
     except KeyError:
-        raise ValueError(
+        raise ConfigError(
             f"{params.network_id!r} has no Ethereum bridge environment; "
             f"known networks: {', '.join(sorted(_DEFAULTS))}"
         ) from None
@@ -144,7 +145,7 @@ def bridge_environment(
     rpc = environment.get(ETH_RPC_ENV, "").strip() or default_rpc
     resolved_margin = _positive_int(environment, SCCP_MARGIN_ENV, margin)
     if resolved_margin <= params.reorg_depth:
-        raise ValueError(
+        raise ConfigError(
             f"{SCCP_MARGIN_ENV} must exceed the SCCP reorg depth ({params.reorg_depth}); "
             f"got {resolved_margin}"
         )

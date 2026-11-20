@@ -86,6 +86,20 @@ def test_the_api_reports_rate_limits_with_retry_after() -> None:
     service.close()
 
 
+def test_a_node_without_a_faucet_answers_404_on_both_routes() -> None:
+    """A disabled faucet is not a bad request: the resource simply is not there."""
+    service = NodeService.open(DEVNET)
+    service.faucet = None
+    with _client(service) as client:
+        status = client.get("/v1/faucet")
+        grant = client.post("/v1/faucet", json={"address": RECIPIENT})
+    assert status.status_code == 404
+    assert grant.status_code == 404
+    assert "disabled" in status.json()["detail"]
+    assert "disabled" in grant.json()["detail"]
+    service.close()
+
+
 def test_a_faucet_grant_is_signed_by_the_faucet_key() -> None:
     service = NodeService.open(DEVNET)
     view = service.faucet_request(RECIPIENT, client="client")

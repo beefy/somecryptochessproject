@@ -38,11 +38,13 @@ def test_epoch_arithmetic_uses_floor_division() -> None:
             helper(-1, DEVNET)
 
 
-def test_state_rejects_negative_height_and_minted() -> None:
+def test_state_rejects_negative_height_minted_and_burned() -> None:
     with pytest.raises(StateError, match="height"):
         State(params=DEVNET, height=-1)
     with pytest.raises(StateError, match="minted"):
         State(params=DEVNET, minted=-1)
+    with pytest.raises(StateError, match="burned"):
+        State(params=DEVNET, burned=-1)
 
 
 def test_account_defaults_and_rejections() -> None:
@@ -168,15 +170,34 @@ def test_snapshot_round_trip_preserves_the_ledger() -> None:
     state = _state()
     state.ensure(ALICE).balance = 42
     state.credit_coinbase(ALICE, 7, 0)
+    state.burned = 9
     state.open_epoch(0, beacon=None, height=0)
     state.tip_hash = "ab" * 32
     restored = State.from_snapshot(DEVNET, state.snapshot())
     assert restored.state_root() == state.state_root()
     assert restored.minted == 7
+    assert restored.burned == 9
     assert sorted(restored.epochs) == [0]
     assert restored.tip_hash == "ab" * 32
     assert restored.timestamps == state.timestamps
     assert restored.account(ALICE).immature == 7
+
+
+def test_the_burn_counter_is_not_a_state_root_leaf() -> None:
+    """The reduced balances commit the burn; the display counter must not fork the chain."""
+    state = _state()
+    before = state.state_root()
+    state.burned = 9
+    assert state.state_root() == before
+
+
+def test_snapshot_without_a_burned_counter_restores_it_as_zero() -> None:
+    """A snapshot written before 0.33.0 still restores; the new counter starts at zero."""
+    state = _state()
+    document = state.snapshot()
+    document.pop("burned")
+    restored = State.from_snapshot(DEVNET, document)
+    assert restored.burned == 0
 
 
 def test_copy_is_independent() -> None:

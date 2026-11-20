@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 
 from sccp.chess.pgn import validate_pgn
 from sccp.cli import PASSPHRASE_ENV, app
-from sccp.config import DEVNET, UNITS_PER_COIN
+from sccp.config import DEVNET, TESTNET, UNITS_PER_COIN
 from sccp.crypto.address import address_version, encode_address
 from sccp.crypto.pq import generate_hybrid_keypair, hybrid_keypair_from_seed
 from sccp.crypto.wallet import read_header
@@ -51,7 +51,7 @@ def test_version() -> None:
 def test_help_lists_wallet_commands() -> None:
     result = runner.invoke(app, ["wallet", "--help"])
     assert result.exit_code == 0
-    for command in ("new", "address", "export-mnemonic", "import-mnemonic"):
+    for command in ("new", "address", "export-mnemonic", "import-mnemonic", "import-seed"):
         assert command in result.stdout
 
 
@@ -196,6 +196,89 @@ def test_import_mnemonic_reads_the_phrase_from_a_file(tmp_path: Path, env: dict[
     )
     assert exposed.exit_code == 1
     assert "chmod 600" in exposed.output
+
+
+def test_import_seed_hex_restores_the_same_address(tmp_path: Path, env: dict[str, str]) -> None:
+    """The raw-seed path derives exactly the key the seed names."""
+    seed_hex = bytes(range(32)).hex()
+    expected = encode_address(
+        hybrid_keypair_from_seed(bytes.fromhex(seed_hex)).public_key_bytes, TESTNET
+    )
+    seed_file = tmp_path / "wallet.seed"
+    seed_file.write_text(seed_hex + "\n", encoding="utf-8")
+    seed_file.chmod(0o600)
+
+    restored = tmp_path / "restored.key"
+    imported = runner.invoke(
+        app,
+        ["wallet", "import-seed", "--out", str(restored), "--seed-file", str(seed_file), *FAST],
+        env=env,
+    )
+    assert imported.exit_code == 0, imported.output
+    assert imported.stdout.strip() == expected
+    assert read_header(restored).address == expected
+
+    # The phrase is an encoding of the same seed, so both imports must agree.
+    exported = runner.invoke(app, ["wallet", "export-mnemonic", "--key", str(restored)], env=env)
+    assert exported.exit_code == 0, exported.output
+    from_phrase = tmp_path / "from-phrase.key"
+    phrase_import = runner.invoke(
+        app,
+        [
+            "wallet",
+            "import-mnemonic",
+            "--out",
+            str(from_phrase),
+            "--mnemonic-file",
+            str(_write_secret(tmp_path / "wallet.mnemonic", exported.stdout)),
+            *FAST,
+        ],
+        env=env,
+    )
+    assert phrase_import.exit_code == 0, phrase_import.output
+    assert phrase_import.stdout.strip() == expected
+
+
+def test_import_seed_rejects_a_malformed_or_exposed_seed(
+    tmp_path: Path, env: dict[str, str]
+) -> None:
+    """A seed is 64 hex characters read from a file nobody else can read."""
+    bad = tmp_path / "short.seed"
+    bad.write_text("00ff\n", encoding="utf-8")
+    bad.chmod(0o600)
+    rejected = runner.invoke(
+        app,
+        ["wallet", "import-seed", "--out", str(tmp_path / "a.key"), "--seed-file", str(bad), *FAST],
+        env=env,
+    )
+    assert rejected.exit_code == 1
+    assert "64 characters" in rejected.output
+
+    exposed = tmp_path / "exposed.seed"
+    exposed.write_text("00" * 32 + "\n", encoding="utf-8")
+    exposed.chmod(0o644)
+    refused = runner.invoke(
+        app,
+        [
+            "wallet",
+            "import-seed",
+            "--out",
+            str(tmp_path / "b.key"),
+            "--seed-file",
+            str(exposed),
+            *FAST,
+        ],
+        env=env,
+    )
+    assert refused.exit_code == 1
+    assert "chmod 600" in refused.output
+
+
+def _write_secret(path: Path, text: str) -> Path:
+    """Write key material with the mode the CLI's readers require."""
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o600)
+    return path
 
 
 def test_network_override_and_mismatch(tmp_path: Path, env: dict[str, str]) -> None:

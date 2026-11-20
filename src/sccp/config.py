@@ -103,13 +103,13 @@ class VariantParams(BaseModel):
     @model_validator(mode="after")
     def _check_invariants(self) -> Self:
         if self.rules not in ("chess", "chess960"):
-            raise ValueError(f"unsupported variant rules {self.rules!r}")
+            raise ConfigError(f"unsupported variant rules {self.rules!r}")
         if self.name == STANDARD_VARIANT and (self.asset is not None or self.rules != "chess"):
-            raise ValueError("the standard variant is native SCCP with standard chess rules")
+            raise ConfigError("the standard variant is native SCCP with standard chess rules")
         if self.name != STANDARD_VARIANT and self.asset is None:
-            raise ValueError(f"variant {self.name!r} needs a derived asset id")
+            raise ConfigError(f"variant {self.name!r} needs a derived asset id")
         if (self.max_supply is None) != (self.halving_interval is None):
-            raise ValueError("a variant sets max_supply and halving_interval together")
+            raise ConfigError("a variant sets max_supply and halving_interval together")
         return self
 
 
@@ -232,20 +232,20 @@ class NetworkParams(BaseModel):
     @model_validator(mode="after")
     def _check_invariants(self) -> Self:
         if self.retarget_interval % self.epoch_length != 0:
-            raise ValueError("retarget_interval must be a multiple of epoch_length")
+            raise ConfigError("retarget_interval must be a multiple of epoch_length")
         if not self.k_min <= self.wins_required <= self.k_max:
-            raise ValueError("wins_required must satisfy k_min <= k <= k_max")
+            raise ConfigError("wins_required must satisfy k_min <= k <= k_max")
         if self.min_plies > self.max_plies:
-            raise ValueError("min_plies must not exceed max_plies")
+            raise ConfigError("min_plies must not exceed max_plies")
         if self.max_block_bytes <= max(self.max_pgn_bytes, self.max_tx_bytes):
-            raise ValueError("max_block_bytes must exceed the PGN and tx caps")
+            raise ConfigError("max_block_bytes must exceed the PGN and tx caps")
         if (self.max_supply is None) != (self.halving_interval is None):
-            raise ValueError("max_supply and halving_interval are set together or not at all")
+            raise ConfigError("max_supply and halving_interval are set together or not at all")
         drand_fields = (self.drand_period_seconds, self.drand_round_offset)
         if self.drand_chain is None and any(field is not None for field in drand_fields):
-            raise ValueError("drand timing constants require drand_chain")
+            raise ConfigError("drand timing constants require drand_chain")
         if self.drand_chain is not None and any(field is None for field in drand_fields):
-            raise ValueError("drand_chain requires drand_period_seconds and drand_round_offset")
+            raise ConfigError("drand_chain requires drand_period_seconds and drand_round_offset")
 
         max_money = self.max_money
         if max_money is not None:
@@ -257,7 +257,7 @@ class NetworkParams(BaseModel):
                 ("clock_witness_bond", self.clock_witness_bond),
             ):
                 if amount > max_money:
-                    raise ValueError(f"{name} exceeds MAX_MONEY ({max_money})")
+                    raise ConfigError(f"{name} exceeds MAX_MONEY ({max_money})")
 
         # Standard chess is the network's own unit of account. It is always
         # first and always mirrors the network's own schedule, even when a
@@ -282,10 +282,10 @@ class NetworkParams(BaseModel):
         )
         names = [variant.name for variant in variants]
         if len(set(names)) != len(names):
-            raise ValueError("variant names must be unique")
+            raise ConfigError("variant names must be unique")
         assets = [variant.asset for variant in variants if variant.asset is not None]
         if len(set(assets)) != len(assets):
-            raise ValueError("two variants cannot mint the same asset")
+            raise ConfigError("two variants cannot mint the same asset")
         object.__setattr__(self, "variants", variants)
         return self
 

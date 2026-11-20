@@ -732,6 +732,14 @@ class State:
     """The last :data:`MAX_RECENT_TIMESTAMPS` block timestamps, oldest first."""
     minted: int = 0
     """Total native subsidy ever created, for the ``max_supply`` clamp."""
+    burned: int = 0
+    """Total native SCCP destroyed by slashes, for display.
+
+    The burn itself is already committed through the reduced balances in
+    ``state_root``. This counter records what those reductions removed, including
+    integer-division dust, and is persisted in snapshots; it is not consensus
+    state, so a snapshot written before the counter existed restores it as zero.
+    """
     minted_assets: dict[str, int] = field(default_factory=dict)
     """Total variant-token supply ever created, keyed by asset id."""
     pools: dict[str, Pool] = field(default_factory=dict)
@@ -746,6 +754,8 @@ class State:
             raise StateError("state height must be non-negative")
         if self.minted < 0:
             raise StateError("minted supply must be non-negative")
+        if self.burned < 0:
+            raise StateError("burned supply must be non-negative")
         for asset, amount in self.minted_assets.items():
             if not isinstance(asset, str) or not asset:
                 raise StateError("minted_assets keys must be asset ids")
@@ -1097,6 +1107,7 @@ class State:
             "last_k_change_height": self.last_k_change_height,
             "timestamps": list(self.timestamps),
             "minted": self.minted,
+            "burned": self.burned,
             **(
                 {"minted_assets": dict(sorted(self.minted_assets.items()))}
                 if self.minted_assets
@@ -1246,6 +1257,7 @@ class State:
             ),
             timestamps=[_as_int(value, "timestamp") for value in timestamps_raw],
             minted=_as_int(document.get("minted"), "minted"),
+            burned=_as_int(document.get("burned", 0), "burned"),
             minted_assets=_asset_totals(document.get("minted_assets")),
             pools=pools,
             htlcs=htlcs,

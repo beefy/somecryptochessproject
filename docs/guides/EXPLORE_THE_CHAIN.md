@@ -52,8 +52,8 @@ deploy that does exactly this is
 
 ## What the pages show
 
-- **Overview** — height, tip age, epoch, peer count, pool sizes and the newest
-  blocks and games.
+- **Overview** — height, tip age, epoch, peer count, pool sizes, the native SCCP
+  burned by slashing, and the newest blocks and games.
 - **Blocks** — newest first, paged with the node's `before_height` cursor rather
   than an offset, so a reorg cannot make a page skip a block. The search box
   accepts a height, a block hash or a transaction id: a hash and a txid have the

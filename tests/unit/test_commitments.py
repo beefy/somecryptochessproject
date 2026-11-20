@@ -14,6 +14,7 @@ import pytest
 
 from sccp.config import CLOCK_EVIDENCE_PLIES
 from sccp.crypto.pq import hybrid_keypair_from_seed
+from sccp.errors import ProtocolError
 from sccp.protocol.clocks import FIXED_TIME_CONTROL, build_clock_evidence
 from sccp.protocol.commitments import (
     ZERO_ROOT,
@@ -89,9 +90,9 @@ def test_a_move_root_covers_the_requested_range_only() -> None:
     )
     opening = move_root(NETWORK, MATCH_ID, seats, san_moves, start_ply=2)
     assert opening != whole
-    with pytest.raises(ValueError):
+    with pytest.raises(ProtocolError):
         move_root(NETWORK, MATCH_ID, seats, san_moves, start_ply=9)
-    with pytest.raises(ValueError):
+    with pytest.raises(ProtocolError):
         move_root(NETWORK, MATCH_ID, seats, san_moves, start_ply=3, end_ply=2)
 
 

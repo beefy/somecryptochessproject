@@ -239,6 +239,7 @@ def test_the_witness_api_serves_its_bundle_and_audit(signed_match: Any) -> None:
     assert served["checkpoint"]["kind"] == "clock"
     assert published.get(f"/v1/matches/{match_id}/audit").json()["verified"] is True
     assert published.get("/v1/matches/unknown/receipts").status_code == 404
+    assert published.get("/v1/matches/unknown/audit").status_code == 404
 
 
 def test_a_witness_reports_a_relay_that_signs_nothing(signed_match: Any) -> None:

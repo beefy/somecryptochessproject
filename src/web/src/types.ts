@@ -47,6 +47,8 @@ export interface NodeStatus {
   mempool: MempoolStatus;
   /** Native SCCP minted so far, in base units. */
   minted: number;
+  /** Native SCCP destroyed by timeout and witness slashes, when the node reports it. */
+  burned?: number;
   /** Asset id -> minted base units for every non-native variant token. */
   minted_assets: Record<string, number>;
 }

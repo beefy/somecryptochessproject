@@ -58,9 +58,19 @@ def test_status_describes_the_chain() -> None:
     assert payload["peers"] == 0
     assert payload["mempool"] == {"transactions": 0, "proofs": 0}
     assert payload["minted"] >= 0
+    assert payload["burned"] == 0
     assert isinstance(payload["minted_assets"], dict)
     # The relay's pairing gate reads this: a fresh devnet has no witnesses yet.
     assert payload["witnesses"] == 0
+    service.close()
+
+
+def test_status_reports_the_native_burn_counter() -> None:
+    service = _node()
+    service.chain.state.burned = 123
+    with _client(service) as client:
+        payload = client.get("/v1/status").json()
+    assert payload["burned"] == 123
     service.close()
 
 

@@ -59,6 +59,7 @@ from sccp.config import TESTNET, NetworkParams, coins_to_units
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import HybridKeypair, hybrid_keypair_from_seed
 from sccp.crypto.wallet import KdfParams, create_wallet, read_header
+from sccp.errors import ConfigError
 from sccp.protocol.models import Transaction, TxType
 
 FIXED_MINERS: Final = 2
@@ -261,7 +262,7 @@ class HostCapacity:
 def miner_seed(index: int) -> bytes:
     """The fixed, published seed for extra miner ``index``."""
     if index < 0:
-        raise ValueError("a miner index must be non-negative")
+        raise ConfigError("a miner index must be non-negative")
     return hashlib.sha256(SEED_NAMESPACE + index.to_bytes(4, "big")).digest()
 
 

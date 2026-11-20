@@ -12,7 +12,9 @@ from __future__ import annotations
 import re
 from typing import Final
 
-__version__: Final = "0.32.0"
+from sccp.errors import ConfigError
+
+__version__: Final = "0.33.0"
 """Package version (kept in sync with ``pyproject.toml``)."""
 
 PROTOCOL_VERSION: Final = 1
@@ -35,14 +37,14 @@ def chess_version() -> str:
 
 
 def verify_chess_version() -> str:
-    """Raise ``RuntimeError`` unless ``python-chess`` is the expected series.
+    """Raise :class:`~sccp.errors.ConfigError` unless ``python-chess`` is the expected series.
 
     Returns the installed ``chess.__version__`` so callers can log it.
     """
     version = chess_version()
     match = CHESS_SERIES_PATTERN.match(version)
     if match is None or f"{match.group(1)}.{match.group(2)}" != EXPECTED_CHESS_SERIES:
-        raise RuntimeError(
+        raise ConfigError(
             f"python-chess {version} is not supported: this codebase requires the "
             f"{EXPECTED_CHESS_SERIES}.x behaviour line (see PROTOCOL.md section 3). "
             "Pin python-chess>=1.11,<2."

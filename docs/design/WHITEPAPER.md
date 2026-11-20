@@ -2,7 +2,7 @@
 
 ## Chess as proof of work
 
-**Whitepaper for protocol v1 · reference implementation 0.32.0 · November 2026**
+**Whitepaper for protocol v1 · reference implementation 0.33.0 · November 2026**
 
 > **Scope.** This document explains how the current reference implementation
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,
@@ -1037,13 +1037,15 @@ flag. The pieces are:
    parts to the witnesses whose flag receipt settled the claim, and 20% burned
    by not crediting it — with the integer-division dust of the witness share
    staying uncredited too, because a fraction smaller than a base unit cannot be
-   paid to anyone. The charge comes out of the seat's bond first and its
+   paid to anyone. The node reports the running total as `burned` in
+   `/v1/status`; that counter is display accounting, not a new `state_root` leaf.
+   The charge comes out of the seat's bond first and its
    balance after that, so a seat cannot unregister its way out of a stall, and it
    is charged once per claim. Bonding a claim prices a *false* accusation; this
    prices the *real* stall the claim proves.
 6. **Witness slashing.** Two conflicting signed receipts from the same witness are
-   `slash_evidence`. The witness bond is slashed and the witness is removed from
-   the active set.
+   `slash_evidence`. The witness bond is slashed, counted by the same `burned`
+   total, and the witness is removed from the active set.
 
 The ledger validators and appliers for claims, disputes and witness slashing are
 implemented, and the engine miner builds and locally verifies a timeout claim.
@@ -1628,7 +1630,7 @@ contract (snapshotted in `tests/fixtures/openapi.json`):
 
 | Route | Purpose |
 | --- | --- |
-| `GET /v1/status` | Network, height, tip, sync, mempool, minted totals and the epoch's witness count |
+| `GET /v1/status` | Network, height, tip, sync, mempool, minted and burned totals and the epoch's witness count |
 | `GET /v1/params` | Effective network parameters, including each variant and its asset |
 | `GET /v1/blocks` | Newest blocks first, paged, with proof counts per variant |
 | `GET /v1/blocks/{height-or-hash}` | A validated block |
@@ -1803,9 +1805,10 @@ A stall is the one loss a seat can choose instead of playing on, so it has its
 own price: finalising a `time_forfeit` claim charges the flagged seat 10% of the
 protocol's miner bond (50 SCCP on mainnet). Half goes to the claimant, 30% is
 split between the witnesses whose flag receipt settled the claim, and 20% is
-burned. A fifth of the charge therefore never reaches an account, which is the
-cheapest honest way to burn in a ledger with no burn counter, and the witness
-share is what pays for the flag evidence the claimant needed.
+burned. A fifth of the charge therefore never reaches an account; the chain
+reports the running total as `burned` in `/v1/status`, so the destroyed value is
+visible without adding a consensus leaf, and the witness share is what pays for
+the flag evidence the claimant needed.
 
 Trading adds revenue rather than cost. The DEX's `dex_fee_bps` (30 basis points)
 stays in the pool for its LPs and the protocol takes no cut, so a swap moves

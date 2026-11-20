@@ -38,7 +38,7 @@ from sccp.crypto.address import validate_address
 from sccp.crypto.pq import require_pq
 from sccp.errors import (
     AddressError,
-    FaucetError,
+    FaucetDisabledError,
     GenesisError,
     GossipError,
     LedgerError,
@@ -409,6 +409,7 @@ class NodeService:
                 proofs=len(self.mempool.proofs),
             ),
             minted=self.chain.state.minted,
+            burned=self.chain.state.burned,
             minted_assets=dict(sorted(self.chain.state.minted_assets.items())),
             witnesses=len(self.chain.state.active_witnesses(self.chain.state.current_epoch())),
         )
@@ -1014,7 +1015,7 @@ class NodeService:
     def faucet_request(self, address: str, *, client: str, amount: int | None = None) -> FaucetView:
         """Dispense one faucet grant and admit its transfer to the mempool."""
         if self.faucet is None:
-            raise FaucetError(f"the faucet is disabled on {self.params.network_id}")
+            raise FaucetDisabledError(f"the faucet is disabled on {self.params.network_id}")
         with self.write_lock:
             tx = self.faucet.request(address, client=client, amount=amount)
         return FaucetView(

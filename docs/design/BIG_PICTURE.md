@@ -1,6 +1,6 @@
 # The big picture: a wallet, a bridge and a DEX
 
-> **Status (tree at 0.32.0).** Implemented except for the optional `wETH`
+> **Status (tree at 0.33.0).** Implemented except for the optional `wETH`
 > federation and the items marked **not built**. The browser wallet (section 4),
 > variant assets (section 5), the native DEX (section 6) and the trustless
 > ETH<->SCCP HTLC bridge (section 7) are in the tree; the bridge contract is
@@ -41,7 +41,7 @@ That gives four deliverables, in dependency order:
 | Native DEX | pools, LP positions and swaps between on-chain assets | new transaction types, `pools` in state | 0.24.0, shipped |
 | ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | new transaction types, `htlcs` in state, one Ethereum contract | 0.24.0, shipped |
 
-All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.32.0. The
+All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.33.0. The
 `sccp/v2` fork this document assumed did not happen: `PROTOCOL_VERSION` is still
 1, the domains stayed `sccp/v1/...`, and `PROTOCOL.md` documents the new
 transaction types as part of v1 (section 5.1).
@@ -352,6 +352,13 @@ reserves, shares and keys well formed. Snapshot and restore carry the new maps;
 the state root changed when the fields landed, so the switchover was a breaking
 state change rather than a payload addition, and the golden chain, the pinned
 genesis hashes and the web vectors were regenerated with it (0.24.0 and 0.25.0).
+
+0.33.0 adds a **native-only** `State.burned` display counter for the timeout
+stall slash and the clock-witness bond slash. It is persisted in snapshots and
+reported as `burned` by `/v1/status`, but it is deliberately not a `state_root`
+leaf: the reduced account balances already commit the burn, so adding the counter
+must not move the consensus root. A snapshot written before the field restores it
+as zero; a fresh replay from genesis counts every historical slash.
 
 ### 5.3 Transaction payloads
 

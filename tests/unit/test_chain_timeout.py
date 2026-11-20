@@ -388,6 +388,7 @@ def test_a_stall_costs_ten_percent_of_the_miner_bond(open_claim: tuple[State, An
     claimant_before = state.account(record.claimant).balance
     witness = match.accounts["carol"].address
     witness_before = state.account(witness).balance
+    burned_before = state.burned
     burned = slash - slash // 2 - slash * timeout.STALL_QUORUM_BPS // 10_000
 
     closed = timeout.finalise_claim(state, claim_id, record.deadline_height + 1)
@@ -400,6 +401,7 @@ def test_a_stall_costs_ten_percent_of_the_miner_bond(open_claim: tuple[State, An
     assert state.account(witness).balance == witness_before + slash * 3 // 10
     supply_after = sum(account.balance + account.bonded for account in state.accounts.values())
     assert supplied - supply_after == burned
+    assert state.burned - burned_before == burned
     assert burned == slash * timeout.STALL_BURN_BPS // 10_000
 
 
@@ -412,9 +414,11 @@ def test_the_stall_slash_is_charged_once(open_claim: tuple[State, Any, str]) -> 
         state.params
     )
     bond_after_first = state.account(record.accused).bonded
+    burned_after_first = state.burned
 
     assert timeout.apply_stall_slash(state, record, record.accused) == 0
     assert state.account(record.accused).bonded == bond_after_first
+    assert state.burned == burned_after_first
 
 
 def test_a_withdrawn_staller_pays_from_its_balance(open_claim: tuple[State, Any, str]) -> None:
@@ -440,14 +444,17 @@ def test_the_stall_slash_must_name_the_accused(open_claim: tuple[State, Any, str
 
 
 def test_an_equivocating_witness_loses_its_bond(signed_match: Any, timeout_state: State) -> None:
+    address = signed_match.accounts["carol"].address
+    burned_before = timeout_state.burned
+    witness_bond = timeout_state.witnesses[address].bond
     tx = _slash_tx(signed_match, _receipts(signed_match))
     validate_transaction(tx, timeout_state.params, timeout_state, height=HEIGHT)
     apply_transaction(timeout_state, tx, height=HEIGHT)
 
-    address = signed_match.accounts["carol"].address
     assert address not in timeout_state.witnesses
     assert timeout_state.account(address).bonded == 0
     assert timeout_state.account(address).banned_until == HEIGHT + DEVNET.unbond_delay
+    assert timeout_state.burned == burned_before + witness_bond
 
 
 def test_slash_needs_two_different_receipts_from_a_registered_witness(

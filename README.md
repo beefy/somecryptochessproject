@@ -14,7 +14,8 @@ reward.
  - [Web wallet](https://app.proofofchess.com/#/wallet)
  - [Living Whitepaper](https://github.com/chessproofofwork/somecryptochessproject/blob/main/docs/design/WHITEPAPER.md)
  - [All documentation](docs/README.md)
- - [Node API docs](http://app.proofofchess.com:8645/docs)
+ - [Node API docs (Swagger UI)](http://app.proofofchess.com:8645/docs)
+ - [Node API reference (ReDoc)](http://app.proofofchess.com:8645/redoc)
  - [Public testnet](http://app.proofofchess.com:8645/v1/status)
  - [Reddit](https://www.reddit.com/r/chessproofofwork/)
 
@@ -317,8 +318,9 @@ responsibility rather than a construction phase.
 │   ├── README.md                 # what the compose stack does and does not do
 │   ├── explorer/                 # Caddy + nginx + compose for app and landing
 │   ├── init_testnet_stack.py     # deterministic testnet stack keys
-│   ├── init_devnet_stack.py      # the same two keys for a local devnet stack
-│   └── bootstrap_devnet_stack.py # devnet chain + relay config, no node needed
+│   ├── setup_devnet_stack.py     # devnet keys + bootstrap chain + relay config
+│   ├── init_devnet_stack.py      # keyfile half, importable on its own
+│   └── bootstrap_devnet_stack.py # chain half, importable on its own
 ├── genesis/{devnet,testnet,mainnet}.json
 ├── scripts/
 │   ├── fetch_engine.py           # verified Stockfish download
@@ -757,11 +759,13 @@ heights in order and adopts the heavier branch.
 
 The app documents itself: `/openapi.json` is the generated schema, `/docs` is
 Swagger UI grouped into node, chain, ledger, chess and DeFi, and `/redoc` is the
-same schema in ReDoc. On the testnet the page is
-<http://app.proofofchess.com:8645/docs>, and the read-only mirror serves it over
-TLS at <https://mirror.proofofchess.com/docs>.
+same schema as a single scrollable reference. On the testnet the two pages are
+<http://app.proofofchess.com:8645/docs> and
+<http://app.proofofchess.com:8645/redoc>; the read-only mirror serves them over
+TLS at <https://mirror.proofofchess.com/docs> and
+<https://mirror.proofofchess.com/redoc>.
 `https://app.proofofchess.com/docs` is the explorer, because nginx proxies only
-`/v1/` to the node. Both pages load their assets from a CDN, so a browser
+`/v1/` to the node. All three pages load their assets from a CDN, so a browser
 without internet access sees a blank page; the JSON needs nothing.
 
 `sccp.miner.engine_miner.EngineMiner` is the unattended half: one `run_once()`

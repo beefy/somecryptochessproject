@@ -1829,6 +1829,11 @@
       "NodeStatus": {
         "additionalProperties": false,
         "properties": {
+          "burned": {
+            "default": 0,
+            "minimum": 0.0,
+            "type": "integer"
+          },
           "genesis_hash": {
             "type": "string"
           },

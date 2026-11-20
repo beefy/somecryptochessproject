@@ -342,6 +342,10 @@ def apply_stall_slash(state: State, claim: TimeoutClaimRecord, staller: str) -> 
     settled the claim, and the remainder burned (never credited). Returns the
     amount collected, which is ``0`` when the seat has nothing left to take.
 
+    The state's ``burned`` counter records the exact uncredited remainder,
+    including the dust that integer division leaves when the witness share does
+    not divide evenly.
+
     A claim is charged at most once: the record remembers the charge, so
     re-finalising cannot debit the staller twice.
     """
@@ -353,13 +357,17 @@ def apply_stall_slash(state: State, claim: TimeoutClaimRecord, staller: str) -> 
     collected = _debit_for_stall(state.ensure(staller), stall_slash_amount(state.params))
     if collected <= 0:
         return 0
-    state.ensure(claim.claimant).balance += collected * STALL_CLAIMANT_BPS // 10_000
+    claimant_share = collected * STALL_CLAIMANT_BPS // 10_000
+    state.ensure(claim.claimant).balance += claimant_share
+    credited = claimant_share
     quorum_pool = collected * STALL_QUORUM_BPS // 10_000
     witnesses = sorted({signature.witness for signature in claim.clock_evidence.final.witnesses})
     if witnesses:
         each = quorum_pool // len(witnesses)
         for address in witnesses:
             state.ensure(address).balance += each
+        credited += each * len(witnesses)
+    state.burned += collected - credited
     return collected
 
 
@@ -426,6 +434,7 @@ def apply_slash(state: State, tx: Transaction, height: int) -> None:
     account = state.ensure(address)
     slash = min(record.bond, account.bonded)
     account.bonded -= slash
+    state.burned += slash
     account.banned_until = max(account.banned_until, height + state.params.unbond_delay)
     state.witnesses.pop(address, None)
 

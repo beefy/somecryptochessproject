@@ -309,6 +309,10 @@ services:
       # minutes. It holds no roster slot and builds no blocks; the node admits every
       # transfer like any wallet's.
       #
+      # Every twelfth cycle it also fires a burst (80 transfers in five one-second
+      # waves, after topping the pool up with the operator key) so a deep mempool
+      # and several blocks of backlog are exercised; `--burst-every 0` disables it.
+      #
       # It also seats the two extra miners, with fixed roles rather than a churn:
       # `synthetic-miner-1` is deliberately slow, so its clock really runs out
       # and the timeout claim path runs against live evidence, and

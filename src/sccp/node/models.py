@@ -48,6 +48,14 @@ class NodeStatus(ProtocolModel):
     syncing: bool
     mempool: MempoolStatus
     minted: int = Field(default=0, ge=0)
+    burned: int = Field(default=0, ge=0)
+    """Native SCCP destroyed by timeout and witness slashes.
+
+    The field is informational accounting: the burn is already committed by the
+    reduced balances in ``state_root``. A state restored from a snapshot written
+    before the counter existed reports zero until the burns that follow are
+    applied.
+    """
     minted_assets: dict[str, int] = Field(default_factory=dict)
     witnesses: int = Field(default=0, ge=0)
     """Active clock witnesses in the current epoch.

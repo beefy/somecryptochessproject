@@ -14,6 +14,10 @@ class SccpError(Exception):
     """Base class for all errors raised by this package."""
 
 
+class SccpTypeError(SccpError, TypeError):
+    """A caller supplied a value of the wrong Python type."""
+
+
 # --- configuration -----------------------------------------------------------
 
 
@@ -40,7 +44,7 @@ class DuplicateKeyError(SerializationError):
     """Two object keys collide after Unicode normalization."""
 
 
-class UnsupportedTypeError(SerializationError, TypeError):
+class UnsupportedTypeError(SerializationError, SccpTypeError):
     """A value of an unsupported Python type reached the encoder."""
 
 
@@ -165,6 +169,14 @@ class FaucetError(NodeError):
     """The faucet is disabled, exhausted or asked for an unsupported amount."""
 
 
+class OrphanBlockError(NodeError):
+    """A submitted block's parent is unknown, so it waits in the orphan pool."""
+
+
+class FaucetDisabledError(FaucetError):
+    """The node was started without a faucet service."""
+
+
 # --- ledger ------------------------------------------------------------------
 
 
@@ -223,6 +235,13 @@ class TimeoutClaimError(LedgerError):
 
 class WalletServiceError(LedgerError):
     """A wallet-service request is malformed or not affordable."""
+
+
+# --- ratings -----------------------------------------------------------------
+
+
+class RatingError(SccpError, ValueError):
+    """A rating input or a settled game cannot produce a valid rating."""
 
 
 # --- devnet ------------------------------------------------------------------

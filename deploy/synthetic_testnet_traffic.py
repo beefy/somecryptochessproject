@@ -87,7 +87,7 @@ import random
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Final
 
@@ -99,6 +99,7 @@ from sccp.chain.tx import htlc_id, sign_transaction, txid
 from sccp.config import TESTNET, NetworkParams, coins_to_units, format_coins
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import HybridKeypair, hybrid_keypair_from_seed
+from sccp.errors import ConfigError
 from sccp.protocol.models import Transaction, TxType
 
 try:  # the tests import this module as ``deploy.synthetic_testnet_traffic``
@@ -149,6 +150,28 @@ EXTRA_MINER_CHURN: Final = False
 The churn is a demonstration of roster turnover; the testnet's two extra seats
 are fixed roles, so they are started once and kept up.
 """
+
+BURST_EVERY: Final = 12
+"""Run a burst after every this many ordinary cycles; ``0`` disables bursts.
+
+Twelve cycles is roughly half an hour of normal traffic, so a deploy sees a
+burst several times a day without turning the faucet and pool into a firehose.
+"""
+
+BURST_ROUNDS: Final = 5
+"""Waves in one burst. Each wave queues its sends before the next one starts."""
+
+BURST_TRANSFERS: Final = 80
+"""Transfers in one burst, split across its waves."""
+
+BURST_INTERVAL_SECONDS: Final = 1.0
+"""Pause between waves. Short on purpose: the point is a spike in the pool."""
+
+BURST_GRANT_COINS: Final = 50
+"""Coins per top-up before a burst, enough for several one-coin sends per wallet."""
+
+BURST_MIN_BALANCE_COINS: Final = 40
+"""Top up a burst wallet below this, so the spike is not cut short by balances."""
 
 EXTRA_WITNESS_KEY_FILES: Final = (
     Path("/stack/keys/witness-1.pub"),
@@ -228,7 +251,7 @@ class Wallet:
 def wallet_seed(index: int) -> bytes:
     """The fixed, published seed for traffic wallet ``index``."""
     if index < 0:
-        raise ValueError("a wallet index must be non-negative")
+        raise ConfigError("a wallet index must be non-negative")
     return hashlib.sha256(SEED_NAMESPACE + index.to_bytes(4, "big")).digest()
 
 
@@ -765,6 +788,8 @@ class CycleReport:
     """The DEX action's line, when this cycle attempted one."""
     miners: str = ""
     """The churn's line, when this deployment seats extra miners."""
+    burst: bool = False
+    """This report is a burst, not an ordinary cycle."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -795,6 +820,12 @@ class Options:
     dex_coins: int = DEX_COINS
     dex_asset: str | None = None
     """The variant token to pair with SCCP; ``None`` uses the network's first variant."""
+    burst_every: int = BURST_EVERY
+    burst_rounds: int = BURST_ROUNDS
+    burst_transfers: int = BURST_TRANSFERS
+    burst_interval_seconds: float = BURST_INTERVAL_SECONDS
+    burst_grant_coins: int = BURST_GRANT_COINS
+    burst_min_balance_coins: int = BURST_MIN_BALANCE_COINS
 
 
 DEFAULT_OPTIONS: Final = Options()
@@ -912,16 +943,37 @@ def _send_transfers(
     count: int,
     options: Options,
     params: NetworkParams,
+    booked: dict[str, tuple[int, int]] | None = None,
 ) -> list[str]:
-    """Queue up to ``count`` transfers between the pool's wallets."""
-    views = {item.address: account(client, item.address) for item in active}
-    nonces = {
-        address: _integer(view.get("nonce"), "nonce", address) for address, view in views.items()
-    }
-    budgets = {
-        address: _integer(view.get("balance"), "balance", address)
-        for address, view in views.items()
-    }
+    """Queue up to ``count`` transfers between the pool's wallets.
+
+    ``booked`` carries the nonce and budget each wallet has already committed
+    during this burst. A node's account view is built from the tip state, not
+    from its mempool, so a later wave that re-read it would reuse the nonces the
+    earlier waves submitted and every one of those sends would be refused. The
+    caller passes the same mapping to each wave; ``None`` keeps the ordinary
+    one-shot behaviour.
+    """
+    if booked is None:
+        views = {item.address: account(client, item.address) for item in active}
+        nonces = {
+            address: _integer(view.get("nonce"), "nonce", address)
+            for address, view in views.items()
+        }
+        budgets = {
+            address: _integer(view.get("balance"), "balance", address)
+            for address, view in views.items()
+        }
+    else:
+        missing = [item.address for item in active if item.address not in booked]
+        for address in missing:
+            view = account(client, address)
+            booked[address] = (
+                _integer(view.get("nonce"), "nonce", address),
+                _integer(view.get("balance"), "balance", address),
+            )
+        nonces = {address: nonce for address, (nonce, _) in booked.items()}
+        budgets = {address: budget for address, (_, budget) in booked.items()}
     submitted: list[str] = []
     attempts = 0
     while len(submitted) < count and attempts < count * 4:
@@ -944,6 +996,8 @@ def _send_transfers(
         submitted.append(submit_transaction(client, tx))
         nonces[sender.address] += 1
         budgets[sender.address] -= cost
+        if booked is not None:
+            booked[sender.address] = (nonces[sender.address], budgets[sender.address])
     return submitted
 
 
@@ -1574,10 +1628,108 @@ def run_cycle(
     )
 
 
+def run_burst(
+    client: httpx.Client,
+    *,
+    after_cycle: int,
+    pool: Sequence[Wallet],
+    rng: random.Random,
+    options: Options = DEFAULT_OPTIONS,
+    params: NetworkParams = TESTNET,
+    sleep: Callable[[float], None] = time.sleep,
+) -> CycleReport:
+    """Spike the mempool with ``options.burst_transfers`` sends, then wait once.
+
+    A burst first tops every wallet up to :data:`BURST_MIN_BALANCE_COINS`, so the
+    spike is not cut short by the pool's ordinary balances. It then queues its
+    sends in waves; the pause between waves is seconds, not the minutes an
+    ordinary cycle idles, so several blocks' worth of transfers reach the node
+    together. Every txid is waited on after the last wave, which is what makes
+    this a burst: the generator does not pause half-way to let a block drain the
+    pool.
+    """
+    gateway = FaucetGateway(
+        client,
+        params=params,
+        # A burst tops up addresses the earlier cycles already funded, which the
+        # public faucet refuses once per address. The published key is the operator
+        # path this generator already uses for a rate-limited cycle.
+        use_faucet_endpoint=False,
+        wait_seconds=options.wait_seconds,
+        poll_seconds=options.poll_seconds,
+    )
+    gateway.start_cycle()
+    funding = _fund(
+        client,
+        pool,
+        gateway=gateway,
+        options=replace(
+            options,
+            grant_coins=options.burst_grant_coins,
+            min_balance_coins=options.burst_min_balance_coins,
+        ),
+    )
+    confirmed_grants = (
+        wait_for_transactions(
+            client,
+            funding.all,
+            wait_seconds=options.wait_seconds,
+            poll_seconds=options.poll_seconds,
+        )
+        if funding.all
+        else set()
+    )
+    submitted: list[str] = []
+    booked: dict[str, tuple[int, int]] = {}
+    rounds = max(1, options.burst_rounds)
+    for wave in range(rounds):
+        count = options.burst_transfers // rounds
+        if wave < options.burst_transfers % rounds:
+            count += 1
+        submitted.extend(
+            _send_transfers(
+                client,
+                active=pool,
+                pool=pool,
+                rng=rng,
+                count=count,
+                options=options,
+                params=params,
+                booked=booked,
+            )
+        )
+        if wave + 1 < rounds:
+            sleep(options.burst_interval_seconds)
+    mined = (
+        wait_for_transactions(
+            client,
+            submitted,
+            wait_seconds=options.wait_seconds,
+            poll_seconds=options.poll_seconds,
+        )
+        if submitted
+        else set()
+    )
+    grant_txids = set(funding.all)
+    grants_confirmed = sum(1 for digest in confirmed_grants if digest in grant_txids)
+    return CycleReport(
+        cycle=after_cycle,
+        wallet_count=len(pool),
+        funded=len(funding.grants),
+        faucet_grants=funding.faucet,
+        operator_grants=len(funding.grants) - funding.faucet,
+        transfers=len(submitted),
+        confirmed=grants_confirmed + len(mined),
+        unconfirmed=len(funding.all) - grants_confirmed,
+        burst=True,
+    )
+
+
 def _summary(report: CycleReport) -> str:
     """One greppable line per cycle."""
+    kind = "burst" if report.burst else "cycle"
     line = (
-        f"cycle {report.cycle}: {report.wallet_count} wallets, funded {report.funded} "
+        f"{kind} {report.cycle}: {report.wallet_count} wallets, funded {report.funded} "
         f"({report.faucet_grants} faucet, {report.operator_grants} key), "
         f"{report.transfers} transfers, {report.confirmed} confirmed"
     )
@@ -1645,6 +1797,22 @@ def run(
             else:
                 reports.append(report)
                 print(_summary(report), flush=True)
+            if options.burst_every > 0 and completed % options.burst_every == 0:
+                try:
+                    burst = run_burst(
+                        client,
+                        after_cycle=completed,
+                        pool=pool,
+                        rng=generator,
+                        options=options,
+                        params=params,
+                        sleep=sleep,
+                    )
+                except (httpx.HTTPError, TrafficError, ValueError) as exc:
+                    print(f"burst after cycle {completed}: {exc}", file=sys.stderr, flush=True)
+                else:
+                    reports.append(burst)
+                    print(_summary(burst), flush=True)
             if cycles is not None and completed >= cycles:
                 break
             sleep(generator.uniform(options.idle_min_seconds, options.idle_max_seconds))
@@ -1796,6 +1964,49 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="stop after this many cycles (default: run until interrupted)",
     )
+    parser.add_argument(
+        "--burst-every",
+        type=int,
+        default=BURST_EVERY,
+        help="run a burst after this many cycles; 0 disables bursts (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--no-burst",
+        dest="burst_every",
+        action="store_const",
+        const=0,
+        help="never run a burst",
+    )
+    parser.add_argument(
+        "--burst-rounds",
+        type=int,
+        default=BURST_ROUNDS,
+        help="waves in one burst (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--burst-transfers",
+        type=int,
+        default=BURST_TRANSFERS,
+        help="transfers in one burst (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--burst-interval-seconds",
+        type=float,
+        default=BURST_INTERVAL_SECONDS,
+        help="pause between burst waves (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--burst-grant-coins",
+        type=int,
+        default=BURST_GRANT_COINS,
+        help="coins per wallet top-up before a burst (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--burst-min-balance-coins",
+        type=int,
+        default=BURST_MIN_BALANCE_COINS,
+        help="top a wallet up before a burst below this balance (default: %(default)s)",
+    )
     return parser
 
 
@@ -1833,6 +2044,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--dex-asset must be a 64-character lowercase hex asset id")
     if args.cycles is not None and args.cycles < 1:
         parser.error("--cycles must be at least 1")
+    if args.burst_every < 0:
+        parser.error("--burst-every cannot be negative")
+    if args.burst_rounds < 1:
+        parser.error("--burst-rounds must be at least 1")
+    if args.burst_transfers < 1:
+        parser.error("--burst-transfers must be at least 1")
+    if args.burst_interval_seconds < 0:
+        parser.error("--burst-interval-seconds cannot be negative")
+    if args.burst_grant_coins < 1:
+        parser.error("--burst-grant-coins must be at least 1")
+    if args.burst_min_balance_coins < 1:
+        parser.error("--burst-min-balance-coins must be at least 1")
     options = Options(
         max_wallets=args.max_wallets,
         grant_coins=args.grant_coins,
@@ -1859,6 +2082,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         bridge_coins=args.bridge_coins,
         dex_coins=args.dex_coins,
         dex_asset=args.dex_asset,
+        burst_every=args.burst_every,
+        burst_rounds=args.burst_rounds,
+        burst_transfers=args.burst_transfers,
+        burst_interval_seconds=args.burst_interval_seconds,
+        burst_grant_coins=args.burst_grant_coins,
+        burst_min_balance_coins=args.burst_min_balance_coins,
     )
     try:
         with httpx.Client(base_url=args.node, timeout=30.0) as client:

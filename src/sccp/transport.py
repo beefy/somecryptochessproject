@@ -18,13 +18,15 @@ from typing import Any
 
 import httpx
 
+from sccp.errors import SccpTypeError
+
 
 class ASGITransport(httpx.BaseTransport):
     """Drive an ASGI app synchronously from an ``httpx.Client``."""
 
     def __init__(self, app: Any) -> None:
         if not callable(app):
-            raise TypeError("app must be an ASGI callable")
+            raise SccpTypeError("app must be an ASGI callable")
         self.app = app
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:

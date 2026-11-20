@@ -63,10 +63,12 @@ from sccp.crypto.wallet import (
     create_wallet,
     export_mnemonic,
     import_mnemonic,
+    import_seed,
     load_wallet,
     read_header,
     read_mnemonic_file,
     read_passphrase_file,
+    read_seed_file,
 )
 from sccp.devnet import run_devnet
 from sccp.errors import SccpError, WalletServiceError
@@ -800,6 +802,64 @@ def wallet_import_mnemonic(
         lambda: import_mnemonic(
             out,
             phrase,
+            params,
+            passphrase,
+            kdf=_keyfile_kdf(kdf_n),
+            created_at=created_at,
+            force=force,
+        )
+    )
+    _emit_wallet(ctx, wallet)
+
+
+@wallet_app.command("import-seed")
+def wallet_import_seed(
+    ctx: typer.Context,
+    out: Annotated[Path, typer.Option("--out", help="Path of the keyfile to write.")],
+    network: Annotated[
+        str | None,
+        typer.Option("--network", help="Network the address is derived for."),
+    ] = None,
+    seed_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--seed-file",
+            help=(
+                "File holding the 64-character hex master seed (mode 0600); "
+                "skips the hidden prompt so the command works without a terminal."
+            ),
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite an existing keyfile."),
+    ] = False,
+    created_at: Annotated[
+        int | None,
+        typer.Option("--created-at", hidden=True, help="Fix created_at (tests)."),
+    ] = None,
+    kdf_n: Annotated[
+        int | None,
+        typer.Option("--kdf-n", hidden=True, help="scrypt N (tests only; default 2**17)."),
+    ] = None,
+) -> None:
+    """Recreate a keyfile from its 32-byte master seed in hexadecimal.
+
+    The seed is the same secret a 24-word phrase encodes, so this restores both
+    the Ed25519 and the ML-DSA-65 halves. It is read from a mode-checked file or
+    a hidden prompt, never from a shell argument: an argument would land in the
+    shell history and the process table.
+    """
+    params = _resolve_network(ctx, network)
+    if seed_file is not None:
+        seed_hex = _run(lambda: read_seed_file(seed_file))
+    else:
+        seed_hex = str(typer.prompt("Seed (64 hex characters)", hide_input=True))
+    passphrase = _passphrase(ctx, confirm=True)
+    wallet = _run(
+        lambda: import_seed(
+            out,
+            seed_hex,
             params,
             passphrase,
             kdf=_keyfile_kdf(kdf_n),

@@ -458,6 +458,50 @@ def import_mnemonic(
     )
 
 
+def parse_seed_hex(text: str) -> bytes:
+    """Decode a 32-byte master seed written as 64 hexadecimal characters.
+
+    The accepted form is deliberately narrow: surrounding whitespace is ignored,
+    case is folded, and anything else -- a 24-word phrase, a shorter hex string,
+    ``0x`` prefixes or stray characters -- is refused rather than silently
+    coerced. That matters because the seed backs up both key halves: accepting a
+    typo would produce a different, valid-looking wallet.
+    """
+    raw = text.strip().lower()
+    if len(raw) != SEED_SIZE * 2 or any(character not in "0123456789abcdef" for character in raw):
+        raise KeyEncodingError(f"a seed is {SEED_SIZE} bytes of hex ({SEED_SIZE * 2} characters)")
+    return bytes.fromhex(raw)
+
+
+def import_seed(
+    path: str | Path,
+    seed_hex: str,
+    network: str | NetworkParams,
+    passphrase: str,
+    *,
+    kdf: KdfParams | None = None,
+    created_at: int | None = None,
+    force: bool = False,
+) -> Wallet:
+    """Recreate a keyfile from its 32-byte master seed in hexadecimal.
+
+    This is the raw-seed counterpart of :func:`import_mnemonic`: the CLI accepts
+    it for operators who keep the seed in a hardware-backed store, and the web
+    wallet uses it to open a seed exported by another client. Both key halves are
+    derived from the seed, so the resulting address and public key are identical
+    to the wallet the seed came from.
+    """
+    return create_wallet(
+        path,
+        network,
+        passphrase,
+        seed=parse_seed_hex(seed_hex),
+        kdf=kdf,
+        created_at=created_at,
+        force=force,
+    )
+
+
 def read_passphrase_file(path: str | Path) -> str:
     """Read a passphrase from a mode-checked file (not the keyfile itself).
 
@@ -504,6 +548,30 @@ def read_mnemonic_file(path: str | Path) -> str:
     if not phrase:
         raise PassphraseError(f"mnemonic file {target} is empty")
     return phrase
+
+
+def read_seed_file(path: str | Path) -> str:
+    """Read a hexadecimal master seed from a mode-checked file.
+
+    A seed file is key material, so it gets the same group/other permission check
+    as a mnemonic file. The whole file must be the seed: a trailing newline is
+    fine, but extra lines or whitespace between characters are not, because the
+    caller is importing a secret rather than transcribing a phrase.
+    """
+    target = Path(path)
+    try:
+        status = target.stat()
+        text = target.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PassphraseError(f"cannot read seed file {target}: {exc}") from exc
+    if status.st_mode & 0o077:
+        raise PassphraseError(f"seed file {target} is accessible by group or others; chmod 600 it")
+    seed = text.strip()
+    if not seed:
+        raise PassphraseError(f"seed file {target} is empty")
+    if any(character.isspace() for character in seed):
+        raise PassphraseError(f"seed file {target} must hold exactly one hexadecimal seed")
+    return seed
 
 
 def _read_document(path: Path) -> dict[str, object]:
