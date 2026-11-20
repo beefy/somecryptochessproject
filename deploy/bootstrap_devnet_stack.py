@@ -159,8 +159,8 @@ def _tip_timestamp(service: NodeService) -> int:
     and the explorer both have to explain away.
 
     The ``tip + target`` floor keeps the bootstrap's spacing at the target, which is what
-    the retarget reads. It runs at most one bootstrap window ahead of the wall clock (three
-    minutes on devnet), well inside ``MAX_FUTURE_SECONDS``, and the first real block only
+    the retarget reads. It runs at most one bootstrap window ahead of the wall clock (two
+    seconds on devnet), well inside ``MAX_FUTURE_SECONDS``, and the first real block only
     has to be newer than that.
     """
     tip = service.chain.state.timestamps[-1]

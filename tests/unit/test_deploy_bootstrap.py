@@ -308,7 +308,7 @@ def test_bootstrap_blocks_end_at_the_wall_clock(tmp_path: Path) -> None:
     2023-11-14, and walking forward from it dated a fresh stack's first twenty
     blocks "in 2023": the explorer labelled them "1095d ago" and the analysis
     notebook's time axes spanned three years. Stamping block 1 at the wall clock
-    instead put the *last* block a full window (19 minutes on testnet) into the
+    instead put the *last* block a full window (nine minutes on testnet) into the
     future, and the node's settler paces itself with ``clock() - tip_timestamp >=
     mine_interval``, so no real block could be built until the clock caught up: a
     fresh deploy sat at height 19 with registrations and proofs queued in the

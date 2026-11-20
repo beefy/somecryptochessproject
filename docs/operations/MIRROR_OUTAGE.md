@@ -31,10 +31,11 @@ curl -fsS https://app.proofofchess.com/v1/blocks/1   | jq -r .hash
 | genesis and block 1 equal, tip behind | normal, up to one poll | nothing |
 | tip equal, but `height` stuck for hours with the primary advancing | the poll loop is broken, not slow | this page, case 2 |
 
-A mirror that is behind by a few blocks is working. A mirror that is behind by
-thousands is not "catching up" — with a 30-second poll and a chain that adds one
-block a minute, a replica that misses an hour has to fetch thousands of blocks in
-sequence, and the honest answer is to wipe it rather than watch it.
+A mirror that is behind by a few blocks is working: one poll adopts up to
+`max_sync_blocks` (512) at a time, over four hours of chain at the 30-second target,
+so ordinary lag closes by itself. A mirror that is behind and *staying* behind is not
+"catching up" — its poll is broken (case 2), or the replica holds a chain nobody else
+has (case 3) — and the honest answer is to wipe it rather than watch it.
 
 ## Case 1: nothing answers
 

@@ -15,7 +15,17 @@ not itemised here.
   `TIME_CONTROL_TAG` is `600+0`, so the protocol's single time control, the PGN
   header, the web verifier and the synthetic miner's slow-move pacing all agree.
   A game now lasts at most ten minutes per seat; a seat that runs out is flagged
-  and settled exactly as before.
+  and settled exactly as before. The apex landing page, the operator runbooks and
+  the deploy notes were swept with it: the traffic fleet's deliberate forfeit now
+  takes about ten minutes rather than half an hour, and
+  `tests/unit/test_landing_page.py` reads the clock and the testnet block target
+  out of the library so the hero stats cannot drift again.
+- **Prose built on the old 60-second block time is gone.** The web README's
+  `--mine` advice, three deploy wait-budget docstrings, the bootstrap window
+  arithmetic (18 blocks is nine minutes at 30 s, not 19) and the mirror page's
+  "thousands of blocks an hour" are corrected. `tests/unit/test_docs_block_pacing.py`
+  re-derives the bootstrap windows from the deploy modules and bans the retired
+  phrasings, so the next drift fails a test instead of shipping.
 - **A stalled clock costs the staller 10% of its miner bond.** `apply_stall_slash`
   charges `STALL_SLASH_BPS` (1,000) of the bond of the seat named in the claim —
   bond first, then balance, so unregistering does not escape it — and splits it

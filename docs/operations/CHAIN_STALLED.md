@@ -52,11 +52,12 @@ ssh sccp@proofofchess.com "curl -fsS http://127.0.0.1:8646/v1/matches | jq -r '.
 ```
 
 
-The deliberate time forfeit in the traffic fleet takes about half an hour by
-design (`synthetic-miner-1` waits 36 s per move); a forfeit that never arrives
-means the witness quorum is not signing, so no bonded claim can be made. The relay
-must report a `witness` address, not `null` — a relay without one signs no
-receipts and no timeout can ever be claimed.
+The deliberate time forfeit in the traffic fleet takes about ten minutes of play
+by design (`synthetic-miner-1` waits 36 s per move, so its 10+0 clock is gone
+after roughly seventeen of its own moves); a forfeit that never arrives means the
+witness quorum is not signing, so no bonded claim can be made. The relay must
+report a `witness` address, not `null` — a relay without one signs no receipts
+and no timeout can ever be claimed.
 
 **2. Games end, but as draws.** Draws produce no proof, by consensus. If the
 seats are too weak or too evenly matched, `--nodes-per-move 5000` at 60 plies of

@@ -103,7 +103,7 @@ PER_MINER_MEMORY_MB: Final = 256
 RESERVED_MEMORY_MB: Final = 1024
 
 WAIT_SECONDS: Final = 900.0
-"""How long to wait for the grant and registration blocks. One block is a minute."""
+"""How long to wait for the grant and registration blocks. One block is 30 s."""
 
 POLL_SECONDS: Final = 5.0
 NODES_PER_MOVE: Final = 5_000

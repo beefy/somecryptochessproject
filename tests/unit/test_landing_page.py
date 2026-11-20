@@ -5,7 +5,9 @@ application. That split is easy to undo by accident: a link written against the
 apex turns the landing page into a router, and a script added for a live counter
 turns the first page into a blank document when the bundle fails. This test
 holds the two properties that matter most -- a canonical apex document that
-renders without JavaScript, and every application entry point on `app.`.
+renders without JavaScript, and every application entry point on `app.` -- plus
+the numbers it quotes, which are prose and would otherwise drift from the
+protocol the way 30+0 did when the clock changed to 10+0.
 """
 
 from __future__ import annotations
@@ -13,6 +15,9 @@ from __future__ import annotations
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
+
+from sccp.config import TESTNET
+from sccp.protocol.clocks import FIXED_TIME_CONTROL
 
 ROOT = Path(__file__).resolve().parents[2]
 LANDING = ROOT / "src" / "landing" / "index.html"
@@ -93,3 +98,14 @@ def test_the_page_links_to_the_deployment_and_not_the_retired_names() -> None:
     assert "app.proofofchess.com" in hosts
     assert "github.com" in hosts
     assert not any(host.endswith(".chessproofofwork.com") for host in hosts)
+
+
+def test_the_page_quotes_the_protocols_clock_and_block_target() -> None:
+    """The hero stats are prose, so they are read from the library and checked."""
+    text = LANDING.read_text(encoding="utf-8")
+    minutes = FIXED_TIME_CONTROL.initial_ms // 60_000
+    increment = FIXED_TIME_CONTROL.increment_ms // 1_000
+
+    assert f"{minutes} + {increment}" in text
+    assert "30 + 0" not in text, "the page still advertises the retired 30+0 control"
+    assert f"{TESTNET.target_block_seconds} s" in text

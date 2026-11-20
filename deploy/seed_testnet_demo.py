@@ -77,7 +77,11 @@ BRIDGE_CLAIM_BLOCKS: Final = 12
 """Blocks between the lock and its timelock; the claim lands well inside it."""
 
 WAIT_SECONDS: Final = 1_800.0
-"""How long to wait for a mature C960 coinbase: 30 blocks at one minute each."""
+"""How long to wait for a mature C960 coinbase.
+
+Maturity is 40 testnet blocks, twenty minutes at the 30-second target, so 1,800 s
+leaves room for a stalled settler and still fails the seed instead of hanging.
+"""
 
 POLL_SECONDS: Final = 10.0
 """How often to re-read the miner balances while waiting for C960."""
