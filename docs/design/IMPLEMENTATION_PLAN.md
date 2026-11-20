@@ -1,6 +1,6 @@
 # Next steps and improvement areas
 
-> Status: protocol v1 through release 0.34.0 is implemented -- the chain, the
+> Status: protocol v1 through release 0.35.0 is implemented -- the chain, the
 > relay, the engine miner, the hybrid wallet, the browser wallet and explorer,
 > variant assets, the native DEX and the HTLC bridge. This is a forward-looking
 > engineering document. It lists the work still needed, in priority order, and

@@ -7,6 +7,24 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.35.0] - 2026-11-20
+
+### Added
+
+- **Chess rulesets are pluggable.** `sccp.chess.rulesets` is now the registry
+  for a variant's PGN `Rules` tag, `Variant` header, start-position validation,
+  board class, optional beacon-selected start and opening-book policy. The
+  built-in `standard` and `chess960` entries preserve the existing networks, and
+  a future token can register another ruleset without changing the PGN verifier,
+  relay or miner.
+- **Each variant token declares its own clock.** `VariantParams` carries
+  `time_control_initial_ms` and `time_control_increment_ms`; certificates,
+  PGNs, clock evidence, timeout claims, relay matches and both miner paths now
+  use the token's declared control instead of a network-wide 10+0 constant.
+  Supplying a custom `standard` variant can override the standard token's clock.
+  Existing `testnet`, `devnet` and `mainnet` parameters and their 10+0 behavior
+  are unchanged.
+
 ## [0.34.0] - 2026-11-20
 
 ### Added
