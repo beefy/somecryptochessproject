@@ -8,12 +8,14 @@ This module is the single source of truth for every byte that consensus hashes
 Floats are rejected by an explicit walk rather than by ``json.dumps``, because
 ``json.dumps(allow_nan=False)`` still accepts finite floats such as ``1.5``.
 The walk also enforces the consensus integer range, NFC-normalizes keys and
-values, and refuses keys that collide after normalization.
+values, refuses strings carrying surrogate code points (which UTF-8 cannot
+encode) and refuses keys that collide after normalization.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from enum import StrEnum
@@ -38,6 +40,24 @@ DIGEST_SIZE: Final = 32
 EMPTY_ROOT: Final[bytes] = b"\x00" * DIGEST_SIZE
 """Root of an empty commitment tree."""
 
+_SURROGATE: Final = re.compile(r"[\ud800-\udfff]")
+"""Code points UTF-8 cannot encode: a string carrying one has no canonical form."""
+
+
+def _normalized_text(text: str) -> str:
+    """NFC-normalize ``text``, refusing strings canonical JSON cannot encode.
+
+    A surrogate code point (lone, or half of a ``\\ud800\\udc00``-style pair in a
+    Python string) passes ``unicodedata.normalize`` but makes the UTF-8 encode in
+    :func:`canonical_json` fail, so it is rejected here with the same typed error
+    as any other unrepresentable value.
+    """
+    if _SURROGATE.search(text) is not None:
+        raise SerializationError(
+            "string contains a surrogate code point, which canonical JSON cannot encode"
+        )
+    return unicodedata.normalize("NFC", text)
+
 
 def normalize(value: object) -> JsonValue:
     """Type-check, range-check and NFC-normalize a canonical JSON tree.
@@ -45,7 +65,9 @@ def normalize(value: object) -> JsonValue:
     Accepts ``None``, ``bool``, ``int``, ``str``, ``list`` and ``dict`` (including
     subclasses of the latter two). Everything else -- notably ``float``,
     ``Decimal``, ``bytes``, ``tuple`` and ``set`` -- raises
-    :class:`~sccp.errors.UnsupportedTypeError`.
+    :class:`~sccp.errors.UnsupportedTypeError`, and a string containing a
+    surrogate code point raises :class:`~sccp.errors.SerializationError` because
+    UTF-8 cannot encode it.
     """
     if value is None or isinstance(value, bool):  # bool before int
         return value
@@ -54,7 +76,7 @@ def normalize(value: object) -> JsonValue:
             raise RangeError(f"integer {value} outside [{INT_MIN}, {INT_MAX}]")
         return value
     if isinstance(value, str):
-        return unicodedata.normalize("NFC", value)
+        return _normalized_text(value)
     if isinstance(value, list):
         return [normalize(item) for item in value]
     if isinstance(value, dict):
@@ -63,7 +85,7 @@ def normalize(value: object) -> JsonValue:
         for raw_key, item in items.items():
             if not isinstance(raw_key, str):
                 raise UnsupportedTypeError("object keys must be strings")
-            key = unicodedata.normalize("NFC", raw_key)
+            key = _normalized_text(raw_key)
             if key in out:
                 raise DuplicateKeyError(f"duplicate object key after NFC: {key!r}")
             out[key] = normalize(item)

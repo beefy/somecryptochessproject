@@ -54,6 +54,7 @@ from sccp.errors import (
     ConfigError,
     OpeningBookError,
     ProofVerificationError,
+    SerializationError,
     TimeoutClaimError,
     TxValidationError,
 )
@@ -672,7 +673,13 @@ def _check_body(work: State, params: NetworkParams, block: Block) -> None:
             f"coinbase variant rewards are {actual_rewards}, expected {expected_rewards}",
         )
     _check_proof_count(params, block)
-    size = block_size(block)
+    try:
+        size = block_size(block)
+    except SerializationError as exc:
+        # A payload holding a float, an out-of-range integer or a surrogate has no
+        # canonical bytes, so the block has no merkle root either. Report that as a
+        # schema rejection instead of letting the encoder's error escape untyped.
+        _fail(BlockFailure.SCHEMA, f"the block body is not canonical JSON: {exc}")
     if size > params.max_block_bytes:
         _fail(BlockFailure.SIZE, f"block is {size} bytes, cap is {params.max_block_bytes}")
     if header.merkle_root != merkle_root_of(block):

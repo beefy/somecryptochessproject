@@ -32,7 +32,13 @@ from sccp.crypto.pq import (
     hybrid_verify,
     is_hybrid_public_key_hex,
 )
-from sccp.errors import AddressError, ConfigError, KeyEncodingError, TxValidationError
+from sccp.errors import (
+    AddressError,
+    ConfigError,
+    KeyEncodingError,
+    SerializationError,
+    TxValidationError,
+)
 from sccp.protocol.beacon import commitment
 from sccp.protocol.models import Availability, Transaction, TxType
 from sccp.serialization import Domain, canonical_json, domain_hex, normalize
@@ -1006,6 +1012,14 @@ def validate_transaction(
         _fail(TxFailure.SCHEMA, f"{tx.sender!r} is not a {params.network_id} address")
     if not isinstance(tx.payload, dict):
         _fail(TxFailure.SCHEMA, "payload must be an object")
+    # The signature covers the canonical body, so a payload the canonical encoder
+    # cannot represent can never have been signed. Reject it as a schema failure
+    # here rather than let check_sender_key's txid() (and tx_size() below) raise a
+    # bare SerializationError that bypasses the TxFailure vocabulary.
+    try:
+        normalize(tx.payload)
+    except SerializationError as exc:
+        _fail(TxFailure.SCHEMA, f"payload is not canonical JSON: {exc}")
 
     # Signature before nonce: a forger must not learn whether a nonce is free.
     key_hex = check_sender_key(state, params, tx, verify_signature=verify_signature)

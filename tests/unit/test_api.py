@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 import pytest
+from fastapi.routing import APIRoute
 
 from sccp.chain.dex import NATIVE_ASSET
 from sccp.chain.dex import pool_id as derive_pool_id
@@ -24,7 +25,7 @@ from sccp.config import CHESS960_ASSET_ID, DEVNET, TESTNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import MempoolError, ProtocolError
-from sccp.node.app import create_app, openapi_contract
+from sccp.node.app import OPENAPI_TAGS, create_app, openapi_contract
 from sccp.node.service import NodeService
 from sccp.transport import client_for
 from sccp.version import PROTOCOL_VERSION
@@ -157,6 +158,27 @@ def test_invalid_and_foreign_transactions_are_refused() -> None:
     foreign = signed.model_copy(update={"network": TESTNET.network_id})
     with pytest.raises(ProtocolError, match="testnet"):
         service.submit_transaction(foreign)
+
+
+def test_a_payload_canonical_json_cannot_encode_is_a_bad_request() -> None:
+    """Admission hashes the payload before validating it, so both cases are a 400."""
+    service = _node()
+    tx = WalletService(DEVNET, service.chain.state).build_transfer(FAUCET, MINER_ADDRESS, 5_000)
+    as_float = tx.model_copy(update={"payload": {**tx.payload, "memo": 1.5}})
+    as_surrogate = tx.model_copy(update={"payload": {**tx.payload, "memo": "\ud800"}})
+    # json.dumps escapes the lone surrogate, so the request body is valid UTF-8
+    # even though the decoded payload is not, and the terminal would not show it.
+    escaped = json.dumps(as_surrogate.model_dump(mode="json", by_alias=True))
+    with _client(service) as client:
+        float_response = client.post("/v1/tx", json=as_float.model_dump(mode="json", by_alias=True))
+        surrogate_response = client.post(
+            "/v1/tx", content=escaped, headers={"content-type": "application/json"}
+        )
+        pool = client.get("/v1/mempool").json()
+    assert float_response.status_code == 400, float_response.text
+    assert surrogate_response.status_code == 400, surrogate_response.text
+    assert "surrogate" in surrogate_response.json()["detail"]
+    assert pool["transactions"] == []
 
 
 def test_duplicate_pending_transactions_are_refused() -> None:
@@ -499,3 +521,70 @@ def test_openapi_contract_requires_the_network_id() -> None:
                 assert "network" in model.get("properties", {}), path
                 checked += 1
     assert checked >= 12
+
+
+# --- the generated documentation -------------------------------------------
+
+
+def test_the_swagger_ui_the_spec_and_redoc_are_served() -> None:
+    """FastAPI generates all three; nothing else has to be deployed for them."""
+    service = _node()
+    app = create_app(service)
+    with client_for(app) as client:
+        spec = client.get("/openapi.json")
+        docs = client.get("/docs")
+        redoc = client.get("/redoc")
+    service.close()
+    assert spec.status_code == 200
+    assert spec.json()["info"]["title"] == "sccp node (devnet)"
+    assert "PROTOCOL.md" in spec.json()["info"]["description"]
+    assert docs.status_code == 200
+    assert docs.headers["content-type"].startswith("text/html")
+    assert "/openapi.json" in docs.text
+    assert redoc.status_code == 200
+    assert "/openapi.json" in redoc.text
+
+
+def test_the_explorer_mount_does_not_shadow_the_documentation(tmp_path: Path) -> None:
+    """The explorer is mounted at ``/``, so ``/docs`` could have been swallowed."""
+    (tmp_path / "index.html").write_text("<!doctype html><title>explorer</title>", encoding="utf-8")
+    service = _node()
+    with client_for(create_app(service, web_root=tmp_path)) as client:
+        docs = client.get("/docs")
+        spec = client.get("/openapi.json")
+    service.close()
+    assert docs.status_code == 200
+    assert "swagger-ui" in docs.text
+    assert spec.status_code == 200
+
+
+def test_every_route_is_documented_and_grouped() -> None:
+    """An untagged route would fall outside every Swagger section."""
+    service = _node()
+    app = create_app(service)
+    schema = app.openapi()
+    registered = {
+        route.path
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith("/v1/")
+    }
+    service.close()
+    documented = {path for path in schema["paths"] if path.startswith("/v1/")}
+    assert documented == registered
+    assert [tag["name"] for tag in schema["tags"]] == [tag["name"] for tag in OPENAPI_TAGS]
+    sections = {tag["name"] for tag in OPENAPI_TAGS}
+    for path, operations in schema["paths"].items():
+        for operation in operations.values():
+            assert operation.get("tags"), path
+            assert set(operation["tags"]) <= sections, path
+
+
+def test_the_pinned_contract_carries_no_documentation_prose() -> None:
+    """Grouping and prose may change freely; the wire format may not."""
+    schema = _contract()
+    assert "tags" not in schema
+    for path, operations in schema["paths"].items():
+        for operation in operations.values():
+            assert "tags" not in operation, path
+            assert "summary" not in operation, path
+            assert "description" not in operation, path

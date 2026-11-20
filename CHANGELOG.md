@@ -7,6 +7,26 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **The node's HTTP API documents itself at `/docs`.** FastAPI already generated
+  a schema, but nothing pointed at it, nothing described it and no test noticed
+  if it disappeared. The app now carries a landing-page description that names
+  the error mapping (400 rejected, 404 unknown, 429 rate-limited, 202 orphan
+  block), its 33 operations are grouped into five Swagger sections -- node,
+  chain, ledger, chess, DeFi -- and `tests/unit/test_api.py` pins that `/docs`,
+  `/redoc` and `/openapi.json` are served (including with the explorer mounted at
+  `/`), that every registered route appears in the schema with a group, and that
+  a docstring or a re-grouped route still leaves `tests/fixtures/openapi.json`
+  untouched. The pinned contract now ignores `tags` for the same reason it
+  already ignored summaries and descriptions: grouping is documentation, a field
+  or status code is not. The README links the hosted page
+  (`http://app.proofofchess.com:8645/docs`, or
+  `https://mirror.proofofchess.com/docs` over TLS) beside the public testnet,
+  and says why `https://app.proofofchess.com/docs` is the explorer instead.
+
+## [0.31.0] - 2026-11-19
+
 ### Changed
 
 - **Testnet confirms transactions in 30 s instead of 60 s without adding
@@ -65,6 +85,16 @@ not itemised here.
 
 ### Fixed
 
+- **A payload that canonical JSON cannot encode is now a typed rejection at every
+  step of the transaction and block checklists.** A float, an out-of-range integer
+  or a string carrying a surrogate code point escaped `validate_transaction`,
+  `apply_block_body` and mempool admission as a bare `SerializationError` -- and a
+  surrogate escaped as an unhandled `UnicodeEncodeError`, which is a 500 from
+  `POST /v1/tx`. The canonical walk now refuses surrogate code points outright, a
+  transaction reports `TxFailure.SCHEMA`, a block `BlockFailure.SCHEMA` and
+  admission a `MempoolError`, so a hostile payload gets the same 400 as any other
+  invalid one. A payload mutated into such a value after admission is dropped by
+  the existing txid guard instead of aborting a selection pass or a re-base.
 - **`scripts/play_miner.py` no longer calls the opponent's first reply a book
   ply.** The announcement read the relay's move list, so a reply that landed
   between joining and the first prompt was printed under "certified book plies:
