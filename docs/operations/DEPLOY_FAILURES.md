@@ -168,6 +168,15 @@ ssh sccp@proofofchess.com 'cd /opt/sccp-testnet \
 | `deploy-edge.yml` | the mirror does not answer, or answers with the old chain | `ssh` to the edge host, `docker compose ps`, then the step that failed |
 | `deploy-edge.yml` with no `EDGE_DEPLOY_HOST` | green, mirror untouched | `gh variable list` |
 
+A red run whose *first* red step is `Configure SSH` is configuration, not chain.
+The mirror has no public SSH and a GitHub runner has no route into the VPC, so the
+job reads the mirror's host key through `TESTNET_DEPLOY_HOST` or not at all. The
+step's `::error::` line names the setting: `vars.EDGE_DEPLOY_HOST` must be
+`user@host` (not a bare IP, not `host:port`), an internal address needs
+`vars.EDGE_SSH_PROXY_JUMP=1`, and the jump needs `vars.TESTNET_DEPLOY_HOST` set.
+That step used to end on an unguarded `ssh-keyscan`, so the same failure printed
+nothing but "exit code 1" after five seconds.
+
 The edge deploy is deliberately allowed to fail without failing the primary: a
 red mirror job with a green stack job means the chain is fine and the read-only
 copy is not. Treat it as SEV4 and finish the primary work first.
