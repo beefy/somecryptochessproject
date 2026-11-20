@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.34.0] - 2026-11-20
+
 ### Added
 
 - **A miner submits timeout claims by default.** When a timed match ends on the
@@ -18,6 +20,13 @@ not itemised here.
   are rebuilt with a fresh nonce. `--no-submit-timeout-claims` keeps the old
   in-memory-only behavior. The testnet Compose stack and its synthetic miners
   spell the flag explicitly.
+
+### Changed
+
+- **The dashboard names the timeout penalty.** The **Burned** stat now reads
+  "removed by miner timeout penalty" instead of "removed by slashing". The
+  native counter itself is unchanged and still includes both timeout stall
+  slashes and clock-witness bond slashes.
 
 ## [0.33.0] - 2026-11-20
 

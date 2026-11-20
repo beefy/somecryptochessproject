@@ -89,7 +89,7 @@ export function Dashboard(): ReactNode {
         <StatCard
           label="Burned"
           value={status.data === undefined ? "-" : formatAmount(status.data.burned)}
-          hint="removed by slashing"
+          hint="removed by miner timeout penalty"
         />
       </View>
 

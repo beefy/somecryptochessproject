@@ -18,7 +18,7 @@ sccp --version
 ```
 
 ```text
-sccp 0.33.0 (protocol v1)
+sccp 0.34.0 (protocol v1)
 ```
 
 Python 3.11 or newer is required. `-e` keeps `src/sccp` in place, so an edit to
