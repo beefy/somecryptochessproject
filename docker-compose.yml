@@ -310,7 +310,7 @@ services:
       # transfer like any wallet's.
       #
       # It also seats the two extra miners, with fixed roles rather than a churn:
-      # `synthetic-miner-1` is deliberately slow, so a 30+0 game really is flagged
+      # `synthetic-miner-1` is deliberately slow, so its clock really runs out
       # and the timeout claim path runs against live evidence, and
       # `synthetic-miner-2` plays GNU Chess, so the roster is not one engine six
       # times. `host_capacity` budgets both against this VM (two vCPUs after the

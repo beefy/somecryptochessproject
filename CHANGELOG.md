@@ -7,6 +7,30 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **Whitepaper drift now fails a test.** `tests/unit/test_whitepaper_coverage.py`
+  compares the whitepaper's transaction table and `PROTOCOL.md` section 10.2
+  against `TxType`, both API tables against `tests/fixtures/openapi.json` in both
+  directions, the header version against `sccp.version`, and the Chess960
+  schedule, `dex_fee_bps` and the per-network bridge parameters against
+  `config.py` and `bridge/config.py`. Mutating any of them fails the file.
+
+### Changed
+
+- **The whitepaper describes the chain that exists.** It still showed an
+  eleven-type transaction table, seventeen routes and no mention of variants,
+  the DEX or the bridge — all of which shipped in 0.24.0. Section 13.2 now lists
+  all eighteen transaction types, including `transfer`'s optional `asset`;
+  13.6–13.8 are new, covering per-variant issuance and per-variant pairing, the
+  constant-product pools (committed reserves, `min_amount_out` as the only bound,
+  no deadline) and the two-leg ETH bridge (per-network chain ids, confirmations
+  and margins above `reorg_depth`, and why the order book is off consensus);
+  15.2 lists every route the node serves; and 4.1, 16.1, 17.1, 18.9, 19 and 20
+  were swept with them. `PROTOCOL.md` gained the `variant` field on `register`,
+  the `htlc:` leaves `state_root` commits, `htlcs` in the snapshot key list, and
+  the two `/v1/faucet` rows its route table was missing.
+
 ### Fixed
 
 - **The mirror deploy says why its SSH step failed.** `deploy-edge.yml` ended the

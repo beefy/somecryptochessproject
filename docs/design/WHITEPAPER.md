@@ -13,7 +13,9 @@
 > `PROTOCOL.md` disagree, `PROTOCOL.md` wins.
 >
 > **Status.** Protocol v1, the timed relay and the two-miner testnet are
-> implemented. Mainnet parameters exist, but no
+> implemented. So are the variant assets (Chess960/C960), the constant-product
+> DEX and the ETH↔SCCP hash-lock bridge, which are exercised on devnet and
+> testnet. Mainnet parameters exist, but no
 > mainnet has been launched or audited. Testnet and devnet coins have no value.
 
 ---
@@ -32,7 +34,7 @@
 10. [Pairing and the opening](#10-pairing-and-the-opening)
 11. [The match protocol and clocks](#11-the-match-protocol-and-clocks)
 12. [Win proofs and verification](#12-win-proofs-and-verification)
-13. [The ledger: accounts, transactions and bonds](#13-the-ledger-accounts-transactions-and-bonds)
+13. [The ledger: accounts, assets, transactions and bonds](#13-the-ledger-accounts-assets-transactions-and-bonds)
 14. [Blocks, difficulty and fork choice](#14-blocks-difficulty-and-fork-choice)
 15. [Node, gossip, sync and storage](#15-node-gossip-sync-and-storage)
 16. [Economics, security and residual risk](#16-economics-security-and-residual-risk)
@@ -163,7 +165,9 @@ requirement to run two strong engines; it does not claim to eliminate it.
 
 - A GUI, chess engine or analysis product.
 - Anonymity, privacy or confidential transactions.
-- Smart contracts, NFTs or a general virtual machine.
+- Smart contracts, NFTs or a general virtual machine. The DEX and the bridge are
+  fixed consensus transaction types (sections 13.7 and 13.8), not deployed code,
+  and nothing on the chain executes a program supplied by a user.
 - Light clients and SPV proofs (header/state roots are reserved for later).
 - Mining pools, delegated mining or reward sharing.
 - A production P2P stack with NAT traversal; v1 uses HTTP gossip and pull-sync.
@@ -214,6 +218,7 @@ requirement to run two strong engines; it does not claim to eliminate it.
 | Full node | Validates and stores blocks, maintains mempool and peer state, serves the API | Peers revalidate everything; a bad node cannot make an invalid block valid |
 | Peer | Gossips transactions, proofs and blocks; serves blocks for pull-sync | Content-addressed ids and full validation; failures affect only peer score |
 | Faucet | Sends testnet/devnet coins from a published deterministic key | Test networks only; mainnet has no faucet |
+| Ethereum bridge | Two hash-locked legs: the SCCP one is consensus, the other is an `EthHtlc` contract on the one chain its network may bridge to | Every node validates the SCCP leg; the ETH leg is a deployment fact published by `GET /v1/bridge`, and no node trusts a third-party RPC |
 
 ### 4.2 Trust assumptions
 
@@ -630,7 +635,10 @@ EngineWhite, EngineBlack, OpeningID, OpeningHash,
 TimeControl, Rules
 ```
 
-`Rules` must be `chess`. `TimeControl` is `<initial>+<increment>` in seconds;
+`Rules` must match the variant the proof names: `chess` for a standard game, or
+`chess960` for a Chess960 game, whose PGN also carries `SetUp "1"`, a
+Shredder-FEN `FEN` and `Variant "Chess960"`. `TimeControl` is
+`<initial>+<increment>` in seconds;
 the v1 policy uses `10+0`. `MatchID`, epoch, round, seats, engines, opening id,
 opening hash and time control are checked against the match certificate, so a
 proof cannot silently describe a different game. Variations are rejected when a
@@ -648,6 +656,11 @@ game_hash = H("sccp/v1/game", {
     "result": "1-0" | "0-1" | "1/2-1/2"
 })
 ```
+
+A Chess960 game hashes the same way with its own `start_fen` (one of the 960
+legal positions, in Shredder-FEN) and an added `"variant": "chess960"`, so a
+shuffled game can never collide with the standard one that happens to reach the
+same moves.
 
 Headers, comments, clock annotations and move-number formatting are excluded.
 Two PGNs with the same canonical moves and result on the same network produce
@@ -921,6 +934,8 @@ A `MatchCertificate` binds:
 - white and black addresses;
 - white and black engine fingerprints;
 - opening id, opening hash and the exact book moves;
+- the chess variant, which fixes the `Rules` header, the start position and the
+  pool the seats were paired in;
 - time control;
 - both seats' start signatures.
 
@@ -1127,6 +1142,9 @@ height `h` inside epoch `E`, the block builder and validators require:
 - `proof.epoch < E`; the referenced epoch has ended;
 - the winner is the block miner;
 - the winner was on that epoch's roster;
+- the proof's variant is one the network settles, and the proof, its certificate
+  and its opening all name that same variant (a Chess960 win is checked against
+  the seat that registered for Chess960, section 13.6);
 - the epoch has a matchable roster;
 - `h > epoch_end`: settlement starts at the first block of the next epoch (the
   header at `epoch_end` still belongs to the proof's own epoch);
@@ -1184,23 +1202,30 @@ trusting a server-side database — the chart is the chain, grouped by epoch.
 ---
 
 
-## 13. The ledger: accounts, transactions and bonds
+## 13. The ledger: accounts, assets, transactions and bonds
 
 ### 13.1 Account state
 
-State is an account map plus epoch, proof, match, timeout, witness and
-registration indexes. An account holds spendable balance, immature coinbase
-funds, locked bond, next nonce and registration metadata. Amounts are integers.
-The state root commits to the account map in address order. Indexes are derived
-from committed transactions and proofs, so they can be rebuilt by replay; the
-consensus commitment is the account root plus the block chain.
+State is an account map plus epoch, proof, match, timeout, witness, registration,
+pool and hash-lock indexes. An account holds spendable and immature native
+balance, spendable and immature per-asset balances, locked bond, next nonce and
+registration metadata, including the chess variant it registered for. Amounts
+are integers; no float exists anywhere in the ledger.
+
+The state root is a Merkle root over the account map in address order. A chain
+that has DEX pools adds one `pool:<pool_id>` leaf per pool, and one
+`htlc:<htlc_id>` leaf per hash lock, so reserves, LP positions and escrowed
+secrets are as authenticated as balances and the namespaces cannot collide with
+an address. Indexes are derived from committed transactions and proofs, so they
+can be rebuilt by replay; the consensus commitment is the state root plus the
+block chain.
 
 ### 13.2 Transaction types
 
 | Type | Purpose |
 | --- | --- |
-| `transfer` | Move spendable balance |
-| `register` | Register a miner and lock the registration bond |
+| `transfer` | Move spendable balance; an optional `asset` field names a variant token instead of SCCP |
+| `register` | Register a miner, lock the registration bond and choose a chess variant |
 | `register_witness` | Register a bonded clock witness |
 | `update_registration` | Change metadata, extend registration, adjust bond |
 | `unregister` | Begin unbonding |
@@ -1210,6 +1235,20 @@ consensus commitment is the account root plus the block chain.
 | `timeout_claim` | Open a bonded claim that an opponent flagged |
 | `timeout_dispute` | Answer a claim with a later signed move |
 | `slash_evidence` | Prove witness equivocation |
+| `create_pool` | Create a DEX pair and make its first deposit |
+| `add_liquidity` | Deposit both sides of a pool and mint LP shares |
+| `remove_liquidity` | Burn LP shares and withdraw both sides pro rata |
+| `swap` | Trade one reserve for the other under the constant-product curve |
+| `htlc_lock` | Move coins into consensus escrow under a SHA-256 hashlock |
+| `htlc_claim` | Reveal the preimage and take a locked hash lock |
+| `htlc_refund` | Reclaim a hash lock after its timelock |
+
+`PROTOCOL.md` section 10.2 carries every payload key and per-type rejection rule.
+Three of these families are easy to confuse with something bigger than they are:
+the pool types are a fixed constant-product pair (section 13.7), the hash locks
+are a two-chain atomic swap primitive (section 13.8), and the variant is a second
+chess ruleset rather than a second chain (section 13.6). None of them is a
+deployed contract or a general-purpose programming environment.
 
 A transaction is rejected for the wrong network, unknown fields, wrong type,
 bad signature, wrong nonce, insufficient balance, insufficient fee, or a
@@ -1255,6 +1294,142 @@ root must equal the header's `state_root`.
 
 The implementation uses copy-on-write state transitions internally; consensus
 semantics are "all or nothing". A node never persists a partially applied block.
+
+### 13.6 Variant assets
+
+A variant is a second chess ruleset whose settled proofs mint a different asset
+inside the same block that carries them, not a second chain and not a second
+roster:
+
+| Variant | Rules | Asset | Symbol | Issue schedule |
+| --- | --- | --- | --- | --- |
+| `standard` | `chess` | native SCCP (`asset` is `None`) | `SCCP` | the network's own subsidy, halving and cap |
+| `chess960` | `chess960` | a derived asset id | `C960` | 50 per block, halving every 210,000 blocks, 21,000,000 cap |
+
+The asset id is not assigned by an issuer. It is
+`H("sccp/v1/asset", {symbol, name, decimals, variant})`, so two nodes that agree
+on those parameters cannot disagree about which asset a transfer names, and
+nobody can mint a second C960 under a different id. It is pinned in `config.py`
+as `CHESS960_ASSET_ID` and published by `GET /v1/params`.
+
+A miner registers for one variant (the `variant` field on `register`) and that
+choice travels with its roster seat. Pairing happens *within* a variant, so a
+standard seat and a Chess960 seat never meet: an engine tuned for one ruleset is
+not comparable to the other, and the pairing function does not pretend it is.
+
+Issuance follows the block, not the miner. `coinbase` pays the native subsidy
+only when the block carries at least one standard proof, and every variant the
+block represents mints its own schedule at most once per block
+(`variant_subsidy`, `minted_variant_rewards`). A block holding one standard win
+and one Chess960 win pays both; a block that settles only Chess960 games pays no
+SCCP at all. Variant balances live in a per-asset map on the account (`assets`,
+`immature_assets`), mature on the same `coinbase_maturity` clock as native
+coinbase, and move with `transfer` plus an `asset` field — a native transfer that
+names an asset is rejected rather than quietly downgraded.
+
+Chess960 has no opening book: the shuffled start position is the point of the
+variant, so its book is `none` and a proof's PGN starts there instead of from a
+book line. Fees are always paid in SCCP, which is why a miner that earns only
+C960 still needs a little native coin to spend it.
+
+### 13.7 Liquidity pools
+
+A pool is consensus state, not a deployed contract: an ordered asset pair, two
+integer reserves and an LP share ledger. `pool_id = H("sccp/v1/pool",
+{asset_a, asset_b})` is derived from the pair, so either side order yields the
+same id and a pair can only ever have one pool.
+
+Four transaction types drive it (`create_pool`, `add_liquidity`,
+`remove_liquidity`, `swap`). The curve is `x * y = k`; a swap pays
+
+```text
+amount_out = amount_in * (10000 - fee_bps) * reserve_out
+             / (reserve_in * 10000 + amount_in * (10000 - fee_bps))
+```
+
+rounded down, with `fee_bps = dex_fee_bps` — 30 basis points on every shipped
+network — left in the input reserve for the LPs. An initial deposit mints
+`isqrt(amount_a * amount_b)` shares; a later deposit mints the minimum of the two
+proportional share counts, so a deliberately imbalanced deposit cannot mint value
+out of the pool; a redemption pays both reserves pro rata, refuses to pay zero of
+either side, and deletes the pool when the last share is burned.
+
+Two properties are deliberate and worth stating without euphemism. First,
+reserves and LP positions are committed in `state_root`, so a swap is as
+authenticated as a balance and a reader can check a price without trusting a
+server. Second, a swap carries `min_amount_out` and nothing else: there is no
+deadline and no per-block clearing price, transactions apply in block order
+against the reserves the earlier ones left, and a builder can move the price a
+later swap pays up to that swap's own bound. Both are open design items
+(`PROTOCOL.md` section 10.6, `BIG_PICTURE.md` section 6.2), not oversights.
+
+Fees for pool transactions are paid in native SCCP, so an account holding only a
+variant token needs a small SCCP balance to trade it.
+
+### 13.8 The Ethereum bridge
+
+Moving value between SCCP and Ethereum needs both chains to agree on one secret
+without either chain trusting the other's node. v1 does it with two hash locks
+over the same plain SHA-256 preimage:
+
+- **The SCCP leg is consensus.** `htlc_lock` moves coins into escrow under
+  `hashlock = sha256(preimage)`, with `timelock_height > height` and an optional
+  `asset` (omitted means native SCCP); `htlc_claim` is signed by the beneficiary
+  and valid only before the timelock, paying the escrow and recording the
+  revealed preimage in state; `htlc_refund` is signed by the original locker at
+  or after it. `htlc_id = H("sccp/v1/htlc", {from, nonce})`. A closed lock stays
+  in state and in `state_root` so the counterparty and an explorer can read the
+  secret, and a *native* claim or refund may pay its fee out of the released
+  amount, which lets a taker who holds no SCCP claim the first leg.
+- **The Ethereum leg is a small contract**, `contracts/EthHtlc.sol` with
+  Foundry tests: `lock`, `claim`, `refund` and a read-only `getLock`, one
+  `Locked` event, and the same 32 hashlock bytes the SCCP chain checks. There is
+  no issuer, no wrapped token and no custodian on either side.
+
+Neither leg is taken on faith. `GET /v1/bridge` publishes the deployment facts —
+chain id and name, explorer, contract address, confirmation depth, SCCP margin,
+and whether a contract is configured — for the one chain a network may bridge to:
+
+| Network | Ethereum chain | Confirmations | SCCP margin |
+| --- | --- | --- | --- |
+| `devnet` | Anvil (31337) | 1 | 24 blocks |
+| `testnet` | Sepolia (11155111) | 6 | 24 blocks |
+| `mainnet` | Ethereum (1) | 12 | 20 blocks |
+
+That mapping is a constant, not configuration: a Sepolia deposit must never be
+credited by a mainnet node, so the chain id cannot be pointed elsewhere by an
+environment variable. The chain id, confirmation depth and margin are deployment
+facts, which is why they live in `bridge/config.py` rather than in
+`NetworkParams`; consensus enforces the SCCP hash lock and nothing else.
+
+The order of the legs is the safety argument. The taker locks ETH first,
+publishes a signed take naming the ETH transaction, hashlock and timelock, and
+only then does the maker lock SCCP. The take carries an SCCP height, and the node
+rejects one whose SCCP lock does not expire at least `sccp_margin` blocks before
+the ETH timelock (converted with `target_block_seconds`, so 24 blocks is twelve
+minutes at testnet's 30-second target) or that is already behind the tip. The
+maker checks the same rule again before locking, and the margin is larger than
+`reorg_depth` on every network, so the maker can wait for the taker's SCCP claim
+to be final and still have time to claim ETH with the now-public preimage. If the
+maker never locks, the taker's ETH expires and comes back; if the taker never
+claims, the maker's SCCP refunds. Each side has a block-height exit that needs no
+counterparty, which is the whole reason the swap can be untrusted.
+
+The order book is explicitly **not** consensus. `/v1/orders` holds makers' signed
+sell-SCCP promises and takers' signed takes in node memory: it holds no funds,
+any node can mirror it, and losing it costs a re-post. Signatures are the
+ledger's hybrid scheme over canonical domain hashes, so an order cannot be forged
+or redirected to another beneficiary, and expiry is evaluated against the node's
+injected clock rather than a browser's. Verification of the ETH leg stays with
+the party that cares: the maker reads `getLock` through `sccp bridge
+eth-lock-info` before locking SCCP, and a node never fetches a third-party RPC to
+decide consensus.
+
+`sccp dex` and `sccp bridge` drive all of this from a terminal, the web wallet
+has DeFi pages that sign the same transactions, and
+[`TEST_DEVNET_BRIDGE_DEX.md`](../guides/TEST_DEVNET_BRIDGE_DEX.md) walks an
+end-to-end devnet run — Anvil, `EthHtlc`, two wallets, an order, both claims and
+a pool swap.
 
 ---
 
@@ -1445,27 +1620,49 @@ optionally bootstraps from peer URLs.
 
 ### 15.2 HTTP API
 
-The public v1 surface is small:
+The public v1 surface is a single unauthenticated HTTP API. `PROTOCOL.md` section
+14.1 has the field-level table and `/openapi.json` is the machine-readable
+contract (snapshotted in `tests/fixtures/openapi.json`):
 
 | Route | Purpose |
 | --- | --- |
-| `GET /v1/status` | Network, height, tip, sync and mempool summary |
-| `GET /v1/params` | Effective network parameters |
+| `GET /v1/status` | Network, height, tip, sync, mempool, minted totals and the epoch's witness count |
+| `GET /v1/params` | Effective network parameters, including each variant and its asset |
+| `GET /v1/blocks` | Newest blocks first, paged, with proof counts per variant |
 | `GET /v1/blocks/{height-or-hash}` | A validated block |
-| `POST /v1/blocks` | Submit a block |
-| `GET /v1/accounts/{address}` | Balance, bond, nonce and registration |
-| `GET /v1/epochs/{epoch}` | Roster, beacon, quotas and withheld miners |
-| `GET /v1/epochs/{epoch}/beacon` | The epoch beacon document |
-| `GET /v1/difficulty` | Current and next difficulty |
-| `GET /v1/games/{game_hash}` | Indexed proof/game metadata |
-| `GET /v1/matches/{match_id}` | Match record |
-| `GET /v1/matches/{match_id}/transcript` | Stored certificate, result and PGN |
-| `GET /v1/mempool` | Pool contents and fee summary |
+| `POST /v1/blocks` | Submit a block; 202 when the parent is unknown |
+| `GET /v1/difficulty` | Current and next difficulty, with retarget history |
+| `GET /v1/accounts/{address}` | Native and per-asset balances, bond, nonce and registration |
+| `GET /v1/mempool` | Pending transaction and proof ids |
 | `GET /v1/transactions/{txid}` | Transaction status |
 | `POST /v1/tx` | Submit a signed transaction |
 | `POST /v1/proofs` | Submit a win proof |
-| `POST /v1/gossip` | Receive a signed gossip envelope |
+| `GET /v1/epochs/{epoch}` | Roster, beacon, quotas and withheld miners |
+| `GET /v1/epochs/{epoch}/beacon` | The epoch beacon document |
+| `GET /v1/games` | Settled games, paged, each naming its variant |
+| `GET /v1/games/{game_hash}` | Indexed proof/game metadata |
+| `GET /v1/games/{game_hash}/pgn` | The move text a proof carries |
+| `GET /v1/matches/{match_id}` | Match record |
+| `GET /v1/matches/{match_id}/transcript` | Stored certificate, result and PGN |
+| `GET /v1/ratings` | Derived Glicko-2 rating per miner, strongest first |
+| `GET /v1/ratings/{address}` | One miner's rating, record and per-epoch history |
+| `GET /v1/pools` | Every DEX pool: reserves, total shares, fee, LP positions |
+| `GET /v1/pools/{pool_id}` | One DEX pool |
+| `GET /v1/bridge` | The Ethereum deployment facts for this network |
+| `GET /v1/htlcs` | SCCP hash locks, filtered by address or hashlock |
+| `GET /v1/htlcs/{htlc_id}` | One lock, its status and the preimage once claimed |
+| `GET /v1/orders` | Open signed sell-SCCP orders in the off-consensus book |
+| `GET /v1/orders/{order_id}` | One order and its take, if any |
+| `POST /v1/orders` | Publish a signed order |
+| `POST /v1/orders/{order_id}/takes` | Attach a signed take after the ETH leg is locked |
+| `GET /v1/faucet` | Faucet status and limits (test networks) |
+| `POST /v1/faucet` | Request testnet/devnet coins |
 | `GET /v1/peers` | Known peers and scores |
+| `POST /v1/gossip` | Receive a signed gossip envelope |
+
+Accepted objects are validated exactly as a block would validate them, so an
+invalid transaction or proof never reaches the mempool, and a duplicate
+`(sender, nonce)` or proof id is rejected rather than replacing the pending one.
 
 The API has no authentication or TLS in v1. It is intended for localhost, a
 private network or a reverse proxy. Exposing it directly to the internet gives
@@ -1557,7 +1754,9 @@ snapshot and checks that its state root agrees with the replayed state at that
 hash. A mismatch is a storage error, not a reason to trust the snapshot. Replay
 is the authority.
 
-The default snapshot interval is 100 blocks. `reorg_depth` exists in the
+The snapshot interval comes from the network's `snapshot_interval`: 100 blocks by
+default, 200 on testnet, because halving the block time doubled every
+block-denominated window. `reorg_depth` exists in the
 parameter set but is not currently enforced by the reference node: fork choice
 follows any heavier branch, however deep. Treat the parameter as reserved for a
 future operational policy, not as a guard that is active today.
@@ -1605,6 +1804,12 @@ split between the witnesses whose flag receipt settled the claim, and 20% is
 burned. A fifth of the charge therefore never reaches an account, which is the
 cheapest honest way to burn in a ledger with no burn counter, and the witness
 share is what pays for the flag evidence the claimant needed.
+
+Trading adds revenue rather than cost. The DEX's `dex_fee_bps` (30 basis points)
+stays in the pool for its LPs and the protocol takes no cut, so a swap moves
+value between the trader and the pool's share holders and mints nothing. The
+bridge charges no fee at all: its cost is two timelocks and the margin between
+them (section 13.8), which is time, not coin.
 
 ### 16.2 The central attack: self-play
 
@@ -1668,6 +1873,9 @@ claim otherwise.
 | Stolen wallet key | Passphrase-encrypted keyfile | Key compromise is identity compromise |
 | Quantum key recovery | One scheme: hybrid Ed25519 + ML-DSA-65 (6.5). Every account is a version-1 address over the full 32-byte digest, every spend carries both signatures, and certificates, results and evidence checkpoints are hybrid-signed | Breaking ML-DSA-65 is the only path; the scheme is younger than Ed25519 and its implementation surface is larger |
 | Weak engine / thrown game | Only a winner's proof is paid, so a bad engine loses and earns nothing | A colluding pair can trade legal wins; that is self-play, priced by the bond and pairing diversity |
+| Pool price manipulation (sandwich) | A swap carries `min_amount_out` and applies in block order, so the trader's own bound caps what a builder can extract | No deadline and no batch clearing: a builder can move the price a later swap pays, up to that swap's bound (section 13.7) |
+| Fake bridge order or take | Both are hybrid-signed over canonical domain hashes and the book holds no funds; the counterparty verifies the ETH leg before moving its own coins | A maker must read `getLock` itself; the node never calls a third-party RPC |
+| Bridge leg griefing | Both legs are hash-locked under the same secret and the SCCP leg always expires first by `sccp_margin`, which exceeds `reorg_depth` | The ETH leg is only as safe as the deployed contract and the confirmation depth an operator configures; no protocol-owned deployment exists |
 
 ### 16.5 Finality
 
@@ -1749,6 +1957,10 @@ strong chess. Do not describe a proof as "proof of honest play".
 | REST node API, proof settler and CLI | Implemented |
 | Wallet, devnet, multi-miner demo, unit/integration tests | Implemented |
 | Public faucet, deterministic bootstrap and two-miner testnet stack | Implemented |
+| Variant assets: Chess960/C960, per-variant issuance and per-variant pairing | Implemented |
+| Constant-product DEX: pools, LP shares, swaps, reserves committed in `state_root` | Implemented |
+| ETH↔SCCP bridge: consensus HTLCs, `EthHtlc` contract and Foundry tests, off-consensus order book, CLI and web flows | Implemented; the deployed ETH contract is operator configuration |
+| Browser wallet: hybrid ledger signing, certificates, bridge orders and takes | Implemented |
 | GHCR image build and SSH testnet deploy workflow | Implemented |
 
 ### 17.2 Planned or incomplete
@@ -1757,7 +1969,7 @@ strong chess. Do not describe a proof as "proof of honest play".
 | --- | --- |
 | Continuous public testnet and 72-hour soak | Not yet run |
 | Metrics, alerting and block explorer | Not implemented |
-| Browser ledger signing (ML-DSA in JS) | The web wallet signs and verifies both halves; `@noble/post-quantum` keygen is byte-identical to the reference implementation |
+| Production bridge deployment | `EthHtlc.sol` and its Foundry tests are in-repo; a deployed, reviewed contract on Sepolia or mainnet is operator configuration, and no protocol-owned contract is live |
 | Automatic timeout-claim submission in CLI/demo | Incomplete integration |
 | drand quicknet verifier wiring | Hook exists; pinned verifier not bundled |
 | Faucet limit persistence | Limits are in memory |
@@ -1925,6 +2137,21 @@ The relay is not a trusted matchmaker. It can refuse service, but it cannot
 change a proof's pairing, colour, opening or result without producing something
 that fails verification.
 
+An independent witness runs beside the relay:
+
+```bash
+sccp witness run --key w1.key --relay http://127.0.0.1:8646 --port 8647 \
+    --relay-witness-key <relay witness public key hex>
+```
+
+It polls the relay's open matches, re-checks the clock arithmetic with the
+protocol's own verifier and co-signs what it observed, serving its bundle on
+`GET /v1/matches/{id}/receipts`. The witness is read-only towards the relay: it
+cannot move a clock or a move, and a receipt the relay signed with no key at all
+is still co-signed and reported, because that attests to nothing on its own. On
+mainnet, where `clock_witness_quorum` is 3, independent witnesses are what make
+a flag settleable without trusting the relay.
+
 ### 18.7 Run a miner
 
 ```bash
@@ -1967,6 +2194,11 @@ Devnet runs in-process with one-block epochs, zero bonds, zero seal difficulty
 and mock engines. It is deterministic and designed for tests, demos and CI. It
 does not prove that real engines or real timing work; use testnet or the timed
 relay scripts for that.
+
+Devnet is also the environment the bridge, DEX and Chess960 flows are exercised
+in: `sccp dex` and `sccp bridge` speak to an Anvil chain, and
+[`TEST_DEVNET_BRIDGE_DEX.md`](../guides/TEST_DEVNET_BRIDGE_DEX.md) walks the run
+from `EthHtlc` deployment to both swap claims.
 
 ### 18.10 A hand-played game
 
@@ -2038,23 +2270,29 @@ the engine-marked tests.
 
 | Term | Meaning |
 | --- | --- |
+| **Asset id** | `H("sccp/v1/asset", {symbol, name, decimals, variant})`: a variant token's immutable id, derived rather than issued |
 | **Availability** | A bonded commitment to be matchable in a future epoch |
 | **Beacon** | Public epoch randomness derived from reveals (and optionally drand) |
 | **Block** | Header plus coinbase, transactions and win proofs |
 | **Bond** | Locked collateral for a miner or witness identity |
 | **Bootstrap** | The initial heights where no proofs are required |
+| **C960** | The Chess960 variant's asset symbol; standard chess mints native SCCP |
 | **Certificate** | Both-seat signed record of a match's fixed parameters |
 | **Claim window** | Number of blocks after an epoch in which its wins can be proven |
 | **Coinbase** | The unsigned transaction paying the block reward and fees |
 | **Cumulative work** | Sum of `(1 << seal_bits) + k * 65536` over a branch |
+| **DEX pool** | An ordered asset pair with two integer reserves and an LP share ledger, keyed by `pool_id` |
 | **Epoch** | Fixed number of heights used for availability, beacons and pairing |
 | **Game hash** | Hash of network, start position, SAN moves and result |
 | **Genesis** | Pinned height-0 block and initial state |
+| **HTLC** | A hash time-locked contract: coins escrowed under `sha256(preimage)` until a claim, or returned after a timelock |
 | **Hybrid key** | Ed25519 and ML-DSA-65 keypair sharing one seed; scheme byte `0x01` prefixes both key and signature |
 | **k / wins_required** | Number of valid proofs a block must carry |
+| **LP share** | A pool's proportional claim on both reserves: minted on deposit, burned on redemption |
 | **Low ply** | A game shorter than the network's `min_plies` |
 | **MTP** | Median time past of the previous 11 block timestamps |
 | **Opening hash** | Commitment to the book version, line id and move list |
+| **Order / take** | Off-consensus, signed ETH/SCCP book entries: a maker's sell promise and a taker's announcement that the ETH leg is locked |
 | **Proof id** | Hash of game hash, match id and winner |
 | **Roster** | Miners with valid availability and reveals for an epoch |
 | **Seal** | Header hash work measured in leading zero bits |
@@ -2078,12 +2316,16 @@ the engine-marked tests.
 - [`OPEN_A_WALLET.md`](../guides/OPEN_A_WALLET.md) — wallet creation, backup and
   restore.
 - [`SEND_COINS.md`](../guides/SEND_COINS.md) — transfers, fees and settlement.
+- [`TEST_DEVNET_BRIDGE_DEX.md`](../guides/TEST_DEVNET_BRIDGE_DEX.md) — the
+  devnet bridge, DEX and Chess960 walkthrough.
 - [`RUN_A_TESTNET_MINER.md`](../setup/RUN_A_TESTNET_MINER.md) — the relay
   and miner operator guide.
 - [`README.md`](../../README.md) — overview, quickstart and command examples.
 - `data/openings.json` — the shipped opening book.
 - `data/engines.json` — pinned engine profiles and checksums.
 - `genesis/{testnet,mainnet,devnet}.json` — pinned genesis documents.
+- `contracts/EthHtlc.sol` — the Ethereum hash-lock contract, with Foundry tests
+  in `contracts/test/` and a deploy script in `contracts/script/`.
 
 ### 20.2 Standards and libraries
 

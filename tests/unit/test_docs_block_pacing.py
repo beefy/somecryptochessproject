@@ -61,6 +61,8 @@ RETIRED: Final = (
     # nine at 30, and the devnet window was never minutes at all.
     "19 minutes on testnet",
     "three minutes on devnet",
+    # The retired *clock*, which `FIXED_TIME_CONTROL` now sets to 10+0.
+    "30+0",
 )
 
 
@@ -72,6 +74,7 @@ def _documents() -> list[Path]:
         *sorted((ROOT / "deploy").glob("*.py")),
         ROOT / "README.md",
         ROOT / "src" / "web" / "README.md",
+        ROOT / "docker-compose.yml",
     ]
 
 
