@@ -53,6 +53,14 @@ def _service_block(text: str, service: str) -> str:
     return "\n".join(block)
 
 
+def _step(text: str, name: str) -> str:
+    """The lines of one workflow step, up to the next step."""
+    marker = f"- name: {name}\n"
+    start = text.index(marker)
+    end = text.find("\n      - name:", start)
+    return text[start:] if end == -1 else text[start:end]
+
+
 def test_the_mirror_is_one_node_behind_one_proxy() -> None:
     """Two services, because every extra one is another process to patch.
 
@@ -166,6 +174,33 @@ def test_the_mirror_deploy_resets_only_a_diverged_chain() -> None:
     assert "/v1/blocks/1" in commands, "divergence is detected by the first block"
     assert "up -d --no-build" in commands
     assert "caddy reload" in commands, "a changed Caddyfile needs a reload"
+
+
+def test_a_store_the_new_build_cannot_replay_is_rebuilt_once() -> None:
+    """The mirror replays its chain, so a consensus change bricks its store.
+
+    `restore_chain` re-runs every stored block through validation under the
+    running build's parameters. The 30 s cadence doubled maturity, registration,
+    dispute and beacon windows, which changes the state root of blocks already
+    on disk: the node aborts at startup, never turns healthy, and `up` fails
+    behind `tls`'s `service_healthy` dependency -- before the block-1 comparison
+    above can notice. `up -d` returning success for a restart loop is exactly
+    the trap, so the step waits for health and, when it fails, prints why and
+    throws the cache away once.
+    """
+    restart = _step(WORKFLOW.read_text(encoding="utf-8"), "Pull the image and restart the stack")
+
+    assert "--wait --wait-timeout" in restart, "a created container is not a serving node"
+    assert restart.index("--wait --wait-timeout") < restart.index("rm -rf /data/*")
+    assert restart.count("--wait --wait-timeout 300 node") == 2, "both waits are the node's"
+    assert restart.count("rm -rf /data/*") == 1, "one rebuild, not a wipe loop"
+    assert "docker compose logs --tail=40 --no-color node" in restart, "say why it was wiped"
+    # The proxy and the rest of the project still start, and only after the node
+    # is healthy: `tls` gates on `service_healthy`, so starting it first waits on
+    # a node that is still being rebuilt.
+    whole = 'docker compose up -d --no-build --remove-orphans"'
+    assert restart.count(whole) == 1
+    assert restart.index(whole) > restart.index("rm -rf /data/*")
 
 
 def test_a_missing_mirror_is_reported_rather_than_skipped() -> None:

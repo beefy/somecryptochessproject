@@ -55,6 +55,32 @@ ssh sccp@136.119.76.215 'free -m; dmesg -T | grep -i oom | tail -5'
 ssh sccp@136.119.76.215 'cd /srv/sccp-edge && docker compose logs --tail=60 --no-color node'
 ```
 
+A restart loop that starts **right after a stack deploy** is not memory. The node
+replays its SQLite chain before it binds the port, under the running build's
+consensus parameters, so a release that moves one — the 30 s cadence doubled the
+maturity, registration, dispute and beacon windows — cannot apply blocks the
+previous build wrote. The tail of the log is a validation error about the header
+state root, not a kill:
+
+```
+BlockValidationError header state root is <a>, the block applies to <b>
+```
+
+`deploy-edge.yml` handles this: it waits for health, prints that tail, wipes the
+store and starts once more, leaving a `::warning::` in the run. By hand it is the
+same three steps — the container is the only writer, so stop it first:
+
+```bash
+ssh sccp@136.119.76.215 'cd /srv/sccp-edge \
+  && docker compose stop node \
+  && docker compose run --rm --no-deps --entrypoint sh node -c "rm -rf /data/*" \
+  && docker compose up -d --no-build'
+```
+
+Nothing is lost: no keys, no faucet, and no block the primary does not also have
+— the same reasoning as case 3. A loop that survives the rebuild is the image,
+not the store.
+
 ## Case 2: it answers and never advances
 
 The node's log names the peer and the reason, because the sync is a plain poll of
@@ -108,10 +134,13 @@ not also have.
 
 ## Rebuilding through the workflow instead
 
-`deploy-edge.yml` is not only a deploy. It compares the mirror's block 1 with the
+`deploy-edge.yml` is not only a deploy. It waits for the new image's node to
+become healthy and, when it cannot replay the store it inherited, wipes
+`node-data` and starts it once; it also compares the mirror's block 1 with the
 primary's and, when they disagree, deletes the mirror's `node-data` itself before
-restarting — the case above, automated. So after the primary has been reset, the
-cheapest path is often to let the next successful stack deploy run the mirror job:
+restarting — the case above, automated. So after the primary has been reset, or
+after a release that changed a consensus parameter, the cheapest path is often to
+let the next successful stack deploy run the mirror job:
 
 ```bash
 gh run list --workflow=deploy-edge.yml --limit 5

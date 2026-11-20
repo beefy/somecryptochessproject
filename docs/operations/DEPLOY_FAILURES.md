@@ -165,12 +165,20 @@ ssh sccp@proofofchess.com 'cd /opt/sccp-testnet \
 | Workflow | Fails like | First check |
 | --- | --- | --- |
 | `deploy-explorer.yml` | upload or symlink switch failed; the site serves the previous release and the run is red | `readlink -f /opt/sccp-explorer/www/app/current`, then the job's upload step |
-| `deploy-edge.yml` | the mirror does not answer, or answers with the old chain | `ssh` to the edge host, `docker compose ps`, then the smoke-test step |
+| `deploy-edge.yml` | the mirror does not answer, or answers with the old chain | `ssh` to the edge host, `docker compose ps`, then the step that failed |
 | `deploy-edge.yml` with no `EDGE_DEPLOY_HOST` | green, mirror untouched | `gh variable list` |
 
 The edge deploy is deliberately allowed to fail without failing the primary: a
 red mirror job with a green stack job means the chain is fine and the read-only
 copy is not. Treat it as SEV4 and finish the primary work first.
+
+One failure looks like a bad image and is not: the mirror replays its SQLite
+chain at startup, so a release that changes a consensus parameter cannot apply
+blocks written by the previous build and the node exits. The restart step waits
+for health, prints the node's log tail, wipes `node-data` and retries once, so
+that case leaves a `::warning::` in a green run rather than a red one. A run that
+is still red after the retry is the image, not the volume —
+[`MIRROR_OUTAGE.md`](MIRROR_OUTAGE.md) case 1 has the manual rebuild.
 
 ## Verifying a deploy that claims to be done
 

@@ -226,9 +226,42 @@ jobs:
             ssh edge "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
           # `--no-build` is not style: this VM is a 1 GB e2-micro with no source
           # tree, and falling back to a build there fails slowly and opaquely.
-          ssh edge "cd '$DEPLOY_DIR' \
-            && docker compose pull node \
-            && docker compose up -d --no-build --remove-orphans"
+          ssh edge "cd '$DEPLOY_DIR' && docker compose pull node"
+
+          # `up -d` on its own only proves the containers were created; `--wait`
+          # also proves the node answers, and that distinction is the whole
+          # reason this step can fail. The mirror replays its stored chain at
+          # startup, so a build that moves a consensus parameter -- the 30 s
+          # cadence doubled maturity, registration, dispute and beacon windows
+          # -- makes the state root of blocks already on disk unreplayable. The
+          # node exits, `tls` never starts behind its `service_healthy`
+          # dependency, and `up` failed here, before the block-1 comparison
+          # below could see anything.
+          #
+          # Only the node is waited on: a proxy that will not start must never
+          # cost the chain, and the wipe below is for a node that cannot read
+          # its own store. The rest of the project starts afterwards, as before.
+          if ! ssh edge "cd '$DEPLOY_DIR' \
+                && docker compose up -d --no-build --wait --wait-timeout 300 node"; then
+            echo "::warning::the node did not become healthy on the chain it had stored"
+            ssh edge "cd '$DEPLOY_DIR' && docker compose ps -a" || true
+            ssh edge "cd '$DEPLOY_DIR' && docker compose logs --tail=40 --no-color node" || true
+
+            # The store is a cache, not history: this mirror holds no keys and no
+            # block the primary does not also have, so an unreadable one is thrown
+            # away and one sync rebuilds it (docs/operations/MIRROR_OUTAGE.md).
+            # Exactly once, so a genuinely broken image still fails the deploy
+            # instead of wiping the volume on a loop.
+            #
+            # Only the node's own volume. A project-wide `down --volumes` would
+            # take caddy_data with it and re-issue the certificate on every chain
+            # reset, which is a Let's Encrypt rate limit away from an outage.
+            ssh edge "cd '$DEPLOY_DIR' \
+              && docker compose stop node \
+              && docker compose run --rm --no-deps --entrypoint sh node -c 'rm -rf /data/*' \
+              && docker compose up -d --no-build --wait --wait-timeout 300 node"
+          fi
+          ssh edge "cd '$DEPLOY_DIR' && docker compose up -d --no-build --remove-orphans"
 
       # A changed Caddyfile in a bind mount is not picked up by `up -d`, and
       # Caddy does not watch the file.
