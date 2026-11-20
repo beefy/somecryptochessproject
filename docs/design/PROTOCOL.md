@@ -814,7 +814,7 @@ the one scheme, not a second way to spend.
 | Type | Payload keys | Effect |
 | --- | --- | --- |
 | `transfer` | `to`, `amount`, `public_key`\* | moves `amount` from `from` to `to`; `to != from`, `amount >= 1` |
-| `register` | `public_key`, `endpoint`, `engine`, `bond` | locks `bond >= min_bond`, stores key/endpoint/engine, sets `registered_until_epoch = epoch + registration_epochs`; refused while banned |
+| `register` | `public_key`, `endpoint`, `engine`, `bond`, `variant`? | locks `bond >= min_bond`, stores key/endpoint/engine and the chosen variant (`standard` when omitted), sets `registered_until_epoch = epoch + registration_epochs`; refused while banned, and a miner already registered for a different variant must unregister first |
 | `register_witness` | `public_key`, `endpoint`, `bond` | locks `bond >= clock_witness_bond` and registers a clock witness for `registration_epochs` |
 | `update_registration` | `endpoint`, `engine`, `extend_epochs`, `bond`, `public_key`\* | must change at least one of those; optionally tops up the bond |
 | `unregister` | `public_key`\* | clears registration and starts `unbond_delay` at `height + unbond_delay` |
@@ -896,9 +896,11 @@ The lifecycle (implemented in `src/sccp/chain/timeout.py`) is:
    (`STALL_CLAIMANT_BPS`, `STALL_QUORUM_BPS`, `STALL_BURN_BPS`): half to the
    claimant, 30% in equal parts to the witnesses whose final flag receipt
    settled the claim, and the last 20% burned — burned by *not* crediting it, so
-   a scan of the ledger sees supply shrink rather than a burn counter move. A
-   seat with nothing left to take pays what it has, and the claim is still
-   finalised: the slash is a cost, not a precondition.
+   a scan of the ledger sees supply shrink rather than a burn counter move. Any
+   remainder from dividing the witness share stays uncredited with it, for the
+   same reason: there is no account to hold a fraction of a base unit. A seat
+   with nothing left to take pays what it has, and the claim is still finalised:
+   the slash is a cost, not a precondition.
 
 `slash_evidence` covers clock-witness equivocation only: it carries
 `evidence = {witness, receipts}` with exactly two receipts of the same
@@ -1054,7 +1056,9 @@ witness registry, open/closed timeout claims, and the DEX pools
 `state_root` is the merkle root (section 1) over `address -> account` leaves,
 where an account leaf commits to every field of the table above. When the chain
 has DEX pools, it also commits one leaf per pool under the key `pool:<pool_id>`,
-so reserves and LP positions are as authenticated as balances. `roster_root` is
+and one leaf per hash lock under `htlc:<htlc_id>`, so reserves, LP positions and
+escrowed secrets are as authenticated as balances and the two namespaces cannot
+collide with an address. `roster_root` is
 the same construction over the epoch's roster, committing only
 `{public_key, max_games}` per member plus `variant` for non-standard members.
 Both are recomputed rather than trusted.
@@ -1062,7 +1066,8 @@ Both are recomputed rather than trusted.
 Snapshots are JSON with the top-level keys `network`, `height`, `tip_hash`,
 `accounts`, `proofs`, `proof_ids`, `matches`, `miner_stats`, `epochs`,
 `availability`, `reveals`, `witnesses`, `timeout_claims`, `difficulty`,
-`last_k_change_height`, `timestamps`, `minted` and, when non-empty, `pools`. A
+`last_k_change_height`, `timestamps`, `minted` and, when non-empty, `pools` and
+`htlcs`. A
 snapshot is a cache: a node replaying blocks checks the snapshot's `state_root`
 against the state it rebuilds, so a corrupted snapshot cannot become consensus.
 
@@ -1310,6 +1315,8 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |
 | POST | `/v1/blocks` | `BlockView`, or 202 when the parent is unknown |
 | GET | `/v1/accounts/{address}` | `AccountView`: network, native and per-asset balances, immature queues, bonded, nonce, registration variant, endpoint, engine, key, ban height |
+| GET | `/v1/faucet` | the faucet's public policy: network, the published faucet address, the grant amount and maximum, the per-address cooldown and the per-client grant window (404 when the network has no faucet) |
+| POST | `/v1/faucet` | `FaucetRequest {address, amount?}` → `FaucetView {network, address, amount, txid}`: the node spends from the published faucet key and admits the transfer; 429 when the address or client is over a limit |
 | GET | `/v1/pools` | `PoolList`: every DEX pool with reserves, total shares, fee, and each LP address's shares |
 | GET | `/v1/pools/{pool_id}` | `PoolView`: one DEX pool (404 when the chain has not created it) |
 | GET | `/v1/bridge` | `BridgeView`: the Ethereum chain id/name, HTLC contract, confirmation depth and SCCP margin for this network |

@@ -255,6 +255,14 @@ proxy on that host reaches it. The instance, address record, Compose file,
 workflow variables and smoke checks are in
 [`deploy/edge/README.md`](../../deploy/edge/README.md).
 
+One host-level setting belongs with those steps: an `e2-micro` has 1 GB and no
+swap, and the stack leaves almost nothing free. Without a swap file the VM can
+stop scheduling userland while still completing TCP handshakes, which reads as a
+dead mirror and a failing `deploy-edge.yml` with no error on the host.
+[`deploy/edge/README.md`](../../deploy/edge/README.md) has the four commands, and
+[`MIRROR_OUTAGE.md`](../operations/MIRROR_OUTAGE.md) case 1 recognises the
+symptom.
+
 ### SSH
 
 The deploy workflow uses plain SSH, not IAP, and GitHub-hosted runners do not

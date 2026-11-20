@@ -170,12 +170,28 @@ ssh sccp@proofofchess.com 'cd /opt/sccp-testnet \
 
 A red run whose *first* red step is `Configure SSH` is configuration, not chain.
 The mirror has no public SSH and a GitHub runner has no route into the VPC, so the
-job reads the mirror's host key through `TESTNET_DEPLOY_HOST` or not at all. The
-step's `::error::` line names the setting: `vars.EDGE_DEPLOY_HOST` must be
-`user@host` (not a bare IP, not `host:port`), an internal address needs
-`vars.EDGE_SSH_PROXY_JUMP=1`, and the jump needs `vars.TESTNET_DEPLOY_HOST` set.
-That step used to end on an unguarded `ssh-keyscan`, so the same failure printed
-nothing but "exit code 1" after five seconds.
+job reads the mirror's host key by jumping through `TESTNET_DEPLOY_HOST`, and
+`EDGE_DEPLOY_HOST` must be the mirror's **internal** address for the hop to mean
+anything (a public address is filtered by design):
+
+```bash
+gcloud compute instances describe sccp-edge --zone=us-central1-a \
+    --format='value(networkInterfaces[0].networkIP)'   # the address to use
+gh variable set EDGE_DEPLOY_HOST --env testnet --body 'deploy@10.128.0.2'
+```
+
+The jump also needs the `sccp-edge-ssh-from-primary` rule (primary tag ->
+mirror tag, tcp:22), `secrets.TESTNET_SSH_KEY` authorized on the primary, and
+`secrets.EDGE_SSH_KEY` authorized on the mirror's `ssh-keys` metadata. When the
+jump finds no key the step falls back to a direct scan, so `vars.EDGE_SSH_PROXY_JUMP`
+is only needed to force one route (`1` jump, `0` direct). The step's `::error::`
+line names whichever is missing: `vars.EDGE_DEPLOY_HOST` must be `user@host` (not
+a bare host, not `host:port`), a hop that finds no key says so and prints the
+`gcloud` command, a key that reaches the mirror but is refused says that instead
+of failing on the `scp` two steps later, and a mirror that accepts TCP on port 22
+but never answers is called out as a host problem. That step used to end on an
+unguarded `ssh-keyscan`, so the same class of failure printed nothing but "exit
+code 1" after five seconds.
 
 The edge deploy is deliberately allowed to fail without failing the primary: a
 red mirror job with a green stack job means the chain is fine and the read-only

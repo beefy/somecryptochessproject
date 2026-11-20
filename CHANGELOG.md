@@ -7,8 +7,57 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **Whitepaper drift now fails a test.** `tests/unit/test_whitepaper_coverage.py`
+  compares the whitepaper's transaction table and `PROTOCOL.md` section 10.2
+  against `TxType`, both API tables against `tests/fixtures/openapi.json` in both
+  directions, the header version against `sccp.version`, the Chess960 schedule,
+  `dex_fee_bps` and the per-network bridge parameters against `config.py` and
+  `bridge/config.py`, and the stall slash's 10% price and its 50/30/20 split
+  against `chain/timeout.py` in all three places that state them. Mutating any of
+  them fails the file.
+
+### Changed
+
+- **The whitepaper describes the chain that exists.** It still showed an
+  eleven-type transaction table, seventeen routes and no mention of variants,
+  the DEX or the bridge — all of which shipped in 0.24.0. Section 13.2 now lists
+  all eighteen transaction types, including `transfer`'s optional `asset`;
+  13.6–13.8 are new, covering per-variant issuance and per-variant pairing, the
+  constant-product pools (committed reserves, `min_amount_out` as the only bound,
+  no deadline) and the two-leg ETH bridge (per-network chain ids, confirmations
+  and margins above `reorg_depth`, and why the order book is off consensus);
+  15.2 lists every route the node serves; and 4.1, 16.1, 17.1, 18.9, 19 and 20
+  were swept with them. `PROTOCOL.md` gained the `variant` field on `register`,
+  the `htlc:` leaves `state_root` commits, `htlcs` in the snapshot key list, and
+  the two `/v1/faucet` rows its route table was missing.
+
 ### Fixed
 
+- **A wedged mirror is a memory problem, and the runbook says so.** The mirror VM
+  has 1 GB and no swap, and its stack sits at roughly 930 MB of the 969 the
+  kernel sees. When it runs out, the kernel keeps completing TCP handshakes from
+  the accept queue while userland never runs: `ssh-keyscan` reads no banner,
+  `https://mirror.proofofchess.com` times out, the instance still reports
+  `RUNNING`, and the serial console is all failed container health checks — which
+  is how `deploy-edge.yml` failed with "no host key" against an address that
+  answers `nc`. `deploy/edge/README.md` now gives it a swap file,
+  `MIRROR_OUTAGE.md` case 1 recognises the symptom and the reboot, and
+  `GCP_RESOURCE_SETUP.md` says the setting belongs to the VM.
+- **The mirror deploy finds a route instead of asking for one.** The mirror has no
+  public 22 by design, so `vars.EDGE_SSH_PROXY_JUMP=1` was the only route a
+  GitHub-hosted runner had — and leaving it unset produced a run that scanned a
+  filtered address and failed on a variable the operator had never configured.
+  The step now tries the jump through `vars.TESTNET_DEPLOY_HOST` and falls back to
+  a direct scan (`EDGE_SSH_PROXY_JUMP=1`/`0` force one route), the `Host edge`
+  block takes the resolved route rather than the raw flag, the log says which
+  route answered, and the jump hop authenticates to the primary with
+  `TESTNET_SSH_KEY` instead of reusing the mirror's key — one `IdentityFile` for
+  both hosts made the hop impossible whenever the two keys differed, which is the
+  arrangement this repository ships. A key that never authenticated used to fail
+  as a bare `scp` two steps later; a refused key, a wrong route and a host that
+  accepts TCP but never answers are now told apart.
 - **The mirror deploy says why its SSH step failed.** `deploy-edge.yml` ended the
   step on an unguarded `ssh-keyscan`, so a mirror with no route from the runner
   failed the job at ssh-keyscan's five-second timeout with "exit code 1" and no
