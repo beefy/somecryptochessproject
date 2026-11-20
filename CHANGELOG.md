@@ -7,6 +7,21 @@ not itemised here.
 
 ## [Unreleased]
 
+### Added
+
+- **The node's HTTP API documents itself at `/docs`.** FastAPI already generated
+  a schema, but nothing pointed at it, nothing described it and no test noticed
+  if it disappeared. The app now carries a landing-page description that names
+  the error mapping (400 rejected, 404 unknown, 429 rate-limited, 202 orphan
+  block), its 33 operations are grouped into five Swagger sections -- node,
+  chain, ledger, chess, DeFi -- and `tests/unit/test_api.py` pins that `/docs`,
+  `/redoc` and `/openapi.json` are served (including with the explorer mounted at
+  `/`), that every registered route appears in the schema with a group, and that
+  a docstring or a re-grouped route still leaves `tests/fixtures/openapi.json`
+  untouched. The pinned contract now ignores `tags` for the same reason it
+  already ignored summaries and descriptions: grouping is documentation, a field
+  or status code is not.
+
 ## [0.31.0] - 2026-11-19
 
 ### Changed

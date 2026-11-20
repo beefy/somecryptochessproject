@@ -16,7 +16,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -86,8 +86,15 @@ def _error_response(status_code: int, message: str) -> JSONResponse:
     return JSONResponse(status_code=status_code, content={"detail": message})
 
 
-CONTRACT_IGNORED_KEYS = frozenset({"description", "examples", "operationId", "summary", "title"})
-"""Schema keys that may change without affecting a client."""
+CONTRACT_IGNORED_KEYS = frozenset(
+    {"description", "examples", "operationId", "summary", "tags", "title"}
+)
+"""Schema keys that may change without affecting a client.
+
+Prose, generated ids and the Swagger group names organize the page a human
+reads; dropping them keeps a documentation edit out of the pinned contract in
+``tests/fixtures/openapi.json``, while routes, fields and status codes stay in it.
+"""
 
 
 def _normalise(value: Any) -> Any:
@@ -106,10 +113,10 @@ def _normalise(value: Any) -> Any:
 def openapi_contract(app: FastAPI) -> dict[str, Any]:
     """The API schema projected onto the parts a client actually depends on.
 
-    Prose and generated operation ids are dropped so documentation edits do not
-    churn the snapshot, and ``info`` is dropped because it carries the package
-    version. Routes, parameters, request bodies, response codes and model fields
-    all survive, so an accidental breaking change fails
+    Prose, generated operation ids and Swagger group names are dropped so
+    documentation edits do not churn the snapshot, and ``info`` is dropped because
+    it carries the package version. Routes, parameters, request bodies, response
+    codes and model fields all survive, so an accidental breaking change fails
     ``tests/unit/test_api.py`` until ``scripts/make_openapi_fixture.py`` is run
     on purpose.
     """
@@ -117,6 +124,39 @@ def openapi_contract(app: FastAPI) -> dict[str, Any]:
     assert isinstance(schema, dict)  # FastAPI always returns a mapping
     schema.pop("info", None)
     return schema
+
+
+API_DESCRIPTION: Final = """The node's JSON API (PROTOCOL.md section 14.1).
+
+Every response is a frozen pydantic model and every top-level body names its
+network, so a wallet can refuse a node on the wrong one. `GET /v1/status` is the
+health check. Errors are `{"detail": "..."}`: 400 for a rejected object, 404 for
+an unknown id, 429 for a rate-limited faucet and 202 for a block whose parent is
+unknown.
+
+The wire formats behind these routes -- transaction payloads, the epoch beacon,
+the block checklist -- are in the protocol document; this page documents the
+routes, their parameters and their response models.
+"""
+"""What the Swagger UI landing page says about itself."""
+
+OPENAPI_TAGS: Final[tuple[dict[str, str], ...]] = (
+    {"name": "node", "description": "This node: identity, parameters, mempool and peers."},
+    {
+        "name": "chain",
+        "description": "Blocks, epochs, beacons, difficulty and confirmed transactions.",
+    },
+    {"name": "ledger", "description": "Accounts, signed submissions and the testnet faucet."},
+    {
+        "name": "chess",
+        "description": "Games, matches, transcripts and the derived miner ratings.",
+    },
+    {
+        "name": "defi",
+        "description": "Liquidity pools, the HTLC bridge and the off-consensus order book.",
+    },
+)
+"""Sections of the Swagger UI, in display order. Prose only: not in the contract."""
 
 
 def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI:
@@ -138,6 +178,8 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     app = FastAPI(
         title=f"sccp node ({service.params.network_id})",
         version=__version__,
+        description=API_DESCRIPTION,
+        openapi_tags=list(OPENAPI_TAGS),
         lifespan=lifespan,
     )
     app.state.service = service
@@ -156,19 +198,19 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     async def _bad_request(_: Request, exc: SccpError) -> JSONResponse:
         return _error_response(400, str(exc))
 
-    @app.get("/v1/status", response_model=NodeStatus)
+    @app.get("/v1/status", response_model=NodeStatus, tags=["node"])
     def status() -> NodeStatus:
         return service.status()
 
-    @app.get("/v1/params")
+    @app.get("/v1/params", tags=["node"])
     def params() -> dict[str, object]:
         return service.params.model_dump(mode="json")
 
-    @app.get("/v1/bridge", response_model=BridgeView)
+    @app.get("/v1/bridge", response_model=BridgeView, tags=["defi"])
     def bridge() -> BridgeView:
         return service.bridge_view()
 
-    @app.get("/v1/orders", response_model=OrderList)
+    @app.get("/v1/orders", response_model=OrderList, tags=["defi"])
     def orders(
         maker_sccp: str | None = Query(default=None),
         give_asset: str | None = Query(default=None),
@@ -178,80 +220,80 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
             maker_sccp=maker_sccp, give_asset=give_asset, want_asset=want_asset
         )
 
-    @app.get("/v1/orders/{order_id}", response_model=OrderDetail)
+    @app.get("/v1/orders/{order_id}", response_model=OrderDetail, tags=["defi"])
     def order(order_id: str) -> OrderDetail:
         return service.order_detail(order_id)
 
-    @app.post("/v1/orders", response_model=OrderAccepted)
+    @app.post("/v1/orders", response_model=OrderAccepted, tags=["defi"])
     def submit_order(order: Order) -> OrderAccepted:
         return service.submit_order(order)
 
-    @app.post("/v1/orders/{order_id}/takes", response_model=TakeAccepted)
+    @app.post("/v1/orders/{order_id}/takes", response_model=TakeAccepted, tags=["defi"])
     def submit_take(order_id: str, take: Take) -> TakeAccepted:
         return service.submit_take(order_id, take)
 
-    @app.get("/v1/htlcs", response_model=HtlcList)
+    @app.get("/v1/htlcs", response_model=HtlcList, tags=["defi"])
     def htlcs(
         address: str | None = Query(default=None),
         hashlock: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
     ) -> HtlcList:
         return service.htlcs(address=address, hashlock=hashlock)
 
-    @app.get("/v1/htlcs/{htlc_id}", response_model=HtlcView)
+    @app.get("/v1/htlcs/{htlc_id}", response_model=HtlcView, tags=["defi"])
     def htlc(htlc_id: str) -> HtlcView:
         return service.htlc(htlc_id)
 
-    @app.get("/v1/blocks", response_model=BlockList)
+    @app.get("/v1/blocks", response_model=BlockList, tags=["chain"])
     def blocks(
         limit: int = Query(default=25, ge=1, le=200),
         before_height: int | None = Query(default=None, ge=0),
     ) -> BlockList:
         return service.blocks(limit=limit, before_height=before_height)
 
-    @app.get("/v1/blocks/{reference}", response_model=BlockView)
+    @app.get("/v1/blocks/{reference}", response_model=BlockView, tags=["chain"])
     def block(reference: str) -> BlockView:
         return service.block(reference)
 
-    @app.post("/v1/blocks", response_model=BlockView)
+    @app.post("/v1/blocks", response_model=BlockView, tags=["chain"])
     def submit_block(block: Block) -> BlockView:
         ingested = service.ingest_block(block)
         if not ingested.accepted:
             raise HTTPException(status_code=202, detail="block is an orphan; parent unknown")
         return service.block(ingested.hash)
 
-    @app.get("/v1/accounts/{address}", response_model=AccountView)
+    @app.get("/v1/accounts/{address}", response_model=AccountView, tags=["ledger"])
     def account(address: str) -> AccountView:
         return service.account(address)
 
-    @app.get("/v1/pools", response_model=PoolList)
+    @app.get("/v1/pools", response_model=PoolList, tags=["defi"])
     def pools() -> PoolList:
         return service.pools()
 
-    @app.get("/v1/pools/{pool_id}", response_model=PoolView)
+    @app.get("/v1/pools/{pool_id}", response_model=PoolView, tags=["defi"])
     def pool(pool_id: str) -> PoolView:
         return service.pool(pool_id)
 
-    @app.get("/v1/epochs/{epoch}", response_model=EpochView)
+    @app.get("/v1/epochs/{epoch}", response_model=EpochView, tags=["chain"])
     def epoch(epoch: int) -> EpochView:
         return service.epoch(epoch)
 
-    @app.get("/v1/epochs/{epoch}/beacon", response_model=Beacon)
+    @app.get("/v1/epochs/{epoch}/beacon", response_model=Beacon, tags=["chain"])
     def epoch_beacon(epoch: int) -> Beacon:
         return service.beacon(epoch)
 
-    @app.get("/v1/difficulty", response_model=DifficultyView)
+    @app.get("/v1/difficulty", response_model=DifficultyView, tags=["chain"])
     def difficulty() -> DifficultyView:
         return service.difficulty()
 
-    @app.get("/v1/ratings", response_model=RatingsView)
+    @app.get("/v1/ratings", response_model=RatingsView, tags=["chess"])
     def ratings(limit: int = Query(default=100, ge=1, le=1000)) -> RatingsView:
         return service.ratings(limit=limit)
 
-    @app.get("/v1/ratings/{address}", response_model=MinerRatingDetail)
+    @app.get("/v1/ratings/{address}", response_model=MinerRatingDetail, tags=["chess"])
     def miner_rating(address: str) -> MinerRatingDetail:
         return service.miner_rating(address)
 
-    @app.get("/v1/games", response_model=GameList)
+    @app.get("/v1/games", response_model=GameList, tags=["chess"])
     def games(
         limit: int = Query(default=25, ge=1, le=200),
         before_height: int | None = Query(default=None, ge=0),
@@ -263,54 +305,54 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
             before_game_hash=before_game_hash,
         )
 
-    @app.get("/v1/games/{game_hash}", response_model=GameView)
+    @app.get("/v1/games/{game_hash}", response_model=GameView, tags=["chess"])
     def game(game_hash: str) -> GameView:
         return service.game(game_hash)
 
-    @app.get("/v1/games/{game_hash}/pgn", response_model=GamePgn)
+    @app.get("/v1/games/{game_hash}/pgn", response_model=GamePgn, tags=["chess"])
     def game_pgn(game_hash: str) -> GamePgn:
         return service.game_pgn(game_hash)
 
-    @app.get("/v1/matches/{match_id}", response_model=MatchInfo)
+    @app.get("/v1/matches/{match_id}", response_model=MatchInfo, tags=["chess"])
     def match(match_id: str) -> MatchInfo:
         return service.match(match_id)
 
-    @app.get("/v1/matches/{match_id}/transcript", response_model=Transcript)
+    @app.get("/v1/matches/{match_id}/transcript", response_model=Transcript, tags=["chess"])
     def transcript(match_id: str) -> Transcript:
         return service.transcript(match_id)
 
-    @app.get("/v1/faucet")
+    @app.get("/v1/faucet", tags=["ledger"])
     def faucet_status() -> dict[str, object]:
         if service.faucet is None:
             raise HTTPException(status_code=404, detail="the faucet is disabled")
         return service.faucet.status()
 
-    @app.post("/v1/faucet", response_model=FaucetView)
+    @app.post("/v1/faucet", response_model=FaucetView, tags=["ledger"])
     def faucet(request: FaucetRequest, http_request: Request) -> FaucetView:
         client = http_request.client.host if http_request.client is not None else "unknown"
         return service.faucet_request(request.address, client=client, amount=request.amount)
 
-    @app.get("/v1/mempool", response_model=MempoolView)
+    @app.get("/v1/mempool", response_model=MempoolView, tags=["node"])
     def mempool() -> MempoolView:
         return service.mempool_view()
 
-    @app.get("/v1/transactions/{txid}", response_model=TransactionRecord)
+    @app.get("/v1/transactions/{txid}", response_model=TransactionRecord, tags=["chain"])
     def transaction(txid: str) -> TransactionRecord:
         return service.transaction(txid)
 
-    @app.post("/v1/tx", response_model=TxAccepted)
+    @app.post("/v1/tx", response_model=TxAccepted, tags=["ledger"])
     def submit_tx(tx: Transaction) -> TxAccepted:
         return service.submit_transaction(tx)
 
-    @app.post("/v1/proofs", response_model=ProofAccepted)
+    @app.post("/v1/proofs", response_model=ProofAccepted, tags=["ledger"])
     def submit_proof(proof: WinProof) -> ProofAccepted:
         return service.announce_proof(proof)
 
-    @app.post("/v1/gossip", response_model=GossipResult)
+    @app.post("/v1/gossip", response_model=GossipResult, tags=["node"])
     def gossip(envelope: GossipEnvelope) -> GossipResult:
         return service.handle_gossip(envelope)
 
-    @app.get("/v1/peers", response_model=list[PeerView])
+    @app.get("/v1/peers", response_model=list[PeerView], tags=["node"])
     def peers() -> tuple[PeerView, ...]:
         return service.peers_view()
 

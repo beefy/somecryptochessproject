@@ -754,6 +754,11 @@ collects failures and is banned for five minutes; a block whose parent is
 unknown waits in the orphan pool without penalty. `sync_from` pulls missing
 heights in order and adopts the heavier branch.
 
+The app documents itself: `/openapi.json` is the generated schema, `/docs` is
+Swagger UI grouped into node, chain, ledger, chess and DeFi, and `/redoc` is the
+same schema in ReDoc. Both pages load their assets from a CDN, so a browser
+without internet access sees a blank page; the JSON needs nothing.
+
 `sccp.miner.engine_miner.EngineMiner` is the unattended half: one `run_once()`
 performs at most one relay-visible action per match, so a caller owns the
 pacing. It joins certified matches, replays the opponent's moves from the

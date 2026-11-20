@@ -1319,6 +1319,12 @@ version are stripped and the rest is snapshotted in
 `tests/fixtures/openapi.json`, so a route, field or status-code change fails CI
 until `scripts/make_openapi_fixture.py` is run deliberately.
 
+A running node serves that schema at `/openapi.json`, with Swagger UI at `/docs`
+and ReDoc at `/redoc`. The pages' group names (node, chain, ledger, chess, DeFi)
+and prose are documentation only, so they stay out of the snapshot while the
+routes, parameters and models stay in it. The two HTML pages load their assets
+from a CDN; a client that cannot reach one should read `/openapi.json` instead.
+
 ### 14.2 Gossip envelopes
 
 ```json
