@@ -20,7 +20,10 @@ not itemised here.
   a docstring or a re-grouped route still leaves `tests/fixtures/openapi.json`
   untouched. The pinned contract now ignores `tags` for the same reason it
   already ignored summaries and descriptions: grouping is documentation, a field
-  or status code is not.
+  or status code is not. The README links the hosted page
+  (`http://app.proofofchess.com:8645/docs`, or
+  `https://mirror.proofofchess.com/docs` over TLS) beside the public testnet,
+  and says why `https://app.proofofchess.com/docs` is the explorer instead.
 
 ## [0.31.0] - 2026-11-19
 
