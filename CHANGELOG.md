@@ -63,6 +63,20 @@ not itemised here.
   the key inventory, contain-rotate-verify) and `SECURITY_INCIDENT.md` (the
   exposed-surface table, containment before diagnosis, abuse and volumetric paths).
 
+### Fixed
+
+- **`scripts/play_miner.py` no longer calls the opponent's first reply a book
+  ply.** The announcement read the relay's move list, so a reply that landed
+  between joining and the first prompt was printed under "certified book plies:
+  no clock, no receipts, not your moves" -- the opposite of what a receipted
+  move is -- and the line changed depending on how fast the client looked. It
+  now prints the certificate's `opening.moves` (six plies of the devnet book,
+  for the solo table's beacon) and reports any earlier replies separately as
+  `opponent played`. `test_the_certified_opening_is_announced_before_the_first_prompt`
+  compares against the certificate instead of a snapshot taken after the engine
+  had already moved, which is what made it fail at random on Python 3.12 only,
+  and a second test pins the pre-played-reply case.
+
 ## [0.30.0] - 2026-11-18
 
 

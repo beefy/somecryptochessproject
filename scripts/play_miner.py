@@ -65,9 +65,12 @@ Type ``help`` at the prompt for the commands. Moves are accepted as SAN
 
 A session never starts at move 1: the relay plays the book line the beacon draws
 for this match (``sccp.chess.openings``) and hands you the position after it, so
-the first thing this script prints is that line and the board it left. Every
-move it reports carries its move number (``3. e4``, ``3... Nd5``), which is the
-only way to tell a knight that came from f6 from one that cannot have moved.
+the first thing this script prints is that line and the board it left. A reply
+the opponent got in before your first prompt is printed after the book line, as
+``opponent played``, not folded into it: the book is what the certificate
+commits to, and those plies carry no receipts. Every move it reports carries its
+move number (``3. e4``, ``3... Nd5``), which is the only way to tell a knight
+that came from f6 from one that cannot have moved.
 
 The finished game's PGN is printed at the end; ``--pgn-out FILE`` also writes it
 to disk. That is the relay's game record, not a win proof. In solo and attached
@@ -1645,11 +1648,21 @@ class Game:
         before the first prompt; those plies are neither yours nor receipted, so
         a player who is never told starts from a board they have not seen and
         reads the next knight move as an illegal one.
+
+        The book is read from the certificate rather than from the relay's move
+        list: the opponent may already have answered by the time this client
+        looks, and a receipted reply is not a book ply. Those earlier replies
+        are still reported, in the same shape the poll loop uses.
         """
-        board = _board_from(view)
+        book = view.certificate.opening.moves
         self.out("")
-        self.out(f"opening  {move_text(view.san_moves)}")
-        self.out("         certified book plies: no clock, no receipts, not your moves")
+        if book:
+            self.out(f"opening  {move_text(book)}")
+            self.out("         certified book plies: no clock, no receipts, not your moves")
+        for ply in range(len(book), len(view.san_moves)):
+            label = move_label(ply)
+            self.out(f"opponent played {label}{view.san_moves[ply]}    {_clock_line(view)}")
+        board = _board_from(view)
         self.out(f"you play move {board.fullmove_number} as {self.seat.color}")
         self._show_board(board)
 

@@ -156,6 +156,10 @@ def test_the_certified_opening_is_announced_before_the_first_prompt(
 
     This is the bug a player hits otherwise: the first prompt is move 3 of a game
     they have never seen, so the opponent's next knight move reads as illegal.
+
+    The announcement is compared with the certificate, not with the relay's move
+    list: the opponent is already polling and may answer before the prompt, and
+    that answer is neither ours nor a book ply.
     """
     lines: list[str] = []
     with _solo(play, clock_ms=lambda: 5_000_000, ascii=True) as table:
@@ -169,12 +173,53 @@ def test_the_certified_opening_is_announced_before_the_first_prompt(
 
         view = table.seat.view()
         assert view.status == "active"
-        opening = play.move_text(view.san_moves)
-        assert opening
-        assert f"opening  {opening}" in lines
-        assert any(line.startswith("you play move ") for line in lines)
+        book = view.certificate.opening.moves
+        assert book
+        opening = f"opening  {play.move_text(book)}"
+        assert opening in lines
+        # The book line comes before the prompt, which is the point of it.
+        first_prompt = next(
+            index for index, line in enumerate(lines) if line.startswith("you play move ")
+        )
+        assert lines.index(opening) < first_prompt
         # The board is drawn, so the position the book left is on screen too.
         assert any("a b c d e f g h" in line for line in lines)
+
+
+def test_the_reply_the_opponent_played_before_the_prompt_is_not_called_opening(
+    play: ModuleType,
+) -> None:
+    """A receipted reply that beat our first prompt is reported as a move.
+
+    The solo table seats the person as black behind a book line, so the engine
+    opens with a real move of its own. Waiting for it before the announcement
+    reproduces the slow-client ordering that used to fold it into the book.
+    """
+    lines: list[str] = []
+    with _solo(play, clock_ms=lambda: 5_000_000, ascii=True) as table:
+        table.seat.join()
+        view = table.seat.view()
+        for _ in range(50):
+            if len(view.san_moves) > len(view.certificate.opening.moves):
+                break
+            table.step()
+            view = table.seat.view()
+        assert table.errors == []
+        book = view.certificate.opening.moves
+        assert book and len(view.san_moves) > len(book)
+
+        game = play.Game(
+            table.seat, stack=table, options=play.Options(ascii=True), out=lines.append
+        )
+        game._announce_opening(view)
+
+        assert f"opening  {play.move_text(book)}" in lines
+        assert f"opening  {play.move_text(view.san_moves)}" not in lines
+        reply = f"opponent played {play.move_label(len(book))}{view.san_moves[len(book)]}"
+        assert any(line.startswith(reply) for line in lines)
+        assert lines.index(f"opening  {play.move_text(book)}") < next(
+            index for index, line in enumerate(lines) if line.startswith(reply)
+        )
 
 
 def test_a_seed_picks_its_own_opening(play: ModuleType) -> None:

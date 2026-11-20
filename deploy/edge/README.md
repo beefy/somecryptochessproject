@@ -169,11 +169,24 @@ own pin — so the mirror's host key is scanned through the jump on every run. I
 you would rather pin it, put both keys in `EDGE_KNOWN_HOSTS`; the scan is an
 append, never a replacement.
 
-The job is idempotent, and it only destroys the replica on purpose: the primary's
-own redeploy resets its chain, so the workflow compares block 1 with the
-primary's and, when the mirror is holding a chain the primary discarded, deletes
-the node's data and resyncs. The certificate and its volume are never touched. To
-move the mirror to a different tag by hand, run the workflow with `image_tag=<sha>`.
+The job is idempotent, and it only destroys the replica on purpose. Both resets
+are scoped to `node-data`; `caddy_data` is never touched, because losing it
+re-issues the certificate:
+
+* **the node never turns healthy.** The mirror replays its SQLite chain at
+  startup, under the *new* build's consensus parameters. A release that moves one
+  — the 30 s cadence doubled the maturity, registration, dispute and beacon
+  windows — cannot replay blocks written by the old build, so the node exits and
+  `tls` never starts behind its `service_healthy` dependency. The restart step
+  waits for health, prints the node's last log lines, throws the store away and
+  starts once more. A second failure is the image, and the run goes red.
+* **block 1 differs from the primary's.** The primary resets its chain on every
+  stack deploy, so a mirror that kept the old one is serving blocks nobody
+  follows. The workflow compares block 1 with the primary's and deletes the
+  node's data when they disagree.
+
+To move the mirror to a different tag by hand, run the workflow with
+`image_tag=<sha>`.
 
 ### Manually, on the VM
 
@@ -198,6 +211,13 @@ The mirror does not need the source tree: `docker compose pull` is the only step
 that talks to the registry, and `--no-build` keeps Compose from trying to build a
 500 MB image on a 1 GB VM if the tag is missing. `docker compose up -d` after a
 `SCCP_IMAGE` change recreates the node container and keeps the volume.
+
+Keeping the volume is only right while the new build can read it. The node
+replays its stored chain at startup, so an image that changes a consensus
+parameter cannot apply blocks written by the previous one and exits instead of
+serving. That is the deploy's job, not yours: it waits for health, wipes
+`node-data` and starts once more. If you are doing it by hand, see case 1 of
+[`docs/operations/MIRROR_OUTAGE.md`](../../docs/operations/MIRROR_OUTAGE.md).
 
 ### What to watch
 
