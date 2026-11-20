@@ -27,9 +27,12 @@ name: deploy-edge
 #   vars.EDGE_DEPLOY_DIR      optional; defaults to /srv/sccp-edge
 #   vars.EDGE_DEPLOY_PORT     optional; defaults to 22
 #   vars.EDGE_PRIMARY_URL     optional; defaults to https://app.proofofchess.com
-#   vars.EDGE_SSH_PROXY_JUMP  optional; "1" reaches the mirror through
-#                             TESTNET_DEPLOY_HOST, so the mirror needs no public
-#                             SSH rule (see the ProxyJump section below)
+#   vars.EDGE_SSH_PROXY_JUMP  optional; "1" forces the jump through
+#                             TESTNET_DEPLOY_HOST, "0" forces a direct connection.
+#                             Unset tries the jump first and falls back, which is
+#                             the only route a GitHub-hosted runner has to a
+#                             mirror with no public SSH (see the ProxyJump
+#                             section below)
 on:
   workflow_run:
     workflows: ["deploy-testnet-miners"]
@@ -127,19 +130,28 @@ jobs:
 
       # --- SSH -----------------------------------------------------------------
       # The mirror VM has no public 22 by design (deploy/edge/README.md): its
-      # only inbound rules are 80/443 plus IAP. Two ways to reach it from a
-      # GitHub-hosted runner:
+      # only inbound rules are 80/443 plus IAP and the primary's tag. Two ways to
+      # reach it from a GitHub-hosted runner, tried in that order:
       #
-      #   * vars.EDGE_SSH_PROXY_JUMP=1: jump through TESTNET_DEPLOY_HOST over the
-      #     VPC's internal address. The same key must be authorized on both hosts,
-      #     and one more firewall rule (primary tag -> mirror tag, tcp:22) has to
-      #     exist. That is the default posture this repository documents.
-      #   * otherwise EDGE_DEPLOY_HOST is reachable directly, which means a
-      #     self-hosted runner inside the network or a deliberately widened rule.
+      #   * jump through TESTNET_DEPLOY_HOST, which is the posture this repository
+      #     documents. The mirror's address only has to mean something inside the
+      #     VPC, one firewall rule (primary tag -> mirror tag, tcp:22) has to
+      #     exist, and the mirror's own key has to be authorized on it.
+      #   * connect directly to EDGE_DEPLOY_HOST, which needs a self-hosted runner
+      #     inside the network or a deliberately widened rule.
+      #
+      # The jump is tried first and the direct scan only runs when it finds no
+      # key, so neither posture needs a variable to be set. `=1` and `=0` force
+      # one route, mostly to test that the other still works.
       - name: Configure SSH
         if: steps.target.outputs.deploy == 'true'
         env:
           SSH_KEY: ${{ secrets.EDGE_SSH_KEY || secrets.TESTNET_SSH_KEY }}
+          # The jump authenticates to *the primary* before it reaches the mirror,
+          # and the primary trusts the deploy key rather than the mirror's. One
+          # IdentityFile for both Host blocks made the hop impossible whenever the
+          # two keys differed -- which is the arrangement this repository ships.
+          PRIMARY_KEY: ${{ secrets.TESTNET_SSH_KEY }}
           # The pinned file falls back to the primary's, so the fallback says
           # nothing about the mirror; only a deliberate EDGE_KNOWN_HOSTS can.
           EDGE_PIN: ${{ secrets.EDGE_KNOWN_HOSTS }}
@@ -176,15 +188,36 @@ jobs:
             *:*) fail "vars.EDGE_DEPLOY_HOST must not carry a port ('$TARGET'); set vars.EDGE_DEPLOY_PORT" ;;
           esac
 
-          if [ -n "${JUMP:-}" ] && [ -z "${PRIMARY_TARGET:-}" ]; then
+          # Which routes are allowed. `mode` is what the operator asked for; the
+          # `route` chosen further down is the one that answered. An unset flag
+          # means "try the jump, fall back to a direct connection", because a
+          # jump host that exists is the only route a GitHub-hosted runner has to
+          # a mirror with no public SSH -- and demanding a second variable for it
+          # produced a run that scanned a filtered address and then failed on a
+          # setting the operator had never configured.
+          case "${JUMP:-}" in
+            1 | true | yes | on) mode=jump ;;
+            0 | false | no | off) mode=direct ;;
+            "") mode=any ;;
+            *) fail "vars.EDGE_SSH_PROXY_JUMP must be 1 or 0, not '$JUMP'" ;;
+          esac
+          if [ "$mode" = jump ] && [ -z "${PRIMARY_TARGET:-}" ]; then
             fail "vars.EDGE_SSH_PROXY_JUMP is set but vars.TESTNET_DEPLOY_HOST is empty, so there is no host to jump through"
           fi
+          jumpable=false
+          if [ "$mode" != direct ] && [ -n "${PRIMARY_TARGET:-}" ]; then jumpable=true; fi
 
           install -m 700 -d "$HOME/.ssh"
           printf '%s\n' "$SSH_KEY" > "$HOME/.ssh/id_edge"
           chmod 600 "$HOME/.ssh/id_edge"
+          primary_key="$HOME/.ssh/id_edge"
+          if [ -n "${PRIMARY_KEY:-}" ]; then
+            printf '%s\n' "$PRIMARY_KEY" > "$HOME/.ssh/id_primary"
+            chmod 600 "$HOME/.ssh/id_primary"
+            primary_key="$HOME/.ssh/id_primary"
+          fi
 
-          # alias, user@host, port, extra config line
+          # alias, user@host, port, identity file, extra config line
           host_block() {
             user="${2%%@*}"; name="${2#*@}"
             if [ "$user" = "$2" ]; then user=root; fi
@@ -193,7 +226,7 @@ jobs:
               echo "  HostName $name"
               echo "  User $user"
               echo "  Port $3"
-              echo "  IdentityFile $HOME/.ssh/id_edge"
+              echo "  IdentityFile $4"
               echo "  IdentitiesOnly yes"
               echo "  StrictHostKeyChecking yes"
               # A runner has nobody at the keyboard: fail on a passphrase rather
@@ -201,12 +234,12 @@ jobs:
               # on a dropped SYN until the job times out.
               echo "  BatchMode yes"
               echo "  ConnectTimeout 15"
-              if [ -n "$4" ]; then echo "  $4"; fi
+              if [ -n "${5:-}" ]; then echo "  $5"; fi
             } >> "$HOME/.ssh/config"
           }
 
-          host_block primary "${PRIMARY_TARGET:-placeholder@127.0.0.1}" "$PRIMARY_PORT" ""
-          host_block edge "$TARGET" "$DEPLOY_PORT" "${JUMP:+ProxyJump primary}"
+          host_block primary "${PRIMARY_TARGET:-placeholder@127.0.0.1}" "$PRIMARY_PORT" \
+            "$primary_key" ""
 
           # `ssh-keygen -F` reads hashed entries, which is what `ssh-keyscan -H`
           # writes, so it is the honest way to ask "is this host pinned?" -- and
@@ -220,40 +253,84 @@ jobs:
             printf '%s\n' "$KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
           fi
 
-          # The jump host is scanned directly; the mirror is scanned *through*
-          # it, because its address only means something inside the VPC. Both
-          # scans are verified with `pinned` instead of trusted: ssh-keyscan
-          # exits 0 having printed nothing when a responder answers without a
-          # key, and `|| true` is only safe because of the check that follows.
-          if [ -n "${JUMP:-}" ] && ! pinned "${PRIMARY_TARGET#*@}" "$PRIMARY_PORT"; then
+          # The jump host's key is scanned directly and verified before it can be
+          # used: ssh-keyscan exits 0 having printed nothing when a responder
+          # answers without a key, so `|| true` is only safe because of `pinned`.
+          # An unreachable jump host is fatal only when the operator asked for the
+          # jump; otherwise the mirror may still be reachable on its own.
+          if [ "$jumpable" = true ] && ! pinned "${PRIMARY_TARGET#*@}" "$PRIMARY_PORT"; then
             ssh-keyscan -T 10 -p "$PRIMARY_PORT" -H "${PRIMARY_TARGET#*@}" \
               >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
-            pinned "${PRIMARY_TARGET#*@}" "$PRIMARY_PORT" ||
+            if pinned "${PRIMARY_TARGET#*@}" "$PRIMARY_PORT"; then
+              echo "jump host ${PRIMARY_TARGET#*@} pinned on port $PRIMARY_PORT"
+            elif [ "$mode" = jump ]; then
               fail "could not learn the host key of ${PRIMARY_TARGET#*@} on port $PRIMARY_PORT, the jump host: pin it in TESTNET_KNOWN_HOSTS, or check that it still accepts SSH from GitHub runners"
+            else
+              echo "::notice::could not read the jump host's key; trying a direct connection to the mirror"
+              jumpable=false
+            fi
           fi
 
           # The mirror's key is scanned even when a pinned file was supplied. It
           # has to be: EDGE_KNOWN_HOSTS falls back to TESTNET_KNOWN_HOSTS, which
           # pins the *primary*, so it cannot contain the mirror's key and
           # `StrictHostKeyChecking yes` would refuse the one host being deployed.
-          # A deliberate EDGE_KNOWN_HOSTS is a different thing: it was written
-          # for this host, so a pin there means the probe is unnecessary.
+          # A deliberate EDGE_KNOWN_HOSTS is a different thing: it was written for
+          # this host, so a pin there means the probes are unnecessary.
+          mirror_pinned=false
           if [ -n "${EDGE_PIN:-}" ] && pinned "$edge_host" "$DEPLOY_PORT"; then
             echo "the mirror's host key is pinned in EDGE_KNOWN_HOSTS"
-          elif [ -n "${JUMP:-}" ]; then
+            mirror_pinned=true
+          fi
+
+          # Jump first: that route needs no public port on the mirror at all. The
+          # direct scan is the fallback for a runner that can reach the host
+          # itself. Both are verified, neither is trusted.
+          route=""
+          if [ "$mirror_pinned" = false ] && [ "$jumpable" = true ]; then
             ssh primary "ssh-keyscan -p $DEPLOY_PORT -H '$edge_host'" \
-              >> "$HOME/.ssh/known_hosts" || true
-            pinned "$edge_host" "$DEPLOY_PORT" ||
-              fail "could not read the host key of $edge_host on port $DEPLOY_PORT through ${PRIMARY_TARGET#*@}: check the sccp-edge-ssh-from-primary firewall rule (deploy/edge/README.md) and that the deploy key is authorized on the mirror"
-          else
+              >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+            if pinned "$edge_host" "$DEPLOY_PORT"; then route=jump; fi
+          fi
+          if [ -z "$route" ] && [ "$mirror_pinned" = false ] && [ "$mode" != jump ]; then
             ssh-keyscan -T 10 -p "$DEPLOY_PORT" -H "$edge_host" \
-              >> "$HOME/.ssh/known_hosts" || true
-            pinned "$edge_host" "$DEPLOY_PORT" ||
-              fail "no host key from $edge_host:$DEPLOY_PORT: the mirror has no public SSH by design, so set vars.EDGE_SSH_PROXY_JUMP=1 to jump through vars.TESTNET_DEPLOY_HOST, or pin its key in secrets.EDGE_KNOWN_HOSTS, or give the runner a route to it"
+              >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
+            if pinned "$edge_host" "$DEPLOY_PORT"; then route=direct; fi
+          fi
+          if [ -z "$route" ] && [ "$mirror_pinned" = true ]; then
+            # The key is known, so no probe can pick the transport: use the route
+            # the repository documents whenever it is available.
+            if [ "$jumpable" = true ]; then route=jump; else route=direct; fi
+          fi
+          if [ -z "$route" ]; then
+            if [ "$mode" = jump ]; then
+              fail "could not read the host key of $edge_host on port $DEPLOY_PORT through ${PRIMARY_TARGET#*@}: EDGE_DEPLOY_HOST must be the mirror's internal address when the runner has no route of its own (gcloud compute instances describe <edge> --format='value(networkInterfaces[0].networkIP)'), the sccp-edge-ssh-from-primary rule must allow the primary's network tag, and the deploy key must be authorized on the mirror (deploy/edge/README.md)"
+            elif [ "$jumpable" = true ]; then
+              fail "no host key from $edge_host:$DEPLOY_PORT, through ${PRIMARY_TARGET#*@} or directly: if the mirror's SSH is open only to the VPC, EDGE_DEPLOY_HOST must be its internal address and sccp-edge-ssh-from-primary must allow the primary's tag (deploy/edge/README.md); if it is open to the runner, pin its key in secrets.EDGE_KNOWN_HOSTS; a host that accepts TCP but never speaks is a mirror problem, not a key problem"
+            else
+              fail "no host key from $edge_host:$DEPLOY_PORT: the mirror has no public SSH by design, so set vars.TESTNET_DEPLOY_HOST so this job can jump through the primary, or pin its key in secrets.EDGE_KNOWN_HOSTS, or give the runner a route to it"
+            fi
+          fi
+
+          if [ "$route" = jump ]; then
+            host_block edge "$TARGET" "$DEPLOY_PORT" "$HOME/.ssh/id_edge" "ProxyJump primary"
+          else
+            host_block edge "$TARGET" "$DEPLOY_PORT" "$HOME/.ssh/id_edge" ""
           fi
 
           chmod 600 "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"
-          echo "mirror: ${TARGET%%@*}@$edge_host:$DEPLOY_PORT -> $DOMAIN, data in $DEPLOY_DIR${JUMP:+, jumped through ${PRIMARY_TARGET#*@}}"
+          if [ "$route" = jump ]; then
+            echo "mirror: ${TARGET%%@*}@$edge_host:$DEPLOY_PORT -> $DOMAIN, data in $DEPLOY_DIR, jumped through ${PRIMARY_TARGET#*@}"
+          else
+            echo "mirror: ${TARGET%%@*}@$edge_host:$DEPLOY_PORT -> $DOMAIN, data in $DEPLOY_DIR, direct from this runner"
+          fi
+
+          # The host key proves identity, not authorization. A key that is not in
+          # the mirror's authorized_keys used to surface as a bare scp failure two
+          # steps later; one deliberate connect names the real cause here, and
+          # separates a refused key from a route that never reached the host.
+          ssh -o ConnectTimeout=15 edge true 2>/dev/null ||
+            fail "the deploy key could not open a session on $edge_host as ${TARGET%%@*}: 'Permission denied' means the key is not in the mirror's ssh-keys metadata (deploy/edge/README.md); a timeout or 'Connection refused' means the $route route is wrong, and a host that accepts TCP on port $DEPLOY_PORT but never answers is unwell rather than misconfigured"
 
       # --- Ship the stack ------------------------------------------------------
       - name: Upload the Compose project

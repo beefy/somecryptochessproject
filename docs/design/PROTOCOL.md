@@ -896,9 +896,11 @@ The lifecycle (implemented in `src/sccp/chain/timeout.py`) is:
    (`STALL_CLAIMANT_BPS`, `STALL_QUORUM_BPS`, `STALL_BURN_BPS`): half to the
    claimant, 30% in equal parts to the witnesses whose final flag receipt
    settled the claim, and the last 20% burned — burned by *not* crediting it, so
-   a scan of the ledger sees supply shrink rather than a burn counter move. A
-   seat with nothing left to take pays what it has, and the claim is still
-   finalised: the slash is a cost, not a precondition.
+   a scan of the ledger sees supply shrink rather than a burn counter move. Any
+   remainder from dividing the witness share stays uncredited with it, for the
+   same reason: there is no account to hold a fraction of a base unit. A seat
+   with nothing left to take pays what it has, and the claim is still finalised:
+   the slash is a cost, not a precondition.
 
 `slash_evidence` covers clock-witness equivocation only: it carries
 `evidence = {witness, receipts}` with exactly two receipts of the same

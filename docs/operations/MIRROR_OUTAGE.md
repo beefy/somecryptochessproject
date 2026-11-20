@@ -56,6 +56,28 @@ ssh sccp@136.119.76.215 'free -m; dmesg -T | grep -i oom | tail -5'
 ssh sccp@136.119.76.215 'cd /srv/sccp-edge && docker compose logs --tail=60 --no-color node'
 ```
 
+There is a failure that looks like a network problem and is not: the mirror accepts
+TCP on port 22 and then never sends an SSH banner, `ssh-keyscan` times out, and
+`https://mirror.proofofchess.com` answers nothing — while the instance still shows
+`RUNNING` and the serial console is full of failed container health checks and
+metadata-server timeouts. That is a host with no memory left: the kernel keeps
+completing handshakes from the accept queue while userland never runs, so sshd
+cannot greet anyone. The chain is intact; nothing needs wiping. Reboot it
+(`gcloud compute instances reset sccp-edge --zone=<zone>`) and put the shortfall
+on disk, because this VM has no swap out of the box and the stack sits at roughly
+930 MB of the 969 MB the kernel sees:
+
+```bash
+ssh sccp@136.119.76.215 'sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile \
+  && sudo mkswap /swapfile && sudo swapon /swapfile'
+ssh sccp@136.119.76.215 "echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab"
+ssh sccp@136.119.76.215 'free -m'   # the Swap line must survive the next reboot
+```
+
+`deploy/edge/README.md` has the same steps with `vm.swappiness=20`. If the host
+wedges again with swap in place, the machine type is the next thing to change:
+`e2-small` costs about $13/month more and removes the ceiling.
+
 A restart loop that starts **right after a stack deploy** is not memory. The node
 replays its SQLite chain before it binds the port, under the running build's
 consensus parameters, so a release that moves one — the 30 s cadence doubled the

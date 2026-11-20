@@ -124,13 +124,24 @@ gcloud compute instances add-metadata "$EDGE" \
     --metadata-from-file ssh-keys=deploy.pub
 ```
 
-Then set `vars.EDGE_SSH_PROXY_JUMP=1` and `vars.EDGE_DEPLOY_HOST=<user>@<internal IP>`;
-without the jump flag, `EDGE_DEPLOY_HOST` must be directly reachable from the
-runner (a self-hosted runner, or a deliberately widened rule — the same
-trade-off `docs/setup/GCP_RESOURCE_SETUP.md` describes for the primary). The
-workflow checks the pair: an internal address with no jump flag fails in the
-`Configure SSH` step with an `::error::` naming `EDGE_SSH_PROXY_JUMP`, because the
-mirror has no public SSH to read a host key from.
+Then set `vars.EDGE_DEPLOY_HOST=<user>@<internal IP>`. The workflow reaches the
+mirror by jumping through `vars.TESTNET_DEPLOY_HOST` and only falls back to a
+direct connection when the jump finds no host key, so on a GitHub-hosted runner
+the mirror's address only has to mean something from inside the VPC — a public
+address there is filtered by design and the direct attempt simply fails. Pin the
+route with `vars.EDGE_SSH_PROXY_JUMP` if you want to prove one works: `1` forces
+the jump, `0` forbids it. The step logs the route it used (`jumped through …` or
+`direct from this runner`) and, if neither works, names both attempts: a jump that
+cannot see the mirror reports that `EDGE_DEPLOY_HOST` must be the internal
+address, the rule must allow the primary's tag and the key must be authorized on
+the mirror; a mirror that accepts TCP on port 22 but never answers is called out
+as a host problem rather than a key problem.
+
+The two hops use different keys, because they are different hosts: the jump
+authenticates to the primary with `secrets.TESTNET_SSH_KEY` (the key the primary
+already authorizes), and the mirror with `secrets.EDGE_SSH_KEY` (falling back to
+`TESTNET_SSH_KEY`). The mirror's key is the one that has to be in its `ssh-keys`
+metadata.
 
 ```bash
 # the mirror's internal address: what EDGE_DEPLOY_HOST points at when jumping
@@ -140,6 +151,31 @@ gcloud compute instances describe "$EDGE" --zone="$ZONE" --project="$PROJECT_ID"
 
 Point an `A` record for the mirror's name at `EDGE_IP` before starting the stack:
 Caddy cannot finish the HTTP-01 challenge until the name resolves to this VM.
+
+### Give it swap
+
+The stack fits in an `e2-micro`, but not with room to spare: the node, Caddy,
+Docker and the guest agent sit at roughly 930 MB of the 969 MB the kernel sees,
+and the image ships no swap. A host that runs out does not exit — it stops
+scheduling userland, so the kernel still completes TCP handshakes from the accept
+queue while sshd never sends a banner. That is what a failing
+`deploy-edge.yml` looks like when the cause is the VM: `Configure SSH` reports no
+host key from an address that answers `nc`, `https://<domain>/v1/status` times
+out, the instance is still `RUNNING`, and the serial console is full of failed
+container health checks. Create the swap file once:
+
+```bash
+sudo fallocate -l 1G /swapfile && sudo chmod 600 /swapfile
+sudo mkswap /swapfile && sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+echo 'vm.swappiness=20' | sudo tee /etc/sysctl.d/60-sccp-swap.conf
+sudo sysctl vm.swappiness=20
+free -m          # the Swap line must be non-zero, and must survive a reboot
+```
+
+Swap on a small disk is not a performance feature here; it is what keeps `sshd`
+able to answer while the node replays its chain, which is the only job this host
+has. If it wedges again with swap in place, move the VM to `e2-small`.
 
 ## Deploy
 
@@ -163,7 +199,7 @@ skip with nothing in the log):
 | var | `EDGE_DOMAIN` | the mirror's public name, e.g. `mirror.proofofchess.com` |
 | var | `EDGE_PRIMARY_URL` | optional; defaults to `https://app.proofofchess.com` |
 | var | `EDGE_DEPLOY_DIR` | optional; defaults to `/srv/sccp-edge` |
-| var | `EDGE_SSH_PROXY_JUMP` | optional; `1` to jump through `TESTNET_DEPLOY_HOST` |
+| var | `EDGE_SSH_PROXY_JUMP` | optional; `1` forces the jump through `TESTNET_DEPLOY_HOST`, `0` forbids it. Unset tries the jump and falls back to a direct connection |
 | secret | `EDGE_SSH_KEY` | optional; falls back to `TESTNET_SSH_KEY` |
 | secret | `EDGE_KNOWN_HOSTS` | optional; falls back to `TESTNET_KNOWN_HOSTS` |
 

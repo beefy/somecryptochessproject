@@ -243,14 +243,86 @@ def test_the_mirror_host_key_is_verified_even_when_one_is_pinned() -> None:
     assert 'if [ -n "${EDGE_PIN:-}" ] && pinned "$edge_host" "$DEPLOY_PORT"; then' in step
 
 
+def test_the_jump_is_tried_first_and_the_direct_scan_is_the_fallback() -> None:
+    """Both routes are attempted, so neither needs a variable to exist.
+
+    The step first demanded `vars.EDGE_SSH_PROXY_JUMP=1` before it would hop
+    through the primary. On the first run with a real mirror -- a public address
+    whose only inbound ports are 80/443 -- the job scanned that address, found no
+    key, and told the operator to set a variable that was never part of the
+    setup. The documented posture is a jump, because the mirror has no public SSH
+    at all, so the jump is tried first and the direct scan only runs when it
+    finds nothing: `1` and `0` force a route, unset tries both.
+    """
+    step = _step(WORKFLOW.read_text(encoding="utf-8"), "Configure SSH")
+
+    assert 'case "${JUMP:-}" in' in step
+    assert "1 | true | yes | on) mode=jump ;;" in step
+    assert "0 | false | no | off) mode=direct ;;" in step
+    assert "mode=any" in step
+    assert "vars.EDGE_SSH_PROXY_JUMP must be 1 or 0" in step
+
+    jump_probe = step.index('ssh primary "ssh-keyscan')
+    direct_probe = step.index('ssh-keyscan -T 10 -p "$DEPLOY_PORT" -H "$edge_host"')
+    assert jump_probe < direct_probe, "the route that needs no public port is tried first"
+    assert 'if [ -z "$route" ] && [ "$mirror_pinned" = false ] && [ "$mode" != jump ]; then' in step
+
+    # The alias carries the route that answered, not the raw flag: with the flag
+    # unset a jump host would otherwise produce a Host block that never used it.
+    assert (
+        'host_block edge "$TARGET" "$DEPLOY_PORT" "$HOME/.ssh/id_edge" "ProxyJump primary"'
+    ) in step
+    assert "${JUMP:+ProxyJump primary}" not in step, "the alias must follow the route"
+    # Whichever route won is in the log, so a green run says how it reached the
+    # mirror and a red one does not have to be guessed at.
+    assert "jumped through ${PRIMARY_TARGET#*@}" in step
+    assert "direct from this runner" in step
+
+
+def test_the_jump_hop_uses_the_primary_s_key_not_the_mirror_s() -> None:
+    """Two hosts, two keys: the primary trusts the deploy key, not the mirror's.
+
+    One `IdentityFile` for both `Host` blocks made the hop impossible whenever
+    the keys differed -- which is what this repository ships, because
+    `EDGE_SSH_KEY` is the mirror's own key and `TESTNET_SSH_KEY` is the primary's.
+    The jump hop now has its own identity file, so the hop authenticates to the
+    primary with the key the primary already trusts.
+    """
+    step = _step(WORKFLOW.read_text(encoding="utf-8"), "Configure SSH")
+
+    assert "PRIMARY_KEY: ${{ secrets.TESTNET_SSH_KEY }}" in step
+    assert '> "$HOME/.ssh/id_primary"' in step
+    assert 'primary_key="$HOME/.ssh/id_primary"' in step
+    assert '"$primary_key" ""' in step, "the primary block takes the primary identity"
+    assert '"$HOME/.ssh/id_edge" "ProxyJump primary"' in step
+
+
+def test_an_unauthorized_deploy_key_is_named_before_the_scp() -> None:
+    """A host key proves identity, not authorization; say which one failed.
+
+    `EDGE_KNOWN_HOSTS` can be right and the key still absent from the mirror's
+    `ssh-keys` metadata, which used to surface as a bare `scp` failure two steps
+    after the step that could have known. The one deliberate connect also tells a
+    refused key apart from a route that never reached the host, because those two
+    need different fixes.
+    """
+    step = _step(WORKFLOW.read_text(encoding="utf-8"), "Configure SSH")
+
+    assert "ssh -o ConnectTimeout=15 edge true" in step
+    assert "'Permission denied' means the key is not in the mirror's ssh-keys metadata" in step
+    assert "accepts TCP on port $DEPLOY_PORT but never answers is unwell" in step
+
+
 def test_no_host_key_probe_can_fail_without_saying_why() -> None:
     """This step's first real run was five seconds and "exit code 1", nothing else.
 
-    `ssh-keyscan` gives up after five seconds, and the step ended on an
-    unguarded one: under `set -e` an unreachable mirror turned into a bare exit
-    code, which reads like a broken workflow rather than an unset variable. Every
-    probe now has a `fail` on its failure path, and every wrong setting has a
-    message naming itself, so the log says what to change.
+    `ssh-keyscan` gives up after five seconds and exits 0 having printed nothing
+    when a responder answers without a key, so a probe is never trusted: each one
+    is followed by a `pinned` check that decides the outcome, and every terminal
+    outcome ends in a `fail` naming the setting or the host to look at. The step
+    grew a third probe (jump host, mirror through the jump, mirror directly), and
+    the fallback between them is why a probe no longer has to fail the job
+    itself: no key from one route is an invitation to try the other.
     """
     step = _step(WORKFLOW.read_text(encoding="utf-8"), "Configure SSH")
     lines = step.splitlines()
@@ -264,15 +336,17 @@ def test_no_host_key_probe_can_fail_without_saying_why() -> None:
     assert len(probes) == 3, "one jump-host scan and the two mirror scans"
     for index in probes:
         window = "\n".join(lines[index : index + 4])
-        assert "fail" in window, f"the probe at line {index + 1} fails silently"
+        assert "pinned" in window, f"the probe at line {index + 1} decides without verifying"
 
     for expected in (
         "neither EDGE_SSH_KEY nor TESTNET_SSH_KEY is configured",
         "vars.EDGE_DEPLOY_HOST must be user@host",
         "vars.EDGE_SSH_PROXY_JUMP is set but vars.TESTNET_DEPLOY_HOST is empty",
         "the jump host",
+        "must be the mirror's internal address",
         "sccp-edge-ssh-from-primary",
         "pin its key in secrets.EDGE_KNOWN_HOSTS",
+        "'Permission denied' means the key is not in the mirror's ssh-keys metadata",
     ):
         assert expected in step, expected
 

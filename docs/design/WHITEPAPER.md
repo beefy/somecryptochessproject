@@ -1035,7 +1035,9 @@ flag. The pieces are:
 5. **The stall slash.** Finalising also charges the flagged seat 10% of the
    protocol's miner bond (`STALL_SLASH_BPS`): half to the claimant, 30% in equal
    parts to the witnesses whose flag receipt settled the claim, and 20% burned
-   by not crediting it. The charge comes out of the seat's bond first and its
+   by not crediting it — with the integer-division dust of the witness share
+   staying uncredited too, because a fraction smaller than a base unit cannot be
+   paid to anyone. The charge comes out of the seat's bond first and its
    balance after that, so a seat cannot unregister its way out of a stall, and it
    is charged once per claim. Bonding a claim prices a *false* accusation; this
    prices the *real* stall the claim proves.

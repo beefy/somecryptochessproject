@@ -16,7 +16,10 @@ checkable against their source of truth:
   removed route cannot linger in prose either;
 * the header's version against `sccp.version`;
 * the shipped DEX fee, Chess960 schedule and per-network bridge parameters
-  against the sentences that state them.
+  against the sentences that state them;
+* the stall slash's price and its 50/30/20 split against `sccp.chain.timeout`,
+  because a housekeeping charge that is documented in three places is exactly
+  the kind of prose that outlives its constant.
 """
 
 from __future__ import annotations
@@ -30,6 +33,13 @@ import pytest
 
 from sccp import version
 from sccp.bridge.config import bridge_environment
+from sccp.chain.timeout import (
+    STALL_BURN_BPS,
+    STALL_CLAIMANT_BPS,
+    STALL_QUORUM_BPS,
+    STALL_SLASH_BPS,
+    stall_slash_amount,
+)
 from sccp.config import CHESS960, MAINNET, TESTNET, UNITS_PER_COIN
 from sccp.protocol.models import TxType
 
@@ -185,6 +195,53 @@ def test_the_bridge_margin_stays_above_the_reorg_depth() -> None:
             f"{name} margin {environment.sccp_margin} does not exceed reorg_depth "
             f"{params.reorg_depth}"
         )
+
+
+def test_the_stall_slash_and_its_split_are_the_documented_ones(
+    whitepaper: str, protocol: str
+) -> None:
+    """The 10% timeout penalty and where it goes are stated in three places.
+
+    Whitepaper 11.7 (the settlement rule), Whitepaper 16.1 (why it is priced that
+    way) and `PROTOCOL.md` 10.4 (normative) all name the charge and its split, so
+    a moved basis point has to move the sentences with it. The burn is defined as
+    "whatever is not credited", which only equals `STALL_BURN_BPS` while the three
+    shares add up to the charge: a fourth share added to the code would silently
+    shrink the burn those documents promise.
+    """
+    slash = STALL_SLASH_BPS // 100
+    claimant, witnesses, burned = (
+        STALL_CLAIMANT_BPS // 100,
+        STALL_QUORUM_BPS // 100,
+        STALL_BURN_BPS // 100,
+    )
+    assert claimant + witnesses + burned == 100, "the split is not a whole charge"
+    assert claimant * 2 == 100, "the documents call the claimant's share 'half'"
+    # The price is a share of the *protocol* bond, not of whatever the seat
+    # happened to stake, which is what makes it the same cost for every seat.
+    assert stall_slash_amount(MAINNET) == MAINNET.min_bond // 10
+    bond = stall_slash_amount(MAINNET) // UNITS_PER_COIN
+
+    acceptance = " ".join(_section(whitepaper, "11.7").split())
+    assert f"{slash}% of the protocol's miner bond (`STALL_SLASH_BPS`)" in acceptance
+    assert f"half to the claimant, {witnesses}% in equal parts to the witnesses" in acceptance
+    assert f"{burned}% burned by not crediting it" in acceptance
+    assert "comes out of the seat's bond first and its balance after that" in acceptance
+
+    economics = " ".join(_section(whitepaper, "16.1").split())
+    assert f"{slash}% of the protocol's miner bond ({bond} SCCP on mainnet)" in economics
+    assert f"Half goes to the claimant, {witnesses}% is split between the witnesses" in economics
+    assert f"and {burned}% is burned" in economics
+
+    settlement = " ".join(_section(protocol, "10.4").split())
+    assert f"`min_bond * {STALL_SLASH_BPS} / 10000`" in settlement
+    assert f"{slash}% of the protocol's miner bond, {bond} SCCP on mainnet" in settlement
+    assert (
+        f"split {claimant}/{witnesses}/{burned} "
+        "(`STALL_CLAIMANT_BPS`, `STALL_QUORUM_BPS`, `STALL_BURN_BPS`)"
+    ) in settlement
+    assert f"and the last {burned}% burned" in settlement
+    assert "taken from its bond first and from its spendable balance" in settlement
 
 
 def test_every_table_row_has_its_header_s_column_count(whitepaper: str) -> None:
