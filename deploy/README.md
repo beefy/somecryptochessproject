@@ -95,8 +95,8 @@ proof to settle.
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
 | `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 2 --no-extra-miner-churn` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; every twelve cycles it also fires an 80-transfer burst over five waves, and it keeps the two extra role miners seated (`synthetic-miner-1` slow, `synthetic-miner-2` GNU Chess) |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645 --witness-key /stack/keys/witness-1.key` | opens round 0, pairs within each variant, runs the 10+0 clock, opens a new round every 60 s and follows the chain's epoch |
-| `miner-1`, `miner-2` | `sccp miner run --variant standard --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | standard-chess pair: join, play, co-sign, announce win proofs and commit/reveal their own availability |
-| `miner-3`, `miner-4` | `sccp miner run --variant chess960 --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | Chess960 pair: replay the beacon-selected start position, play with `UCI_Chess960`, and settle C960 proofs |
+| `miner-1`, `miner-2` | `sccp miner run --variant standard --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce --submit-timeout-claims` | standard-chess pair: join, play, co-sign, announce win proofs, submit bonded timeout claims and their finalising proofs, and commit/reveal their own availability |
+| `miner-3`, `miner-4` | `sccp miner run --variant chess960 --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce --submit-timeout-claims` | Chess960 pair: replay the beacon-selected start position, play with `UCI_Chess960`, settle C960 proofs, and submit timeout claims on a flag |
 | `witness-2`, `witness-3` | `sccp witness run --relay http://relay:8646 --key /stack/keys/witness-N.key` | independent clock witnesses: poll the relay, verify its receipts, co-sign each receipt and the flag checkpoint, and serve their own bundle at `/v1/matches/{id}/receipts` |
 
 The bootstrap is deliberately separate from mining. It builds each block with
@@ -271,11 +271,13 @@ iterating on the test.
 The relay runs timed sessions whether or not the stack asks for them: both
 clocks start on the second join, moves are charged against the mover and every
 accepted move is answered with a receipt. Without `--witness-key` those receipts
-carry no signatures, so a flagged game cannot become a timeout claim. Add a
-keyfile to the relay (`--witness-key /stack/relay.key`) and pass the matching
-public key hex to the miners (`sccp miner run --relay-witness-key <hex>`) to run
-the full signed path. Both are one flag each because a witness identity is an
-operator decision, not a network parameter.
+carry no signatures, so a flagged game cannot become a timeout claim. The stack's
+relay signs with witness-1, and every miner is given all three witnesses' public
+keys and the two independent witness URLs. A flag a miner wins is signed as a
+`timeout_claim`, submitted to the node by default, and followed by the matching
+`time_forfeit` proof once the claim is in a block. The deployments spell
+`--submit-timeout-claims` explicitly; `--no-submit-timeout-claims` is the
+observation-only alternative.
 
 The relay also counts them: started with `--node`, it reads `witnesses` from the
 node's `/v1/status` on every poll and refuses to open a round while the epoch's

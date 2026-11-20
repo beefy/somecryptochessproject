@@ -319,6 +319,7 @@ def test_the_miner_command_matches_the_compose_miners(tmp_path: Path) -> None:
     at = command.index("miner")
     assert command[at : at + 2] == ["miner", "run"]
     tail = " ".join(command)
+    assert "--submit-timeout-claims" in tail
     assert f"--network {TESTNET.network_id}" in tail
     assert f"--key {miner.keyfile}" in tail
     assert f"--nonce-secret-file {miner.nonce_file}" in tail

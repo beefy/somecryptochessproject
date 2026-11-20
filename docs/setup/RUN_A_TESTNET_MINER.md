@@ -36,8 +36,11 @@ There are three ways to see a miner run:
 3. **Polls the relay** for its assigned matches, joins its seat, plays with the
    engine under a real **10+0** clock, and signs its moves.
 4. **Co-signs the result** and turns the relay transcript into a `WinProof`.
-5. **Announces the proof** to a node (`--node`), plus a timeout claim when it won
-   on the clock and the relay's receipts are signed by a witness it trusts.
+5. **Announces the proof** to a node (`--node`), plus a bonded `timeout_claim`
+   when it won on the clock and the relay's receipts are signed by a witness it
+   trusts. Claim submission is on by default: the miner signs the claim as a
+   transaction, sends it to the node, and queues the matching `time_forfeit`
+   proof until the claim's dispute window closes and it can finalise.
 
 The relay does not trust the miner's clock reports: its own monotonic clock is
 authoritative and every accepted move gets a signed receipt.
@@ -221,7 +224,7 @@ bootstrap registered, otherwise the relay refuses the certificate. Progress
 looks like this:
 
 ```text
-stopped after 30 polls (6.22s): 1 joins, 32 moves, 0 results, 0 proofs, 0 timeout claims
+stopped after 30 polls (6.22s): 1 joins, 32 moves, 0 results, 0 proofs, 0 timeout claims (0 submitted), 0 resignations
 ```
 
 When a game ends decisively, the winner announces its proof to `--node`; a node
@@ -240,6 +243,65 @@ with a warning. `deploy/init_testnet_stack.py` writes `<name>.nonce` next to eac
 keyfile and `stack.json` records the same value, so
 `--nonce-secret-file ./stack/keys/miner-2.nonce` is enough for the second miner.
 
+**Timeout claims are submitted automatically.** When this miner wins on time, it
+signs a `timeout_claim` transaction and sends it to `--node` with the next free
+nonce (shared with availability/reveal, so the transactions cannot collide). The
+claim spends the network's `min_timeout_bond` from the miner's spendable balance
+and needs at least one trusted `--relay-witness-key`; without a trusted witness
+the miner refuses the flag locally instead of signing an unverifiable claim.
+Once the node reports the claim in a block, the miner builds the matching
+`time_forfeit` proof and re-announces it until the dispute window has passed and
+the claim finalises. Claims left in the mempool are re-checked and, if the node
+dropped them, rebuilt with a fresh nonce.
+
+Submission is the default whenever `--node` is set. Turn it off for an
+observation-only miner:
+
+```bash
+# submit claims to the node (default; shown explicitly)
+sccp --passphrase-file ./stack/passphrase miner run \
+    --network testnet \
+    --key ./stack/keys/miner-1.key \
+    --nonce-secret-file ./stack/keys/miner-1.nonce \
+    --engine-profile stockfish-19 \
+    --engine-path ./bin/stockfish-macos-universal \
+    --relay http://127.0.0.1:8646 \
+    --node http://127.0.0.1:8645 \
+    --relay-witness-key <witness-public-key-hex> \
+    --submit-timeout-claims
+
+# keep the locally verified claim in memory and never spend the bond
+sccp --passphrase-file ./stack/passphrase miner run \
+    --network testnet \
+    --key ./stack/keys/miner-1.key \
+    --relay http://127.0.0.1:8646 \
+    --node http://127.0.0.1:8645 \
+    --relay-witness-key <witness-public-key-hex> \
+    --no-submit-timeout-claims
+```
+
+The summary counts both the claims built and the claims actually submitted, and
+prints each submitted txid:
+
+```text
+stopped after 240 polls (120.0s): 1 joins, 32 moves, 0 results, 0 proofs,
+1 timeout claims (1 submitted), 0 resignations
+  timeout claim 49e2b5...: txid 7b20...
+```
+
+Use the txid to follow the claim:
+
+```bash
+curl -s http://127.0.0.1:8645/v1/transactions/<txid>
+sccp --data-dir ./data chain account <claimant-address> --network testnet
+```
+
+`--json` reports the same records under `claims` (match ids) and
+`claim_transactions` (`match_id`, `nonce`, `txid`, `included`). A claim is only
+finalised by the proof the miner queues after the claim is mined; if you stop
+the miner in that interval, restart it while the relay still serves the flagged
+match so it can rebuild the claim and proof.
+
 Stop a miner with `Ctrl-C`; it closes the engine and prints the summary. Useful
 options while testing:
 
@@ -251,7 +313,8 @@ options while testing:
 | `--nonce-secret HEX` | Availability secret; the miner commits and reveals by itself each epoch. |
 | `--nonce-secret-file PATH` | Read that secret from a file instead of the command line. |
 | `--json` | Print one JSON summary instead of human lines; refusals appear under `refusals`. |
-| `--node URL` | Announce win proofs to a node (section 6). |
+| `--node URL` | Announce win proofs and submit timeout claims to a node (section 6). |
+| `--submit-timeout-claims/--no-submit-timeout-claims` | Sign and submit a bonded claim when this miner wins on time (default: on; needs `--node` and a trusted witness key). |
 | `--relay-witness-key HEX` | Trust a relay clock witness, so a flag can become a timeout claim. Repeatable. |
 
 Without `--iterations`, the process runs until you interrupt it. It never exits
@@ -460,7 +523,8 @@ mempool and block height rather than assuming a submitted transaction is instant
 ## 6. Point the miner at a node
 
 `--node` is optional. Without it the miner still plays and co-signs, but keeps
-win proofs local; with it, every verified proof is announced to the node:
+win proofs and timeout claims local; with it, every verified proof is announced
+and a flag it wins is submitted as a signed `timeout_claim` transaction:
 
 ```bash
 sccp --passphrase-file ./stack/passphrase miner run \
@@ -475,6 +539,13 @@ sccp --passphrase-file ./stack/passphrase miner run \
 If the node rejects a proof, the miner records a refusal with the node's reason
 instead of crashing. Check that the node is the same network and serves the chain
 you registered on; proofs carry the network id and are rejected on a mismatch.
+
+A timeout claim has the same node requirement plus a witness requirement: the
+miner only signs it after `--relay-witness-key` (or `--relay-witness-key-file`)
+lets it verify the flag receipt locally. If the claim transaction is rejected
+(balance below the bond plus fee, a bad nonce, or a node on another network) the
+reason becomes a `refused:` line and the miner retries on later polls. Use
+`--no-submit-timeout-claims` when you want the old local-only claim behavior.
 
 ---
 
@@ -534,6 +605,8 @@ ok: N blocks replay to height N-1 (tip...)
 | `round 0 of epoch 1 is already open` | The relay store already contains that round and `open_round` tries again. | Remove the store for a fresh start, or open another `--round N`. |
 | A miner joins but never moves | The other seat never joined, or the round has no match for it. | Run at least two roster miners; check `/v1/matches`. |
 | `refused: ...` lines in the summary | The miner saw an error it could not fix. | Read the reason; it is the node's or relay's own message. |
+| `refused: ... cannot submit timeout claim: ...` | The node rejected the `timeout_claim` (balance, nonce, network, or missing witness registration). | Check `/v1/transactions/<txid>` and the claimant balance; the miner retries every poll. |
+| `--submit-timeout-claims needs --node` | Auto-submission is on but there is no node to receive the transaction. | Pass `--node URL`, or run with `--no-submit-timeout-claims`. |
 
 Exit codes: `0` clean shutdown, `1` refused by the CLI or a service, `2` invalid
 usage.
@@ -549,9 +622,10 @@ usage.
   fixed seeds and publishes the passphrase. Never use them on mainnet.
 - **One process per keyfile.** Two miners signing with the same key race on
   nonces and confuse reputation.
-- **Trust only witnesses you know.** `--relay-witness-key` lets the miner build a
-  timeout claim from that witness's receipts. A wrong or malicious key can make
-  the claim unverifiable and cost the bond.
+- **Trust only witnesses you know.** `--relay-witness-key` lets the miner build and
+  submit a timeout claim from that witness's receipts. A wrong or malicious key
+  can make the claim unverifiable and cost the bond. The bond is debited from the
+  miner's spendable balance when the claim is mined, not when it is signed.
 - **Protect the availability secret** until the reveal is in a block, and keep
   the keyfile passphrase in a mode-0600 file or the environment, as described in
   [`OPEN_A_WALLET.md`](../guides/OPEN_A_WALLET.md).

@@ -87,7 +87,7 @@ operator can trust without looking.
 
 | Work | Why it matters | Done when |
 | --- | --- | --- |
-| **Automate timeout-claim submission** | The ledger, clock evidence and local claim verification exist, but the CLI/demo does not yet submit a `timeout_claim` automatically. | A flagged timed game produces, submits and settles a claim end to end without operator intervention; an end-to-end test covers dispute and finalisation. |
+| **Automate timeout-claim submission** (done) | The ledger, clock evidence and local claim verification exist, and `sccp miner run` now signs the claim, submits it to `--node` by default, retries it through the shared nonce sequence, and queues the proof that finalises it. | A flagged timed game produces and submits a claim without operator intervention; the engine-miner test covers submission and proof construction, and `tests/unit/test_chain_timeout.py` covers dispute and finalisation. |
 | **Pin a drand quicknet verifier** | `drand_used = 1` can only be verified when a caller injects a verifier. Without the pinned BLS12-381 check, production beacons cannot rely on drand. | A bundled verifier checks quicknet signatures against the pinned chain key; offline `sccp verify proof` accepts drand beacons and rejects bad ones. |
 | **Persist faucet limits** | Faucet cooldowns and client quotas are in memory and reset with the node. | Limits survive restarts and are shared by all node workers; abuse tests cover concurrent requests and restart behaviour. |
 

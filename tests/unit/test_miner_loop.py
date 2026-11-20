@@ -477,7 +477,7 @@ def _pipeline_action(kind: str = "availability", epoch: int = 5) -> PipelineActi
     return PipelineAction(kind=kind, epoch=epoch, nonce=0, txid="ab" * 32)
 
 
-def test_the_pipeline_needs_both_a_secret_and_a_node(protocol_accounts: Any) -> None:
+def test_the_pipeline_needs_a_node_and_availability_needs_a_secret(protocol_accounts: Any) -> None:
     alice, bob = protocol_accounts["alice"], protocol_accounts["bob"]
     relay = _StubRelay(_view(alice.address, bob.address))
     secret = MinerConfig(params=DEVNET, keypair=alice.keypair, nonce_secret=SECRET)
@@ -509,7 +509,9 @@ def test_the_pipeline_needs_both_a_secret_and_a_node(protocol_accounts: Any) -> 
     assert with_node.pipeline.max_games == secret.max_games_per_epoch
     assert with_node.pipeline.nonce_secret == SECRET
     assert without_node.pipeline is None
-    assert unconfigured.pipeline is None
+    # A node is enough for timeout claims; only availability needs the secret.
+    assert unconfigured.pipeline is not None
+    assert unconfigured.pipeline.nonce_secret is None
     with_node.close()
     without_node.close()
     unconfigured.close()

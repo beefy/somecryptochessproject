@@ -5,6 +5,20 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
+## [Unreleased]
+
+### Added
+
+- **A miner submits timeout claims by default.** When a timed match ends on the
+  clock and the miner trusts the witness keys, `sccp miner run --node ...` now
+  signs a bonded `timeout_claim` transaction, sends it with the next free nonce
+  (shared with availability/reveal), and re-checks it until the node reports it
+  in a block. Once included, the miner queues the matching `time_forfeit` proof
+  that finalises the claim after its dispute window. Claims dropped by the node
+  are rebuilt with a fresh nonce. `--no-submit-timeout-claims` keeps the old
+  in-memory-only behavior. The testnet Compose stack and its synthetic miners
+  spell the flag explicitly.
+
 ## [0.33.0] - 2026-11-20
 
 ### Added

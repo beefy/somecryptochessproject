@@ -1,8 +1,9 @@
-"""The availability/reveal pipeline that keeps a miner matchable (PROTOCOL.md 6-7)."""
+"""The availability/reveal pipeline and timeout-claim submitter (PROTOCOL.md 6-7, 8.4)."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import pytest
 
@@ -15,7 +16,17 @@ from sccp.crypto.pq import hybrid_keypair_from_seed
 from sccp.errors import EpochPipelineError, RelayError
 from sccp.miner.epoch_pipeline import EpochPipeline, PipelineAction
 from sccp.protocol.beacon import commitment
-from sccp.protocol.models import Availability, Transaction, TxType
+from sccp.protocol.clocks import FIXED_TIME_CONTROL
+from sccp.protocol.models import (
+    Availability,
+    ClockEvidence,
+    FlagReceipt,
+    SignedMove,
+    StreamCheckpoint,
+    TimeoutClaim,
+    Transaction,
+    TxType,
+)
 
 SECRET = "11" * 32
 """The 32-byte hex nonce every availability commitment in this module uses."""
@@ -29,27 +40,45 @@ OPEN_HEIGHT = 15
 
 @dataclass
 class _StubNode:
-    """The ``/v1/status``, ``/v1/accounts`` and ``/v1/tx`` calls the pipeline makes."""
+    """The ``/v1/status``, ``/v1/accounts``, ``/v1/tx`` and tx-lookup calls."""
 
     height: int
     nonce: int = 0
     registered_until: int | None = 99
     reject: str | None = None
+    balance: int = 10**12
+    network: str = TESTNET.network_id
+    mined: bool = False
     submitted: list[Transaction] = field(default_factory=list)
     asked: list[str] = field(default_factory=list)
+    known: set[str] = field(default_factory=set)
 
     def status(self) -> dict[str, object]:
         return {"height": self.height}
 
     def account(self, address: str) -> dict[str, object]:
         self.asked.append(address)
-        return {"nonce": self.nonce, "registered_until_epoch": self.registered_until}
+        return {
+            "network": self.network,
+            "address": address,
+            "balance": self.balance,
+            "nonce": self.nonce,
+            "registered_until_epoch": self.registered_until,
+        }
 
     def submit_transaction(self, tx: Transaction) -> dict[str, object]:
         if self.reject is not None:
             raise RelayError(self.reject)
         self.submitted.append(tx)
+        self.known.add(txid(tx))
         return {"txid": txid(tx)}
+
+    def transaction(self, digest: str) -> dict[str, object]:
+        if digest not in self.known:
+            raise RelayError(f"GET /v1/transactions/{digest} -> 404: unknown transaction")
+        if self.mined:
+            return {"network": self.network, "txid": digest, "height": self.height}
+        return {"network": self.network, "txid": digest, "in_mempool": True}
 
 
 @pytest.fixture
@@ -283,3 +312,91 @@ def test_a_pipeline_action_describes_itself() -> None:
     action = PipelineAction(kind="availability", epoch=5, nonce=7, txid="ab" * 32)
 
     assert action.describe() == "availability for epoch 5 (nonce 7, abababababababab)"
+
+
+def _timeout_claim(signed_match: Any) -> TimeoutClaim:
+    """A claim-shaped payload; the pipeline builds the transaction, not evidence."""
+    certificate = signed_match.certificate
+    return TimeoutClaim(
+        network=certificate.network,
+        match_id=certificate.match_id,
+        certificate=certificate,
+        last_move=SignedMove(
+            network=certificate.network,
+            match_id=certificate.match_id,
+            seat=certificate.white,
+            ply=0,
+            san="e4",
+            signature="00" * 64,
+        ),
+        clock_evidence=ClockEvidence(
+            time_control=FIXED_TIME_CONTROL,
+            final=FlagReceipt(
+                match_id=certificate.match_id,
+                ply=1,
+                seat=certificate.black,
+                received_at_ms=1_000,
+                white_ms=1_000,
+                black_ms=0,
+            ),
+            receipts=(),
+            checkpoint=StreamCheckpoint(
+                network=certificate.network,
+                kind="clock",
+                match_id=certificate.match_id,
+                ply=1,
+                root="00" * 32,
+            ),
+        ),
+        bond=signed_match.params.min_timeout_bond,
+    )
+
+
+def test_a_timeout_claim_shares_the_availability_nonce_sequence(
+    signed_match: Any,
+) -> None:
+    """A claim cannot collide with the availability or reveal already pending."""
+    certificate = signed_match.certificate
+    account = next(
+        item for item in signed_match.accounts.values() if item.address == certificate.white
+    )
+    node = _StubNode(
+        height=OPEN_HEIGHT,
+        network=signed_match.params.network_id,
+        balance=100 * 100_000_000,
+    )
+    pipeline = EpochPipeline(
+        signed_match.params,
+        account.keypair,
+        node,
+        nonce_secret=SECRET,
+        max_games=signed_match.params.rounds_per_epoch,
+    )
+    assert [action.nonce for action in pipeline.step()] == [0, 1]
+
+    claim = _timeout_claim(signed_match)
+    action = pipeline.submit_timeout_claim(claim)
+
+    assert action.nonce == 2
+    assert action.included is False
+    assert node.submitted[-1].type is TxType.TIMEOUT_CLAIM
+    assert node.submitted[-1].nonce == 2
+    assert pipeline.claims == {claim.match_id: action}
+    # A second tick re-checks the same pending transaction instead of resubmitting.
+    assert pipeline.submit_timeout_claim(claim) == action
+    assert len(node.submitted) == 3
+
+    # The node forgot the transaction: the claim is rebuilt with the next free
+    # nonce (the availability pair still owns 0 and 1).
+    node.known.clear()
+    rebuilt = pipeline.submit_timeout_claim(claim)
+    assert rebuilt.nonce == 2
+    assert rebuilt.txid == action.txid
+    assert len(node.submitted) == 4
+
+    # Once it is in a block, the action says so and the engine can queue the
+    # proof that references this txid.
+    node.mined = True
+    included = pipeline.submit_timeout_claim(claim)
+    assert included.included is True
+    assert included.txid == action.txid

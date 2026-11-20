@@ -460,7 +460,9 @@ def miner_command(
 
     ``witness_key_file`` pins the clock witnesses the seat trusts, without which
     a flagged match cannot become a timeout claim; ``witness_urls`` let the seat
-    ask those witnesses for evidence when the relay has none.
+    ask those witnesses for evidence when the relay has none. The command also
+    passes ``--submit-timeout-claims`` explicitly so a win on time becomes a
+    bonded transaction instead of a claim held only in the child's memory.
     """
     command = [
         *sccp_command(),
@@ -468,6 +470,10 @@ def miner_command(
         str(passphrase_file),
         "miner",
         "run",
+        # A flag the seat wins becomes a bonded claim on chain. It trusts the
+        # witness keys passed below, so the worker submits the claim instead of
+        # leaving it in its own memory.
+        "--submit-timeout-claims",
         "--network",
         params.network_id,
         "--key",
