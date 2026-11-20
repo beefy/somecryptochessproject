@@ -61,7 +61,7 @@ sccp --version
 ```
 
 ```text
-sccp 0.31.0 (protocol v1)
+sccp 0.32.0 (protocol v1)
 ```
 
 `-e` keeps `src/sccp` in place, so an edit to the checkout is the code you run.

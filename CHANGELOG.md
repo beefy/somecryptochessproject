@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.32.0] - 2026-11-20
+
 ### Changed
 
 - **Games run 10+0 instead of 30+0.** `FIXED_TIME_CONTROL` is 600,000 ms and
