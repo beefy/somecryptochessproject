@@ -61,7 +61,7 @@ sccp --version
 ```
 
 ```text
-sccp 0.33.0 (protocol v1)
+sccp 0.34.0 (protocol v1)
 ```
 
 `-e` keeps `src/sccp` in place, so an edit to the checkout is the code you run.
@@ -847,7 +847,11 @@ for a balance that cannot cover the bond plus the fee.
 which is what a long-running miner wants; the other flags worth knowing are
 `--max-games-per-epoch`, `--nodes-per-move` and `--depth` for search policy,
 `--resign-after-plies` for a weak engine that would otherwise lose on time, and
-`--relay-witness-key` to co-sign relay clock flags.
+`--relay-witness-key` to co-sign relay clock flags. A flag it wins is submitted
+to `--node` as a signed `timeout_claim` by default (shared nonce sequence, bond
+and fee included); pass `--no-submit-timeout-claims` to keep the claim local.
+The claim needs `--node` and a trusted witness key, and the matching
+`time_forfeit` proof is queued until the claim matures.
 
 [`RUN_A_TESTNET_MINER.md`](RUN_A_TESTNET_MINER.md) walks the same pipeline with
 the testnet numbers and a relay config written by the deploy scripts.

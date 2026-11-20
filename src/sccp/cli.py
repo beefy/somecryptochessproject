@@ -1671,8 +1671,18 @@ def miner_run(
     ),
     node: Annotated[
         str | None,
-        typer.Option("--node", help="Node base URL that receives win proofs."),
+        typer.Option("--node", help="Node base URL that receives win proofs and timeout claims."),
     ] = None,
+    submit_timeout_claims: Annotated[
+        bool,
+        typer.Option(
+            "--submit-timeout-claims/--no-submit-timeout-claims",
+            help=(
+                "Sign and submit a bonded timeout_claim when this miner wins on "
+                "time (default: on; needs --node and trusted witness keys)."
+            ),
+        ),
+    ] = True,
     engine_path: Annotated[
         Path | None,
         typer.Option("--engine-path", help="UCI binary; overrides the profile's pinned build."),
@@ -1820,6 +1830,7 @@ def miner_run(
         resign_after_plies=resign_after_plies,
         variant=variant,
         move_delay_seconds=move_delay_seconds,
+        submit_timeout_claims=submit_timeout_claims,
     )
     miner = EngineMiner(config, engine=engine)
     if not _options(ctx).json_output:
@@ -1829,12 +1840,18 @@ def miner_run(
         )
         if secret is not None and node is None:
             typer.echo("--nonce-secret needs --node; the availability pipeline is off", err=True)
+        if submit_timeout_claims and node is None:
+            typer.echo(
+                "--submit-timeout-claims needs --node; timeout claims stay local",
+                err=True,
+            )
     polls = 0
     joined: list[str] = []
     moves: list[str] = []
     results: list[str] = []
     proofs: list[str] = []
     claims: list[str] = []
+    claim_transactions: dict[str, dict[str, object]] = {}
     resignations: list[str] = []
     refusals: list[str] = []
     started = time.monotonic()
@@ -1847,6 +1864,8 @@ def miner_run(
             results.extend(tick.results)
             proofs.extend(tick.proofs)
             claims.extend(tick.claims)
+            for action in tick.claim_submissions:
+                claim_transactions[action.txid] = action.as_dict()
             resignations.extend(tick.resignations)
             refusals.extend(tick.refusals)
             if iterations and polls >= iterations:
@@ -1869,6 +1888,7 @@ def miner_run(
         "results": results,
         "proofs": proofs,
         "claims": claims,
+        "claim_transactions": list(claim_transactions.values()),
         "resignations": resignations,
         "refusals": refusals,
     }
@@ -1878,9 +1898,15 @@ def miner_run(
     typer.echo(
         f"stopped after {polls} polls ({payload['seconds']}s): "
         f"{len(joined)} joins, {len(moves)} moves, {len(results)} results, "
-        f"{len(proofs)} proofs, {len(claims)} timeout claims, "
+        f"{len(proofs)} proofs, {len(claims)} timeout claims "
+        f"({len(claim_transactions)} submitted), "
         f"{len(resignations)} resignations"
     )
+    for claim in claim_transactions.values():
+        typer.echo(
+            f"  timeout claim {claim['match_id']}: txid {claim['txid']}"
+            + (" (in a block)" if claim["included"] else "")
+        )
     for reason in dict.fromkeys(refusals):
         typer.echo(f"  refused: {reason}")
 

@@ -314,11 +314,12 @@ services:
       # and several blocks of backlog are exercised; `--burst-every 0` disables it.
       #
       # It also seats the two extra miners, with fixed roles rather than a churn:
-      # `synthetic-miner-1` is deliberately slow, so its clock really runs out
-      # and the timeout claim path runs against live evidence, and
-      # `synthetic-miner-2` plays GNU Chess, so the roster is not one engine six
-      # times. `host_capacity` budgets both against this VM (two vCPUs after the
-      # node, the relay and the three witnesses are reserved); `--no-extra-miner-churn`
+      # `synthetic-miner-1` is deliberately slow, so its clock really runs out,
+      # the winning seat submits a bonded timeout_claim, and the timeout path
+      # runs against live evidence; `synthetic-miner-2` plays GNU Chess, so the
+      # roster is not one engine six times. `host_capacity` budgets both against
+      # this VM (two vCPUs after the node, the relay and the three witnesses are
+      # reserved); `--no-extra-miner-churn`
       # keeps them online so their identities are stable from round to round.
       #
       # It runs beside the miners rather than on its own VM because its lifetime is
@@ -387,6 +388,11 @@ services:
       - http://relay:8646
       - --node
       - http://node:8645
+      # A flag this miner wins becomes a signed timeout_claim sent to the node,
+      # and the matching time_forfeit proof is queued until the claim matures.
+      # This is the CLI default; spelling it here makes the deployment's intent
+      # explicit and survives a future default change.
+      - --submit-timeout-claims
       # Trust all three clock witnesses. Without their keys a flagged game cannot
       # become a bonded timeout claim, because the flag receipt has nothing to be
       # verified against. The witness URLs are the fallback evidence source for
@@ -441,6 +447,11 @@ services:
       - http://relay:8646
       - --node
       - http://node:8645
+      # A flag this miner wins becomes a signed timeout_claim sent to the node,
+      # and the matching time_forfeit proof is queued until the claim matures.
+      # This is the CLI default; spelling it here makes the deployment's intent
+      # explicit and survives a future default change.
+      - --submit-timeout-claims
       # Trust all three clock witnesses. Without their keys a flagged game cannot
       # become a bonded timeout claim, because the flag receipt has nothing to be
       # verified against. The witness URLs are the fallback evidence source for
@@ -498,6 +509,11 @@ services:
       - http://relay:8646
       - --node
       - http://node:8645
+      # A flag this miner wins becomes a signed timeout_claim sent to the node,
+      # and the matching time_forfeit proof is queued until the claim matures.
+      # This is the CLI default; spelling it here makes the deployment's intent
+      # explicit and survives a future default change.
+      - --submit-timeout-claims
       # Trust all three clock witnesses. Without their keys a flagged game cannot
       # become a bonded timeout claim, because the flag receipt has nothing to be
       # verified against. The witness URLs are the fallback evidence source for
@@ -551,6 +567,11 @@ services:
       - http://relay:8646
       - --node
       - http://node:8645
+      # A flag this miner wins becomes a signed timeout_claim sent to the node,
+      # and the matching time_forfeit proof is queued until the claim matures.
+      # This is the CLI default; spelling it here makes the deployment's intent
+      # explicit and survives a future default change.
+      - --submit-timeout-claims
       # Trust all three clock witnesses. Without their keys a flagged game cannot
       # become a bonded timeout claim, because the flag receipt has nothing to be
       # verified against. The witness URLs are the fallback evidence source for

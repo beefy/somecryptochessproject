@@ -9,17 +9,20 @@ cooperation — plus the receipt bundle a timeout claim needs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
+from sccp.chain.state import State, WitnessRecord
+from sccp.chain.tx import apply_transaction, txid, validate_transaction
 from sccp.chess.engines import ScriptedEngine
 from sccp.config import DEVNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import generate_hybrid_keypair, hybrid_sign_domain
+from sccp.errors import RelayError
 from sccp.miner.engine_miner import EngineMiner, MinerConfig, RelayClient
 from sccp.miner.matchmaker import Matchmaker, SessionStatus, create_app
 from sccp.protocol.clocks import (
@@ -31,6 +34,8 @@ from sccp.protocol.models import (
     MoveMessage,
     SignedMove,
     TimeoutClaim,
+    Transaction,
+    TxType,
 )
 from sccp.protocol.transcript import certificate_payload
 from sccp.serialization import Domain
@@ -496,19 +501,68 @@ def _miner(
     script: tuple[str, ...],
     time: FakeTime,
     witness_keys: tuple[tuple[str, str], ...] = (),
+    *,
+    node: Any = None,
+    submit_timeout_claims: bool = True,
 ) -> EngineMiner:
     account = _account(signed_match, address)
     config = MinerConfig(
         params=DEVNET,
         keypair=account.keypair,
         witness_keys=witness_keys,
+        submit_timeout_claims=submit_timeout_claims,
     )
     return EngineMiner(
         config,
         engine=ScriptedEngine(list(script)),
         relay=RelayClient("http://relay", client=client_for(app, base_url="http://relay")),
+        node=node,
         clock_ms=time.now_ms,
     )
+
+
+@dataclass
+class _ClaimNode:
+    """The node calls a timeout claim makes: account, submit, status, proof."""
+
+    balance: int = 100 * 100_000_000
+    nonce: int = 0
+    height: int = 20
+    mined: bool = False
+    submitted: list[Transaction] = field(default_factory=list)
+    proofs: list[Any] = field(default_factory=list)
+
+    def status(self) -> dict[str, object]:
+        return {"height": self.height}
+
+    def account(self, address: str) -> dict[str, object]:
+        return {
+            "network": DEVNET.network_id,
+            "address": address,
+            "balance": self.balance,
+            "immature": 0,
+            "bonded": 0,
+            "total": self.balance,
+            "nonce": self.nonce,
+        }
+
+    def submit_transaction(self, tx: Transaction) -> dict[str, object]:
+        self.submitted.append(tx)
+        return {"network": DEVNET.network_id, "txid": txid(tx)}
+
+    def transaction(self, digest: str) -> dict[str, object]:
+        if not any(txid(tx) == digest for tx in self.submitted):
+            raise RelayError(f"GET /v1/transactions/{digest} -> 404: unknown transaction")
+        if self.mined:
+            return {"network": DEVNET.network_id, "txid": digest, "height": self.height}
+        return {"network": DEVNET.network_id, "txid": digest, "in_mempool": True}
+
+    def announce_proof(self, proof: Any) -> dict[str, object]:
+        self.proofs.append(proof)
+        return {"network": DEVNET.network_id, "proof_id": proof.proof_id}
+
+    def close(self) -> None:
+        return None
 
 
 def test_a_miner_settles_a_relay_flag_from_the_relay_receipts(signed_match: Any) -> None:
@@ -552,6 +606,114 @@ def test_a_miner_settles_a_relay_flag_from_the_relay_receipts(signed_match: Any)
         lag_grace_ms=DEVNET.lag_grace_ms,
     )
     assert winner == "white"
+
+
+def test_a_miner_submits_a_flag_claim_and_queues_its_proof(signed_match: Any) -> None:
+    """Auto-submission is the default: a flag becomes a signed transaction."""
+    time = FakeTime()
+    witness = generate_hybrid_keypair()
+    state = _relay(signed_match, time=time, witness=witness)
+    app = create_app(state)
+    client = TestClient(app)
+    client.post("/v1/rounds", json={"round": 0})
+    view = client.get("/v1/matches").json()[0]
+    match_id = view["matchup"]["match_id"]
+    witness_address = state.witness
+    assert witness_address is not None
+    keys = ((witness_address, witness.public_key_hex),)
+    node = _ClaimNode()
+
+    white = _miner(signed_match, view["certificate"]["white"], app, ("Qh5",), time, keys, node=node)
+    black = _miner(signed_match, view["certificate"]["black"], app, (), time, keys)
+    assert white.run_once().joined == (match_id,)
+    assert black.run_once().joined == (match_id,)
+    assert white.run_once().moves == (f"{match_id}:Qh5",)
+
+    time.advance(FIXED_TIME_CONTROL.initial_ms + 5_000)
+    settled = white.run_once()
+
+    assert settled.claims == (match_id,)
+    assert len(node.submitted) == 1
+    transaction = node.submitted[0]
+    assert transaction.type is TxType.TIMEOUT_CLAIM
+    assert transaction.sender == white.address
+    assert transaction.nonce == 0
+    assert transaction.payload["match_id"] == match_id
+    assert settled.claim_submissions[0].txid == txid(transaction)
+    assert settled.claim_submissions[0].included is False
+    assert white.refusals == []
+
+    # The transaction the miner just sent is the one the chain validates: the
+    # certificate signatures, claimant, flag receipt and bond all survive the
+    # same checks a block would apply.
+    certificate = signed_match.certificate
+    chain_state = State(params=DEVNET, height=node.height)
+    for address in (certificate.white, certificate.black):
+        account = chain_state.ensure(address)
+        account.public_key = signed_match.public_keys[address]
+        account.balance = 100 * 100_000_000
+    chain_state.witnesses[witness_address] = WitnessRecord(
+        public_key=witness.public_key_hex,
+        endpoint="tcp://witness.test",
+        bond=DEVNET.clock_witness_bond,
+        registered_at_height=0,
+        until_epoch=1_000,
+    )
+    validate_transaction(transaction, DEVNET, chain_state, height=node.height)
+    apply_transaction(chain_state, transaction, height=node.height)
+    record = chain_state.timeout_claims[txid(transaction)]
+    assert record.claimant == white.address
+    assert record.match_id == match_id
+
+    # Once the node reports the claim in a block, the miner builds the
+    # ``time_forfeit`` proof that references it and queues it for its dispute
+    # window to close.
+    node.mined = True
+    settled = white.run_once()
+    assert settled.proofs
+    assert node.proofs
+    proof = node.proofs[-1]
+    assert proof.termination == "time_forfeit"
+    assert proof.timeout_claim_id == txid(transaction)
+    assert proof.winner == white.address
+
+
+def test_no_submit_timeout_claims_keeps_the_claim_local(signed_match: Any) -> None:
+    """``--no-submit-timeout-claims`` is the explicit observation-only mode."""
+    time = FakeTime()
+    witness = generate_hybrid_keypair()
+    state = _relay(signed_match, time=time, witness=witness)
+    app = create_app(state)
+    client = TestClient(app)
+    client.post("/v1/rounds", json={"round": 0})
+    view = client.get("/v1/matches").json()[0]
+    match_id = view["matchup"]["match_id"]
+    witness_address = state.witness
+    assert witness_address is not None
+    keys = ((witness_address, witness.public_key_hex),)
+    node = _ClaimNode()
+
+    white = _miner(
+        signed_match,
+        view["certificate"]["white"],
+        app,
+        ("Qh5",),
+        time,
+        keys,
+        node=node,
+        submit_timeout_claims=False,
+    )
+    black = _miner(signed_match, view["certificate"]["black"], app, (), time, keys)
+    white.run_once()
+    black.run_once()
+    white.run_once()
+    time.advance(FIXED_TIME_CONTROL.initial_ms + 5_000)
+    settled = white.run_once()
+
+    assert settled.claims == (match_id,)
+    assert settled.claim_submissions == ()
+    assert node.submitted == []
+    assert white.pending_claims == {}
 
 
 def test_a_miner_without_witness_keys_refuses_the_flag(signed_match: Any) -> None:

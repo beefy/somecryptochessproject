@@ -2,7 +2,7 @@
 
 ## Chess as proof of work
 
-**Whitepaper for protocol v1 · reference implementation 0.33.0 · November 2026**
+**Whitepaper for protocol v1 · reference implementation 0.34.0 · November 2026**
 
 > **Scope.** This document explains how the current reference implementation
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,
@@ -1975,7 +1975,6 @@ strong chess. Do not describe a proof as "proof of honest play".
 | Continuous public testnet and 72-hour soak | Not yet run |
 | Metrics, alerting and block explorer | Not implemented |
 | Production bridge deployment | `EthHtlc.sol` and its Foundry tests are in-repo; a deployed, reviewed contract on Sepolia or mainnet is operator configuration, and no protocol-owned contract is live |
-| Automatic timeout-claim submission in CLI/demo | Incomplete integration |
 | drand quicknet verifier wiring | Hook exists; pinned verifier not bundled |
 | Faucet limit persistence | Limits are in memory |
 | Storage pruning and restore tooling | Not implemented |
@@ -1991,7 +1990,7 @@ mainnet readiness. In priority order:
 
 1. Run a persistent public testnet and publish a 72-hour soak report.
 2. Add metrics, alerting and a block explorer.
-3. Automate timeout-claim submission and bundle a pinned drand verifier.
+3. Bundle a pinned drand quicknet verifier.
 4. Persist faucet limits and harden storage, peer networking and miner/relay
    recovery.
 5. Populate the roster's funder/subnet fields so pairing diversity has real data,

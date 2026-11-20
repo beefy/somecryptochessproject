@@ -30,7 +30,7 @@ from sccp.config import NetworkParams, format_coins, get_network
 from sccp.crypto.address import encode_address, validate_address
 from sccp.crypto.pq import HybridKeypair
 from sccp.errors import ConfigError, StateError, WalletServiceError
-from sccp.protocol.models import Transaction, TxType
+from sccp.protocol.models import TimeoutClaim, Transaction, TxType
 
 DEFAULT_SOURCE = "the local chain in --data-dir"
 """Where a wallet's state came from, when the caller does not say."""
@@ -838,6 +838,65 @@ class WalletService:
                 "public_key": keypair.public_key_hex,
                 "epoch": target,
                 "nonce": nonce_secret,
+            },
+        )
+        return sign_transaction(keypair, tx)
+
+    def build_timeout_claim(
+        self,
+        keypair: HybridKeypair,
+        claim: TimeoutClaim,
+        *,
+        fee: int | None = None,
+        nonce: int | None = None,
+    ) -> Transaction:
+        """Build and sign a bonded ``timeout_claim`` transaction.
+
+        ``claim`` is the locally verified evidence bundle a miner assembles from
+        witness receipts. The transaction layer re-verifies it against chain
+        state, so this builder only checks identity, network and funds: the
+        bond and fee must be spendable when the claim is built.
+        """
+        sender = self.address_for(keypair)
+        if claim.network != self.network or claim.certificate.network != self.network:
+            raise WalletServiceError(
+                f"the timeout claim is for {claim.network!r}, this wallet is for {self.network!r}"
+            )
+        if claim.certificate.match_id != claim.match_id:
+            raise WalletServiceError("the timeout claim does not match its certificate")
+        if claim.last_move.network != self.network or claim.last_move.match_id != claim.match_id:
+            raise WalletServiceError(
+                "the timeout claim's last move is for another match or network"
+            )
+        if claim.last_move.seat != sender:
+            raise WalletServiceError(
+                f"the timeout claim must be signed by its claimant "
+                f"{claim.last_move.seat}, not {sender}"
+            )
+        if claim.bond < self.params.min_timeout_bond:
+            raise WalletServiceError(
+                f"a timeout claim bond must be at least {self.params.min_timeout_bond}, "
+                f"not {claim.bond}"
+            )
+        resolved_fee = self.required_fee(fee)
+        if self.state.spendable(sender) < claim.bond + resolved_fee:
+            raise WalletServiceError(
+                f"{sender} cannot cover a {format_coins(claim.bond)} timeout bond plus a "
+                f"{format_coins(resolved_fee)} fee; this balance came from {self.source}"
+            )
+        tx = Transaction(
+            network=self.params.network_id,
+            type=TxType.TIMEOUT_CLAIM,
+            sender=sender,
+            nonce=self._resolve_nonce(sender, nonce),
+            fee=resolved_fee,
+            payload={
+                "match_id": claim.match_id,
+                "certificate": claim.certificate.model_dump(mode="json", by_alias=True),
+                "last_move": claim.last_move.model_dump(mode="json", by_alias=True),
+                "clock_evidence": claim.clock_evidence.model_dump(mode="json", by_alias=True),
+                "bond": claim.bond,
+                "public_key": keypair.public_key_hex,
             },
         )
         return sign_transaction(keypair, tx)

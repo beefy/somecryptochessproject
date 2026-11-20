@@ -2,10 +2,10 @@
 
 ``EngineMiner`` is a library, not a process: it polls a relay through
 :class:`RelayClient`, plays the moves it is assigned, signs them with its own
-verified clock, co-signs results it can reproduce, files bonded timeout claims
-only when its evidence verifies, and announces the resulting win proof to a
-node. The CLI and the devnet drive the same object, which is what makes the
-whole loop testable in-process over ASGI transports.
+verified clock, co-signs results it can reproduce, submits bonded timeout claims
+only when its evidence verifies, and announces the resulting win proof to a node.
+The CLI and the devnet drive the same object, which is what makes the whole loop
+testable in-process over ASGI transports.
 
 Safety rules the code enforces, not just documents:
 
@@ -30,6 +30,7 @@ import httpx
 
 from sccp.chain.state import State
 from sccp.chess.engines import Engine
+from sccp.chess.pgn import validate_pgn
 from sccp.chess.variants import board_for_variant
 from sccp.config import NetworkParams, get_network
 from sccp.crypto.address import encode_address
@@ -40,8 +41,9 @@ from sccp.errors import (
     EpochPipelineError,
     MinerError,
     RelayError,
+    SccpError,
 )
-from sccp.miner.epoch_pipeline import EpochPipeline, PipelineAction
+from sccp.miner.epoch_pipeline import EpochPipeline, PipelineAction, TimeoutClaimAction
 from sccp.miner.matchmaker import ClockBundle, MatchView
 from sccp.protocol.clocks import (
     MatchClock,
@@ -60,14 +62,19 @@ from sccp.protocol.models import (
     MoveMessage,
     MoveReceipt,
     ResultValue,
+    SignedMove,
     TimeoutClaim,
     Transaction,
     Transcript,
     WinProof,
 )
 from sccp.protocol.transcript import (
+    build_win_proof,
     certificate_payload,
+    create_result,
+    expected_from_certificate,
     proof_from_transcript,
+    render_transcript_pgn,
     sign_result,
 )
 from sccp.serialization import Domain
@@ -154,6 +161,16 @@ class MinerConfig:
     authoritative for time, so the delay cannot buy the seat anything.
     """
 
+    submit_timeout_claims: bool = True
+    """Submit a bonded ``timeout_claim`` when this miner wins on time.
+
+    On by default. The claim still needs ``node_url`` (the node that receives
+    the transaction) and at least one trusted :attr:`witness_keys` entry, because
+    a claim whose flag receipt cannot be verified locally is never built. Set
+    this to ``False`` for an observation-only miner that should keep claims in
+    memory instead of spending its bond.
+    """
+
     @classmethod
     def for_network(
         cls,
@@ -171,6 +188,7 @@ class MinerConfig:
         resign_after_plies: int | None = None,
         variant: str = "standard",
         move_delay_seconds: float = 0.0,
+        submit_timeout_claims: bool = True,
     ) -> MinerConfig:
         """Build a config from a network id and a wallet keypair."""
         params = get_network(network)
@@ -189,6 +207,7 @@ class MinerConfig:
             witness_keys=tuple(witness_keys),
             witness_urls=tuple(witness_urls),
             move_delay_seconds=move_delay_seconds,
+            submit_timeout_claims=submit_timeout_claims,
         )
 
     @property
@@ -425,6 +444,13 @@ class NodeClient:
             raise RelayError("node /v1/tx did not return an object")
         return document
 
+    def transaction(self, digest: str) -> Mapping[str, object]:
+        """The node's record for a transaction: ``height`` or ``in_mempool``."""
+        document = self._http.get(f"/v1/transactions/{digest}")
+        if not isinstance(document, Mapping):
+            raise RelayError("node /v1/transactions did not return an object")
+        return document
+
     def announce_proof(self, proof: WinProof) -> Mapping[str, object]:
         """Announce a win proof."""
         document = self._http.post("/v1/proofs", proof.model_dump(mode="json", by_alias=True))
@@ -480,6 +506,8 @@ class MinerTick:
     results: tuple[str, ...] = ()
     proofs: tuple[str, ...] = ()
     claims: tuple[str, ...] = ()
+    claim_submissions: tuple[TimeoutClaimAction, ...] = ()
+    """Timeout claims newly submitted or confirmed on chain this tick."""
     resignations: tuple[str, ...] = ()
     refusals: tuple[str, ...] = ()
     pipeline: tuple[PipelineAction, ...] = ()
@@ -535,7 +563,7 @@ class EngineMiner:
             self.node = None
         if pipeline is not None:
             self.pipeline: EpochPipeline | None = pipeline
-        elif config.nonce_secret is not None and self.node is not None:
+        elif self.node is not None:
             self.pipeline = EpochPipeline(
                 config.params,
                 config.keypair,
@@ -551,6 +579,10 @@ class EngineMiner:
         self.proofs: dict[str, WinProof] = {}
         self.pending_proofs: dict[str, WinProof] = {}
         self.claims: dict[str, TimeoutClaim] = {}
+        self.pending_claims: dict[str, TimeoutClaim] = {}
+        """Claims waiting for inclusion; the pipeline re-checks them every tick."""
+        self.claim_ids: dict[str, str] = {}
+        """``match_id -> txid`` for the claim this process last submitted."""
         self.books: dict[str, ReceiptBook] = {}
         self._witness_clients: dict[str, RelayClient] = {}
         self.refusals: list[str] = []
@@ -664,6 +696,7 @@ class EngineMiner:
         results: list[str] = []
         proofs: list[str] = []
         claims: list[str] = []
+        claim_submissions: list[TimeoutClaimAction] = []
         resignations: list[str] = []
         for view in views:
             matchup = view.matchup
@@ -684,6 +717,10 @@ class EngineMiner:
             proofs += processed[3]
             claims += processed[4]
             resignations += processed[5]
+            claim_submissions += processed[6]
+        flushed_claims, flushed_proofs = self._flush_claims()
+        claim_submissions += flushed_claims
+        proofs += flushed_proofs
         proofs += self._flush_proofs()
         return MinerTick(
             observed=observed,
@@ -692,6 +729,7 @@ class EngineMiner:
             results=tuple(results),
             proofs=tuple(proofs),
             claims=tuple(claims),
+            claim_submissions=tuple(claim_submissions),
             resignations=tuple(resignations),
             refusals=tuple(self.refusals[before:]),
             pipeline=tuple(submitted),
@@ -699,7 +737,9 @@ class EngineMiner:
 
     def _process(
         self, view: MatchView
-    ) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str]]:
+    ) -> tuple[
+        list[str], list[str], list[str], list[str], list[str], list[str], list[TimeoutClaimAction]
+    ]:
         matchup = view.matchup
         seat: Color = "white" if self.address == matchup.white else "black"
         state = self.matches.get(matchup.match_id)
@@ -717,18 +757,19 @@ class EngineMiner:
             view = self.relay.match(state.match_id)
             moves += self._sync_moves(state, view)
         if state.finished or state.refused:
-            return joined, moves, [], [], [], []
+            return joined, moves, [], [], [], [], []
         results: list[str] = []
         proofs: list[str] = []
         claims: list[str] = []
+        claim_submissions: list[TimeoutClaimAction] = []
         resignations: list[str] = []
         if view.status == "finished":
-            results, proofs, claims = self._finish(view, state)
+            results, proofs, claims, claim_submissions = self._finish(view, state)
         elif self._resign_if_stalled(view, state):
             resignations.append(state.match_id)
         elif view.status == "active":
             moves += self._play(state)
-        return joined, moves, results, proofs, claims, resignations
+        return joined, moves, results, proofs, claims, resignations, claim_submissions
 
     def _resign_if_stalled(self, view: MatchView, state: MatchState) -> bool:
         """Resign on our turn once the game passed ``resign_after_plies``.
@@ -802,6 +843,10 @@ class EngineMiner:
         if cls._certificate_body(state.certificate) != cls._certificate_body(view.certificate):
             state.refused = True
             raise MinerError("relay changed the certificate of an open match")
+        # The relay fills in the other seat's join signature after this miner
+        # joined. Keep the pinned copy current so a timeout claim carries both
+        # start signatures, which is what the chain verifies.
+        state.certificate = view.certificate
 
     def _sync_moves(self, state: MatchState, view: MatchView) -> list[str]:
         opening = list(state.certificate.opening.moves)
@@ -972,7 +1017,9 @@ class EngineMiner:
         self._apply_local(state, san, now)
         return [f"{state.match_id}:{san}"]
 
-    def _finish(self, view: MatchView, state: MatchState) -> tuple[list[str], list[str], list[str]]:
+    def _finish(
+        self, view: MatchView, state: MatchState
+    ) -> tuple[list[str], list[str], list[str], list[TimeoutClaimAction]]:
         result = view.result
         if result is None:
             state.refused = True
@@ -997,7 +1044,7 @@ class EngineMiner:
             if updated.result is None or len(updated.result.result_signatures) < 2:
                 # Our co-signature is on the relay, but the transcript only
                 # exists once both seats signed; finish on a later poll.
-                return actions, proofs, []
+                return actions, proofs, [], []
         transcript = self.relay.transcript(state.match_id)
         if transcript.result.game_hash != result.game_hash:
             state.refused = True
@@ -1009,11 +1056,11 @@ class EngineMiner:
             self.proofs[proof.proof_id] = proof
             proofs.append(proof.proof_id)
             self._announce_proof(proof)
-        return actions, proofs, []
+        return actions, proofs, [], []
 
     def _settle_flag(
         self, view: MatchView, state: MatchState
-    ) -> tuple[list[str], list[str], list[str]]:
+    ) -> tuple[list[str], list[str], list[str], list[TimeoutClaimAction]]:
         """Handle a match the relay ended on time.
 
         A flagged game is never co-signed: the losing seat simply stops
@@ -1029,7 +1076,7 @@ class EngineMiner:
                     f"{state.match_id}: lost on time without a flag receipt "
                     "(no on-chain claim is possible)"
                 )
-            return [], [], []
+            return [], [], [], []
         bundle = self.relay.receipts(state.match_id)
         if bundle is None or bundle.flag is None or bundle.checkpoint is None:
             bundle = self._witness_bundle(state.match_id)
@@ -1040,8 +1087,17 @@ class EngineMiner:
         state.finished = True
         claim = self.build_timeout_claim(view, bundle=bundle)
         if claim is None:
-            return [], [], []
-        return [f"{state.match_id}:claim"], [], [state.match_id]
+            return [], [], [], []
+        submissions: list[TimeoutClaimAction] = []
+        if self.config.submit_timeout_claims and self.pipeline is not None:
+            action = self._submit_timeout_claim(claim)
+            if action is not None:
+                submissions.append(action)
+            # Keep the claim even when the first submit failed: _flush_claims
+            # retries it on later ticks, then builds the proof once the node
+            # reports it in a block.
+            self.pending_claims[state.match_id] = claim
+        return [f"{state.match_id}:claim"], [], [state.match_id], submissions
 
     @staticmethod
     def _winner_seat(result: ResultValue) -> Color | None:
@@ -1216,7 +1272,7 @@ class EngineMiner:
             network=self.config.network,
             match_id=state.match_id,
             certificate=state.certificate,
-            last_move=last,
+            last_move=SignedMove.model_validate(last.model_dump(mode="json", exclude={"clock_ms"})),
             clock_evidence=evidence,
             bond=max(self.config.params.min_timeout_bond, 1),
         )
@@ -1239,6 +1295,89 @@ class EngineMiner:
             return None
         self.claims[state.match_id] = claim
         return claim
+
+    def _submit_timeout_claim(self, claim: TimeoutClaim) -> TimeoutClaimAction | None:
+        """Submit ``claim`` through the shared transaction pipeline."""
+        if self.pipeline is None:
+            return None
+        try:
+            action = self.pipeline.submit_timeout_claim(claim)
+        except (EpochPipelineError, RelayError) as exc:
+            self._refuse(f"{claim.match_id}: cannot submit timeout claim: {exc}")
+            return None
+        self.claim_ids[claim.match_id] = action.txid
+        return action
+
+    def _flush_claims(self) -> tuple[list[TimeoutClaimAction], list[str]]:
+        """Retry pending claims and build the proof once one is in a block.
+
+        A claim only finalises when a ``time_forfeit`` proof references its txid.
+        The proof is therefore built here, not when the claim is first submitted:
+        if the node drops the claim and the pipeline rebuilds it with a new nonce,
+        its txid changes and the proof must reference the transaction that really
+        landed.
+        """
+        submissions: list[TimeoutClaimAction] = []
+        proofs: list[str] = []
+        for match_id, claim in list(self.pending_claims.items()):
+            previous = self.claim_ids.get(match_id)
+            action = self._submit_timeout_claim(claim)
+            if action is None:
+                continue
+            if action.txid != previous or action.included:
+                submissions.append(action)
+            if not action.included:
+                continue
+            self.pending_claims.pop(match_id, None)
+            proof = self._timeout_proof(claim, action.txid)
+            if proof is None:
+                continue
+            self.proofs[proof.proof_id] = proof
+            proofs.append(proof.proof_id)
+            self._announce_proof(proof)
+        return submissions, proofs
+
+    def _timeout_proof(self, claim: TimeoutClaim, claim_id: str) -> WinProof | None:
+        """Build the winner-signed proof that finalises an on-chain claim."""
+        state = self.matches.get(claim.match_id)
+        if state is None:
+            self._refuse(f"{claim.match_id}: cannot prove a claim without local match state")
+            return None
+        certificate = state.certificate
+        if claim.last_move.seat == certificate.white:
+            winner_seat: Color = "white"
+            result: ResultValue = "1-0"
+        else:
+            winner_seat = "black"
+            result = "0-1"
+        try:
+            pgn = render_transcript_pgn(
+                certificate,
+                state.board,
+                result=result,
+                termination="time_forfeit",
+            )
+            parsed = validate_pgn(
+                pgn,
+                params=self.config.params,
+                expected=expected_from_certificate(certificate),
+                require_win=True,
+                clock_evidence=claim.clock_evidence,
+            )
+            unsigned = create_result(certificate, parsed)
+            signed = sign_result(unsigned, certificate, winner_seat, self.config.keypair)
+            proof = build_win_proof(
+                certificate,
+                pgn,
+                signed.result_signatures,
+                params=self.config.params,
+                clock_evidence=claim.clock_evidence,
+                timeout_claim_id=claim_id,
+            )
+        except (SccpError, ValueError) as exc:
+            self._refuse(f"{claim.match_id}: cannot build the timeout proof: {exc}")
+            return None
+        return proof
 
     # -- lifecycle ----------------------------------------------------------
 

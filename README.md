@@ -433,9 +433,11 @@ sccp --data-dir ./data miner reveal --network testnet \
 
 # Run an engine miner against a relay (repeat for bob.key, with another engine).
 # --relay-witness-key is the relay's witness public key (hex): with it the miner
-# verifies the relay's clock receipts and can settle a flag as a timeout claim.
-# --nonce-secret-file makes the miner commit and reveal its own availability each
-# epoch, so the roster keeps growing without a manual `miner availability` run.
+# verifies the relay's clock receipts and submits a flag it wins as a bonded
+# timeout_claim to --node (the default; use --no-submit-timeout-claims to keep the
+# claim local). --nonce-secret-file makes the miner commit and reveal its own
+# availability each epoch, so the roster keeps growing without a manual
+# `miner availability` run.
 sccp miner run --network testnet \
     --key alice.key \
     --nonce-secret-file alice.nonce \
@@ -575,7 +577,7 @@ The work that remains is operational and economic rather than foundational:
 
 - run a persistent public testnet and publish a 72-hour soak report;
 - add metrics and alerting;
-- automate timeout-claim submission and pin the drand quicknet verifier;
+- pin the drand quicknet verifier;
 - populate the roster's funder/subnet fields so pairing diversity has real data;
 - harden storage, peer networking, faucet limits and miner/relay resilience;
 - complete the audit, economic review and mainnet go/no-go decision.
