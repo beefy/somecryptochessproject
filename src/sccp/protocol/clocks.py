@@ -1,11 +1,13 @@
 """Match clocks, signed moves and clock evidence (PROTOCOL.md section 8.4).
 
-The protocol has exactly one time control: 10+0. A match starts with two clocks
-at :data:`FIXED_TIME_CONTROL.initial_ms`; only the side to move spends time. A
-move deducts ``max(0, elapsed - lag_grace_ms)`` from the mover and rejects the
-move when the result would be ``<= 0``. The relay is authoritative for live
-play; the on-chain verifier only sees the signed move stream and the witness
-receipts in :class:`~sccp.protocol.models.ClockEvidence`.
+A token declares its time control in :class:`~sccp.config.VariantParams`. A match
+starts with both clocks at that control's ``initial_ms``; only the side to move
+spends time. A move deducts ``max(0, elapsed - lag_grace_ms)`` from the mover and
+rejects the move when the result would be ``<= 0``. The relay is authoritative
+for live play; the on-chain verifier only sees the signed move stream and the
+witness receipts in :class:`~sccp.protocol.models.ClockEvidence`.
+:data:`FIXED_TIME_CONTROL` remains the historical default for callers that have
+no token parameters, but new code should pass the token's control explicitly.
 
 Nothing here trusts a relay timestamp: move signatures cover the protocol move
 payload, and witness signatures cover the receipt fields. Clock arithmetic is
@@ -22,7 +24,12 @@ from typing import Final, Literal
 
 import chess
 
-from sccp.config import CLOCK_EVIDENCE_PLIES
+from sccp.config import (
+    CLOCK_EVIDENCE_PLIES,
+    DEFAULT_TIME_CONTROL_INCREMENT_MS,
+    DEFAULT_TIME_CONTROL_INITIAL_MS,
+    VariantParams,
+)
 from sccp.crypto.address import encode_address
 from sccp.crypto.keys import Keypair, PublicKeyLike, sign_domain, verify_domain
 from sccp.crypto.pq import (
@@ -61,8 +68,15 @@ from sccp.protocol.models import (
 )
 from sccp.serialization import Domain
 
-FIXED_TIME_CONTROL: Final = TimeControl(initial_ms=600_000, increment_ms=0)
-"""The only legal v1 control: 10 minutes per seat, no increment."""
+FIXED_TIME_CONTROL: Final = TimeControl(
+    initial_ms=DEFAULT_TIME_CONTROL_INITIAL_MS,
+    increment_ms=DEFAULT_TIME_CONTROL_INCREMENT_MS,
+)
+"""The historical v1 control: 10 minutes per seat, no increment.
+
+New networks set the control per variant in :class:`~sccp.config.VariantParams`;
+this constant is the default for callers that predate token parameters.
+"""
 
 DEFAULT_LAG_GRACE_MS: Final = 250
 """Network-jitter credit granted once per move (PROTOCOL.md section 8.4)."""
@@ -80,17 +94,34 @@ def opposite(seat: Color) -> Color:
     return OPPOSITE[seat]
 
 
+def time_control_for(variant: VariantParams) -> TimeControl:
+    """Build the protocol time control a token variant declares."""
+    return TimeControl(
+        initial_ms=variant.time_control_initial_ms,
+        increment_ms=variant.time_control_increment_ms,
+    )
+
+
 def validate_time_control(
     control: TimeControl,
     *,
     max_plies: int,
     require_fixed: bool = False,
+    required: TimeControl | None = None,
 ) -> None:
-    """Check the per-network clock bounds and, optionally, the fixed v1 control."""
-    if require_fixed and control != FIXED_TIME_CONTROL:
+    """Check the clock bounds and, optionally, the token's declared control.
+
+    ``required`` is the token-level control and takes precedence over the legacy
+    ``require_fixed`` flag. Passing neither checks only the protocol bounds.
+    """
+    expected = required
+    fixed_only = require_fixed and required is None
+    if fixed_only:
+        expected = FIXED_TIME_CONTROL
+    if expected is not None and control != expected:
+        declared = "protocol-fixed" if fixed_only else "token's declared"
         raise ClockError(
-            f"time control {control.model_dump()} is not the protocol-fixed "
-            f"{FIXED_TIME_CONTROL.model_dump()}"
+            f"time control {control.model_dump()} is not the {declared} {expected.model_dump()}"
         )
     upper = control.initial_ms + control.increment_ms * max_plies
     if upper > MAX_CLOCK_MS:
@@ -606,23 +637,33 @@ def verify_clock_evidence(
     max_plies: int,
     lag_grace_ms: int = DEFAULT_LAG_GRACE_MS,
     require_fixed: bool = True,
+    expected_time_control: TimeControl | None = None,
 ) -> None:
     """Verify a complete flag bundle against a replayed game.
 
     ``san_moves`` is the full SAN list including the certified opening prefix.
     Move receipts use zero-based SAN indexes; the final flag receipt uses the
     total board ply count, so ``final.ply == len(san_moves)``.
+
+    ``expected_time_control`` is the token's declared control. It takes
+    precedence over the legacy ``require_fixed`` flag, which remains true by
+    default so old callers keep the historical 10+0 check.
     """
     _check_grace(lag_grace_ms)
     validate_time_control(
         evidence.time_control,
         max_plies=max_plies,
         require_fixed=require_fixed,
+        required=expected_time_control,
     )
     if evidence.time_control != certificate.time_control:
         raise ClockError("clock_evidence time_control does not match the certificate")
-    if require_fixed:
-        validate_time_control(certificate.time_control, max_plies=max_plies, require_fixed=True)
+    validate_time_control(
+        certificate.time_control,
+        max_plies=max_plies,
+        require_fixed=require_fixed,
+        required=expected_time_control,
+    )
 
     plies = len(san_moves)
     final = evidence.final
@@ -785,6 +826,7 @@ def verify_timeout_claim(
     quorum: int,
     max_plies: int,
     lag_grace_ms: int = DEFAULT_LAG_GRACE_MS,
+    expected_time_control: TimeControl | None = None,
 ) -> Color:
     """Verify a bonded timeout claim and return the winner's seat.
 
@@ -833,6 +875,7 @@ def verify_timeout_claim(
         quorum=quorum,
         max_plies=max_plies,
         lag_grace_ms=lag_grace_ms,
+        expected_time_control=expected_time_control,
     )
     if last_move.seat != (certificate.white if winner_seat == "white" else certificate.black):
         raise ClockError("the timeout claim's last move was not made by the winner")
@@ -859,6 +902,7 @@ __all__ = [
     "opposite",
     "sign_move",
     "sign_receipt",
+    "time_control_for",
     "time_control_from_tag",
     "time_control_tag",
     "validate_time_control",

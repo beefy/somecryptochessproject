@@ -22,11 +22,7 @@ from typing import NoReturn
 from sccp.chess.openings import OpeningBook, book_for
 from sccp.chess.pgn import GameResult as PgnResult
 from sccp.chess.pgn import ParsedGame, validate_pgn
-from sccp.chess.variants import (
-    chess960_start_fen,
-    is_chess960,
-    select_chess960_start,
-)
+from sccp.chess.rulesets import ruleset_for, start_position_for
 from sccp.config import NetworkParams, get_network
 from sccp.errors import (
     BeaconError,
@@ -42,6 +38,7 @@ from sccp.errors import (
 )
 from sccp.protocol.beacon import DrandVerifier, verify_beacon
 from sccp.protocol.clocks import (
+    time_control_for,
     validate_time_control,
     verify_clock_evidence,
     verify_move_evidence,
@@ -145,7 +142,7 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
             f"beacon is for epoch {beacon.epoch}, proof claims epoch {proof.epoch}",
         )
     try:
-        params.variant(proof.variant)
+        variant_params = params.variant(proof.variant)
     except ConfigError as exc:
         _fail(ProofFailure.CERTIFICATE, str(exc))
     if cert.variant != proof.variant:
@@ -178,7 +175,11 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
     if cert.white == cert.black:
         _fail(ProofFailure.CERTIFICATE, "certificate seats must be distinct")
     try:
-        validate_time_control(cert.time_control, max_plies=params.max_plies, require_fixed=True)
+        validate_time_control(
+            cert.time_control,
+            max_plies=params.max_plies,
+            required=time_control_for(variant_params),
+        )
     except ClockError as exc:
         _fail(ProofFailure.CERTIFICATE, str(exc))
     if proof.round >= params.rounds_per_epoch:
@@ -222,13 +223,21 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
         validate_opening_ref(proof.opening)
     except TranscriptError as exc:
         _fail(ProofFailure.OPENING, str(exc))
-    if is_chess960(proof.variant):
-        position = select_chess960_start(beacon_bytes, proof.match_id)
-        if proof.opening.line_id != position:
-            _fail(ProofFailure.OPENING, "opening position is not the one the beacon selected")
-        if proof.opening.start_fen != chess960_start_fen(position):
-            _fail(ProofFailure.OPENING, "opening start FEN is not the selected position")
-    elif context.book is not None:
+    rules = ruleset_for(proof.variant)
+    selected = start_position_for(proof.variant, beacon_bytes, proof.match_id)
+    if selected is not None:
+        if (
+            proof.opening.line_id != selected.line_id
+            or proof.opening.start_fen != selected.start_fen
+            or proof.opening.moves != selected.moves
+            or proof.opening.book_version != selected.book_version
+        ):
+            _fail(ProofFailure.OPENING, "opening is not the position the beacon selected")
+    elif (
+        context.book is not None
+        and rules.allow_book_moves
+        and proof.opening.book_version == context.book.version
+    ):
         try:
             line = context.book.line(proof.opening.line_id)
         except OpeningBookError as exc:
@@ -370,6 +379,7 @@ def verify_win_proof(proof: WinProof, context: ProofContext) -> VerifiedProof:
                 quorum=params.clock_witness_quorum,
                 max_plies=params.max_plies,
                 lag_grace_ms=params.lag_grace_ms,
+                expected_time_control=time_control_for(variant_params),
             )
         except ClockError as exc:
             _fail(ProofFailure.RESULT, f"invalid clock evidence: {exc}")

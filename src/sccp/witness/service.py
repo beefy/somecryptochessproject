@@ -41,6 +41,7 @@ from sccp.protocol.clocks import (
     clock_window,
     opposite,
     sign_receipt,
+    time_control_for,
     verify_clock_evidence,
     verify_receipt_signatures,
 )
@@ -364,6 +365,7 @@ class WitnessService:
                 # the miner's assembly job, not a single witness's.
                 quorum=1,
                 max_plies=self.params.max_plies,
+                expected_time_control=time_control_for(self.params.variant(certificate.variant)),
             )
         except SccpError as exc:
             self._refuse(f"{certificate.match_id}: evidence does not verify: {exc}")

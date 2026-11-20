@@ -52,6 +52,7 @@ from sccp.protocol.clocks import (
     flag_result,
     sign_move,
     sign_receipt,
+    time_control_for,
     verify_clock_evidence,
 )
 from sccp.protocol.models import (
@@ -1279,6 +1280,7 @@ class EngineMiner:
         public_keys = self.config.witness_key_map
         public_keys.update({address: keypair.public_key_hex for address, keypair in witnesses})
         try:
+            variant_params = self.config.params.variant(state.certificate.variant)
             verify_clock_evidence(
                 evidence,
                 certificate=state.certificate,
@@ -1289,8 +1291,9 @@ class EngineMiner:
                 quorum=self.config.params.clock_witness_quorum,
                 max_plies=self.config.params.max_plies,
                 lag_grace_ms=self.config.params.lag_grace_ms,
+                expected_time_control=time_control_for(variant_params),
             )
-        except ClockError as exc:
+        except (ClockError, ConfigError) as exc:
             self._refuse(f"{state.match_id}: clock evidence does not verify: {exc}")
             return None
         self.claims[state.match_id] = claim

@@ -16,7 +16,7 @@ from sccp.chess.pgn import (
     validate_pgn,
     validate_pgn_file,
 )
-from sccp.config import TESTNET, NetworkParams
+from sccp.config import TESTNET, NetworkParams, VariantParams
 from sccp.errors import PgnValidationError
 
 FOOLS_MATE = "1. f3 e5 2. g4 Qh4# 0-1"
@@ -185,6 +185,27 @@ def test_time_control_must_be_whole_seconds_and_match_the_certificate(
         tags = {**match_tags, "TimeControl": bad}
         with pytest.raises(PgnValidationError, match="TimeControl"):
             validate_pgn(make_pgn(FOOLS_MATE, tags), params=TESTNET, expected=expectations)
+
+
+def test_pgn_time_control_must_match_the_token(
+    make_pgn: Callable[[str, Mapping[str, str]], str],
+    match_tags: dict[str, str],
+) -> None:
+    standard = VariantParams(
+        name="standard",
+        rules="chess",
+        symbol="SCCP",
+        display_name="SCCP",
+        subsidy=TESTNET.subsidy,
+        min_plies=TESTNET.min_plies,
+        time_control_initial_ms=180_000,
+        time_control_increment_ms=2_000,
+    )
+    params = NetworkParams(**{**TESTNET.model_dump(), "variants": [standard.model_dump()]})
+    tags = {**match_tags, "TimeControl": "180+2"}
+    assert validate_pgn(make_pgn(FOOLS_MATE, tags), params=params).time_control == "180+2"
+    with pytest.raises(PgnValidationError, match="declares"):
+        validate_pgn(make_pgn(FOOLS_MATE, match_tags), params=params)
 
 
 def test_max_plies_is_enforced(

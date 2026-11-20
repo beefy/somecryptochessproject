@@ -25,13 +25,19 @@ from typing import Final
 import chess
 import chess.pgn
 
+from sccp.chess.rulesets import (
+    STANDARD_VARIANT,
+    VariantRules,
+    ruleset_for,
+    ruleset_for_rules,
+    supported_rules,
+)
 from sccp.chess.variants import (
     board_for_variant,
-    is_chess960,
     normalise_start_fen,
     variant_rules,
 )
-from sccp.config import STANDARD_VARIANT, NetworkParams
+from sccp.config import NetworkParams
 from sccp.errors import ConfigError, PgnValidationError
 from sccp.protocol.models import MAX_CLOCK_MS, MAX_PLIES_LIMIT
 from sccp.serialization import Domain, domain_hex
@@ -39,8 +45,8 @@ from sccp.serialization import Domain, domain_hex
 RULES_VALUE: Final = "chess"
 """The standard-chess value of the ``Rules`` tag (kept for v1 callers)."""
 
-RULES_VALUES: Final[frozenset[str]] = frozenset({"chess", "chess960"})
-"""The two rule sets a protocol PGN may name."""
+RULES_VALUES: Final[frozenset[str]] = supported_rules()
+"""Every rule set a registered ruleset may name in a protocol PGN."""
 
 REQUIRED_TAGS: Final[tuple[str, ...]] = (
     "Event",
@@ -242,35 +248,40 @@ def _read_single_game(text: str) -> chess.pgn.Game:
     return game
 
 
-def _require_tags(game: chess.pgn.Game) -> dict[str, str]:
-    """Collect the headers and enforce the required-tag contract."""
+def _require_tags(
+    game: chess.pgn.Game, expected_variant: str | None = None
+) -> tuple[dict[str, str], VariantRules]:
+    """Collect the headers and resolve the ruleset the PGN claims.
+
+    When ``expected_variant`` comes from a certificate, that variant wins over
+    the ``Rules`` tag alone. Two registered variants may share a tag (a custom
+    standard-start token can reuse ``Rules: chess``), and only the certificate
+    says which one a proof belongs to.
+    """
     tags = dict(game.headers.items())
     for name in REQUIRED_TAGS:
         value = tags.get(name, "")
         if not value.strip():
             raise PgnValidationError(f"missing required PGN tag: {name}")
-    if tags["Rules"] not in RULES_VALUES:
-        known = ", ".join(sorted(RULES_VALUES))
-        raise PgnValidationError(
-            f"unsupported Rules tag {tags['Rules']!r}; expected one of: {known}"
-        )
+    rules_value = tags["Rules"]
+    try:
+        if expected_variant is not None:
+            ruleset = ruleset_for(expected_variant)
+            if ruleset.pgn_rules != rules_value:
+                raise PgnValidationError(
+                    f"tag Rules is {rules_value!r}, but variant {expected_variant!r} "
+                    f"requires {ruleset.pgn_rules!r}"
+                )
+        else:
+            ruleset = ruleset_for_rules(rules_value)
+    except ConfigError as exc:
+        raise PgnValidationError(str(exc)) from None
     variant_header = tags.get("Variant")
-    if variant_header is not None:
-        aliases = {"Chess960", "Fischerandom", "Fischer Random"}
-        if tags["Rules"] == "chess960" and variant_header not in aliases:
-            raise PgnValidationError(
-                f"Variant tag {variant_header!r} disagrees with Rules 'chess960'"
-            )
-        if tags["Rules"] != "chess960" and variant_header not in ("Standard", "Chess"):
-            raise PgnValidationError(
-                f"Variant tag {variant_header!r} disagrees with Rules {tags['Rules']!r}"
-            )
-    return tags
-
-
-def _variant_for_rules(rules: str) -> str:
-    """Map a PGN ``Rules`` value back to the network's variant name."""
-    return STANDARD_VARIANT if rules == "chess" else "chess960"
+    if variant_header is not None and not ruleset.accepts_variant_header(variant_header):
+        raise PgnValidationError(
+            f"Variant tag {variant_header!r} disagrees with Rules {rules_value!r}"
+        )
+    return tags, ruleset
 
 
 def _int_tag(tags: Mapping[str, str], name: str) -> int:
@@ -486,33 +497,43 @@ def validate_pgn(
         details = "; ".join(str(error) for error in game.errors)
         raise PgnValidationError(f"PGN parse errors: {details}")
 
-    tags = _require_tags(game)
-    variant = _variant_for_rules(tags["Rules"])
+    expected_variant = expected.variant if expected is not None else None
+    tags, ruleset = _require_tags(game, expected_variant)
+    variant = ruleset.name
     try:
-        params.variant(variant)
+        variant_params = params.variant(variant)
     except ConfigError as exc:
         raise PgnValidationError(str(exc)) from None
     try:
         start_fen = normalise_start_fen(game.headers.get("FEN"), variant)
     except ConfigError as exc:
         raise PgnValidationError(str(exc)) from None
-    if not is_chess960(variant) and game.headers.get("SetUp") is not None:
-        raise PgnValidationError("standard chess PGNs must not carry SetUp")
-    if is_chess960(variant):
+    if not ruleset.requires_start_fen and game.headers.get("SetUp") is not None:
+        raise PgnValidationError(f"{variant} PGNs must not carry SetUp")
+    if ruleset.requires_start_fen:
         raw_fen = game.headers.get("FEN")
         if raw_fen is None:
-            raise PgnValidationError("a Chess960 PGN must carry FEN and SetUp")
+            raise PgnValidationError(f"a {variant} PGN must carry FEN and SetUp")
         if game.headers.get("SetUp") not in (None, "1"):
-            raise PgnValidationError("a Chess960 PGN must carry SetUp '1' with its FEN")
+            raise PgnValidationError(f"a {variant} PGN must carry SetUp '1' with its FEN")
         castling = raw_fen.split()[2] if len(raw_fen.split()) >= 3 else ""
-        if castling and any(letter in castling for letter in "KQkq"):
+        if ruleset.shredder_castling and castling and any(letter in castling for letter in "KQkq"):
             raise PgnValidationError(
-                "a Chess960 PGN must name its castling rights in Shredder-FEN "
+                f"a {variant} PGN must name its castling rights in Shredder-FEN "
                 "(rook files, not KQkq)"
             )
 
     numbers = {name: _int_tag(tags, name) for name in ("Epoch", "RoundNumber", "OpeningID")}
     time_control = _time_control_tag(tags)
+    declared_control = (
+        f"{variant_params.time_control_initial_ms // 1000}"
+        f"+{variant_params.time_control_increment_ms // 1000}"
+    )
+    if time_control != declared_control:
+        raise PgnValidationError(
+            f"tag TimeControl is {time_control!r}, but variant {variant!r} declares "
+            f"{declared_control!r}"
+        )
     if expected is not None:
         if _has_variations(game):
             raise PgnValidationError("variations are not allowed in a proof")
