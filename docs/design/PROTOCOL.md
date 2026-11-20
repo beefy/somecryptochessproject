@@ -896,7 +896,9 @@ The lifecycle (implemented in `src/sccp/chain/timeout.py`) is:
    (`STALL_CLAIMANT_BPS`, `STALL_QUORUM_BPS`, `STALL_BURN_BPS`): half to the
    claimant, 30% in equal parts to the witnesses whose final flag receipt
    settled the claim, and the last 20% burned — burned by *not* crediting it, so
-   a scan of the ledger sees supply shrink rather than a burn counter move. Any
+   a scan of the ledger sees supply shrink. `State.burned` records the resulting
+   total for `/v1/status` (including the rounding dust below), but it is not part
+   of `state_root`: the reduced balances already commit the burn. Any
    remainder from dividing the witness share stays uncredited with it, for the
    same reason: there is no account to hold a fraction of a base unit. A seat
    with nothing left to take pays what it has, and the claim is still finalised:
@@ -905,8 +907,9 @@ The lifecycle (implemented in `src/sccp/chain/timeout.py`) is:
 `slash_evidence` covers clock-witness equivocation only: it carries
 `evidence = {witness, receipts}` with exactly two receipts of the same
 `(match_id, kind, ply)`, different contents and valid signatures from the named
-witness. The witness must be registered with a non-zero bond; the bond is burned,
-the witness is de-registered and `banned_until = height + unbond_delay`.
+witness. The witness must be registered with a non-zero bond; the bond is burned
+(and added to `State.burned`), the witness is de-registered and
+`banned_until = height + unbond_delay`.
 Equivocation about proofs (`proof_id` in the payload) is refused here: the only
 on-chain invalidation there is a rejected proof, which block validation already
 handles (section 9).
@@ -1309,7 +1312,7 @@ an orphan block on `POST /v1/blocks` → 202.
 
 | Method | Path | Response |
 | --- | --- | --- |
-| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals, and the epoch's active clock-witness count (`witnesses`, which the relay gates pairing on) |
+| GET | `/v1/status` | `NodeStatus`: network, protocol version, height, tip, genesis, peers, syncing, mempool sizes, native and variant-token minted totals, the native burned total, and the epoch's active clock-witness count (`witnesses`, which the relay gates pairing on) |
 | GET | `/v1/params` | the network parameters, including each variant and the asset it mints |
 | GET | `/v1/blocks` | `BlockList`: newest first (`?limit=`, default 25, max 200; `?before_height=` for the next page), with proof counts per variant |
 | GET | `/v1/blocks/{height-or-hash}` | `BlockView`: network, hash, parent, height, work, main-chain flag, block |

@@ -5,10 +5,17 @@ All notable changes to this project are documented here. The format follows
 semantic versioning. Versions before 0.3.0 predate this file; their contents are
 not itemised here.
 
-## [Unreleased]
+## [0.33.0] - 2026-11-20
 
 ### Added
 
+- **The explorer reports how much SCCP slashing has burned.** `State.burned`
+  keeps the exact native total destroyed by timeout stall slashes and
+  clock-witness bond slashes, including the integer-division dust that never
+  reaches an account. `GET /v1/status` exposes it as `burned`, and the dashboard
+  shows a **Burned** stat in SCCP. The counter is persisted in snapshots but is
+  not part of `state_root`, so it changes no consensus root; a snapshot written
+  before the field restores it as zero.
 - **Whitepaper drift now fails a test.** `tests/unit/test_whitepaper_coverage.py`
   compares the whitepaper's transaction table and `PROTOCOL.md` section 10.2
   against `TxType`, both API tables against `tests/fixtures/openapi.json` in both

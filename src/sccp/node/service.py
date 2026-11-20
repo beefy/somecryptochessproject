@@ -409,6 +409,7 @@ class NodeService:
                 proofs=len(self.mempool.proofs),
             ),
             minted=self.chain.state.minted,
+            burned=self.chain.state.burned,
             minted_assets=dict(sorted(self.chain.state.minted_assets.items())),
             witnesses=len(self.chain.state.active_witnesses(self.chain.state.current_epoch())),
         )

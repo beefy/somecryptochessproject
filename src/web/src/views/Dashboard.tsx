@@ -86,6 +86,11 @@ export function Dashboard(): ReactNode {
             hint={params.data === undefined ? undefined : `${params.data.coinbase_maturity}-block maturity`}
           />
         )}
+        <StatCard
+          label="Burned"
+          value={status.data === undefined ? "-" : formatAmount(status.data.burned)}
+          hint="removed by slashing"
+        />
       </View>
 
       {variantTokens.length > 0 && status.data !== undefined && (
