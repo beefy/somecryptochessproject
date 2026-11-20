@@ -16,7 +16,7 @@ import pytest
 from sccp.chain.mempool import Mempool
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
-from sccp.errors import AddressError
+from sccp.errors import AddressError, RatingError
 from sccp.node.service import NodeService
 from sccp.ratings import (
     DEFAULT_DEVIATION,
@@ -120,7 +120,7 @@ def test_inactivity_inflates_deviation_without_moving_the_rating() -> None:
     assert after.rating == rating.rating
     assert after.deviation == pytest.approx(expected)
     assert inflate(rating, 0) is rating
-    with pytest.raises(ValueError, match="negative"):
+    with pytest.raises(RatingError, match="negative"):
         inflate(rating, -1)
 
 
@@ -130,11 +130,11 @@ def test_an_empty_period_is_one_idle_period() -> None:
 
 
 def test_impossible_scores_and_settings_are_rejected() -> None:
-    with pytest.raises(ValueError, match="between 0 and 1"):
+    with pytest.raises(RatingError, match="between 0 and 1"):
         update_rating(Rating(), [(Rating(), 1.5)])
-    with pytest.raises(ValueError, match="tau"):
+    with pytest.raises(RatingError, match="tau"):
         update_rating(Rating(), [(Rating(), 1.0)], tau=0.0)
-    with pytest.raises(ValueError, match="deviation"):
+    with pytest.raises(RatingError, match="deviation"):
         Rating(1500.0, 0.0)
 
 

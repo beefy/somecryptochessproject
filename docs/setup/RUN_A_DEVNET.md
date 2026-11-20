@@ -237,12 +237,13 @@ a settlement miner. What each part does:
 
 - **The API.** `GET /v1/status` is the health check; `/v1/blocks`, `/v1/games`,
   `/v1/accounts/{address}`, `/v1/epochs/{epoch}`, `/v1/mempool` and the rest are
-  documented in [`PROTOCOL.md`](../design/PROTOCOL.md) section 13. The OpenAPI
-  document is served at `/docs` and `/openapi.json`.
+  documented in [`PROTOCOL.md`](../design/PROTOCOL.md) section 13. Swagger UI is
+  served at `/docs`, the same schema as one page at `/redoc`, and the document
+  itself at `/openapi.json`.
 - **`--web`.** Mounts the built explorer (`src/web/dist`) at `/`. Section 5.
 - **The faucet.** Enabled by default on any test network whose genesis funds a
   faucet key — both `testnet` and `devnet`. `--no-faucet` turns the HTTP
-  endpoint off. Section 7.
+  endpoint off; both faucet routes then answer `404`. Section 7.
 - **`--mine`.** A devnet node is not a chess miner: it does not search for games
   or own a bond. It settles proofs already in its mempool and, when the pool has
   nothing to settle, emits a **heartbeat block**: a proof-less block carrying at
@@ -751,28 +752,25 @@ id and the flag must agree or the relay refuses to start. A devnet runs no
 witness service, so the relay's witness gate (it refuses to pair when the epoch
 has fewer clock witnesses than `clock_witness_quorum`) sees zero and stops:
 start a hand-written devnet relay with `--allow-unwitnessed-rounds`, which
-`deploy/bootstrap_devnet_stack.py` already bakes into the `relay.json` it
+`deploy/setup_devnet_stack.py` already bakes into the `relay.json` it
 writes. The gate is a testnet/mainnet protection; a devnet flag that cannot be
 settled is a wasted game, not a lost bond.
 
 What is still missing for a *two-process* devnet match is the roster: pairing
 needs two miners whose availability was committed and revealed for that epoch,
-and the keys that did it. `deploy/init_devnet_stack.py` and
-`deploy/bootstrap_devnet_stack.py` write exactly that — the devnet counterpart of
-the testnet pair — and they do not need a running node:
+and the keys that did it. `deploy/setup_devnet_stack.py` writes exactly that in
+one command — the devnet counterpart of the testnet pair — and it does not need
+a running node:
 
 ```bash
-python deploy/init_devnet_stack.py --out .devnet-stack
-# stack for devnet in .devnet-stack
-#   miner-1: sccpt1q8exuw4cdf06c5d79ma9kcxv3l3ullgrlzgj77hw3lye3xcqr4ex5ulc77z
-#   miner-2: sccpt1q8f7qfeke79pnzyhe5g58jrry0dttzt2h5qkmzzvsddcdqjgjsmezkx6u32
-
-python deploy/bootstrap_devnet_stack.py --stack .devnet-stack
-# built 3 bootstrap blocks: height 3, tip 32c7b1b90f08...
+python deploy/setup_devnet_stack.py --out .devnet-stack
+# wrote 2 devnet keyfiles and .devnet-stack/stack.json
+# built 3 bootstrap blocks: height 3, epoch 3 matchable
 # relay config for epoch 3 written to .devnet-stack/relay.json
+# ... the node, relay and miner commands for those files
 ```
 
-The second command prints the node, relay and miner commands for those files; it
+It prints the node, relay and miner commands for those files; it
 is the same three-block bootstrap `sccp devnet up` runs in process (fund,
 register, commit, reveal), written to `.devnet-stack/chain/chain.sqlite` and
 validated by the same `NodeService`. The chain stops at height 3, the last block
@@ -781,10 +779,12 @@ already on chain. Re-running the script leaves an existing chain alone; `--fresh
 rebuilds it and never touches the keys. The keyfiles, the nonce secrets and the
 passphrase are fixed and published, so `docker compose`-style reproducibility
 applies here too — devnet coins have no value, and none of these keys may ever be
-reused on another network.
+reused on another network. `deploy/init_devnet_stack.py` and
+`deploy/bootstrap_devnet_stack.py` remain importable when a script needs only
+one stage.
 
-With no bootstrap script, register your own keys with the pipeline below and
-give the relay a roster that has them.
+With the stack script the manual registration below is optional: section 9.4
+remains the path for a stack you build yourself, key by key.
 
 ### 9.4 The pipeline, step by step
 
@@ -881,7 +881,7 @@ put them in.
 Neither bootstrap has to be reset by hand: `sccp devnet up` never writes a data
 directory, and `scripts/play_miner.py --on-chain --fresh` discards whatever chain
 is in `--chain-dir` and starts again from genesis. The stack of 9.3 does the same
-with its own flag: `--fresh` on `deploy/bootstrap_devnet_stack.py` deletes
+with its own flag: `--fresh` on `deploy/setup_devnet_stack.py` deletes
 `.devnet-stack/chain/chain.sqlite` (never the keyfiles) and rebuilds the same
 three blocks, so the relay config it rewrites matches.
 
@@ -904,7 +904,7 @@ three blocks, so the relay config it rewrites matches.
 | `No such option: --node` on `wallet history` | that command reads the local chain, not a node | pass `--data-dir <node data dir>` instead |
 | `import-mnemonic` waits forever with no prompt on screen | the hidden prompt reads the controlling terminal, so a piped phrase is never read | pass `--mnemonic-file <file>` (mode 0600), plus `--passphrase-file` for the new passphrase |
 | `committed no availability for epoch N` on a reveal | the reveal missed its window (`reveal by tip` in the commit output) | reveal in the next block, or let `sccp miner run --nonce-secret-file` commit and reveal both |
-| `the chain is at height N, below the bootstrap tip 3` from the devnet bootstrap | a chain directory holds a partial or foreign chain | `python deploy/bootstrap_devnet_stack.py --stack .devnet-stack --fresh` |
+| `the chain is at height N, below the bootstrap tip 3` from the devnet bootstrap | a chain directory holds a partial or foreign chain | `python deploy/setup_devnet_stack.py --out .devnet-stack --fresh` |
 
 Global options go **before** the subcommand: `sccp --json chain info`,
 `sccp --data-dir .devnet wallet balance ...`, `sccp --network devnet miner run

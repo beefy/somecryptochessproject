@@ -26,6 +26,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from hashlib import sha256
 from typing import Final
 
+from sccp.errors import ProtocolError
 from sccp.protocol.models import (
     Color,
     CommittedMove,
@@ -83,7 +84,7 @@ def move_root(
     """
     stop = len(san_moves) if end_ply is None else end_ply
     if not 0 <= start_ply <= stop <= len(san_moves):
-        raise ValueError("move_root range is outside the SAN list")
+        raise ProtocolError("move_root range is outside the SAN list")
     leaves = (
         move_leaf(network, match_id, seats[seat_for_ply(ply)], ply, san_moves[ply])
         for ply in range(start_ply, stop)

@@ -27,6 +27,7 @@ from sccp.chain.tx import validate_transaction
 from sccp.config import TESTNET, coins_to_units
 from sccp.crypto.address import validate_address
 from sccp.crypto.wallet import FAST_KDF, create_wallet, read_header
+from sccp.errors import ConfigError
 from sccp.protocol.models import Transaction, TxType
 
 NODE = "http://node"
@@ -218,7 +219,7 @@ def test_the_pool_is_derived_from_published_seeds(tmp_path: Path) -> None:
     assert first.endpoint == "http://synthetic-miner-1:8646"
     assert len(first.nonce_secret) == 64
     assert first.nonce_secret != miners.nonce_secret(1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfigError):
         miners.miner_seed(-1)
 
 

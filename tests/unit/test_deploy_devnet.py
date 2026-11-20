@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 from deploy import bootstrap_devnet_stack as bootstrap
+from deploy import setup_devnet_stack as setup
 from deploy.init_devnet_stack import write_stack
 
 from sccp.chain.block import bootstrap_end_height
@@ -16,6 +17,26 @@ from sccp.config import DEVNET
 from sccp.miner.matchmaker import Matchmaker
 from sccp.node.service import NodeService
 from sccp.protocol.models import TxType
+
+
+def test_one_script_writes_the_keys_chain_and_relay(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The documented devnet entry point does both stages in one command."""
+    stack = tmp_path / "stack"
+    assert setup.main(["--out", str(stack), "--passphrase", "test-devnet-passphrase"]) == 0
+    output = capsys.readouterr().out
+    assert (stack / "keys" / "miner-1.key").is_file()
+    assert (stack / "stack.json").is_file()
+    assert (stack / "chain" / "chain.sqlite").is_file()
+    assert (stack / "relay.json").is_file()
+    assert "built 3 bootstrap blocks" in output
+    assert "start the node" in output
+
+    # A second run keeps the chain (and prints no block count) but still derives
+    # the relay config, which is what a repaired or moved stack needs.
+    assert setup.main(["--out", str(stack), "--passphrase", "test-devnet-passphrase"]) == 0
+    assert "kept the existing chain at height 3" in capsys.readouterr().out
 
 
 def test_the_stack_writes_two_devnet_keyfiles(tmp_path: Path) -> None:

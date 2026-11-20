@@ -95,7 +95,7 @@ Because `drip` refills the pool as soon as it drains, the generator never waits 
 an empty mempool: it tracks the txids it submitted and waits for those to leave.
 
 ```bash
-docker compose logs -f traffic   # one "cycle N: ..." line per cycle
+docker compose logs -f traffic   # one "cycle N: ..." or "burst N: ..." line per phase
 docker compose logs --tail=20 drip
 ```
 
@@ -175,7 +175,30 @@ separate workflow precisely because it must survive the chain being reset -- a
 traffic generator that outlived `down -v` would send with nonces and balances that
 no longer exist.
 
+## Burst traffic
+
+Every twelfth cycle (an hour or so at the default idle) `traffic` stops being a
+trickle and fires a burst: it tops the pool up so each wallet can cover its
+share, then queues 80 transfers over five waves, one second apart, and only then
+waits for them to be mined. The point is a deep mempool across several blocks
+and the ordering and eviction paths that a handful of transactions never reach.
+The burst signs with the published operator key instead of the faucet endpoint:
+those addresses already took their one public grant, and the endpoint would
+refuse to fund them again. Ordinary cycles still try the faucet first.
+
+The burst's line starts with `burst 12:` instead of `cycle 12:`. A burst that
+cannot finish logs `burst after cycle 12: ...` on stderr; the ordinary cycle has
+already completed and counted. The knobs are `--burst-every N` (`0` or
+`--no-burst` disables it), `--burst-transfers`, `--burst-rounds`,
+`--burst-interval-seconds`, `--burst-grant-coins` and
+`--burst-min-balance-coins`. The stats notebook marks the burst windows and
+groups consecutive minutes above `max(5, median + 6 * scaled MAD)` into one
+window, so a burst reads as one event instead of five. The top-up needs the
+operator key; without it the burst reports the failure instead of sending with
+empty wallets.
+
 ## Restart and redeploy
+
 
 A full redeploy intentionally wipes the chain and relay state. The bootstrap can
 only start from height 0 (or verify an already-complete bootstrap chain):

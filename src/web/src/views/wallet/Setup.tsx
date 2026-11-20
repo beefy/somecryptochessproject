@@ -24,6 +24,7 @@ import {
   parseKeyfile,
   unlockKeyfile,
 } from "../../lib/keystore";
+import { fromHex } from "../../lib/canonical";
 import { downloadText, keyfileName } from "../../lib/download";
 import { formatInteger } from "../../lib/format";
 import { mnemonicToSeed, seedToMnemonic } from "../../lib/mnemonic";
@@ -471,16 +472,21 @@ function RestorePanel({
   onCancel: () => void;
   onCreated: (document: KeyfileDocument, keypair: HybridKeypair) => Promise<void>;
 }): ReactNode {
+  const [mode, setMode] = useState<"mnemonic" | "seed">("mnemonic");
   const [phrase, setPhrase] = useState("");
+  const [seedHex, setSeedHex] = useState("");
   const [passphrase, setPassphrase] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   const words = phrase.trim().split(/\s+/).filter((word) => word.length > 0).length;
+  const seed = seedHex.trim().toLowerCase();
+  const seedValid = /^[0-9a-f]{64}$/.test(seed);
+  const sourceValid = mode === "mnemonic" ? words === 24 : seedValid;
   const ready =
     network !== null &&
-    words === 24 &&
+    sourceValid &&
     passphrase.length >= MIN_PASSPHRASE_CHARS &&
     passphrase === confirm;
 
@@ -489,8 +495,14 @@ function RestorePanel({
     setBusy(true);
     setError(null);
     try {
-      const seed = mnemonicToSeed(phrase);
-      const { document, keypair } = await createKeyfile({ network, passphrase, seed });
+      // A 24-word phrase is only an encoding of this same 32-byte seed, so both
+      // modes end at `createKeyfile({ seed })` and produce an identical address.
+      const material = mode === "mnemonic" ? mnemonicToSeed(phrase) : fromHex(seed);
+      const { document, keypair } = await createKeyfile({
+        network,
+        passphrase,
+        seed: material,
+      });
       await onCreated(document, keypair);
     } catch (failure) {
       setError(describe(failure));
@@ -498,26 +510,69 @@ function RestorePanel({
     }
   };
 
+  const seedWord = (): ReactNode => {
+    if (mode === "mnemonic") {
+      return words === 24
+        ? "24 words: the phrase restores both halves of the key, without a derivation path."
+        : `${words} of 24 words`;
+    }
+    return seedValid
+      ? "64 hex characters: the raw master seed both key halves derive from."
+      : `${seed.length} of 64 hex characters`;
+  };
+
   return (
     <Section
-      title="Restore from 24 words"
-      subtitle={network === null ? "waiting for the node" : `${network} · the phrase is the seed`}
+      title={mode === "mnemonic" ? "Restore from 24 words" : "Restore from a seed"}
+      subtitle={
+        network === null
+          ? "waiting for the node"
+          : `${network} · ${mode === "mnemonic" ? "the phrase is the seed" : "hex master seed"}`
+      }
     >
-      <TextInput
-        label="Backup phrase"
-        mode="outlined"
-        multiline
-        numberOfLines={3}
-        autoCapitalize="none"
-        autoCorrect={false}
-        value={phrase}
-        onChangeText={setPhrase}
-        style={styles.phraseInput}
-      />
-      <HelperText type={words === 24 ? "info" : "error"} visible>
-        {words === 24
-          ? "24 words: the phrase restores both halves of the key, without a derivation path."
-          : `${words} of 24 words`}
+      <View style={styles.actions}>
+        <Button
+          compact
+          mode={mode === "mnemonic" ? "contained" : "outlined"}
+          onPress={() => setMode("mnemonic")}
+        >
+          24 words
+        </Button>
+        <Button
+          compact
+          mode={mode === "seed" ? "contained" : "outlined"}
+          onPress={() => setMode("seed")}
+        >
+          Seed hex
+        </Button>
+      </View>
+      {mode === "mnemonic" ? (
+        <TextInput
+          label="Backup phrase"
+          mode="outlined"
+          multiline
+          numberOfLines={3}
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={phrase}
+          onChangeText={setPhrase}
+          style={styles.phraseInput}
+        />
+      ) : (
+        <TextInput
+          label="Seed (64 hex characters)"
+          mode="outlined"
+          multiline
+          numberOfLines={2}
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={seedHex}
+          onChangeText={setSeedHex}
+          style={styles.phraseInput}
+        />
+      )}
+      <HelperText type={sourceValid ? "info" : "error"} visible>
+        {seedWord()}
       </HelperText>
       <PassphraseFields
         passphrase={passphrase}

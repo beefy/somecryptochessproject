@@ -25,7 +25,7 @@ from sccp.chain.tx import (
 from sccp.config import CHESS960_ASSET_ID, DEVNET, TESTNET
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
-from sccp.errors import TxValidationError
+from sccp.errors import ConfigError, TxValidationError
 from sccp.node.app import create_app
 from sccp.node.service import NodeService
 from sccp.protocol.models import Transaction, TxType
@@ -310,16 +310,16 @@ def test_bridge_environment_reads_only_the_operator_overrides() -> None:
     ],
 )
 def test_a_malformed_contract_address_is_refused(contract: str, message: str) -> None:
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ConfigError, match=message):
         bridge_environment(DEVNET, {ETH_CONTRACT_ENV: contract})
 
 
 def test_zero_confirmations_or_margin_are_refused() -> None:
-    with pytest.raises(ValueError, match="SCCP_ETH_CONFIRMATIONS"):
+    with pytest.raises(ConfigError, match="SCCP_ETH_CONFIRMATIONS"):
         bridge_environment(DEVNET, {"SCCP_ETH_CONFIRMATIONS": "0"})
-    with pytest.raises(ValueError, match="SCCP_ETH_SCCP_MARGIN"):
+    with pytest.raises(ConfigError, match="SCCP_ETH_SCCP_MARGIN"):
         bridge_environment(DEVNET, {"SCCP_ETH_SCCP_MARGIN": "0"})
-    with pytest.raises(ValueError, match="reorg depth"):
+    with pytest.raises(ConfigError, match="reorg depth"):
         bridge_environment(DEVNET, {"SCCP_ETH_SCCP_MARGIN": "5"})
 
 

@@ -24,6 +24,7 @@ from __future__ import annotations
 from math import isqrt
 from typing import Final
 
+from sccp.errors import StateError
 from sccp.serialization import Domain, domain_hex
 
 NATIVE_ASSET: Final = ""
@@ -37,7 +38,7 @@ def normalize_pair(
 ) -> tuple[str, int, str, int]:
     """Order a pair by asset key, carrying each amount with its side."""
     if asset_x == asset_y:
-        raise ValueError("a pool needs two different assets")
+        raise StateError("a pool needs two different assets")
     if asset_x > asset_y:
         return asset_y, amount_y, asset_x, amount_x
     return asset_x, amount_x, asset_y, amount_y
@@ -47,7 +48,7 @@ def pool_id(asset_x: str, asset_y: str) -> str:
     """The deterministic id of a pool pair, independent of side order."""
     first, second = sorted((asset_x, asset_y))
     if first == second:
-        raise ValueError("a pool needs two different assets")
+        raise StateError("a pool needs two different assets")
     return domain_hex(Domain.POOL, {"asset_a": first, "asset_b": second})
 
 
@@ -103,7 +104,7 @@ def swap_output(
     if amount_in <= 0 or reserve_in <= 0 or reserve_out <= 0:
         return 0
     if not 0 <= fee_bps < BPS_DENOMINATOR:
-        raise ValueError(f"swap fee {fee_bps} is outside [0, {BPS_DENOMINATOR})")
+        raise StateError(f"swap fee {fee_bps} is outside [0, {BPS_DENOMINATOR})")
     amount_after_fee = amount_in * (BPS_DENOMINATOR - fee_bps)
     numerator = amount_after_fee * reserve_out
     denominator = reserve_in * BPS_DENOMINATOR + amount_after_fee

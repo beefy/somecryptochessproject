@@ -16,7 +16,7 @@ from sccp.chain.state import HtlcStatus
 from sccp.config import CHESS960_ASSET_ID, TESTNET, coins_to_units
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import hybrid_keypair_from_seed
-from sccp.errors import RateLimitError
+from sccp.errors import ConfigError, RateLimitError
 from sccp.node.service import NodeService
 from sccp.protocol.models import Transaction
 
@@ -168,7 +168,7 @@ def test_demo_wallets_are_deterministic_and_distinct() -> None:
     assert first.address == seed.demo_wallet(0).address
     assert first.address != seed.demo_wallet(1).address
     assert first.address.startswith("sccpt1")
-    with pytest.raises(ValueError):
+    with pytest.raises(ConfigError):
         seed.demo_wallet(-1)
 
 

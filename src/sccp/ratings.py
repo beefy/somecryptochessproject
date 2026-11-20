@@ -38,6 +38,8 @@ from typing import TYPE_CHECKING, Final
 
 from glicko2 import Player  # type: ignore[import-untyped]
 
+from sccp.errors import RatingError
+
 if TYPE_CHECKING:  # pragma: no cover - import-cycle hygiene, not runtime behaviour
     from sccp.chain.chain import Chain
 
@@ -77,17 +79,17 @@ class Rating:
     def __post_init__(self) -> None:
         for name in ("rating", "deviation", "volatility"):
             if not math.isfinite(float(getattr(self, name))):
-                raise ValueError(f"rating {name} must be finite")
+                raise RatingError(f"rating {name} must be finite")
         if self.deviation <= 0.0:
-            raise ValueError("rating deviation must be positive")
+            raise RatingError("rating deviation must be positive")
         if self.volatility <= 0.0:
-            raise ValueError("rating volatility must be positive")
+            raise RatingError("rating volatility must be positive")
 
 
 def inflate(rating: Rating, periods: int) -> Rating:
     """Grow the deviation over ``periods`` of inactivity (step 1, repeated)."""
     if periods < 0:
-        raise ValueError("periods must not be negative")
+        raise RatingError("periods must not be negative")
     if periods == 0:
         return rating
     phi = rating.deviation / RATING_SCALE
@@ -120,10 +122,10 @@ def update_rating(
     if not games:
         return inflate(current, 1)
     if tau <= 0.0:
-        raise ValueError("tau must be positive")
+        raise RatingError("tau must be positive")
     for _, score in games:
         if not 0.0 <= score <= 1.0:
-            raise ValueError(f"a game score must be between 0 and 1, got {score}")
+            raise RatingError(f"a game score must be between 0 and 1, got {score}")
 
     player = Player(current.rating, current.deviation, current.volatility)
     # The package keeps tau as a class attribute; there is no constructor argument.
@@ -307,7 +309,7 @@ def build_ledger(chain: Chain) -> RatingLedger:
     by_epoch: dict[int, list[SettledGame]] = {}
     for game in games:
         if game.winner == game.loser:
-            raise ValueError(f"game {game.game_hash!r} has one seat on both sides")
+            raise RatingError(f"game {game.game_hash!r} has one seat on both sides")
         by_epoch.setdefault(game.epoch, []).append(game)
 
     states: dict[str, _MinerState] = {}

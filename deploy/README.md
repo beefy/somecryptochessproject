@@ -93,7 +93,7 @@ proof to settle.
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers all four miners for their variants, funds and registers the three clock witnesses, commits and reveals availability, writes `relay.json` from epoch 3 (and keeps it on a re-run) |
 | `seed` | `python -m deploy.seed_testnet_demo --stack /stack --node http://node:8645` | verifies the genesis-seeded SCCP/C960 pool and completed SCCP HTLC; falls back to creating them on a custom chain whose genesis does not |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
-| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 2 --no-extra-miner-churn` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; it also keeps the two extra role miners seated (`synthetic-miner-1` slow, `synthetic-miner-2` GNU Chess) |
+| `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 2 --no-extra-miner-churn` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; every twelve cycles it also fires an 80-transfer burst over five waves, and it keeps the two extra role miners seated (`synthetic-miner-1` slow, `synthetic-miner-2` GNU Chess) |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645 --witness-key /stack/keys/witness-1.key` | opens round 0, pairs within each variant, runs the 10+0 clock, opens a new round every 60 s and follows the chain's epoch |
 | `miner-1`, `miner-2` | `sccp miner run --variant standard --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | standard-chess pair: join, play, co-sign, announce win proofs and commit/reveal their own availability |
 | `miner-3`, `miner-4` | `sccp miner run --variant chess960 --engine-profile stockfish-19 --nodes-per-move 5000 --nonce-secret-file /stack/keys/miner-N.nonce` | Chess960 pair: replay the beacon-selected start position, play with `UCI_Chess960`, and settle C960 proofs |
@@ -111,6 +111,16 @@ testnet nobody is watching still exercises the paths a client takes. Neither hol
 a roster slot or builds a block. `traffic` keeps its coins inside its own wallet
 pool, so it circulates them instead of draining the faucet; the
 [runbook](../docs/operations/RUNBOOK.md#synthetic-traffic) has the arithmetic.
+
+Every twelfth cycle `traffic` also runs a burst: it tops the pool up, queues 80
+transfers in five waves of about one second and only then waits for them to be
+mined, so several blocks see a deep mempool instead of the usual trickle. The
+burst uses the published operator key rather than the faucet endpoint, because
+those addresses already took their one public grant; ordinary cycles still spend
+the faucet first. `--burst-every 0` (or `--no-burst`) disables it;
+`--burst-transfers`, `--burst-rounds`, `--burst-interval-seconds` and the two
+balance flags size it. The stats notebook marks each burst and compares its
+per-minute volume with the ordinary cycles.
 
 `seed` is now an idempotent check rather than the source of the demo state.
 Testnet genesis already creates the SCCP/C960 pool (5 coins per side) and a
@@ -278,20 +288,23 @@ witness service.
 
 ## The devnet stack, without Compose
 
-`init_devnet_stack.py` and `bootstrap_devnet_stack.py` are the devnet counterpart
-of the two testnet scripts above. They need no running node and no container: the
-bootstrap writes `chain.sqlite` itself, then the relay config derived from the
-epoch the chain opened.
+`setup_devnet_stack.py` is the devnet counterpart of the two testnet scripts
+above. It needs no running node and no container: one command writes the keys,
+builds `chain.sqlite` itself, then writes the relay config derived from the epoch
+the chain opened.
 
 ```bash
-python deploy/init_devnet_stack.py --out .devnet-stack
-python deploy/bootstrap_devnet_stack.py --stack .devnet-stack
-# built 3 bootstrap blocks: height 3, tip ...
+python deploy/setup_devnet_stack.py --out .devnet-stack
+# wrote 2 devnet keyfiles and .devnet-stack/stack.json
+# built 3 bootstrap blocks: height 3, epoch 3 matchable
 # relay config for epoch 3 written to .devnet-stack/relay.json
 ```
 
-The second command prints the node, relay and miner commands for those files.
-Both stacks publish their seeds and passphrase on purpose; devnet has no value to
-protect and a reproducible stack is what makes the files work without a
-coordination step. `--fresh` rebuilds the devnet chain and never touches the keys.
-[`docs/setup/RUN_A_DEVNET.md`](../docs/setup/RUN_A_DEVNET.md) section 9.3 walks through it.
+The command prints the node, relay and miner commands for those files.
+`init_devnet_stack.py` and `bootstrap_devnet_stack.py` still hold the two halves
+for tests and scripts that need only one stage. Both stacks publish their seeds
+and passphrase on purpose; devnet has no value to protect and a reproducible
+stack is what makes the files work without a coordination step. `--fresh` on
+`setup_devnet_stack.py` rebuilds the devnet chain and never touches the keys.
+[`docs/setup/RUN_A_DEVNET.md`](../docs/setup/RUN_A_DEVNET.md) section 9.3 walks
+through it.

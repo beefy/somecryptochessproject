@@ -34,7 +34,7 @@ from fastapi import FastAPI, HTTPException
 from sccp.config import CLOCK_EVIDENCE_PLIES, NetworkParams
 from sccp.crypto.address import encode_address
 from sccp.crypto.pq import HybridKeypair
-from sccp.errors import SccpError
+from sccp.errors import NotFoundError, SccpError
 from sccp.miner.matchmaker import ClockBundle, MatchView
 from sccp.protocol.clocks import (
     build_clock_evidence,
@@ -54,7 +54,7 @@ from sccp.protocol.models import (
 )
 
 
-class WitnessError(RuntimeError):
+class WitnessError(SccpError, RuntimeError):
     """The witness could not observe or sign a match safely."""
 
 
@@ -204,7 +204,7 @@ class WitnessService:
             try:
                 if self._absorb(state, bundle):
                     touched.append(match_id)
-            except (WitnessError, SccpError) as exc:
+            except SccpError as exc:
                 self._refuse(f"{match_id}: {exc}")
             with self._lock:
                 finished = view.status == "finished"
@@ -224,7 +224,7 @@ class WitnessService:
         response.raise_for_status()
         payload = response.json()
         if not isinstance(payload, list):
-            raise ValueError("the relay's /v1/matches did not return a list")
+            raise WitnessError("the relay's /v1/matches did not return a list")
         views = [MatchView.model_validate(item) for item in payload]
         known = {view.matchup.match_id for view in views}
         with self._lock:
@@ -377,7 +377,7 @@ class WitnessService:
         with self._lock:
             state = self._matches.get(match_id)
             if state is None:
-                raise KeyError(match_id)
+                raise NotFoundError(f"unknown match {match_id}")
             receipts = tuple(state.receipts[ply] for ply in sorted(state.receipts))
             flag = state.flag
             checkpoint = state.checkpoint
@@ -416,7 +416,7 @@ class WitnessService:
         with self._lock:
             state = self._matches.get(match_id)
             if state is None:
-                raise KeyError(match_id)
+                raise NotFoundError(f"unknown match {match_id}")
             return {
                 "match_id": match_id,
                 "flag": state.flag is not None,
@@ -483,14 +483,14 @@ def create_witness_app(service: WitnessService) -> FastAPI:
     def receipts(match_id: str) -> ClockBundle:
         try:
             return service.bundle(match_id)
-        except KeyError:
+        except NotFoundError:
             raise HTTPException(status_code=404, detail="unknown match") from None
 
     @app.get("/v1/matches/{match_id}/audit")
     def audit(match_id: str) -> dict[str, object]:
         try:
             return service.audit(match_id)
-        except KeyError:
+        except NotFoundError:
             raise HTTPException(status_code=404, detail="unknown match") from None
 
     return app

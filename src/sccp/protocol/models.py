@@ -33,6 +33,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from sccp.config import MAX_PLIES_LIMIT, STANDARD_VARIANT
+from sccp.errors import ProtocolError
 
 DigestHex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 """A 32-byte digest or 32-byte nonce, lowercase hex."""
@@ -140,7 +141,7 @@ class TimeControl(ProtocolModel):
     @model_validator(mode="after")
     def _check_worst_case(self) -> TimeControl:
         if self.initial_ms + self.increment_ms * MAX_PLIES_LIMIT > MAX_CLOCK_MS:
-            raise ValueError(
+            raise ProtocolError(
                 "time control exceeds MAX_CLOCK_MS for max_plies="
                 f"{MAX_PLIES_LIMIT}: {self.initial_ms} + {self.increment_ms} * "
                 f"{MAX_PLIES_LIMIT} > {MAX_CLOCK_MS}"

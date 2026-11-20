@@ -27,7 +27,7 @@ from sccp.chain.state import State
 from sccp.config import NetworkParams, coins_to_units
 from sccp.crypto.address import validate_address
 from sccp.crypto.pq import HybridKeypair
-from sccp.errors import FaucetError, RateLimitError
+from sccp.errors import ConfigError, FaucetError, RateLimitError
 from sccp.protocol.models import Transaction
 from sccp.wallet.service import WalletService
 
@@ -49,13 +49,13 @@ class FaucetPolicy:
 
     def __post_init__(self) -> None:
         if self.amount_coins < 1 or self.max_coins < 1:
-            raise ValueError("faucet amounts must be positive")
+            raise ConfigError("faucet amounts must be positive")
         if self.amount_coins > self.max_coins:
-            raise ValueError("the default faucet amount must not exceed the maximum")
+            raise ConfigError("the default faucet amount must not exceed the maximum")
         if self.cooldown_seconds < 0 or self.client_window_seconds < 1:
-            raise ValueError("faucet windows must be non-negative")
+            raise ConfigError("faucet windows must be non-negative")
         if self.client_grants < 1:
-            raise ValueError("the client grant limit must be positive")
+            raise ConfigError("the client grant limit must be positive")
 
 
 @dataclass(slots=True)

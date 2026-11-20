@@ -351,7 +351,7 @@ class MatchSession:
             clock = _clock_from_document(document.get("clock"), certificate.time_control)
             raw_receipts = document.get("receipts") or []
             if not isinstance(raw_receipts, list):
-                raise TypeError("receipts must be a list")
+                raise RelayError("receipts must be a list")
             receipts = [MoveReceipt.model_validate(item) for item in raw_receipts]
             raw_flag = document.get("flag")
             flag = FlagReceipt.model_validate(raw_flag) if raw_flag else None

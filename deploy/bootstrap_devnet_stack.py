@@ -347,7 +347,7 @@ def write_relay(document: Mapping[str, Any], path: Path) -> None:
     path.write_text(json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _remove_chain(database: Path) -> None:
+def remove_chain(database: Path) -> None:
     """Delete the SQLite database and its WAL sidecars, if any."""
     for suffix in ("", "-wal", "-shm"):
         candidate = database.with_name(database.name + suffix)
@@ -355,7 +355,7 @@ def _remove_chain(database: Path) -> None:
             candidate.unlink()
 
 
-def _print_next_steps(
+def print_next_steps(
     stack: Path,
     data_dir: Path,
     relay_out: Path,
@@ -418,7 +418,7 @@ def main() -> None:
     try:
         miners = load_stack(arguments.stack)
         if arguments.fresh:
-            _remove_chain(data_dir / "chain.sqlite")
+            remove_chain(data_dir / "chain.sqlite")
         service, blocks, relay = build_chain(miners, data_dir=data_dir)
     except BootstrapError as exc:
         raise SystemExit(f"error: {exc}") from exc
@@ -433,7 +433,7 @@ def main() -> None:
         else:
             print(f"chain already bootstrapped at height {service.height}; left untouched")
         print(f"relay config for epoch {epoch} written to {relay_out}")
-        _print_next_steps(arguments.stack, data_dir, relay_out, miners, epoch)
+        print_next_steps(arguments.stack, data_dir, relay_out, miners, epoch)
     finally:
         service.close()
 

@@ -6,7 +6,7 @@ PYTEST_ARGS ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help venv install test test-all adversarial cov cov-gate lint format typecheck check lock dist dist-check release-check devnet stack container-e2e contracts-test clean
+.PHONY: help venv install test test-all adversarial cov cov-gate lint format typecheck check lock dist dist-check release-check devnet devnet-stack stack web-test container-e2e contracts-test clean
 
 help:  ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) \
@@ -80,6 +80,9 @@ dist-check: dist  ## Validate dist/ with twine check --strict (needs `twine>=7`)
 devnet: venv  ## Run the in-process devnet (node + relay + four mock miners)
 	$(PYTHON) -m sccp.cli devnet up --miners 4 --blocks 10
 
+devnet-stack: venv  ## Write .devnet-stack (keys, bootstrap chain and relay.json)
+	$(PYTHON) deploy/setup_devnet_stack.py --out .devnet-stack
+
 stack: venv  ## Write the deterministic stack keys into .stack
 	$(PYTHON) deploy/init_testnet_stack.py --out .stack
 	@if command -v docker >/dev/null 2>&1; then \
@@ -87,6 +90,9 @@ stack: venv  ## Write the deterministic stack keys into .stack
 	else \
 		echo "docker not installed; skipped compose validation"; \
 	fi
+
+web-test:  ## Run the web unit tests (vitest, needs `npm ci` in src/web)
+	cd src/web && npm test
 
 container-e2e: venv  ## Build the image and run the live container smoke test
 	SCCP_RUN_CONTAINER_E2E=1 $(PYTHON) -m pytest -m container \
