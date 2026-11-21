@@ -523,4 +523,6 @@ Reorgs are possible on a shared testnet but unusual on this single-node stack.
 The node keeps orphaned blocks out of the main chain, rebases the mempool after a
 reorg and rebroadcasts transactions and proofs from the discarded branch. If a
 relay still references a match whose proof was orphaned, it will re-announce the
-proof when the miner retries; no operator action is normally needed.
+proof when the miner retries; no operator action is normally needed. The
+restart, partition, reorg, disk-pressure and clock-skew drills are automated in
+`tests/e2e/test_testnet_resilience.py`.

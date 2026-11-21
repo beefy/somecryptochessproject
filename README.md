@@ -359,7 +359,7 @@ responsibility rather than a construction phase.
     │                             # test_gossip.py, test_sync.py, test_miner_loop.py
     ├── property/                 # hypothesis
     ├── integration/              # Stockfish smoke test (-m engine)
-    ├── e2e/                      # test_local_network.py (real loopback ports)
+    ├── e2e/                      # loopback network plus restart/partition/reorg drills
     ├── adversarial/              # cheat / self-play / tamper suites
     └── fixtures/                 # PGN/hash vectors, crypto vectors, openapi.json
 ```
@@ -815,6 +815,12 @@ Two tests pin the parts a unit test could otherwise drift from:
 - `tests/e2e/test_local_network.py` runs two nodes under uvicorn on real
   loopback ports, partitions them, and checks they converge on the same tip, and
   that a signed envelope crosses the wire.
+
+`tests/e2e/test_testnet_resilience.py` adds the drills a long-lived testnet
+needs: node and relay restarts, two-sided partition healing, a heavier-branch
+reorg with mempool rebroadcast, SQLite full-disk/read-only failures, clock skew
+at the future and median-time bounds, replayed blocks/transactions/receipts, and
+the mempool, gossip-cache and peer-ban bounds.
 
 `docker-compose.yml` (with `Dockerfile` and `deploy/`) runs the same software as
 one node, one relay, a deterministic bootstrap and two Stockfish miners on
