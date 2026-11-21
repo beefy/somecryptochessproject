@@ -215,6 +215,34 @@ and then waits for something to carry.
 > created for and the node refuses the wrong one:
 > `error: database /tmp/devnet-e2e/chain.sqlite holds devnet, not testnet`.
 
+### 3.3 The whole multi-process stack at once
+
+`scripts/devnet_up.py` starts the real services as separate processes and stops
+them together on Ctrl+C. It bootstraps `.devnet-stack`, creates a devnet wallet
+and witness keys, starts the node (serving the built explorer), the relay, the
+clock witness and two mock miners, and prints every address and log path:
+
+```bash
+.venv/bin/python scripts/devnet_up.py
+```
+
+```text
+[1/8] Preparing the web UI
+...
+SCCP devnet is up
+  web UI       http://127.0.0.1:8645
+  node API     http://127.0.0.1:8645/v1/status
+  relay API    http://127.0.0.1:8646/v1/status
+  witness API  http://127.0.0.1:8647/v1/status
+  wallet       sccpt1q9e9vfhhytx5ey9kg30mjlfpx50g52p9lnz60fpekyn5xjrvdyxccaq0s3h
+```
+
+`--fresh` rebuilds the chain but keeps keyfiles, `--web-ui dev` runs Vite on
+port 5173 instead of serving `src/web/dist` from the node, `--web-ui none` starts
+no UI, and `--stack DIR` moves everything out of `.devnet-stack`. Per-service
+logs are in `<stack>/logs/`; the wallet keyfile is
+`<stack>/keys/devnet-wallet.key`.
+
 ---
 
 ## 4. Serve the chain with a node
