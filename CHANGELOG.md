@@ -7,6 +7,8 @@ not itemised here.
 
 ## [Unreleased]
 
+## [0.36.0] - 2026-11-20
+
 ### Changed
 
 - **The native token's ticker is `ZQWX`.** The consensus asset's `symbol` and
