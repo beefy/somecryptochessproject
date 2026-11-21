@@ -192,7 +192,7 @@ def _seed_pool(
     variant_coins: int = 1_000,
     share_coins: int = 1_000,
 ) -> str:
-    """Seat an SCCP/Chess960 pool with ``holder`` owning every LP share."""
+    """Seat a ZQWX/Chess960 pool with ``holder`` owning every LP share."""
     pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
     shares = coins_to_units(share_coins)
     for state in (node.chain.state, node.mempool.projection):
@@ -867,7 +867,7 @@ def test_a_cycle_locks_and_claims_a_native_htlc(node: NodeService) -> None:
             options=_quiet_options(bridge=True, bridge_coins=2, min_balance_coins=100),
         )
 
-    assert "locked 2.00000000 SCCP" in report.bridge
+    assert "locked 2.00000000 ZQWX" in report.bridge
     assert "claimed htlc" in report.bridge
     assert report.side_unconfirmed == 0
     assert report.confirmed == 6  # three grants, one send, the lock and the claim
@@ -981,7 +981,7 @@ def test_a_cycle_swaps_against_an_existing_pool(node: NodeService) -> None:
             options=_quiet_options(bridge=False, dex=True, dex_coins=2, min_balance_coins=100),
         )
 
-    assert report.dex.startswith("dex: swapped 2.00000000 SCCP")
+    assert report.dex.startswith("dex: swapped 2.00000000 ZQWX")
     assert report.dex.endswith(f"in pool {pool_id[:12]}")
     assert report.side_unconfirmed == 0
     assert report.confirmed == 5  # three grants, one send and the swap
@@ -989,7 +989,7 @@ def test_a_cycle_swaps_against_an_existing_pool(node: NodeService) -> None:
     assert len(swaps) == 1
     assert swaps[0].payload["pool_id"] == pool_id
     assert swaps[0].payload["amount_in"] == coins_to_units(2)
-    assert "asset_in" not in swaps[0].payload  # native SCCP is the omitted side
+    assert "asset_in" not in swaps[0].payload  # native ZQWX is the omitted side
     assert f"| {report.dex}" in traffic._summary(report)
 
 
@@ -1009,7 +1009,7 @@ def test_a_cycle_adds_liquidity_on_its_rotation(node: NodeService) -> None:
             options=_quiet_options(bridge=False, dex=True, dex_coins=2, min_balance_coins=100),
         )
 
-    assert report.dex.startswith("dex: added 2.00000000 SCCP + 2.00000000 C960")
+    assert report.dex.startswith("dex: added 2.00000000 ZQWX + 2.00000000 C960")
     assert report.dex.endswith(f"to pool {pool_id[:12]}")
     assert report.side_unconfirmed == 0
     deposits = [tx for tx in _admitted(node) if tx.type is TxType.ADD_LIQUIDITY]
@@ -1035,7 +1035,7 @@ def test_a_cycle_removes_liquidity_on_its_rotation(node: NodeService) -> None:
         )
 
     assert report.dex.startswith(
-        "dex: removed 10000000000 shares (100.00000000 SCCP + 100.00000000 C960)"
+        "dex: removed 10000000000 shares (100.00000000 ZQWX + 100.00000000 C960)"
     )
     assert report.dex.endswith(f"from pool {pool_id[:12]}")
     assert report.side_unconfirmed == 0
@@ -1046,7 +1046,7 @@ def test_a_cycle_removes_liquidity_on_its_rotation(node: NodeService) -> None:
 
 
 def test_a_cycle_without_a_pool_creates_one_from_the_variant_asset(node: NodeService) -> None:
-    """The first cycle seeds the network's SCCP/C960 market when none exists."""
+    """The first cycle seeds the network's ZQWX/C960 market when none exists."""
     pool = [traffic.wallet(index) for index in range(2)]
     _seed_accounts(node, [item.address for item in pool], native_coins=50, variant_coins=5)
     # The testnet genesis now seeds this pair; remove it to exercise the
@@ -1064,7 +1064,7 @@ def test_a_cycle_without_a_pool_creates_one_from_the_variant_asset(node: NodeSer
             options=_quiet_options(bridge=False, dex=True, dex_coins=2, min_balance_coins=100),
         )
 
-    assert "dex: created SCCP/C960 pool" in report.dex
+    assert "dex: created ZQWX/C960 pool" in report.dex
     assert report.side_unconfirmed == 0
     creates = [tx for tx in _admitted(node) if tx.type is TxType.CREATE_POOL]
     assert len(creates) == 1

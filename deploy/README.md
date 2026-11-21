@@ -72,7 +72,7 @@ RPC URL cannot put a testnet contract on mainnet. `SCCP_ETH_CONFIRMATIONS` and
 either one to zero is an error, and a margin at or below the SCCP `reorg_depth` is
 refused because the maker needs the finality window plus time to claim ETH.
 Leaving `SCCP_ETH_HTLC_CONTRACT` unset is supported: the bridge page still shows
-the SCCP locks and clearly disables every ETH action.
+the ZQWX locks and clearly disables every ETH action.
 
 For the hosted testnet workflow, set repository variables
 `SCCP_ETH_RPC_URL` (Sepolia) and `SCCP_ETH_HTLC_CONTRACT`; the deploy job passes
@@ -91,7 +91,7 @@ proof to settle.
 | `init` | `python deploy/init_testnet_stack.py --out /stack` | writes the four miner keyfiles, the three witness keyfiles (and their public-key files), the availability secrets, the passphrase file and `stack.json` |
 | `node` | `sccp --data-dir /data node run --network testnet --mine --miner-address ... --mine-interval-seconds 30 --no-mine-bootstrap` | node API plus the proof settler, paced at the target block spacing; chain in SQLite under `node-data` |
 | `bootstrap` | `python deploy/bootstrap_testnet_stack.py --stack /stack --node http://node:8645` | funds/registers all four miners for their variants, funds and registers the three clock witnesses, commits and reveals availability, writes `relay.json` from epoch 3 (and keeps it on a re-run) |
-| `seed` | `python -m deploy.seed_testnet_demo --stack /stack --node http://node:8645` | verifies the genesis-seeded SCCP/C960 pool and completed SCCP HTLC; falls back to creating them on a custom chain whose genesis does not |
+| `seed` | `python -m deploy.seed_testnet_demo --stack /stack --node http://node:8645` | verifies the genesis-seeded ZQWX/C960 pool and completed SCCP HTLC; falls back to creating them on a custom chain whose genesis does not |
 | `drip` | `python deploy/drip_testnet_traffic.py --node http://node:8645` | keeps one ordinary transfer in the pool so every epoch has the ledger work its blocks need |
 | `traffic` | `python deploy/synthetic_testnet_traffic.py --node http://node:8645 --relay http://relay:8646 --extra-miners 2 --no-extra-miner-churn` | creates ten reproducible wallets on startup, funds them in the first cycle, then per cycle tops up and moves coins between 2-10 of the wallets, exercises bridge HTLCs and DEX pools/swaps when funded, waits for both phases to be mined, and idles 1-5 minutes; every twelve cycles it also fires an 80-transfer burst over five waves, and it keeps the two extra role miners seated (`synthetic-miner-1` slow, `synthetic-miner-2` GNU Chess) |
 | `relay` | `sccp matchmaker run --config /stack/relay.json --store /stack/relay-state.json --node http://node:8645 --witness-key /stack/keys/witness-1.key` | opens round 0, pairs within each variant, runs the 10+0 clock, opens a new round every 60 s and follows the chain's epoch |
@@ -123,8 +123,8 @@ balance flags size it. The stats notebook marks each burst and compares its
 per-minute volume with the ordinary cycles.
 
 `seed` is now an idempotent check rather than the source of the demo state.
-Testnet genesis already creates the SCCP/C960 pool (5 coins per side) and a
-completed 1-SCCP HTLC, so `GET /v1/pools`, `GET /v1/htlcs` and the Bridge
+Testnet genesis already creates the ZQWX/C960 pool (5 coins per side) and a
+completed 1-ZQWX HTLC, so `GET /v1/pools`, `GET /v1/htlcs` and the Bridge
 **Activity** tab are populated at height 0. The service detects those records and
 reports them; it can still create the bridge leg and pool for a custom network
 whose genesis does not seed them. It signs with the published stack keys and two
@@ -226,7 +226,7 @@ winner to white; only a limit that varies per match produces a mix of results.
 seeds twelve deterministic traffic wallets, starts the node, the drip and a
 traffic container, and asserts through the node API that the mined chain
 contains closed HTLCs: one claimed before its timelock and one refunded after
-it. A transfer case sends an ordinary SCCP payment and checks both balances and
+it. A transfer case sends an ordinary ZQWX payment and checks both balances and
 the mined transaction record, and a DEX case drives a C960 pool through create,
 swap, add-liquidity and remove-liquidity. A miner-payout case then mines one
 maturity window of fee-paying transfers and checks that the miner account gains

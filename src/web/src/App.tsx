@@ -81,8 +81,8 @@ const DEX_SECTIONS = [
   { key: "dexCreate", label: "Create pool", href: "#/dex/create" },
 ] as const;
 const BRIDGE_SECTIONS = [
-  { key: "bridge", label: "Buy SCCP", href: "#/bridge" },
-  { key: "bridgeSell", label: "Sell SCCP", href: "#/bridge/sell" },
+  { key: "bridge", label: "Buy ZQWX", href: "#/bridge" },
+  { key: "bridgeSell", label: "Sell ZQWX", href: "#/bridge/sell" },
   { key: "bridgeActivity", label: "Activity", href: "#/bridge/activity" },
 ] as const;
 
@@ -169,7 +169,7 @@ function Shell(): ReactNode {
 
           <Anchor href={siteHash(activeSite)} onPress={() => navigate(siteHash(activeSite))} style={styles.brand}>
             <Text variant="titleLarge" style={styles.brandText}>
-              SCCP
+              ZQWX
             </Text>
             {!compact && (
               <Text variant="bodySmall" style={styles.brandSub}>

@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 /// @title EthHtlc
-/// @notice The Ethereum leg of an ETH<->SCCP atomic swap.
+/// @notice The Ethereum leg of an ETH<->ZQWX atomic swap.
 /// @dev There is no owner, proxy, upgrade path or admin function. The contract
 /// holds ETH only between a lock and its claim/refund, and the SCCP chain
 /// independently holds the other leg under the same SHA-256 hashlock. A swap is

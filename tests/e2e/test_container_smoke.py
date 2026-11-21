@@ -494,7 +494,7 @@ options = traffic.Options(
     extra_miners=0,
     bridge=True,
     # The C960 pool has its own seeded devnet case below; a testnet faucet only
-    # mints SCCP, so this run leaves the DEX branch off.
+    # mints ZQWX, so this run leaves the DEX branch off.
     dex=False,
     bridge_coins=1,
     bridge_claim_blocks=12,

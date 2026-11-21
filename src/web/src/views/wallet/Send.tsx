@@ -1,5 +1,5 @@
 /**
- * Sending SCCP: build, review, sign, submit.
+ * Sending ZQWX: build, review, sign, submit.
  *
  * The review step is not decoration. It shows every field the signature covers,
  * plus the txid those fields hash to, so what is approved is what is signed --
@@ -53,7 +53,7 @@ interface SendProps {
   network: string;
   account: AccountView;
   minFee: number;
-  /** Every token this network settles, SCCP first. */
+  /** Every token this network settles, ZQWX first. */
   tokens: Token[];
   /** The next unused nonce, or `null` while the chain is authoritative. */
   pendingNonce: number | null;
@@ -62,7 +62,7 @@ interface SendProps {
 }
 
 function feeText(minFee: number): string {
-  return formatAmount(minFee).replace(" SCCP", "").replace(/,/g, "");
+  return formatAmount(minFee).replace(" ZQWX", "").replace(/,/g, "");
 }
 
 export function SendPanel({
@@ -125,7 +125,7 @@ export function SendPanel({
     if (parsed.fee > nativeSpendable) {
       return `the fee is ${formatAmount(parsed.fee)}, but only ${formatAmount(
         nativeSpendable,
-      )} SCCP is spendable`;
+      )} ZQWX is spendable`;
     }
     if (token.native) {
       if (parsed.amount + parsed.fee > spendable) {
@@ -142,7 +142,7 @@ export function SendPanel({
         parsed.amount,
         token.symbol,
         token.decimals,
-      )} plus its SCCP fee`;
+      )} plus its ZQWX fee`;
     }
     return null;
   })();
@@ -180,7 +180,7 @@ export function SendPanel({
         to: String(review.payload.to),
         amount: parsed.amount,
         asset: token?.asset ?? null,
-        symbol: token?.symbol ?? "SCCP",
+        symbol: token?.symbol ?? "ZQWX",
         fee: parsed.fee,
         nonce: signed.nonce,
         submittedAt: Date.now(),
@@ -206,7 +206,7 @@ export function SendPanel({
       title="Send"
       subtitle={`${formatTokenAmount(
         spendable,
-        token?.symbol ?? "SCCP",
+        token?.symbol ?? "ZQWX",
         token?.decimals ?? 8,
       )} spendable · next nonce ${formatInteger(nonce)}`}
     >
@@ -261,7 +261,7 @@ export function SendPanel({
       )}
       <View style={styles.row}>
         <TextInput
-          label={`Amount (${token?.symbol ?? "SCCP"})`}
+          label={`Amount (${token?.symbol ?? "ZQWX"})`}
           mode="outlined"
           keyboardType="decimal-pad"
           value={amount}
@@ -269,7 +269,7 @@ export function SendPanel({
           style={styles.half}
         />
         <TextInput
-          label="Fee (SCCP)"
+          label="Fee (ZQWX)"
           mode="outlined"
           keyboardType="decimal-pad"
           value={fee}
@@ -291,7 +291,7 @@ export function SendPanel({
       </View>
       <HelperText type={problem === null ? "info" : "error"} visible>
         {problem ??
-          `Up to ${token?.decimals ?? 8} decimals. The fee is always paid in SCCP; the network rejects anything below ${formatAmount(
+          `Up to ${token?.decimals ?? 8} decimals. The fee is always paid in ZQWX; the network rejects anything below ${formatAmount(
             minFee,
           )}.`}
       </HelperText>
@@ -324,12 +324,12 @@ export function SendPanel({
             <Mono>{String(review.payload.to)}</Mono>
           </KeyValue>
           <KeyValue label="Asset" mono>
-            {review.payload.asset === undefined ? "SCCP (native)" : (token?.symbol ?? "variant asset")}
+            {review.payload.asset === undefined ? "ZQWX (native)" : (token?.symbol ?? "variant asset")}
           </KeyValue>
           <KeyValue label="Amount" mono>
             {formatTokenAmount(
               Number(review.payload.amount),
-              token?.symbol ?? "SCCP",
+              token?.symbol ?? "ZQWX",
               token?.decimals ?? 8,
             )}
           </KeyValue>

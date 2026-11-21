@@ -29,7 +29,7 @@ Make sure you are using python3 with your venv.
 | Throughput | cumulative transactions, transactions per block, arrival rate, block interval |
 | Confirmation speed | interval distribution, blocks-settled-within-x, retargets |
 | Transactions | the type mix and the busiest senders |
-| Bridge and DEX | HTLC lifecycles, pool actions, SCCP named in the payload |
+| Bridge and DEX | HTLC lifecycles, pool actions, ZQWX named in the payload |
 | Transfer graph | directed wallet-to-wallet graph, synthetic wallets highlighted |
 | Token distribution | tokens per wallet, largest wallets |
 | Synthetic balances | stacked area of the ten bot wallets over time |
@@ -68,8 +68,8 @@ few megabytes on a busy chain.
 * **Balances are reconstructed, then anchored.** The synthetic-wallet history is rebuilt
   from every native leg the sampled bodies carry: a transfer debits its sender and credits
   its recipient, an HTLC lock escrows `amount` and its claim or refund releases it, pool
-  creation and deposits debit the SCCP side, a native-in swap debits `amount_in`, and every
-  transaction's fee is paid in SCCP. A removal's payout and a variant-in swap's SCCP output
+  creation and deposits debit the ZQWX side, a native-in swap debits `amount_in`, and every
+  transaction's fee is paid in ZQWX. A removal's payout and a variant-in swap's ZQWX output
   are a share of the reserves, and a close whose lock predates the sample carries only an
   id, so none of their amounts is recoverable; they are counted and left to the anchor. The
   gap printed above the chart is measured *before* that anchor is applied: it is what each

@@ -48,7 +48,7 @@ export function CreatePanel({
   if (tokenA === undefined || tokenB === undefined) {
     return (
       <Section title="Create pool" subtitle="a pair needs a variant token">
-        <EmptyState>This network has no non-native token to pair with SCCP.</EmptyState>
+        <EmptyState>This network has no non-native token to pair with ZQWX.</EmptyState>
       </Section>
     );
   }
@@ -76,18 +76,18 @@ export function CreatePanel({
     if (parsedA <= 0 || parsedB <= 0) return "both initial amounts must be positive";
     if (shares <= 0) return "the initial deposit is too small to mint a share";
     if (tokenA.native && parsedA + fee > tokenBalance(account, tokenA)) {
-      return `the SCCP side plus fee exceeds the ${formatTokenAmount(tokenBalance(account, tokenA), "SCCP")} balance`;
+      return `the ZQWX side plus fee exceeds the ${formatTokenAmount(tokenBalance(account, tokenA), "ZQWX")} balance`;
     }
     if (!tokenA.native && parsedA > tokenBalance(account, tokenA)) {
       return `${tokenA.symbol} balance is too small`;
     }
     if (tokenB.native && parsedB + fee > tokenBalance(account, tokenB)) {
-      return `the SCCP side plus fee exceeds the ${formatTokenAmount(tokenBalance(account, tokenB), "SCCP")} balance`;
+      return `the ZQWX side plus fee exceeds the ${formatTokenAmount(tokenBalance(account, tokenB), "ZQWX")} balance`;
     }
     if (!tokenB.native && parsedB > tokenBalance(account, tokenB)) {
       return `${tokenB.symbol} balance is too small`;
     }
-    if (account.balance < fee) return "the wallet needs SCCP for the network fee";
+    if (account.balance < fee) return "the wallet needs ZQWX for the network fee";
     return null;
   })();
 
@@ -113,7 +113,7 @@ export function CreatePanel({
         ],
         ["LP shares minted", formatInteger(shares)],
         ["Initial price", `1 ${tokenA.symbol} = ${(parsedB / parsedA).toFixed(6)} ${tokenB.symbol}`],
-        ["Fee", formatTokenAmount(fee, "SCCP")],
+        ["Fee", formatTokenAmount(fee, "ZQWX")],
         ["Nonce", formatInteger(nonce)],
       ],
     });

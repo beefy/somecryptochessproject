@@ -780,7 +780,7 @@ function Table({
             }))}
           />
         )}
-        <KeyValue label="SCCP balance">
+        <KeyValue label="ZQWX balance">
           {`${formatAmount(accountData.balance)} spendable · ${formatAmount(accountData.bonded)} bonded`}
         </KeyValue>
         {tokens
@@ -813,8 +813,8 @@ function Table({
           {prizeToken === undefined
             ? "This network has no token metadata loaded yet."
             : prizeToken.native
-              ? "Winning standard proofs mint native SCCP; the bond and every fee are SCCP too."
-              : `Winning ${variantLabel(variant)} proofs mint ${prizeToken.symbol}; the bond and every fee are still paid in SCCP.`}
+              ? "Winning standard proofs mint native ZQWX; the bond and every fee are ZQWX too."
+              : `Winning ${variantLabel(variant)} proofs mint ${prizeToken.symbol}; the bond and every fee are still paid in ZQWX.`}
         </HelperText>
         <View style={styles.actions}>
           <Button

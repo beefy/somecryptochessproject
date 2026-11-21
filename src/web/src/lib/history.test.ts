@@ -159,7 +159,7 @@ describe("swap rows", () => {
           type: "swap",
           payload: { pool_id: POOL, amount_in: 10_0000_0000, min_amount_out: 2_450_0000_0000 },
         }),
-        // Token in: the pool pays native SCCP, and this signer accepted no floor.
+        // Token in: the pool pays native ZQWX, and this signer accepted no floor.
         tx({
           from: ADDRESS,
           nonce: 8,

@@ -196,7 +196,7 @@ export interface RevealFields {
   publicKeyHex: string;
 }
 
-/** The `transfer` transaction that moves SCCP between accounts. */
+/** The `transfer` transaction that moves ZQWX between accounts. */
 export interface TransferFields {
   network: string;
   sender: string;
@@ -207,7 +207,7 @@ export interface TransferFields {
   /** Base units (one token unit = 10^-decimals), always positive. */
   amount: number;
   publicKeyHex: string;
-  /** A non-native asset id; omit for SCCP so the v1 payload stays byte-identical. */
+  /** A non-native asset id; omit for ZQWX so the v1 payload stays byte-identical. */
   asset?: string | null;
 }
 
@@ -217,7 +217,7 @@ export interface TransferFields {
  *
  * The chain's `_check_unknown_keys` makes this set strict, so nothing else may
  * be added here without a protocol change (`docs/design/BIG_PICTURE.md` section 5).
- * A token transfer still pays its fee in native SCCP.
+ * A token transfer still pays its fee in native ZQWX.
  */
 export function buildTransfer(fields: TransferFields): Transaction {
   if (!Number.isSafeInteger(fields.amount) || fields.amount <= 0) {
@@ -274,7 +274,7 @@ export interface CreatePoolFields {
   sender: string;
   nonce: number;
   fee: number;
-  /** `null` means native SCCP. The builder orders the pair itself. */
+  /** `null` means native ZQWX. The builder orders the pair itself. */
   assetA: string | null;
   amountA: number;
   assetB: string | null;
@@ -378,7 +378,7 @@ export interface SwapFields {
   nonce: number;
   fee: number;
   poolId: string;
-  /** `null` means native SCCP. */
+  /** `null` means native ZQWX. */
   assetIn: string | null;
   amountIn: number;
   minAmountOut: number;
@@ -429,7 +429,7 @@ export interface HtlcLockFields {
   beneficiary: string;
   amount: number;
   publicKeyHex: string;
-  /** A non-native asset id; omit for native SCCP. */
+  /** A non-native asset id; omit for native ZQWX. */
   asset?: string | null;
 }
 

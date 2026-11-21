@@ -64,7 +64,7 @@ _DEFAULTS: Final[dict[str, tuple[int, str, str | None, str | None, int, int]]] =
     # network: (chain id, name, explorer, default rpc, confirmations, margin)
     #
     # The SCCP margin must exceed `reorg_depth` (10 on every shipped network):
-    # the maker can only safely claim ETH after the taker's SCCP claim is final,
+    # the maker can only safely claim ETH after the taker's ZQWX claim is final,
     # so a four-block margin on testnet would leave no time to act. Twenty-four
     # blocks leaves the depth-11 wait plus a buffer on both test networks.
     "devnet": (

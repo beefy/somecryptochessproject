@@ -123,7 +123,7 @@ services:
       - /stack
       - --node
       - http://node:8645
-    # Testnet genesis already creates the SCCP/C960 pool and a completed SCCP
+    # Testnet genesis already creates the ZQWX/C960 pool and a completed ZQWX
     # HTLC, so this normally just reports them. It remains the fallback creator
     # for a custom chain whose genesis does not seed those records.
     volumes:

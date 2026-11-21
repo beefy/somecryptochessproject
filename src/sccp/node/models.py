@@ -49,7 +49,7 @@ class NodeStatus(ProtocolModel):
     mempool: MempoolStatus
     minted: int = Field(default=0, ge=0)
     burned: int = Field(default=0, ge=0)
-    """Native SCCP destroyed by timeout and witness slashes.
+    """Native ZQWX destroyed by timeout and witness slashes.
 
     The field is informational accounting: the burn is already committed by the
     reduced balances in ``state_root``. A state restored from a snapshot written
@@ -70,7 +70,7 @@ class NodeStatus(ProtocolModel):
 class HtlcView(ProtocolModel):
     """One SCCP-side hash time-locked contract.
 
-    ``asset`` is ``null`` for native SCCP and a 64-hex asset id for a variant
+    ``asset`` is ``null`` for native ZQWX and a 64-hex asset id for a variant
     token. ``status`` is the only mutable field: the id, hashlock, timelock and
     beneficiary are fixed when the lock is mined, and closing records the height
     that claimed or refunded it.
@@ -116,13 +116,13 @@ class BridgeView(ProtocolModel):
 
 
 class OrderView(ProtocolModel):
-    """One open sell-SCCP order from ``GET /v1/orders``."""
+    """One open sell-ZQWX order from ``GET /v1/orders``."""
 
     order_id: str
     network: str = Field(min_length=1)
     maker_sccp: str = Field(min_length=1)
     maker_eth: str = Field(min_length=1)
-    give_asset: Literal["SCCP"] = "SCCP"
+    give_asset: Literal["ZQWX"] = "ZQWX"
     give_amount: int = Field(gt=0)
     want_asset: Literal["ETH"] = "ETH"
     want_amount: str = Field(pattern=r"^[1-9][0-9]*$", max_length=78)
@@ -440,7 +440,7 @@ class GameList(ProtocolModel):
 class PoolView(ProtocolModel):
     """One DEX pool as ``GET /v1/pools`` reports it.
 
-    ``asset_a``/``asset_b`` are ``null`` for native SCCP and a 64-hex asset id
+    ``asset_a``/``asset_b`` are ``null`` for native ZQWX and a 64-hex asset id
     otherwise. ``shares`` maps every LP address to its pool shares, which is what
     lets a wallet show its own position without a second request.
     """

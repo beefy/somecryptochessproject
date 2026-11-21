@@ -26,7 +26,7 @@ The reference implementation covers the full wallet-to-block path:
   difficulty retargeting, fork choice, reorg handling and SQLite persistence
   with snapshot-checked replay.
 - Variant assets: Chess960 proofs mint C960, an asset with its own supply
-  counter, cap and halving schedule beside native SCCP.
+  counter, cap and halving schedule beside native ZQWX.
 - The native DEX (`create_pool`, `add_liquidity`, `remove_liquidity`, `swap`
   with `min_amount_out`) and the ETH↔SCCP HTLC bridge (`htlc_lock`,
   `htlc_claim`, `htlc_refund`, `contracts/EthHtlc.sol`, a signed

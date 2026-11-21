@@ -13,10 +13,10 @@ export function orderBookRow(order: OrderView): ReactNode {
     <View style={styles.order} key={order.order_id}>
       <View style={styles.orderText}>
         <Text variant="titleSmall">
-          {formatTokenAmount(order.give_amount, "SCCP")} for {formatWei(order.want_amount, 6)} ETH
+          {formatTokenAmount(order.give_amount, "ZQWX")} for {formatWei(order.want_amount, 6)} ETH
         </Text>
         <Text variant="bodySmall" style={styles.muted}>
-          {orderPrice(order)} ETH / SCCP · maker {shortAddress(order.maker_sccp)}
+          {orderPrice(order)} ETH / ZQWX · maker {shortAddress(order.maker_sccp)}
         </Text>
         <Text variant="bodySmall" style={styles.muted}>
           expires {new Date(order.expiry * 1000).toLocaleString()} · order{" "}

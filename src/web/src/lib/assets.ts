@@ -2,10 +2,10 @@
  * Tokens, variants and account balances.
  *
  * The network decides both the chess variants it settles and the asset each one
- * mints (`GET /v1/params`). Standard chess is native SCCP; every other variant
+ * mints (`GET /v1/params`). Standard chess is native ZQWX; every other variant
  * has an immutable asset id and a printable symbol such as C960. The explorer and
  * wallet keep those two namespaces apart: a transfer of C960 pays its fee in
- * SCCP, and an account's `assets` map is keyed by the asset id, never a nickname.
+ * ZQWX, and an account's `assets` map is keyed by the asset id, never a nickname.
  */
 
 import type {
@@ -15,11 +15,11 @@ import type {
   VariantParams,
 } from "../types";
 
-/** One tradeable token, native SCCP included. */
+/** One tradeable token, native ZQWX included. */
 export interface Token {
   /** The variant whose proofs mint this token. */
   variant: VariantName;
-  /** `null` for native SCCP; a 64-hex asset id otherwise. */
+  /** `null` for native ZQWX; a 64-hex asset id otherwise. */
   asset: string | null;
   symbol: string;
   name: string;
@@ -29,10 +29,10 @@ export interface Token {
   minPlies: number;
 }
 
-const SCCP: Token = {
+const ZQWX: Token = {
   variant: "standard",
   asset: null,
-  symbol: "SCCP",
+  symbol: "ZQWX",
   name: "Standard chess",
   decimals: 8,
   native: true,
@@ -54,11 +54,11 @@ export function tokenForVariantParams(variant: VariantParams): Token {
   };
 }
 
-/** Every token this network supports, native SCCP first. */
+/** Every token this network supports, native ZQWX first. */
 export function tokensFor(params: NetworkParams | undefined): Token[] {
-  if (params === undefined) return [SCCP];
+  if (params === undefined) return [ZQWX];
   const tokens = (params.variants ?? []).map(tokenForVariantParams);
-  if (!tokens.some((token) => token.native)) tokens.unshift(SCCP);
+  if (!tokens.some((token) => token.native)) tokens.unshift(ZQWX);
   return tokens.sort((left, right) => Number(right.native) - Number(left.native));
 }
 
@@ -70,7 +70,7 @@ export function tokenForVariant(
   return tokens.find((token) => token.variant === variant);
 }
 
-/** The token an asset id names; `null` is native SCCP. */
+/** The token an asset id names; `null` is native ZQWX. */
 export function tokenForAsset(
   tokens: readonly Token[],
   asset: string | null | undefined,
@@ -101,7 +101,7 @@ export function variantLabel(variant: VariantName | null | undefined): string {
 
 /** A short label suitable for a table cell or pill. */
 export function variantShort(variant: VariantName | null | undefined): string {
-  if (variant === "standard") return "SCCP";
+  if (variant === "standard") return "ZQWX";
   if (variant === "chess960") return "C960";
   return variantLabel(variant);
 }

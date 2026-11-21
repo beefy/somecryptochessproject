@@ -251,7 +251,7 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     ) -> OrderList:
         """List open off-consensus orders, optionally filtered by maker or asset.
 
-        An empty string or omitted asset means native SCCP. The list is a view
+        An empty string or omitted asset means native ZQWX. The list is a view
         of the node's current order book snapshot; it is not consensus data.
         """
         return service.order_list(
@@ -363,7 +363,7 @@ def create_app(service: NodeService, *, web_root: Path | None = None) -> FastAPI
     def pools() -> PoolList:
         """List every AMM pool with its reserves, fee and LP shares.
 
-        ``asset_a`` of ``null`` means native SCCP. The values are the canonical
+        ``asset_a`` of ``null`` means native ZQWX. The values are the canonical
         pool state the DEX transactions act on, so a client can quote a swap
         from this response alone.
         """

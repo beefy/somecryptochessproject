@@ -282,7 +282,7 @@ class NodeService:
     bridge: EthEnvironment | None = None
     """The Ethereum environment this node advertises; resolved from the process env."""
     orders: OrderBook = field(default_factory=OrderBook)
-    """The off-consensus ETH/SCCP order book and pending takes."""
+    """The off-consensus ETH/ZQWX order book and pending takes."""
     write_lock: threading.RLock = field(default_factory=threading.RLock, repr=False, compare=False)
     fanout: int = MAX_FANOUT
     max_sync_blocks: int = 512
@@ -496,7 +496,7 @@ class NodeService:
         give_asset: str | None = None,
         want_asset: str | None = None,
     ) -> OrderList:
-        """Open orders, best SCCP price first; expired orders are pruned."""
+        """Open orders, best ZQWX price first; expired orders are pruned."""
         rows = self.orders.list(
             self.clock(),
             maker_sccp=maker_sccp,
@@ -530,7 +530,7 @@ class NodeService:
 
         The node also applies the wall-clock safety rule: the SCCP leg must
         expire before the ETH leg with the environment's margin. The maker checks
-        this again before locking SCCP, but rejecting an obviously unsafe take at
+        this again before locking ZQWX, but rejecting an obviously unsafe take at
         admission keeps a malicious taker from filling the book with traps.
         """
         if take.order_id != digest:

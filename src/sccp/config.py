@@ -86,7 +86,7 @@ class VariantParams(BaseModel):
     """One chess variant and the asset its settled proofs mint.
 
     Standard chess is the network's native asset: ``asset`` is ``None`` and the
-    reward is SCCP. Every other variant names a derived asset id (see
+    reward is ZQWX. Every other variant names a derived asset id (see
     :data:`CHESS960_ASSET_ID`) and mints only that asset.
     """
 
@@ -133,7 +133,7 @@ class VariantParams(BaseModel):
                 f"{', '.join(sorted(supported_rules()))}"
             )
         if self.name == STANDARD_VARIANT and self.asset is not None:
-            raise ConfigError("the standard variant is native SCCP with no derived asset")
+            raise ConfigError("the standard variant is native ZQWX with no derived asset")
         if self.name != STANDARD_VARIANT and self.asset is None:
             raise ConfigError(f"variant {self.name!r} needs a derived asset id")
         if (self.max_supply is None) != (self.halving_interval is None):
@@ -167,7 +167,7 @@ CHESS960: Final = VariantParams(
     max_games_per_block=1,
     opening_book="none",
 )
-"""Fischer Random with the same issuance schedule as SCCP, in its own asset."""
+"""Fischer Random with the same issuance schedule as ZQWX, in its own asset."""
 
 
 class NetworkParams(BaseModel):
@@ -262,8 +262,8 @@ class NetworkParams(BaseModel):
         return tuple(candidate.name for candidate in self.variants)
 
     def variant_for_asset(self, asset: str) -> VariantParams:
-        """Resolve the variant that mints ``asset`` (native SCCP is standard)."""
-        if asset == "SCCP":
+        """Resolve the variant that mints ``asset`` (native ZQWX is standard)."""
+        if asset == "ZQWX":
             return self.variant(STANDARD_VARIANT)
         for candidate in self.variants:
             if candidate.asset == asset:
@@ -313,8 +313,8 @@ class NetworkParams(BaseModel):
             name=STANDARD_VARIANT,
             rules="chess",
             asset=None,
-            symbol="SCCP",
-            display_name="SCCP",
+            symbol="ZQWX",
+            display_name="ZQWX",
             subsidy=self.subsidy,
             halving_interval=self.halving_interval,
             max_supply=self.max_supply,

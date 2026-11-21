@@ -233,12 +233,12 @@ export function fetchHtlcs(
   return request<HtlcList>(`/v1/htlcs${encoded === "" ? "" : `?${encoded}`}`, { signal });
 }
 
-/** `GET /v1/htlcs/{htlc_id}`: one SCCP lock. */
+/** `GET /v1/htlcs/{htlc_id}`: one ZQWX lock. */
 export function fetchHtlc(htlcId: string, signal?: AbortSignal): Promise<HtlcView> {
   return request<HtlcView>(`/v1/htlcs/${encodeURIComponent(htlcId)}`, { signal });
 }
 
-/** `GET /v1/orders`: open sell-SCCP orders. */
+/** `GET /v1/orders`: open sell-ZQWX orders. */
 export function fetchOrders(
   filters: { makerSccp?: string } = {},
   signal?: AbortSignal,
@@ -254,7 +254,7 @@ export function fetchOrder(orderId: string, signal?: AbortSignal): Promise<Order
   return request<OrderDetail>(`/v1/orders/${encodeURIComponent(orderId)}`, { signal });
 }
 
-/** `POST /v1/orders`: publish a signed sell-SCCP order. */
+/** `POST /v1/orders`: publish a signed sell-ZQWX order. */
 export function submitOrder(
   order: Omit<OrderView, "order_id">,
   signal?: AbortSignal,

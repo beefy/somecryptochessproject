@@ -71,7 +71,7 @@ function HeaderRow({ wide }: { wide: boolean }): ReactNode {
   );
 }
 
-/** One line of proof counts, e.g. `2 SCCP · 1 C960`. */
+/** One line of proof counts, e.g. `2 ZQWX · 1 C960`. */
 function variantCounts(block: BlockSummary): string {
   const entries = Object.entries(block.variants ?? {});
   if (entries.length === 0) return "";

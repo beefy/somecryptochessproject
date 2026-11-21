@@ -1,6 +1,6 @@
-"""The off-consensus ETH/SCCP order book.
+"""The off-consensus ETH/ZQWX order book.
 
-An order is a maker's signed promise to sell SCCP for ETH; a take is a taker's
+An order is a maker's signed promise to sell ZQWX for ETH; a take is a taker's
 signed announcement that the ETH leg is locked. Neither is consensus state: the
 book holds no funds and can be mirrored, and losing it only costs a re-post. The
 signature is the same hybrid scheme and canonical domain hash the ledger uses, so
@@ -46,12 +46,12 @@ class OrderError(ProtocolError):
 
 
 class OrderBody(ProtocolModel):
-    """The signed part of a sell-SCCP order."""
+    """The signed part of a sell-ZQWX order."""
 
     network: str
     maker_sccp: str
     maker_eth: str
-    give_asset: Literal["SCCP"] = "SCCP"
+    give_asset: Literal["ZQWX"] = "ZQWX"
     give_amount: int
     want_asset: Literal["ETH"] = "ETH"
     want_amount: str = Field(min_length=1, max_length=78)
@@ -139,7 +139,7 @@ def sccp_timelock_height(
     """The SCCP height a taker may name for an ETH lock that expires at ``eth_timelock``.
 
     The SCCP leg must expire before the ETH leg by ``margin`` blocks, so the
-    maker still has time to claim ETH after a last-moment SCCP claim. The same
+    maker still has time to claim ETH after a last-moment ZQWX claim. The same
     rule is implemented in the browser and enforced again by the node.
     """
     if target_block_seconds <= 0:
@@ -173,7 +173,7 @@ def sign_order(
     expiry: int,
     nonce: int,
 ) -> Order:
-    """Build and sign a sell-SCCP order with ``keypair``."""
+    """Build and sign a sell-ZQWX order with ``keypair``."""
     maker = encode_address(keypair.public_key_bytes, params)
     body = OrderBody(
         network=params.network_id,
@@ -348,7 +348,7 @@ class OrderBook:
         give_asset: str | None = None,
         want_asset: str | None = None,
     ) -> tuple[tuple[str, Order], ...]:
-        """Open orders, best-priced SCCP first and then oldest first."""
+        """Open orders, best-priced ZQWX first and then oldest first."""
         self._prune(now)
         rows = [
             (digest, order)

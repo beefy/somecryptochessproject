@@ -78,13 +78,13 @@ export function SwapPanel({
     if (amountIn <= 0) return "the input amount must be positive";
     if (quote <= 0) return "that input is too small to produce an output";
     if (tokenIn.native && amountIn + fee > spendable) {
-      return `this needs ${formatTokenAmount(amountIn + fee, "SCCP")}; the wallet holds ${formatTokenAmount(spendable, "SCCP")}`;
+      return `this needs ${formatTokenAmount(amountIn + fee, "ZQWX")}; the wallet holds ${formatTokenAmount(spendable, "ZQWX")}`;
     }
     if (!tokenIn.native && amountIn > spendable) {
       return `${tokenIn.symbol} balance is ${formatTokenAmount(spendable, tokenIn.symbol, tokenIn.decimals)}`;
     }
     if (account.balance < fee) {
-      return `the SCCP fee is ${formatTokenAmount(fee, "SCCP")}, but only ${formatTokenAmount(account.balance, "SCCP")} is spendable`;
+      return `the ZQWX fee is ${formatTokenAmount(fee, "ZQWX")}, but only ${formatTokenAmount(account.balance, "ZQWX")} is spendable`;
     }
     return null;
   })();
@@ -109,7 +109,7 @@ export function SwapPanel({
         ["Estimated receive", formatTokenAmount(quote, tokenOut.symbol, tokenOut.decimals)],
         ["Minimum receive", formatTokenAmount(minimumOut, tokenOut.symbol, tokenOut.decimals)],
         ["Slippage", `${slippageBps / 100}%`],
-        ["Fee", formatTokenAmount(fee, "SCCP")],
+        ["Fee", formatTokenAmount(fee, "ZQWX")],
         ["Nonce", formatInteger(nonce)],
       ],
     });
@@ -168,7 +168,7 @@ export function SwapPanel({
         Review swap
       </Button>
       <HelperText type="info" visible>
-        The network fee of {formatTokenAmount(fee, "SCCP")} always comes from the SCCP balance, even
+        The network fee of {formatTokenAmount(fee, "ZQWX")} always comes from the ZQWX balance, even
         when the input is {tokenIn.symbol}.
       </HelperText>
     </Section>

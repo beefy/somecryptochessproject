@@ -1,5 +1,5 @@
 /**
- * Decimal SCCP in, integer base units out.
+ * Decimal ZQWX in, integer base units out.
  *
  * Amounts on the wire are integers, so this is the one place a typed number is
  * scaled. Getting it wrong sends a hundred-millionth of what was meant, which is
@@ -21,11 +21,11 @@ describe("parseAmount", () => {
 
   it("refuses anything that would round", () => {
     expect(() => parseAmount("1.123456789")).toThrow(/8 decimals/);
-    expect(() => parseAmount("1e8")).toThrow(/not an SCCP amount/);
-    expect(() => parseAmount("-1")).toThrow(/not an SCCP amount/);
-    expect(() => parseAmount("")).toThrow(/not an SCCP amount/);
-    expect(() => parseAmount("1.")).toThrow(/not an SCCP amount/);
-    expect(() => parseAmount("0.1.2")).toThrow(/not an SCCP amount/);
+    expect(() => parseAmount("1e8")).toThrow(/not a ZQWX amount/);
+    expect(() => parseAmount("-1")).toThrow(/not a ZQWX amount/);
+    expect(() => parseAmount("")).toThrow(/not a ZQWX amount/);
+    expect(() => parseAmount("1.")).toThrow(/not a ZQWX amount/);
+    expect(() => parseAmount("0.1.2")).toThrow(/not a ZQWX amount/);
   });
 
   it("refuses an amount too large to be exact", () => {
@@ -35,14 +35,14 @@ describe("parseAmount", () => {
   it("round-trips through formatAmount", () => {
     for (const text of ["0.00001", "1", "12.34", "1,000.5"]) {
       expect(formatAmount(parseAmount(text))).toBe(
-        text.includes(",") ? "1,000.5 SCCP" : `${text} SCCP`,
+        text.includes(",") ? "1,000.5 ZQWX" : `${text} ZQWX`,
       );
     }
   });
 
   it("formats a faucet grant in whole coins, not base units", () => {
-    expect(formatCoins(1000)).toBe("1,000 SCCP");
-    expect(formatCoins(1)).toBe("1 SCCP");
+    expect(formatCoins(1000)).toBe("1,000 ZQWX");
+    expect(formatCoins(1)).toBe("1 ZQWX");
     expect(formatCoins(null)).toBe("-");
   });
 });

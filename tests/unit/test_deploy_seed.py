@@ -1,4 +1,4 @@
-"""The deploy-time demo seed: one bridge leg and one SCCP/C960 pool."""
+"""The deploy-time demo seed: one bridge leg and one ZQWX/C960 pool."""
 
 from __future__ import annotations
 
@@ -190,7 +190,7 @@ def test_a_fresh_deploy_already_has_the_genesis_bridge_and_pool(
         report = seed.seed_once(client, miners=(miner,), options=options)
 
     assert report.bridge == "bridge: demo leg already on chain"
-    assert report.dex.startswith("dex: SCCP/C960 pool ")
+    assert report.dex.startswith("dex: ZQWX/C960 pool ")
     assert report.dex.endswith("already exists")
 
     liquidity = seed.demo_wallet(0)
@@ -230,7 +230,7 @@ def test_the_bridge_leg_is_not_duplicated_when_the_seeder_restarts(
         second = seed.seed_once(client, miners=(miner,), options=options)
 
     assert second.bridge == "bridge: demo leg already on chain"
-    assert second.dex.startswith("dex: SCCP/C960 pool ")
+    assert second.dex.startswith("dex: ZQWX/C960 pool ")
     assert "already exists" in second.dex
     assert len(node.mempool.projection.htlcs) == 1
 

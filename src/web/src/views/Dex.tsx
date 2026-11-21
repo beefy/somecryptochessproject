@@ -8,7 +8,7 @@
  * applies, but a quote is only a preview: the transaction carries a minimum
  * output and the node recomputes the fill from its own reserves.
  *
- * Pairs are not hard-coded to SCCP/C960. The token list comes from
+ * Pairs are not hard-coded to ZQWX/C960. The token list comes from
  * `GET /v1/params`, so a network that adds another variant gets another pair in
  * the same pickers without a web release.
  */
@@ -42,8 +42,8 @@ export function DexPage({ view }: { view: DexTab }): ReactNode {
         <StatusPill label="on-chain AMM" tone="info" />
       </View>
       <Text variant="bodyMedium" style={styles.muted}>
-        Swap SCCP and the network&apos;s variant tokens, or provide liquidity to a
-        constant-product pool. Every action is a signed transaction; fees are paid in SCCP.
+        Swap ZQWX and the network&apos;s variant tokens, or provide liquidity to a
+        constant-product pool. Every action is a signed transaction; fees are paid in ZQWX.
       </Text>
       <WalletGate purpose="the DEX">
         <Desk view={view} />

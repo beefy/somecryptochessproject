@@ -1,4 +1,4 @@
-"""The ETH<->SCCP bridge's SCCP leg and per-environment Ethereum settings."""
+"""The ETH<->ZQWX bridge's SCCP leg and per-environment Ethereum settings."""
 
 from __future__ import annotations
 

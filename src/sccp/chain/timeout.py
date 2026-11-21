@@ -84,7 +84,7 @@ STALL_QUORUM_BPS: Final = 3_000
 STALL_BURN_BPS: Final = 2_000
 """The rest is destroyed: it is never credited to any account.
 
-At the mainnet bond (500 SCCP) the charge is 50 SCCP, so the claimant receives
+At the mainnet bond (500 ZQWX) the charge is 50 ZQWX, so the claimant receives
 25, each of the three signing witnesses 5, and 10 leave circulation. Integer
 rounding stays inside the burned share, so the credits always sum to less than
 the debit.

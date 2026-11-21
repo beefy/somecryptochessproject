@@ -48,7 +48,7 @@ export function AccountView({ address }: { address: string }): ReactNode {
         </View>
       </View>
 
-      <Section title="Balances" subtitle="each variant mints its own token; fees stay in SCCP">
+      <Section title="Balances" subtitle="each variant mints its own token; fees stay in ZQWX">
         {tokens.map((token) => {
           const spendable = tokenBalance(view, token);
           const immature = tokenImmature(view, token);
@@ -70,7 +70,7 @@ export function AccountView({ address }: { address: string }): ReactNode {
                   <KeyValue label="Bonded" mono>
                     {formatAmount(view.bonded)}
                   </KeyValue>
-                  <KeyValue label="Total SCCP" mono>
+                  <KeyValue label="Total ZQWX" mono>
                     {formatAmount(view.total)}
                   </KeyValue>
                 </>
@@ -111,7 +111,7 @@ export function AccountView({ address }: { address: string }): ReactNode {
         )}
       </Section>
 
-      <Section title="Bridge locks" subtitle="SCCP hash-time-locked contracts involving this account">
+      <Section title="Bridge locks" subtitle="ZQWX hash-time-locked contracts involving this account">
         {view.htlcs.length === 0 ? (
           <Text variant="bodyMedium" style={styles.muted}>
             No open or closed HTLC names this account.

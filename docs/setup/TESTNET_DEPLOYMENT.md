@@ -37,9 +37,9 @@ Testnet genesis already contains the demo DEX and bridge activity, so a fresh
 deploy opens with a useful `GET /v1/pools` and `GET /v1/htlcs` without waiting
 for a Chess960 proof:
 
-- genesis allocates 5 SCCP and 5 C960 to a published demo liquidity wallet and
-  creates the SCCP/C960 pool from them, with the LP shares held by that wallet;
-- genesis also records a completed 1-SCCP HTLC between two published demo
+- genesis allocates 5 ZQWX and 5 C960 to a published demo liquidity wallet and
+  creates the ZQWX/C960 pool from them, with the LP shares held by that wallet;
+- genesis also records a completed 1-ZQWX HTLC between two published demo
   wallets, using the published demo preimage, so the Bridge **Activity** tab is
   populated at height 0;
 - the `seed` service is now an idempotent check: it detects the existing pool and

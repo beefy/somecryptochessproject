@@ -293,7 +293,7 @@ def _require_trade_funds(
     fee: int,
     what: str,
 ) -> None:
-    """Require the fee in SCCP and ``amount`` of ``asset``, native or token."""
+    """Require the fee in ZQWX and ``amount`` of ``asset``, native or token."""
     _require_balance(state, address, fee, "the fee")
     if asset == dex.NATIVE_ASSET:
         _require_balance(state, address, amount + fee, what)
@@ -307,11 +307,11 @@ def _require_trade_funds(
 
 
 def _field_trade_asset(payload: Mapping[str, object], key: str, params: NetworkParams) -> str:
-    """Read a pool side: an omitted key is native SCCP, a value is an asset id."""
+    """Read a pool side: an omitted key is native ZQWX, a value is an asset id."""
     value = payload.get(key)
     if value is None:
         if key in payload:
-            _fail(TxFailure.SCHEMA, f"native SCCP must omit payload field {key!r}")
+            _fail(TxFailure.SCHEMA, f"native ZQWX must omit payload field {key!r}")
         return dex.NATIVE_ASSET
     if not isinstance(value, str) or not value:
         _fail(TxFailure.SCHEMA, f"payload field {key!r} must be an asset id")
@@ -320,7 +320,7 @@ def _field_trade_asset(payload: Mapping[str, object], key: str, params: NetworkP
     except ConfigError as exc:
         _fail(TxFailure.TYPE, str(exc))
     if variant.native:
-        _fail(TxFailure.TYPE, f"native SCCP must omit payload field {key!r}")
+        _fail(TxFailure.TYPE, f"native ZQWX must omit payload field {key!r}")
     return value
 
 
@@ -388,8 +388,8 @@ def _validate_transfer(params: NetworkParams, state: State, tx: Transaction, hei
     except ConfigError as exc:
         _fail(TxFailure.TYPE, str(exc))
     if variant.native:
-        _fail(TxFailure.TYPE, "native SCCP transfers must omit the asset field")
-    # Fees stay in SCCP even when the transferred amount is a variant token.
+        _fail(TxFailure.TYPE, "native ZQWX transfers must omit the asset field")
+    # Fees stay in ZQWX even when the transferred amount is a variant token.
     _require_balance(state, tx.sender, tx.fee, "the fee")
     if state.asset_balance(tx.sender, asset) < amount:
         _fail(
@@ -605,7 +605,7 @@ def _validate_swap(params: NetworkParams, state: State, tx: Transaction, height:
         _fail(TxFailure.TYPE, f"unknown pool {pool_id}")
     asset_in = _field_trade_asset(tx.payload, "asset_in", params)
     if asset_in not in (pool.asset_a, pool.asset_b):
-        _fail(TxFailure.TYPE, f"{asset_in or 'SCCP'} is not a side of pool {pool_id}")
+        _fail(TxFailure.TYPE, f"{asset_in or 'ZQWX'} is not a side of pool {pool_id}")
     amount_in = _field_int(tx.payload, "amount_in", minimum=1)
     minimum_out = _field_int(tx.payload, "min_amount_out")
     if asset_in == pool.asset_a:
@@ -626,10 +626,10 @@ def _validate_swap(params: NetworkParams, state: State, tx: Transaction, height:
 def _require_htlc_close_fee(state: State, address: str, record: HtlcRecord, fee: int) -> None:
     """Require a fee, allowing a native HTLC's proceeds to pay it.
 
-    A bridge taker may hold no SCCP at all: the whole point is to buy some with
+    A bridge taker may hold no ZQWX at all: the whole point is to buy some with
     ETH. Requiring a pre-existing native balance would make the first swap
     impossible, so a native claim or refund may pay the network fee out of the
-    amount being released. A token HTLC still needs SCCP for the fee, exactly as
+    amount being released. A token HTLC still needs ZQWX for the fee, exactly as
     every other token transaction does.
     """
     available = state.spendable(address)
@@ -1076,7 +1076,7 @@ def apply_transaction(state: State, tx: Transaction, *, height: int) -> None:
     if not closes_htlc:
         # An HTLC close may pay its fee from the native amount it releases; the
         # applier debits it after crediting the escrow, so a taker who started
-        # with no SCCP can still claim. Every other type pays the fee up front.
+        # with no ZQWX can still claim. Every other type pays the fee up front.
         account.balance -= tx.fee
     account.nonce += 1
     if account.public_key is None:

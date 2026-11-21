@@ -194,8 +194,8 @@ def test_pgn_time_control_must_match_the_token(
     standard = VariantParams(
         name="standard",
         rules="chess",
-        symbol="SCCP",
-        display_name="SCCP",
+        symbol="ZQWX",
+        display_name="ZQWX",
         subsidy=TESTNET.subsidy,
         min_plies=TESTNET.min_plies,
         time_control_initial_ms=180_000,

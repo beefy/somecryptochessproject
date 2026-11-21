@@ -7,6 +7,20 @@ not itemised here.
 
 ## [Unreleased]
 
+### Changed
+
+- **The native token's ticker is `ZQWX`.** The consensus asset's `symbol` and
+  `display_name`, the API's `give_asset` constant, the genesis premine asset
+  alias and every fee, balance, cap, pool, order, bridge and UI string that
+  names the coin now say `ZQWX` instead of `SCCP`. Software and network
+  identity is unchanged: the Python package and CLI (`sccp`), the npm package,
+  the `SCCP_*` environment variables, the address HRPs (`sccp1…`, `sccpt1…`),
+  the `sccp/v1/...` signature domains and the explorer's own name. A client
+  that still spells the old symbol — a genesis allocation with
+  `"asset": "SCCP"`, or a bridge order signed with `give_asset: "SCCP"` — is
+  rejected; regenerate the genesis document from
+  `genesis/mainnet-premine.json` or re-sign the order.
+
 ## [0.35.0] - 2026-11-20
 
 ### Added
@@ -50,11 +64,11 @@ not itemised here.
 
 ### Added
 
-- **The explorer reports how much SCCP slashing has burned.** `State.burned`
+- **The explorer reports how much ZQWX slashing has burned.** `State.burned`
   keeps the exact native total destroyed by timeout stall slashes and
   clock-witness bond slashes, including the integer-division dust that never
   reaches an account. `GET /v1/status` exposes it as `burned`, and the dashboard
-  shows a **Burned** stat in SCCP. The counter is persisted in snapshots but is
+  shows a **Burned** stat in ZQWX. The counter is persisted in snapshots but is
   not part of `state_root`, so it changes no consensus root; a snapshot written
   before the field restores it as zero.
 - **Whitepaper drift now fails a test.** `tests/unit/test_whitepaper_coverage.py`
@@ -154,7 +168,7 @@ not itemised here.
   runs no witness service.
 - **Mainnet's premine is one basis point instead of ten percent.**
   `genesis/mainnet-premine.json` now holds a single `sccp-bootstrap` tranche of
-  1 basis point — 2,100 SCCP — with no variant tranches, and
+  1 basis point — 2,100 ZQWX — with no variant tranches, and
   `scripts/make_genesis.py` pins the manifest total to exactly that. Every C960
   in existence is therefore mined. `genesis/mainnet.json` and
   `MAINNET.genesis_hash` were regenerated
@@ -330,7 +344,7 @@ not itemised here.
 - **The testnet notebook charts the bridge and the DEX.** `analysis/testnet_stats.ipynb`
   now reads the HTLC and pool transaction types the traffic bot emits: one panel covers
   lock, claim and refund lifecycles, another covers pool creation, liquidity changes and
-  swaps with the SCCP named in each payload, and the closing snapshot counts both.
+  swaps with the ZQWX named in each payload, and the closing snapshot counts both.
 - **The wallet's history rows copy what they name.** Every row in `#/wallet/history`
   has a copy button for its txid and one for the address on the other side (the pool id
   on a swap), so a hash or an address leaves the page without selecting text by hand.
@@ -422,7 +436,7 @@ not itemised here.
   The proof context built from an epoch record dropped each member's `variant`,
   so every C960 seat was checked as `standard` and the node refused the proof
   ("seat ... is registered for 'standard', not 'chess960'"). The relay settled
-  C960 sessions, but the node kept rejecting them and only SCCP ever minted.
+  C960 sessions, but the node kept rejecting them and only ZQWX ever minted.
   Both `chain/block.py` and the devnet scripts now carry `member.variant`
   through, and `test_a_chess960_proof_settles_against_a_chess960_roster` drives
   a signed C960 win proof into a mempool built from a C960 epoch record.
@@ -446,8 +460,8 @@ not itemised here.
 
 ### Added
 
-- **A 10% SCCP and 5%-per-variant genesis premine.** Mainnet genesis now
-  allocates 2,100,000 SCCP and 1,050,000 C960. The public tranche addresses and
+- **A 10% ZQWX and 5%-per-variant genesis premine.** Mainnet genesis now
+  allocates 2,100,000 ZQWX and 1,050,000 C960. The public tranche addresses and
   basis-point split live in `genesis/mainnet-premine.json`; private keys are not
   committed. Genesis documents are version 2 and allocations can name a variant
   asset, with each asset clamped by its own cap and tracked in `minted_assets`.
@@ -455,7 +469,7 @@ not itemised here.
   `scripts/make_genesis.py` will generate a document. The pinned mainnet and
   testnet hashes changed.
 - **Genesis-seeded testnet DEX and bridge state.** Testnet genesis now creates
-  the SCCP/C960 pool (5 coins per side) and a completed 1-SCCP HTLC before height
+  the ZQWX/C960 pool (5 coins per side) and a completed 1-ZQWX HTLC before height
   0 is committed, so `GET /v1/pools` and `GET /v1/htlcs` are useful on a fresh
   deployment. `deploy/seed_testnet_demo.py` remains idempotent and reports the
   existing records; it is the fallback creator for a custom chain whose genesis
@@ -473,7 +487,7 @@ not itemised here.
   and puts its Shredder-FEN in the signed certificate, so both seats replay the
   same board. PGN validation requires `Rules "chess960"`, `SetUp`, `Variant` and
   that FEN; a standard PGN cannot be replayed as Chess960. A settled Chess960
-  proof mints C960 instead of SCCP: accounts carry per-asset balances and
+  proof mints C960 instead of ZQWX: accounts carry per-asset balances and
   maturity queues, transfers can name an `asset`, and the coinbase pays C960 only
   when the block settled that variant. The game hash, opening hash and signed
   certificate payload add the variant only for non-standard games, so existing
@@ -485,35 +499,35 @@ not itemised here.
   the four fixed miners.
 - **Explorer and wallet are multi-token and variant-aware.** The games list,
   game/block detail, account page, Elo leaderboard and miner page name each
-  game's or miner's variant. The dashboard reports SCCP and C960 issuance, the
+  game's or miner's variant. The dashboard reports ZQWX and C960 issuance, the
   block list summarises each block's proofs by variant, and transaction pages
-  decode an asset transfer. The wallet shows SCCP and C960 balances separately,
+  decode an asset transfer. The wallet shows ZQWX and C960 balances separately,
   the Receive tab lists every token one address holds, and Send has a token
-  picker with the SCCP fee shown for every asset. Play can register for either
+  picker with the ZQWX fee shown for every asset. Play can register for either
   variant, draws the certified Chess960 start position (including castling via
   the 960 rules), and builds a proof with the variant's start FEN, hash and
   minimum-ply rule.
-- **An on-chain DEX for SCCP and variant tokens.** `create_pool`,
+- **An on-chain DEX for ZQWX and variant tokens.** `create_pool`,
   `add_liquidity`, `remove_liquidity` and `swap` are consensus transactions;
   pools and their LP share ledgers are committed in `state_root` and served from
   `GET /v1/pools` and `/v1/pools/{id}`. The constant-product curve charges
   `dex_fee_bps` (30 bp by default) to liquidity providers, while every
-  transaction still pays its ordinary SCCP fee. The web DEX quotes locally, signs
+  transaction still pays its ordinary ZQWX fee. The web DEX quotes locally, signs
   a minimum output into the swap, and offers swap, create-pool and add/remove
   liquidity views with the wallet's position.
 - **CLI coverage for the bridge and DEX.** `sccp dex` creates pools, adds and
   removes liquidity, quotes and swaps; `sccp bridge` publishes and inspects
-  signed orders, publishes takes, and locks, claims or refunds both the SCCP
+  signed orders, publishes takes, and locks, claims or refunds both the ZQWX
   and ETH legs. The ETH leg uses the node's configured Anvil environment and an
   unlocked JSON-RPC account; the browser Bridge page remains the EIP-1193 path.
-  `wallet balance` now prints every variant-token balance as well as SCCP.
-- **A trustless ETH↔SCCP bridge.** `htlc_lock`, `htlc_claim` and `htlc_refund`
+  `wallet balance` now prints every variant-token balance as well as ZQWX.
+- **A trustless ETH↔ZQWX bridge.** `htlc_lock`, `htlc_claim` and `htlc_refund`
   are consensus transactions; open and closed locks, including the revealed
   preimage, are committed in `state_root` and served from `GET /v1/htlcs` and the
   account view. `contracts/EthHtlc.sol` is the Ethereum leg: no owner, proxy or
   upgrade path, SHA-256 hashlock, and mutually exclusive claim/refund timelocks.
   Signed off-consensus orders (`GET/POST /v1/orders`, `POST
-  /v1/orders/{id}/takes`) let a maker sell SCCP for ETH without a custodian, and
+  /v1/orders/{id}/takes`) let a maker sell ZQWX for ETH without a custodian, and
   the web Bridge page runs the four-step flow with a browser Ethereum wallet.
   The environment mapping is fixed: devnet→Anvil `31337`, testnet→Sepolia
   `11155111`, mainnet→Ethereum `1`; `GET /v1/bridge` reports it and the deploy
@@ -649,8 +663,8 @@ not itemised here.
 
 ### Added
 
-- **`docs/design/BIG_PICTURE.md`, the plan for a browser wallet, an ETH<->SCCP bridge
-  and a native DEX.** The chain settles games and mints SCCP, but there is still
+- **`docs/design/BIG_PICTURE.md`, the plan for a browser wallet, an ETH<->ZQWX bridge
+  and a native DEX.** The chain settles games and mints ZQWX, but there is still
   no way to sign from a browser beyond the playable table, nowhere to trade one
   asset for another, and no path between mined coins and ETH. The document plans
   four releases in dependency order. A browser wallet (section 4) ports the
@@ -663,8 +677,8 @@ not itemised here.
   native DEX (section 6) is a constant-product pool that clears each block as a
   batch, which keeps the invariant while removing in-block sandwiching. The
   bridge (section 7) is a pair of HTLCs -- `htlc_lock`/`htlc_claim`/`htlc_refund`
-  on SCCP, one minimal `EthHtlc.sol` on Ethereum -- plus a signed,
-  off-consensus order book, so an ETH holder can buy SCCP and a miner can sell
+  on ZQWX, one minimal `EthHtlc.sol` on Ethereum -- plus a signed,
+  off-consensus order book, so an ETH holder can buy ZQWX and a miner can sell
   rewards without a custodian, a peg or a wrapped asset. Every SCCP-side key,
   signature and HTLC claim stays hybrid Ed25519 + ML-DSA-65; the single Solidity
   file runs on the counterparty chain, so the node still has no EVM and no

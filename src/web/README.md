@@ -183,14 +183,14 @@ hash routes on `https://app.proofofchess.com`, served by the same bundle.
 | `#/accounts/<address>` | balances, nonce, miner registration, that seat's games |
 | `#/wallet/play` | legacy alias for `#/play`; the table now has its own page |
 | `#/play` | a seat in a real match, signed with the unlocked wallet key; standard or Chess960 |
-| `#/dex` | swap SCCP and variant tokens (the DEX's default tab) |
+| `#/dex` | swap ZQWX and variant tokens (the DEX's default tab) |
 | `#/dex/liquidity` | add/remove liquidity and view LP positions |
 | `#/dex/create` | create a new constant-product pool |
-| `#/bridge` | buy SCCP with ETH (the bridge's default tab) |
+| `#/bridge` | buy ZQWX with ETH (the bridge's default tab) |
 | `#/bridge/sell` | publish signed sell orders and follow/refund their HTLC legs |
 | `#/bridge/activity` | SCCP hash locks involving the connected wallet |
-| `#/wallet` | the wallet: unlock or create a keyfile, SCCP and variant-token balances, nickname, pending transfers |
-| `#/wallet/send` | build, review and sign an SCCP or C960 transfer, with an optional recipient nickname |
+| `#/wallet` | the wallet: unlock or create a keyfile, ZQWX and variant-token balances, nickname, pending transfers |
+| `#/wallet/send` | build, review and sign a ZQWX or C960 transfer, with an optional recipient nickname |
 | `#/wallet/receive` | the address, every token it can receive, a copy button and its public-key fingerprint |
 | `#/wallet/faucet` | ask the testnet faucet for funds, with the request's progress |
 | `#/wallet/history` | transactions touching the account, scanned from blocks, plus pending rows |
@@ -226,11 +226,11 @@ from a subdirectory on a static host.
 
 ## The bridge
 
-`#/bridge` is a trustless ETH↔SCCP atomic swap, not a custodian. A maker signs a
-sell-SCCP order with the wallet's hybrid key and binds an Ethereum address; a
+`#/bridge` is a trustless ETH↔ZQWX atomic swap, not a custodian. A maker signs a
+sell-ZQWX order with the wallet's hybrid key and binds an Ethereum address; a
 taker locks ETH in `contracts/EthHtlc.sol` under `sha256(secret)`, then the maker
-verifies that transaction and locks SCCP with the same hash under a timelock that
-expires before the ETH leg by the network's margin. The taker claims SCCP
+verifies that transaction and locks ZQWX with the same hash under a timelock that
+expires before the ETH leg by the network's margin. The taker claims ZQWX
 (revealing the secret) and the maker claims ETH with it. Both legs have
 independent refunds, so a stalled counterparty costs time, not funds.
 
@@ -244,7 +244,7 @@ SCCP network and cannot be overridden:
 | `mainnet` | Ethereum | `1` |
 
 An EIP-1193 wallet (MetaMask) signs the Ethereum leg. The page refuses to sign
-when the wallet's `eth_chainId` differs, and a maker refuses to lock SCCP until
+when the wallet's `eth_chainId` differs, and a maker refuses to lock ZQWX until
 it has verified the ETH transaction's depositor, contract, value, hashlock,
 timelock and beneficiary. The node operator sets `SCCP_ETH_RPC_URL` and
 `SCCP_ETH_HTLC_CONTRACT`; see [`deploy/README.md`](../../deploy/README.md) and
@@ -298,8 +298,8 @@ What the page does:
   page: `POST /v1/faucet` on testnet and devnet, with a visible in-progress bar
   until the node answers and the grant's txid afterwards. On mainnet the tab says
   the service does not exist rather than hiding a button.
-- **Send** — choose native SCCP or a variant token such as C960, then an amount
-  and fee (the fee is always SCCP), an optional nickname for the recipient (saved
+- **Send** — choose native ZQWX or a variant token such as C960, then an amount
+  and fee (the fee is always ZQWX), an optional nickname for the recipient (saved
   in this browser, never in the keyfile), a review screen showing every signed
   field plus the txid, then a hybrid signature and `POST /v1/tx`. The next nonce
   is kept locally because the account view reports the *committed* one; an

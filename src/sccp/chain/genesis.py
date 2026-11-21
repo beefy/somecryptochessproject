@@ -1,7 +1,7 @@
 """Genesis blocks and allocation documents (PROTOCOL.md section 13).
 
 Genesis is the only place where supply can exist before a block subsidy. A
-document can allocate native SCCP and any consensus-defined variant asset, and
+document can allocate native ZQWX and any consensus-defined variant asset, and
 can seed DEX pools or HTLC records so a test network starts with a usable
 market and bridge example. Its hash is pinned in
 :class:`~sccp.config.NetworkParams` and checked on load, so two nodes cannot
@@ -25,7 +25,7 @@ A genesis document is small, hand-auditable JSON::
 
 The public key is mandatory for an allocation because Ed25519 is not
 key-recoverable: without it the allocated coins could never be spent. Native
-SCCP omits ``asset``; a variant allocation names its derived 64-hex asset id.
+ZQWX omits ``asset``; a variant allocation names its derived 64-hex asset id.
 """
 
 from __future__ import annotations
@@ -124,9 +124,9 @@ def faucet_allocation(network: str, params: NetworkParams) -> GenesisAllocation:
 class GenesisAllocation:
     """One genesis output: an address, its public key, an asset and an amount.
 
-    ``asset`` is empty for native SCCP and a 64-hex variant asset id otherwise.
+    ``asset`` is empty for native ZQWX and a 64-hex variant asset id otherwise.
     The default keeps the three-argument constructor used by older callers and
-    makes an omitted document field mean SCCP, exactly like a transfer payload.
+    makes an omitted document field mean ZQWX, exactly like a transfer payload.
     """
 
     address: str
@@ -135,7 +135,7 @@ class GenesisAllocation:
     asset: str = ""
 
     def as_dict(self) -> dict[str, object]:
-        """Canonical document form; native SCCP omits ``asset``."""
+        """Canonical document form; native ZQWX omits ``asset``."""
         document: dict[str, object] = {
             "address": self.address,
             "public_key": self.public_key,
@@ -153,7 +153,7 @@ class GenesisPool:
     The two amounts are debited from ``creator`` and become the initial
     reserves; the creator owns ``isqrt(amount_a * amount_b)`` LP shares. The
     side fields use the same convention as the transaction payload: an omitted
-    asset is native SCCP.
+    asset is native ZQWX.
     """
 
     creator: str
@@ -228,11 +228,11 @@ def zero_address(params: NetworkParams) -> str:
 
 
 def _parse_asset(params: NetworkParams, raw: object, label: str) -> str:
-    """Parse an optional asset id; omitted, null and ``SCCP`` all mean native."""
-    if raw is None or raw == "SCCP" or raw == "":
+    """Parse an optional asset id; omitted, null and ``ZQWX`` all mean native."""
+    if raw is None or raw == "ZQWX" or raw == "":
         return ""
     if not isinstance(raw, str) or len(raw) != 64 or raw != raw.lower():
-        raise GenesisError(f"{label} must be omitted for SCCP or a 32-byte lowercase asset id")
+        raise GenesisError(f"{label} must be omitted for ZQWX or a 32-byte lowercase asset id")
     try:
         bytes.fromhex(raw)
     except ValueError:
@@ -274,7 +274,7 @@ def _parse_allocations(params: NetworkParams, raw: object) -> tuple[GenesisAlloc
         if not isinstance(amount, int) or isinstance(amount, bool) or amount <= 0:
             raise GenesisError(f"allocation for {address} needs a positive integer amount")
         if (address, asset) in seen:
-            raise GenesisError(f"duplicate genesis allocation for {address} and {asset or 'SCCP'}")
+            raise GenesisError(f"duplicate genesis allocation for {address} and {asset or 'ZQWX'}")
         seen.add((address, asset))
         allocations.append(GenesisAllocation(address, public_key, amount, asset))
     return tuple(allocations)
@@ -288,7 +288,7 @@ def _check_allocation(
     The public key must derive the declared address: Ed25519 is not
     key-recoverable, so a mismatched pair would make the premine permanently
     unspendable and silently so. One address may appear once per asset, which
-    lets a treasury or testnet demo wallet hold SCCP and a variant token.
+    lets a treasury or testnet demo wallet hold ZQWX and a variant token.
     """
     if not validate_address(entry.address, params):
         raise GenesisError(f"{entry.address!r} is not a {params.network_id} address")
@@ -306,7 +306,7 @@ def _check_allocation(
     key = (entry.address, entry.asset)
     if key in seen:
         raise GenesisError(
-            f"duplicate genesis allocation for {entry.address} and {entry.asset or 'SCCP'}"
+            f"duplicate genesis allocation for {entry.address} and {entry.asset or 'ZQWX'}"
         )
     seen.add(key)
 
@@ -460,7 +460,7 @@ def _debit_genesis(state: State, address: str, asset: str, amount: int) -> None:
     account = state.account(address)
     held = account.assets.get(asset, 0) if asset else account.balance
     if held < amount:
-        label = asset or "SCCP"
+        label = asset or "ZQWX"
         raise GenesisError(f"{address} holds {held} {label}, cannot allocate {amount}")
     if asset:
         state.debit_asset(address, asset, amount)

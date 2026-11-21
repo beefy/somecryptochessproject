@@ -101,8 +101,8 @@ def test_each_variant_declares_its_own_time_control() -> None:
     faster_standard = VariantParams(
         name="standard",
         rules="chess",
-        symbol="SCCP",
-        display_name="SCCP",
+        symbol="ZQWX",
+        display_name="ZQWX",
         subsidy=DEVNET.subsidy,
         min_plies=DEVNET.min_plies,
         time_control_initial_ms=180_000,

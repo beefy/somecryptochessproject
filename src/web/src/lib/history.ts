@@ -54,7 +54,7 @@ export interface HistoryEntry {
   to: string | null;
   /** Base units, or `null` for a transaction type that moves no coins. */
   amount: number | null;
-  /** Asset id for a token transfer; `null` means native SCCP. */
+  /** Asset id for a token transfer; `null` means native ZQWX. */
   asset: string | null;
   fee: number;
   nonce: number;
@@ -329,7 +329,7 @@ export function mergeHistory(...groups: HistoryEntry[][]): HistoryEntry[] {
     .slice(0, HISTORY_LIMIT);
 }
 
-/** A pool's two assets, in the order consensus stores them; `null` is native SCCP. */
+/** A pool's two assets, in the order consensus stores them; `null` is native ZQWX. */
 export type PoolPair = readonly [string | null, string | null];
 
 /**

@@ -107,15 +107,15 @@ export function BuyPanel(context: BridgeContext): ReactNode {
 
   if (orders.length === 0) {
     return (
-      <Section title="Buy SCCP with ETH" subtitle="open sell orders from SCCP holders">
+      <Section title="Buy ZQWX with ETH" subtitle="open sell orders from ZQWX holders">
         <EmptyState>
-          No one is selling SCCP right now. A seller creates a signed order on the Sell tab; the
+          No one is selling ZQWX right now. A seller creates a signed order on the Sell tab; the
           order appears here for anyone to take.
         </EmptyState>
       </Section>
     );
   }
-  if (order === undefined) return <Section title="Buy SCCP with ETH">Loading order…</Section>;
+  if (order === undefined) return <Section title="Buy ZQWX with ETH">Loading order…</Section>;
 
   const choose = (orderId: string): void => {
     setSelectedId(orderId);
@@ -252,7 +252,7 @@ export function BuyPanel(context: BridgeContext): ReactNode {
       await submitTransaction(toWireTransaction(signed));
       context.setPendingNonce(signed.nonce + 1);
       setClaimSent(true);
-      notify("SCCP claim submitted. The maker can claim the ETH once it is mined.");
+      notify("ZQWX claim submitted. The maker can claim the ETH once it is mined.");
       context.reload();
       htlcs.reload();
     } catch (failure) {
@@ -303,7 +303,7 @@ export function BuyPanel(context: BridgeContext): ReactNode {
 
   return (
     <Section
-      title="Buy SCCP with ETH"
+      title="Buy ZQWX with ETH"
       subtitle="lock ETH first; the maker's SCCP leg is the second leg"
       action={<StatusPill label={bridge.eth_chain_name} tone="info" />}
     >
@@ -315,13 +315,13 @@ export function BuyPanel(context: BridgeContext): ReactNode {
             mode={candidate.order_id === selectedId ? "contained" : "outlined"}
             onPress={() => choose(candidate.order_id)}
           >
-            {formatTokenAmount(candidate.give_amount, "SCCP")}
+            {formatTokenAmount(candidate.give_amount, "ZQWX")}
           </Button>
         ))}
       </ScrollView>
       <KeyValue label="You pay">{formatWei(order.want_amount, 8)} ETH</KeyValue>
-      <KeyValue label="You receive">{formatTokenAmount(order.give_amount, "SCCP")}</KeyValue>
-      <KeyValue label="Price">{orderPrice(order)} ETH / SCCP</KeyValue>
+      <KeyValue label="You receive">{formatTokenAmount(order.give_amount, "ZQWX")}</KeyValue>
+      <KeyValue label="Price">{orderPrice(order)} ETH / ZQWX</KeyValue>
       <KeyValue label="Maker" mono>
         {shortAddress(order.maker_sccp)}
       </KeyValue>
@@ -342,7 +342,7 @@ export function BuyPanel(context: BridgeContext): ReactNode {
       />
       <HelperText type="info" visible>
         The ETH leg opens with a 32-byte secret generated here. It stays in this browser until the
-        SCCP claim reveals it; if the maker never locks SCCP, refund the ETH after the timelock.
+        ZQWX claim reveals it; if the maker never locks ZQWX, refund the ETH after the timelock.
       </HelperText>
       {take !== null && (
         <KeyValue label="Taker's ETH transaction" mono>
@@ -351,22 +351,22 @@ export function BuyPanel(context: BridgeContext): ReactNode {
       )}
       {record !== undefined && (
         <>
-          <KeyValue label="SCCP lock" mono>
+          <KeyValue label="ZQWX lock" mono>
             {shortHash(record.htlc_id, 12)}
           </KeyValue>
           <KeyValue label="SCCP timelock">height {formatInteger(record.timelock_height)}</KeyValue>
-          <KeyValue label="SCCP status">{record.status}</KeyValue>
+          <KeyValue label="ZQWX status">{record.status}</KeyValue>
         </>
       )}
       {local !== undefined && take === null && (
         <HelperText type="info" visible>
           ETH is locked and the take is pending in the node&apos;s order book. Waiting for the node
-          to report the maker&apos;s SCCP lock.
+          to report the maker&apos;s ZQWX lock.
         </HelperText>
       )}
       {local !== undefined && take !== null && record === undefined && (
         <HelperText type="info" visible>
-          Waiting for the maker to lock SCCP for hashlock {shortHash(local.hashlock, 8)}.
+          Waiting for the maker to lock ZQWX for hashlock {shortHash(local.hashlock, 8)}.
         </HelperText>
       )}
       {claimSent && (
@@ -383,26 +383,26 @@ export function BuyPanel(context: BridgeContext): ReactNode {
       )}
       {record?.status === "locked" && local === undefined && (
         <HelperText type="error" visible>
-          The SCCP lock exists, but this browser does not hold the swap secret. Open the browser
+          The ZQWX lock exists, but this browser does not hold the swap secret. Open the browser
           that took the order; do not reveal the secret to anyone else.
         </HelperText>
       )}
       {record?.status === "locked" && !lockFinal && (
         <HelperText type="info" visible>
-          Waiting for the SCCP lock to reach {params.reorg_depth + 1} confirmations (
+          Waiting for the ZQWX lock to reach {params.reorg_depth + 1} confirmations (
           {formatInteger(lockConfirmations)}/{params.reorg_depth + 1}); do not claim before it
           is final.
         </HelperText>
       )}
       {record?.status === "claimed" && (
         <HelperText type="info" visible>
-          SCCP claimed at height {formatInteger(record.closed_at_height)}. The maker can now claim
+          ZQWX claimed at height {formatInteger(record.closed_at_height)}. The maker can now claim
           the ETH with the public preimage.
         </HelperText>
       )}
       {record?.status === "refunded" && (
         <HelperText type="error" visible>
-          The maker refunded SCCP after the timelock. Refund the ETH leg once its timelock passes.
+          The maker refunded ZQWX after the timelock. Refund the ETH leg once its timelock passes.
         </HelperText>
       )}
       {error !== null && (
@@ -428,7 +428,7 @@ export function BuyPanel(context: BridgeContext): ReactNode {
         )}
         {canClaim && (
           <Button mode="contained" loading={busy} disabled={busy} onPress={() => void claimSccp()}>
-            Claim SCCP and reveal secret
+            Claim ZQWX and reveal secret
           </Button>
         )}
         {local !== undefined && expired && record === undefined && (

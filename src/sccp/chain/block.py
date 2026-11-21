@@ -258,7 +258,7 @@ def minted_subsidy(
 ) -> int:
     """The **native** subsidy a block mints, given the proofs it carries.
 
-    Only a standard-chess proof mints SCCP. A block that settled only variant
+    Only a standard-chess proof mints ZQWX. A block that settled only variant
     games mints that variant's asset instead (see :func:`minted_variant_rewards`)
     and pays its block miner the fees.
     """
@@ -669,7 +669,7 @@ def _check_body(work: State, params: NetworkParams, block: Block) -> None:
         except ConfigError as exc:
             _fail(BlockFailure.COINBASE, str(exc))
         if variant.native:
-            _fail(BlockFailure.COINBASE, "native SCCP cannot appear in variant_rewards")
+            _fail(BlockFailure.COINBASE, "native ZQWX cannot appear in variant_rewards")
         actual_rewards[asset] = amount
     if actual_rewards != expected_rewards:
         _fail(
