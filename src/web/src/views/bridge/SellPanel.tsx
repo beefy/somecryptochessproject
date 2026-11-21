@@ -64,9 +64,11 @@ export function SellPanel(context: BridgeContext): ReactNode {
       if (!bridge.configured || bridge.eth_htlc_contract === null) {
         throw new Error(`this node has no ${bridge.eth_chain_name} HTLC contract configured`);
       }
-      const sccp = parseTokenAmount(amount, "ZQWX", 8);
-      if (!Number.isSafeInteger(sccp) || sccp <= 0) throw new Error("enter a positive ZQWX amount");
-      if (sccp + params.min_fee > account.balance) {
+      const lockAmount = parseTokenAmount(amount, "ZQWX", 8);
+      if (!Number.isSafeInteger(lockAmount) || lockAmount <= 0) {
+        throw new Error("enter a positive ZQWX amount");
+      }
+      if (lockAmount + params.min_fee > account.balance) {
         throw new Error(
           `the wallet holds ${formatTokenAmount(account.balance, "ZQWX")}; the order needs the amount plus a fee`,
         );
@@ -86,7 +88,7 @@ export function SellPanel(context: BridgeContext): ReactNode {
         network,
         makerSccp: address,
         makerEth: eth,
-        giveAmount: sccp,
+        giveAmount: lockAmount,
         wantAmount: want.toString(),
         minSccpTimelock: status.height + 1,
         expiry: Math.floor(Date.now() / 1000) + Math.ceil(hours * 3600),

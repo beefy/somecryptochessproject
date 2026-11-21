@@ -20,11 +20,11 @@ export const SITE_LABELS: Readonly<Record<Site, string>> = {
 
 /** The browser tab title for each view. */
 export const SITE_TITLES: Readonly<Record<Site, string>> = {
-  explorer: "SCCP explorer",
-  wallet: "SCCP wallet",
-  play: "SCCP play",
-  dex: "SCCP DEX",
-  bridge: "SCCP bridge",
+  explorer: "ZQWX explorer",
+  wallet: "ZQWX wallet",
+  play: "ZQWX play",
+  dex: "ZQWX DEX",
+  bridge: "ZQWX bridge",
 };
 
 /** The hash that opens `site`'s landing page. */

@@ -29,7 +29,7 @@ describe("the five views", () => {
   it("labels and titles every view", () => {
     for (const site of SITES) {
       expect(SITE_LABELS[site]).not.toBe("");
-      expect(SITE_TITLES[site].startsWith("SCCP ")).toBe(true);
+      expect(SITE_TITLES[site].startsWith("ZQWX ")).toBe(true);
     }
   });
 });

@@ -2,7 +2,7 @@
   "name": "sccp-web",
   "private": true,
   "version": "0.35.0",
-  "description": "SCCP block explorer and testnet table, built with React Native for Web and Material Design",
+  "description": "ZQWX block explorer and testnet table, built with React Native for Web and Material Design",
   "type": "module",
   "scripts": {
     "dev": "vite",

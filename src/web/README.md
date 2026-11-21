@@ -1,4 +1,4 @@
-# `src/web` — the SCCP explorer
+# `src/web` — the ZQWX explorer
 
 The browser client: a block explorer and a table that is one real seat in a real
 match. React Native for Web rendered through Material Design

@@ -15,8 +15,8 @@ not itemised here.
   names the coin now say `ZQWX` instead of `SCCP`. Software and network
   identity is unchanged: the Python package and CLI (`sccp`), the npm package,
   the `SCCP_*` environment variables, the address HRPs (`sccp1…`, `sccpt1…`),
-  the `sccp/v1/...` signature domains and the explorer's own name. A client
-  that still spells the old symbol — a genesis allocation with
+  the `sccp/v1/...` signature domains and the `sccp` hostnames and paths. A
+  client that still spells the old symbol — a genesis allocation with
   `"asset": "SCCP"`, or a bridge order signed with `give_asset: "SCCP"` — is
   rejected; regenerate the genesis document from
   `genesis/mainnet-premine.json` or re-sign the order.
