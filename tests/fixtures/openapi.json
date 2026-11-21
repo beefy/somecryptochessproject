@@ -1946,8 +1946,8 @@
             "type": "integer"
           },
           "give_asset": {
-            "const": "SCCP",
-            "default": "SCCP",
+            "const": "ZQWX",
+            "default": "ZQWX",
             "type": "string"
           },
           "maker_eth": {
@@ -2076,8 +2076,8 @@
             "type": "integer"
           },
           "give_asset": {
-            "const": "SCCP",
-            "default": "SCCP",
+            "const": "ZQWX",
+            "default": "ZQWX",
             "type": "string"
           },
           "maker_eth": {

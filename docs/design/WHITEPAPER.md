@@ -2,7 +2,7 @@
 
 ## Chess as proof of work
 
-**Whitepaper for protocol v1 · reference implementation 0.35.0 · November 2026**
+**Whitepaper for protocol v1 · reference implementation 0.36.0 · November 2026**
 
 > **Scope.** This document explains how the current reference implementation
 > works end to end: identity, chess proofs, matchmaking, the ledger, consensus,
@@ -14,7 +14,7 @@
 >
 > **Status.** Protocol v1, the timed relay and the two-miner testnet are
 > implemented. So are the variant assets (Chess960/C960), the constant-product
-> DEX and the ETH↔SCCP hash-lock bridge, which are exercised on devnet and
+> DEX and the ETH↔ZQWX hash-lock bridge, which are exercised on devnet and
 > testnet. Mainnet parameters exist, but no
 > mainnet has been launched or audited. Testnet and devnet coins have no value.
 
@@ -241,8 +241,8 @@ There are three parameter sets:
 
 | Network | Purpose | Address prefix | Genesis |
 | --- | --- | --- | --- |
-| `testnet` | Public, valueless integration network | `sccpt1...` | Pinned testnet genesis with a faucet allocation, a seeded SCCP/C960 pool and a completed SCCP HTLC |
-| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis with a 1-basis-point (2,100 SCCP) bootstrap grant |
+| `testnet` | Public, valueless integration network | `sccpt1...` | Pinned testnet genesis with a faucet allocation, a seeded ZQWX/C960 pool and a completed SCCP HTLC |
+| `mainnet` | Reserved production parameters | `sccp1...` | Pinned mainnet genesis with a 1-basis-point (2,100 ZQWX) bootstrap grant |
 | `devnet` | Deterministic in-process tests and demos | `sccpt1...` | Pinned deterministic genesis with a faucet allocation |
 
 The network id is inside transaction hashes, game hashes, certificates,
@@ -1228,7 +1228,7 @@ block chain.
 
 | Type | Purpose |
 | --- | --- |
-| `transfer` | Move spendable balance; an optional `asset` field names a variant token instead of SCCP |
+| `transfer` | Move spendable balance; an optional `asset` field names a variant token instead of ZQWX |
 | `register` | Register a miner, lock the registration bond and choose a chess variant |
 | `register_witness` | Register a bonded clock witness |
 | `update_registration` | Change metadata, extend registration, adjust bond |
@@ -1307,7 +1307,7 @@ roster:
 
 | Variant | Rules | Asset | Symbol | Issue schedule |
 | --- | --- | --- | --- | --- |
-| `standard` | `chess` | native SCCP (`asset` is `None`) | `SCCP` | the network's own subsidy, halving and cap |
+| `standard` | `chess` | native ZQWX (`asset` is `None`) | `ZQWX` | the network's own subsidy, halving and cap |
 | `chess960` | `chess960` | a derived asset id | `C960` | 50 per block, halving every 210,000 blocks, 21,000,000 cap |
 
 The asset id is not assigned by an issuer. It is
@@ -1326,14 +1326,14 @@ only when the block carries at least one standard proof, and every variant the
 block represents mints its own schedule at most once per block
 (`variant_subsidy`, `minted_variant_rewards`). A block holding one standard win
 and one Chess960 win pays both; a block that settles only Chess960 games pays no
-SCCP at all. Variant balances live in a per-asset map on the account (`assets`,
+ZQWX at all. Variant balances live in a per-asset map on the account (`assets`,
 `immature_assets`), mature on the same `coinbase_maturity` clock as native
 coinbase, and move with `transfer` plus an `asset` field — a native transfer that
 names an asset is rejected rather than quietly downgraded.
 
 Chess960 has no opening book: the shuffled start position is the point of the
 variant, so its book is `none` and a proof's PGN starts there instead of from a
-book line. Fees are always paid in SCCP, which is why a miner that earns only
+book line. Fees are always paid in ZQWX, which is why a miner that earns only
 C960 still needs a little native coin to spend it.
 
 ### 13.7 Liquidity pools
@@ -1367,24 +1367,24 @@ against the reserves the earlier ones left, and a builder can move the price a
 later swap pays up to that swap's own bound. Both are open design items
 (`PROTOCOL.md` section 10.6, `BIG_PICTURE.md` section 6.2), not oversights.
 
-Fees for pool transactions are paid in native SCCP, so an account holding only a
-variant token needs a small SCCP balance to trade it.
+Fees for pool transactions are paid in native ZQWX, so an account holding only a
+variant token needs a small ZQWX balance to trade it.
 
 ### 13.8 The Ethereum bridge
 
-Moving value between SCCP and Ethereum needs both chains to agree on one secret
+Moving value between ZQWX and Ethereum needs both chains to agree on one secret
 without either chain trusting the other's node. v1 does it with two hash locks
 over the same plain SHA-256 preimage:
 
 - **The SCCP leg is consensus.** `htlc_lock` moves coins into escrow under
   `hashlock = sha256(preimage)`, with `timelock_height > height` and an optional
-  `asset` (omitted means native SCCP); `htlc_claim` is signed by the beneficiary
+  `asset` (omitted means native ZQWX); `htlc_claim` is signed by the beneficiary
   and valid only before the timelock, paying the escrow and recording the
   revealed preimage in state; `htlc_refund` is signed by the original locker at
   or after it. `htlc_id = H("sccp/v1/htlc", {from, nonce})`. A closed lock stays
   in state and in `state_root` so the counterparty and an explorer can read the
   secret, and a *native* claim or refund may pay its fee out of the released
-  amount, which lets a taker who holds no SCCP claim the first leg.
+  amount, which lets a taker who holds no ZQWX claim the first leg.
 - **The Ethereum leg is a small contract**, `contracts/EthHtlc.sol` with
   Foundry tests: `lock`, `claim`, `refund` and a read-only `getLock`, one
   `Locked` event, and the same 32 hashlock bytes the SCCP chain checks. There is
@@ -1408,25 +1408,25 @@ facts, which is why they live in `bridge/config.py` rather than in
 
 The order of the legs is the safety argument. The taker locks ETH first,
 publishes a signed take naming the ETH transaction, hashlock and timelock, and
-only then does the maker lock SCCP. The take carries an SCCP height, and the node
-rejects one whose SCCP lock does not expire at least `sccp_margin` blocks before
+only then does the maker lock ZQWX. The take carries an SCCP height, and the node
+rejects one whose ZQWX lock does not expire at least `sccp_margin` blocks before
 the ETH timelock (converted with `target_block_seconds`, so 24 blocks is twelve
 minutes at testnet's 30-second target) or that is already behind the tip. The
 maker checks the same rule again before locking, and the margin is larger than
-`reorg_depth` on every network, so the maker can wait for the taker's SCCP claim
+`reorg_depth` on every network, so the maker can wait for the taker's ZQWX claim
 to be final and still have time to claim ETH with the now-public preimage. If the
 maker never locks, the taker's ETH expires and comes back; if the taker never
-claims, the maker's SCCP refunds. Each side has a block-height exit that needs no
+claims, the maker's ZQWX refunds. Each side has a block-height exit that needs no
 counterparty, which is the whole reason the swap can be untrusted.
 
 The order book is explicitly **not** consensus. `/v1/orders` holds makers' signed
-sell-SCCP promises and takers' signed takes in node memory: it holds no funds,
+sell-ZQWX promises and takers' signed takes in node memory: it holds no funds,
 any node can mirror it, and losing it costs a re-post. Signatures are the
 ledger's hybrid scheme over canonical domain hashes, so an order cannot be forged
 or redirected to another beneficiary, and expiry is evaluated against the node's
 injected clock rather than a browser's. Verification of the ETH leg stays with
 the party that cares: the maker reads `getLock` through `sccp bridge
-eth-lock-info` before locking SCCP, and a node never fetches a third-party RPC to
+eth-lock-info` before locking ZQWX, and a node never fetches a third-party RPC to
 decide consensus.
 
 `sccp dex` and `sccp bridge` drive all of this from a terminal, the web wallet
@@ -1593,11 +1593,11 @@ root. It is loaded from a pinned document; its hash must equal
 but production callers are expected to pin it.
 
 The genesis state contains the initial allocations. Mainnet allocates 1 basis
-point of the SCCP cap — 2,100 SCCP — as a bootstrap grant and no variant supply;
+point of the ZQWX cap — 2,100 ZQWX — as a bootstrap grant and no variant supply;
 its public address is in `genesis/mainnet-premine.json`. Testnet and devnet
 include a faucet allocation under a published deterministic key, and testnet
-also seeds an SCCP/C960 pool
-and a completed SCCP bridge HTLC. Mainnet has no faucet. Every later block must
+also seeds a ZQWX/C960 pool
+and a completed ZQWX bridge HTLC. Mainnet has no faucet. Every later block must
 descend from the genesis block; a document with a different genesis hash is a
 different chain.
 
@@ -1655,7 +1655,7 @@ contract (snapshotted in `tests/fixtures/openapi.json`):
 | `GET /v1/bridge` | The Ethereum deployment facts for this network |
 | `GET /v1/htlcs` | SCCP hash locks, filtered by address or hashlock |
 | `GET /v1/htlcs/{htlc_id}` | One lock, its status and the preimage once claimed |
-| `GET /v1/orders` | Open signed sell-SCCP orders in the off-consensus book |
+| `GET /v1/orders` | Open signed sell-ZQWX orders in the off-consensus book |
 | `GET /v1/orders/{order_id}` | One order and its take, if any |
 | `POST /v1/orders` | Publish a signed order |
 | `POST /v1/orders/{order_id}/takes` | Attach a signed take after the ETH leg is locked |
@@ -1795,7 +1795,7 @@ A block's cost has three parts:
 
 The reward is the block subsidy plus fees. On mainnet the subsidy starts at 50
 coins and halves every 210,000 blocks, with a 21,000,000-coin cap. Genesis
-allocates 1 basis point of that cap (2,100 SCCP) as a bootstrap grant and no
+allocates 1 basis point of that cap (2,100 ZQWX) as a bootstrap grant and no
 variant supply, so every C960 in existence is mined. The private key is not in
 the repository and the on-chain grant is auditable in
 `genesis/mainnet-premine.json`. Testnet and
@@ -1803,7 +1803,7 @@ devnet rewards are valueless.
 
 A stall is the one loss a seat can choose instead of playing on, so it has its
 own price: finalising a `time_forfeit` claim charges the flagged seat 10% of the
-protocol's miner bond (50 SCCP on mainnet). Half goes to the claimant, 30% is
+protocol's miner bond (50 ZQWX on mainnet). Half goes to the claimant, 30% is
 split between the witnesses whose flag receipt settled the claim, and 20% is
 burned. A fifth of the charge therefore never reaches an account; the chain
 reports the running total as `burned` in `/v1/status`, so the destroyed value is
@@ -1964,7 +1964,7 @@ strong chess. Do not describe a proof as "proof of honest play".
 | Public faucet, deterministic bootstrap and two-miner testnet stack | Implemented |
 | Variant assets: Chess960/C960, per-variant issuance and per-variant pairing | Implemented |
 | Constant-product DEX: pools, LP shares, swaps, reserves committed in `state_root` | Implemented |
-| ETH↔SCCP bridge: consensus HTLCs, `EthHtlc` contract and Foundry tests, off-consensus order book, CLI and web flows | Implemented; the deployed ETH contract is operator configuration |
+| ETH↔ZQWX bridge: consensus HTLCs, `EthHtlc` contract and Foundry tests, off-consensus order book, CLI and web flows | Implemented; the deployed ETH contract is operator configuration |
 | Browser wallet: hybrid ledger signing, certificates, bridge orders and takes | Implemented |
 | GHCR image build and SSH testnet deploy workflow | Implemented |
 
@@ -2280,7 +2280,7 @@ the engine-marked tests.
 | **Block** | Header plus coinbase, transactions and win proofs |
 | **Bond** | Locked collateral for a miner or witness identity |
 | **Bootstrap** | The initial heights where no proofs are required |
-| **C960** | The Chess960 variant's asset symbol; standard chess mints native SCCP |
+| **C960** | The Chess960 variant's asset symbol; standard chess mints native ZQWX |
 | **Certificate** | Both-seat signed record of a match's fixed parameters |
 | **Claim window** | Number of blocks after an epoch in which its wins can be proven |
 | **Coinbase** | The unsigned transaction paying the block reward and fees |
@@ -2296,7 +2296,7 @@ the engine-marked tests.
 | **Low ply** | A game shorter than the network's `min_plies` |
 | **MTP** | Median time past of the previous 11 block timestamps |
 | **Opening hash** | Commitment to the book version, line id and move list |
-| **Order / take** | Off-consensus, signed ETH/SCCP book entries: a maker's sell promise and a taker's announcement that the ETH leg is locked |
+| **Order / take** | Off-consensus, signed ETH/ZQWX book entries: a maker's sell promise and a taker's announcement that the ETH leg is locked |
 | **Proof id** | Hash of game hash, match id and winner |
 | **Roster** | Miners with valid availability and reveals for an epoch |
 | **Seal** | Header hash work measured in leading zero bits |

@@ -181,7 +181,7 @@ export function Wallet({
       setPending(next);
       const name = labelFor(readContacts(), tx.to) ?? shortAddress(tx.to);
       notify(
-        `sent ${formatTokenAmount(tx.amount, tx.symbol ?? "SCCP")} to ${name} · pending at nonce ${formatInteger(tx.nonce)}`,
+        `sent ${formatTokenAmount(tx.amount, tx.symbol ?? "ZQWX")} to ${name} · pending at nonce ${formatInteger(tx.nonce)}`,
       );
     },
     [notify, session],
@@ -306,10 +306,10 @@ export function Wallet({
                   </KeyValue>
                 ))}
                 <HelperText type="info" visible>
-                  One address can receive every token this network settles: SCCP and assets such
+                  One address can receive every token this network settles: ZQWX and assets such
                   as C960. The sender&apos;s transaction names the asset; this address needs no
                   separate token account. Holding C960 does not pay fees, though -- the same
-                  account needs a little SCCP to move it.
+                  account needs a little ZQWX to move it.
                 </HelperText>
               </View>
             )}
@@ -488,7 +488,7 @@ export function Wallet({
                       <KeyValue label="Bonded" mono>
                         {formatAmount(accountView.bonded)}
                       </KeyValue>
-                      <KeyValue label="Total SCCP" mono>
+                      <KeyValue label="Total ZQWX" mono>
                         {formatAmount(accountView.total)}
                       </KeyValue>
                     </>
@@ -501,7 +501,7 @@ export function Wallet({
             </KeyValue>
             {pending.map((entry) => (
               <KeyValue key={entry.txid} label="Pending">
-                {formatTokenAmount(entry.amount, entry.symbol ?? "SCCP")} to{" "}
+                {formatTokenAmount(entry.amount, entry.symbol ?? "ZQWX")} to{" "}
                 {labelFor(readContacts(), entry.to) ?? shortAddress(entry.to)} · nonce{" "}
                 {formatInteger(entry.nonce)}
               </KeyValue>

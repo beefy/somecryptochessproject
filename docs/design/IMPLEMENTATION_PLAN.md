@@ -1,6 +1,6 @@
 # Next steps and improvement areas
 
-> Status: protocol v1 through release 0.35.0 is implemented -- the chain, the
+> Status: protocol v1 through release 0.36.0 is implemented -- the chain, the
 > relay, the engine miner, the hybrid wallet, the browser wallet and explorer,
 > variant assets, the native DEX and the HTLC bridge. This is a forward-looking
 > engineering document. It lists the work still needed, in priority order, and
@@ -26,7 +26,7 @@ The reference implementation covers the full wallet-to-block path:
   difficulty retargeting, fork choice, reorg handling and SQLite persistence
   with snapshot-checked replay.
 - Variant assets: Chess960 proofs mint C960, an asset with its own supply
-  counter, cap and halving schedule beside native SCCP.
+  counter, cap and halving schedule beside native ZQWX.
 - The native DEX (`create_pool`, `add_liquidity`, `remove_liquidity`, `swap`
   with `min_amount_out`) and the ETH↔SCCP HTLC bridge (`htlc_lock`,
   `htlc_claim`, `htlc_refund`, `contracts/EthHtlc.sol`, a signed

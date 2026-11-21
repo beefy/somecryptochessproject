@@ -1,10 +1,10 @@
 /**
- * The bridge: a trustless ETH<->SCCP atomic swap over signed orders.
+ * The bridge: a trustless ETH<->ZQWX atomic swap over signed orders.
  *
- * A maker sells SCCP and binds an Ethereum address in a hybrid-signed order. A
+ * A maker sells ZQWX and binds an Ethereum address in a hybrid-signed order. A
  * taker locks ETH first under a SHA-256 hashlock; the maker verifies that lock,
- * then locks SCCP with the same hash under a longer timelock. The taker claims
- * SCCP (revealing the secret), and the maker uses the now-public secret to claim
+ * then locks ZQWX with the same hash under a longer timelock. The taker claims
+ * ZQWX (revealing the secret), and the maker uses the now-public secret to claim
  * ETH. Neither chain holds a custodian's key, and every failure path has a
  * timelock refund.
  *
@@ -41,10 +41,10 @@ export function BridgePage({ view }: { view: BridgeTab }): ReactNode {
     <View style={styles.root}>
       <View style={styles.header}>
         <Text variant="headlineSmall">Bridge</Text>
-        <StatusPill label="ETH ↔ SCCP" tone="info" />
+        <StatusPill label="ETH ↔ ZQWX" tone="info" />
       </View>
       <Text variant="bodyMedium" style={styles.muted}>
-        Swap ETH for SCCP without a custodian. Orders are signed off-chain; both legs are
+        Swap ETH for ZQWX without a custodian. Orders are signed off-chain; both legs are
         hash-time-locked, so a stalled swap refunds instead of stranding funds.
       </Text>
       <WalletGate purpose="the Bridge">

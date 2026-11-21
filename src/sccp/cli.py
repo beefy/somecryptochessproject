@@ -4,7 +4,7 @@ The CLI exposes the wallet and keyfile tools, offline ``verify pgn`` and
 ``verify proof`` checks, the matchmaking relay, the node (``node run``), the
 unattended miner (``miner run``, ``miner register``, ``miner availability``,
 ``miner reveal``), the read-only chain commands, the testnet faucet, the
-one-command devnet, the on-chain DEX and the ETH/SCCP bridge. Every command is a
+one-command devnet, the on-chain DEX and the ETH/ZQWX bridge. Every command is a
 thin wrapper over a library call so the same behaviour is testable in-process.
 
 Global options may be passed before or after the subcommand; an explicitly
@@ -130,7 +130,7 @@ app.add_typer(dex_app, name="dex")
 
 bridge_app = typer.Typer(
     no_args_is_help=True,
-    help="Publish ETH/SCCP orders and lock, claim or refund bridge HTLCs.",
+    help="Publish ETH/ZQWX orders and lock, claim or refund bridge HTLCs.",
 )
 app.add_typer(bridge_app, name="bridge")
 
@@ -571,14 +571,14 @@ def _asset_symbol(params: NetworkParams, asset: str) -> str:
 
 
 def _asset_id(params: NetworkParams, asset: str | None) -> str:
-    """Resolve a CLI asset name to an id; native SCCP is the empty string."""
-    if asset is None or asset.strip() == "" or asset.upper() == "SCCP":
+    """Resolve a CLI asset name to an id; native ZQWX is the empty string."""
+    if asset is None or asset.strip() == "" or asset.upper() == "ZQWX":
         return dex.NATIVE_ASSET
     for variant in params.variants:
         if asset in (variant.asset, variant.name, variant.symbol):
             return variant.asset or dex.NATIVE_ASSET
     known = ", ".join(
-        ["SCCP", *(variant.symbol for variant in params.variants if not variant.native)]
+        ["ZQWX", *(variant.symbol for variant in params.variants if not variant.native)]
     )
     _fail(f"unknown asset {asset!r}; this network has: {known}")
     raise AssertionError("unreachable")
@@ -970,7 +970,7 @@ def wallet_send(
         str | None,
         typer.Option(
             "--asset",
-            help="Asset id, variant name or symbol (default: native SCCP).",
+            help="Asset id, variant name or symbol (default: native ZQWX).",
         ),
     ] = None,
     node: Annotated[
@@ -1012,7 +1012,7 @@ def wallet_send(
         "from": tx.sender,
         "to": to,
         "amount": coins_to_units(amount),
-        "asset": tx.payload.get("asset", "SCCP"),
+        "asset": tx.payload.get("asset", "ZQWX"),
         "fee": int(tx.fee),
         "nonce": tx.nonce,
         "accepted": receipt.get("accepted"),
@@ -2267,8 +2267,8 @@ def dex_pools(
         if not isinstance(row, Mapping):
             continue
         typer.echo(
-            f"{row.get('pool_id')} {row.get('asset_a') or 'SCCP'}/"
-            f"{row.get('asset_b') or 'SCCP'} reserves "
+            f"{row.get('pool_id')} {row.get('asset_a') or 'ZQWX'}/"
+            f"{row.get('asset_b') or 'ZQWX'} reserves "
             f"{row.get('reserve_a')}/{row.get('reserve_b')} "
             f"shares {row.get('total_shares')}"
         )
@@ -2285,7 +2285,7 @@ def dex_pool(
     if _options(ctx).json_output:
         _echo_json(document)
         return
-    typer.echo(f"{pool_id} {document.get('asset_a') or 'SCCP'}/{document.get('asset_b') or 'SCCP'}")
+    typer.echo(f"{pool_id} {document.get('asset_a') or 'ZQWX'}/{document.get('asset_b') or 'ZQWX'}")
     typer.echo(
         f"reserves {document['reserve_a']}/{document['reserve_b']} "
         f"shares {document['total_shares']} fee {document['fee_bps']} bps"
@@ -2303,7 +2303,7 @@ def dex_quote(
     amount_in: Annotated[int, typer.Option("--amount-in", help="Input amount, in whole coins.")],
     asset_in: Annotated[
         str | None,
-        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for SCCP)."),
+        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for ZQWX)."),
     ] = None,
     slippage_bps: Annotated[
         int,
@@ -2322,7 +2322,7 @@ def dex_quote(
     left = pool.get("asset_a") or dex.NATIVE_ASSET
     right = pool.get("asset_b") or dex.NATIVE_ASSET
     if resolved not in (left, right):
-        _fail(f"pool {pool_id} does not trade {asset_in or 'SCCP'}")
+        _fail(f"pool {pool_id} does not trade {asset_in or 'ZQWX'}")
     native_in = resolved == left
     reserve_in = _document_int(pool, "reserve_a" if native_in else "reserve_b")
     reserve_out = _document_int(pool, "reserve_b" if native_in else "reserve_a")
@@ -2342,7 +2342,7 @@ def dex_quote(
             }
         )
         return
-    typer.echo(f"in   {_coins(units_in)} at {asset_in or 'SCCP'}")
+    typer.echo(f"in   {_coins(units_in)} at {asset_in or 'ZQWX'}")
     typer.echo(f"out  {_coins(units_out)}")
     typer.echo(f"min  {_coins(minimum)} ({slippage_bps / 100:.2f}% slippage)")
 
@@ -2355,11 +2355,11 @@ def dex_create_pool(
     amount_b: Annotated[int, typer.Option("--amount-b", help="Second side, in whole coins.")],
     asset_a: Annotated[
         str | None,
-        typer.Option("--asset-a", help="First asset id/name/symbol (omit for SCCP)."),
+        typer.Option("--asset-a", help="First asset id/name/symbol (omit for ZQWX)."),
     ] = None,
     asset_b: Annotated[
         str | None,
-        typer.Option("--asset-b", help="Second asset id/name/symbol (omit for SCCP)."),
+        typer.Option("--asset-b", help="Second asset id/name/symbol (omit for ZQWX)."),
     ] = None,
     fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
     node: Annotated[
@@ -2462,7 +2462,7 @@ def dex_swap(
     amount_in: Annotated[int, typer.Option("--amount-in", help="Input amount, in whole coins.")],
     asset_in: Annotated[
         str | None,
-        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for SCCP)."),
+        typer.Option("--asset-in", help="Asset id, variant name or symbol (omit for ZQWX)."),
     ] = None,
     min_out: Annotated[
         int | None,
@@ -2491,7 +2491,7 @@ def dex_swap(
     left = pool.get("asset_a") or dex.NATIVE_ASSET
     right = pool.get("asset_b") or dex.NATIVE_ASSET
     if resolved not in (left, right):
-        _fail(f"pool {pool_id} does not trade {asset_in or 'SCCP'}")
+        _fail(f"pool {pool_id} does not trade {asset_in or 'ZQWX'}")
     native_in = resolved == left
     reserve_in = _document_int(pool, "reserve_a" if native_in else "reserve_b")
     reserve_out = _document_int(pool, "reserve_b" if native_in else "reserve_a")
@@ -2556,7 +2556,7 @@ def bridge_orders(
         str | None, typer.Option("--node", help="Node that serves the order book.")
     ] = None,
 ) -> None:
-    """List open sell-SCCP orders, best price first."""
+    """List open sell-ZQWX orders, best price first."""
     path = "/v1/orders" if maker is None else f"/v1/orders?maker_sccp={maker}"
     document = _node_document(node, path)
     if _options(ctx).json_output:
@@ -2570,7 +2570,7 @@ def bridge_orders(
         if not isinstance(row, Mapping):
             continue
         typer.echo(
-            f"{row.get('order_id')} {_coins(int(row.get('give_amount', 0)))} SCCP "
+            f"{row.get('order_id')} {_coins(int(row.get('give_amount', 0)))} ZQWX "
             f"for {row.get('want_amount')} wei maker {row.get('maker_sccp')}"
         )
 
@@ -2592,18 +2592,18 @@ def bridge_order(
     if not isinstance(order, Mapping):
         _fail("the node returned no order")
     typer.echo(
-        f"{order_id} {_coins(int(order.get('give_amount', 0)))} SCCP for "
+        f"{order_id} {_coins(int(order.get('give_amount', 0)))} ZQWX for "
         f"{order.get('want_amount')} wei"
     )
     take = document.get("take")
     if isinstance(take, Mapping):
         typer.echo(f"take: {take.get('take_id')}")
-        typer.echo(f"  taker SCCP {take.get('taker_sccp')}")
+        typer.echo(f"  taker ZQWX {take.get('taker_sccp')}")
         typer.echo(f"  taker ETH  {take.get('taker_eth')}")
         typer.echo(f"  hashlock   {take.get('hashlock')}")
         typer.echo(f"  ETH tx     {take.get('eth_tx_hash')}")
         typer.echo(f"  ETH lock   {take.get('eth_timelock')}")
-        typer.echo(f"  SCCP lock  {take.get('sccp_timelock_height')}")
+        typer.echo(f"  ZQWX lock  {take.get('sccp_timelock_height')}")
     else:
         typer.echo("take: none")
 
@@ -2657,7 +2657,7 @@ def bridge_sell(
     ctx: typer.Context,
     key: Annotated[Path, typer.Option("--key", help="Maker's SCCP keyfile.")],
     eth_address: Annotated[str, typer.Option("--eth-address", help="Maker's Ethereum address.")],
-    amount: Annotated[int, typer.Option("--amount", help="SCCP to sell, in whole coins.")],
+    amount: Annotated[int, typer.Option("--amount", help="ZQWX to sell, in whole coins.")],
     price_wei: Annotated[
         str,
         typer.Option("--price-wei", help="ETH price as a positive wei decimal string."),
@@ -2677,7 +2677,7 @@ def bridge_sell(
     node: Annotated[str | None, typer.Option("--node", help="Node that accepts the order.")] = None,
     network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
 ) -> None:
-    """Publish a signed order to sell SCCP for ETH."""
+    """Publish a signed order to sell ZQWX for ETH."""
     if amount <= 0:
         _fail("--amount must be positive", code=2)
     if expiry_hours <= 0:
@@ -2694,7 +2694,7 @@ def bridge_sell(
     account = _node_document(node, f"/v1/accounts/{wallet.address}")
     if _document_int(account, "balance") < give_amount + params.min_fee:
         _fail(
-            f"{wallet.address} holds {_coins(_document_int(account, 'balance'))} SCCP; "
+            f"{wallet.address} holds {_coins(_document_int(account, 'balance'))} ZQWX; "
             f"the order needs {_coins(give_amount + params.min_fee)}"
         )
     status = _node_document(node, "/v1/status")
@@ -2716,7 +2716,7 @@ def bridge_sell(
         _echo_json({**accepted, "order": order.model_dump(mode="json")})
         return
     typer.echo(f"published order {_document_text(accepted, 'order_id')}")
-    typer.echo(f"  {_coins(give_amount)} SCCP for {price_wei} wei")
+    typer.echo(f"  {_coins(give_amount)} ZQWX for {price_wei} wei")
 
 
 @bridge_app.command("take")
@@ -2732,7 +2732,7 @@ def bridge_take(
     eth_tx_hash: Annotated[str, typer.Option("--eth-tx-hash", help="The lock transaction hash.")],
     sccp_timelock: Annotated[
         int | None,
-        typer.Option("--sccp-timelock-height", help="SCCP expiry height (default: safe maximum)."),
+        typer.Option("--sccp-timelock-height", help="ZQWX expiry height (default: safe maximum)."),
     ] = None,
     nonce: Annotated[
         int | None,
@@ -2823,7 +2823,7 @@ def bridge_lock(
     amount: Annotated[int, typer.Option("--amount", help="Amount to lock, in whole coins.")],
     asset: Annotated[
         str | None,
-        typer.Option("--asset", help="Asset id/name/symbol (omit for SCCP)."),
+        typer.Option("--asset", help="Asset id/name/symbol (omit for ZQWX)."),
     ] = None,
     fee: Annotated[int | None, typer.Option("--fee", help="Fee in base units.")] = None,
     node: Annotated[
@@ -2831,7 +2831,7 @@ def bridge_lock(
     ] = None,
     network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
 ) -> None:
-    """Lock SCCP under a hashlock for a bridge counterparty."""
+    """Lock ZQWX under a hashlock for a bridge counterparty."""
     if amount <= 0:
         _fail("--amount must be positive", code=2)
     params = _resolve_network(ctx, network)
@@ -2872,7 +2872,7 @@ def bridge_claim(
     ] = None,
     network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
 ) -> None:
-    """Claim SCCP and reveal the preimage."""
+    """Claim ZQWX and reveal the preimage."""
     params = _resolve_network(ctx, network)
     wallet = _wallet_for(ctx, key, network)
     document = _node_document(node, f"/v1/htlcs/{htlc_id_value}")
@@ -2888,7 +2888,7 @@ def bridge_claim(
             )
         )
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
-    _report_transaction(ctx, tx, receipt, "claimed SCCP and revealed the preimage")
+    _report_transaction(ctx, tx, receipt, "claimed ZQWX and revealed the preimage")
 
 
 @bridge_app.command("refund")
@@ -2902,7 +2902,7 @@ def bridge_refund(
     ] = None,
     network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
 ) -> None:
-    """Refund an expired SCCP lock to its creator."""
+    """Refund an expired ZQWX lock to its creator."""
     params = _resolve_network(ctx, network)
     wallet = _wallet_for(ctx, key, network)
     document = _node_document(node, f"/v1/htlcs/{htlc_id_value}")
@@ -2917,7 +2917,7 @@ def bridge_refund(
             )
         )
     receipt = _submit_transaction(node or DEFAULT_NODE_URL, tx)
-    _report_transaction(ctx, tx, receipt, "refunded SCCP")
+    _report_transaction(ctx, tx, receipt, "refunded ZQWX")
 
 
 @bridge_app.command("eth-lock")
@@ -3002,7 +3002,7 @@ def bridge_eth_claim(
     ] = None,
     network: Annotated[str | None, typer.Option("--network", help="Require this network.")] = None,
 ) -> None:
-    """Claim the ETH leg with the preimage the SCCP claim revealed."""
+    """Claim the ETH leg with the preimage the ZQWX claim revealed."""
     _, rpc, address, depth = _eth_endpoint(
         ctx,
         node=node,

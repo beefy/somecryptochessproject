@@ -38,7 +38,7 @@ your `PATH` yet.
 | [`SEND_COINS.md`](guides/SEND_COINS.md) | fund, transfer, fees, nonces and settlement |
 | [`PLAY_AND_EXPORT.md`](guides/PLAY_AND_EXPORT.md) | play on-chain, serve the chain, export the block's PGN |
 | [`EXPLORE_THE_CHAIN.md`](guides/EXPLORE_THE_CHAIN.md) | the web app: build it, what the pages show, the playable table |
-| [`TEST_DEVNET_BRIDGE_DEX.md`](guides/TEST_DEVNET_BRIDGE_DEX.md) | ETH↔SCCP, pools, swaps and Chess960 end to end, CLI and web |
+| [`TEST_DEVNET_BRIDGE_DEX.md`](guides/TEST_DEVNET_BRIDGE_DEX.md) | ETH↔ZQWX, pools, swaps and Chess960 end to end, CLI and web |
 
 ## Setup
 

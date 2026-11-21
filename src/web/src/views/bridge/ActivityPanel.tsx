@@ -22,7 +22,7 @@ export function ActivityPanel({
         account.htlcs.map((htlc) => (
           <View key={htlc.htlc_id} style={styles.block}>
             <Text variant="titleSmall">
-              {formatTokenAmount(htlc.amount, htlc.asset === null ? "SCCP" : "asset", 8)}
+              {formatTokenAmount(htlc.amount, htlc.asset === null ? "ZQWX" : "asset", 8)}
             </Text>
             <Text variant="bodySmall" style={styles.muted}>
               {htlc.sender === account.address ? "locked by you" : "payable to you"} ·{" "}
@@ -42,7 +42,7 @@ export function ActivityPanel({
       )}
       {!bridge.configured && (
         <HelperText type="info" visible>
-          SCCP locks are visible without a configured Ethereum contract; the ETH actions are
+          ZQWX locks are visible without a configured Ethereum contract; the ETH actions are
           disabled until one is set.
         </HelperText>
       )}

@@ -824,11 +824,11 @@ the one scheme, not a second way to spend.
 | `timeout_claim` | `match_id`, `certificate`, `last_move`, `clock_evidence`, `bond`, `public_key`\* | opens a bonded claim (10.4) |
 | `timeout_dispute` | `claim_id`, `move`, `move_signature`, `clock_evidence`, `public_key`\* | the accused answers with a later signed move (10.4) |
 | `slash_evidence` | `evidence`, `proof_id`, `public_key`\* | burns an equivocating clock witness (10.4); `proof_id` is refused here |
-| `create_pool` | `asset_a`?, `amount_a`, `asset_b`?, `amount_b`, `public_key`\* | creates the ordered pair's first pool; both sides positive; the omitted asset key means native SCCP; shares are `isqrt(amount_a * amount_b)` |
+| `create_pool` | `asset_a`?, `amount_a`, `asset_b`?, `amount_b`, `public_key`\* | creates the ordered pair's first pool; both sides positive; the omitted asset key means native ZQWX; shares are `isqrt(amount_a * amount_b)` |
 | `add_liquidity` | `pool_id`, `amount_a`, `amount_b`, `public_key`\* | deposits both sides; mints `min(amount_a * shares / reserve_a, amount_b * shares / reserve_b)` shares |
 | `remove_liquidity` | `pool_id`, `shares`, `public_key`\* | burns the sender's shares and pays both reserves pro rata; a full redemption deletes the pool |
-| `swap` | `pool_id`, `asset_in`?, `amount_in`, `min_amount_out`, `public_key`\* | moves `amount_in` into one reserve and the constant-product output out of the other; omitted `asset_in` means SCCP; rejects an output below `min_amount_out` |
-| `htlc_lock` | `hashlock`, `timelock_height`, `beneficiary`, `amount`, `asset`?, `public_key`\* | moves `amount` into consensus escrow under `sha256(preimage) == hashlock`; `timelock_height > height`; omitted `asset` means native SCCP |
+| `swap` | `pool_id`, `asset_in`?, `amount_in`, `min_amount_out`, `public_key`\* | moves `amount_in` into one reserve and the constant-product output out of the other; omitted `asset_in` means ZQWX; rejects an output below `min_amount_out` |
+| `htlc_lock` | `hashlock`, `timelock_height`, `beneficiary`, `amount`, `asset`?, `public_key`\* | moves `amount` into consensus escrow under `sha256(preimage) == hashlock`; `timelock_height > height`; omitted `asset` means native ZQWX |
 | `htlc_claim` | `htlc_id`, `preimage`, `public_key`\* | signed by `beneficiary`, valid only before `timelock_height`, checks the preimage, pays the escrow and records the revealed secret |
 | `htlc_refund` | `htlc_id`, `public_key`\* | signed by the original locker, valid only at or after `timelock_height`; mutually exclusive with a claim |
 
@@ -839,13 +839,13 @@ already know (10.1).
 in state (and in `state_root`) so an explorer and the counterparty can read the
 preimage; a lock has no preimage until a claim reveals it. A native claim or
 refund may pay its network fee out of the amount being released, which lets a
-bridge taker who holds no SCCP claim the first leg. The hash is plain SHA-256,
+bridge taker who holds no ZQWX claim the first leg. The hash is plain SHA-256,
 not a domain hash, because the Ethereum contract checks the same 32 bytes.
 
 The DEX's swap fee is `dex_fee_bps` (30 basis points by default). It is charged
 inside the curve and stays in the input reserve, so it belongs to the pool's
 liquidity providers rather than to the miner. Every DEX transaction still pays
-its ordinary fee in native SCCP.
+its ordinary fee in native ZQWX.
 
 ### 10.3 Coinbase
 
@@ -888,7 +888,7 @@ The lifecycle (implemented in `src/sccp/chain/timeout.py`) is:
 4. **The stall slash.** The bond makes a *false* claim expensive; the stall
    slash makes a *real* stall expensive. When finalisation happens, the accused
    seat pays `min_bond * 1000 / 10000` — 10% of the protocol's miner bond, 50
-   SCCP on mainnet — which is taken from its bond first and from its spendable
+   ZQWX on mainnet — which is taken from its bond first and from its spendable
    balance after that, so unregistering before the claim lands does not escape
    the charge. The record remembers the charge (`slashed`), so re-finalising the
    same claim cannot debit twice, and a proof whose loser is not the claim's
@@ -992,7 +992,7 @@ is not in a browser.
 ### 10.6 Liquidity pools
 
 A DEX pool is consensus state, not a contract account. It has an ordered pair
-`(asset_a, asset_b)` — the empty string means native SCCP — two integer reserves
+`(asset_a, asset_b)` — the empty string means native ZQWX — two integer reserves
 and an LP share ledger keyed by address. `pool_id` is
 `H("sccp/v1/pool", {asset_a, asset_b})`, so both nodes derive the same id from
 either side order.
@@ -1012,7 +1012,7 @@ chain refuses a redemption that would pay zero of either side, and deletes the
 pool when the last share is burned.
 
 All reserves are integer base units. Fees for DEX transactions are still paid in
-native SCCP, so an account swapping a variant token needs a small SCCP balance.
+native ZQWX, so an account swapping a variant token needs a small ZQWX balance.
 Creating a pool costs nothing beyond the ordinary transaction fee: there is no
 pool-creation deposit and no protocol-owned minimum liquidity, so the first
 deposit is the whole of `k` and a zero-share initial deposit is refused rather
@@ -1041,7 +1041,7 @@ nothing in it reads a clock, a random source or the network. It holds one
 
 | Account field | Meaning |
 | --- | --- |
-| `balance`, `immature` | spendable and maturing native SCCP base units |
+| `balance`, `immature` | spendable and maturing native ZQWX base units |
 | `assets`, `immature_assets` | spendable and maturing variant-token balances keyed by asset id |
 | `bonded` | locked bond (registration or witness) |
 | `nonce` | next valid transaction nonce |
@@ -1268,7 +1268,7 @@ optional and defaults to the first allocation. Each `allocations` entry needs a
 positive integer `amount` in base units, a valid address for this network, and a
 `public_key` that **derives** that address — Ed25519 is not key-recoverable, so
 an allocation without a matching key would be unspendable. The entry is native
-SCCP when `asset` is omitted and otherwise names a variant asset id. One address
+ZQWX when `asset` is omitted and otherwise names a variant asset id. One address
 may appear once per asset; a duplicate `(address, asset)` pair is rejected.
 
 `pools` and `htlcs` are optional and are applied after the allocations, in that
@@ -1280,7 +1280,7 @@ amount in escrow, `claimed` debits the sender and credits the beneficiary, and
 that opens its hashlock. Genesis pools and HTLCs are limited to height 0 and are
 part of `state_root`.
 
-Mainnet allocates **1 basis point of the SCCP cap** — 2,100 SCCP — at genesis as
+Mainnet allocates **1 basis point of the ZQWX cap** — 2,100 ZQWX — at genesis as
 a bootstrap grant, and **no variant supply**: every C960 in existence is mined
 (or, on testnet only, seeded as demo liquidity). The public address and basis
 point live in `genesis/mainnet-premine.json`; the private key is not part of the
@@ -1288,8 +1288,8 @@ repository. `scripts/make_genesis.py` refuses to generate a document unless the
 manifest's tranches total exactly that one basis point, so neither an accidental
 mint nor a silently dropped grant can change the chain.
 
-Testnet also seeds an SCCP/C960 pool with 5 coins per side and one completed
-1-SCCP HTLC, using published demo keys, so `GET /v1/pools` and `GET /v1/htlcs`
+Testnet also seeds a ZQWX/C960 pool with 5 coins per side and one completed
+1-ZQWX HTLC, using published demo keys, so `GET /v1/pools` and `GET /v1/htlcs`
 are useful on a fresh deployment. The Ethereum leg remains an operator
 deployment.
 
@@ -1325,7 +1325,7 @@ an orphan block on `POST /v1/blocks` → 202.
 | GET | `/v1/bridge` | `BridgeView`: the Ethereum chain id/name, HTLC contract, confirmation depth and SCCP margin for this network |
 | GET | `/v1/htlcs` | `HtlcList`: SCCP hash locks filtered by `?address=` or `?hashlock=` |
 | GET | `/v1/htlcs/{htlc_id}` | `HtlcView`: one lock, its status and the preimage once claimed |
-| GET | `/v1/orders` | `OrderList`: open signed sell-SCCP orders (`?maker_sccp=` filter) |
+| GET | `/v1/orders` | `OrderList`: open signed sell-ZQWX orders (`?maker_sccp=` filter) |
 | GET | `/v1/orders/{order_id}` | `OrderDetail`: one order and its take, if any |
 | POST | `/v1/orders` | `OrderAccepted`: publish a signed order in the off-consensus book |
 | POST | `/v1/orders/{order_id}/takes` | `TakeAccepted`: attach a signed take after the ETH leg is locked |

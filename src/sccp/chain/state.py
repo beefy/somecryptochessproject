@@ -86,7 +86,7 @@ def reveal_deadline_tip(epoch: int, params: NetworkParams) -> int:
 class Account:
     """One account's balances, bond, nonce and registration metadata.
 
-    ``balance`` is the native SCCP coin. ``assets`` holds non-native variant
+    ``balance`` is the native ZQWX coin. ``assets`` holds non-native variant
     tokens (Chess960 first) keyed by their derived asset id; both have a matching
     ``immature`` counter for coinbase rewards that have not matured yet.
     """
@@ -112,7 +112,7 @@ class Account:
     engine: str | None = None
     """Engine fingerprint declared at registration."""
     variant: str = "standard"
-    """Chess variant this miner registered for; standard is native SCCP."""
+    """Chess variant this miner registered for; standard is native ZQWX."""
     public_key: str | None = None
     """Ed25519 public key (hex), set by genesis, ``register`` or first reveal."""
     banned_until: int = 0
@@ -265,7 +265,7 @@ class Account:
 class Pool:
     """One constant-product liquidity pool, including its LP share ledger.
 
-    ``asset_a`` is the empty string for native SCCP and a 64-hex asset id
+    ``asset_a`` is the empty string for native ZQWX and a 64-hex asset id
     otherwise. The pair is ordered, so a pool has exactly one representation and
     :func:`sccp.chain.dex.pool_id` can be derived from either side order.
     """
@@ -367,7 +367,7 @@ class HtlcStatus(StrEnum):
 class HtlcRecord:
     """One hash time-locked contract held by consensus (PROTOCOL.md section 10).
 
-    ``asset`` is the empty string for native SCCP and a 64-hex asset id for a
+    ``asset`` is the empty string for native ZQWX and a 64-hex asset id for a
     variant token. Native and token amounts are mutually exclusive by keeping one
     ``amount`` beside one ``asset`` name, exactly as the DEX pool sides do.
     """
@@ -733,7 +733,7 @@ class State:
     minted: int = 0
     """Total native subsidy ever created, for the ``max_supply`` clamp."""
     burned: int = 0
-    """Total native SCCP destroyed by slashes, for display.
+    """Total native ZQWX destroyed by slashes, for display.
 
     The burn itself is already committed through the reduced balances in
     ``state_root``. This counter records what those reductions removed, including

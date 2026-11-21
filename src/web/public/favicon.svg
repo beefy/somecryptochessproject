@@ -15,7 +15,7 @@
     The hairline ring stays inside the clip edge so the light half has an edge
     against a light browser chrome; the dark half needs none.
   -->
-  <title>SCCP explorer</title>
+  <title>ZQWX explorer</title>
   <defs>
     <clipPath id="board-disc">
       <circle cx="32" cy="32" r="32" />

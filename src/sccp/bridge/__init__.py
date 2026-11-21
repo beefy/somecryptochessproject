@@ -1,6 +1,6 @@
-"""The ETH<->SCCP bridge.
+"""The ETH<->ZQWX bridge.
 
-The bridge is a pair of hash time-locked contracts, not a custodian: SCCP lives
+The bridge is a pair of hash time-locked contracts, not a custodian: ZQWX lives
 in :class:`sccp.chain.state.HtlcRecord` entries and ETH lives in
 ``contracts/EthHtlc.sol``. The SCCP node only needs an Ethereum chain id and a
 contract address for the environment it is serving; it never holds an Ethereum

@@ -16,7 +16,7 @@ const params = {
       name: "standard",
       rules: "chess",
       asset: null,
-      symbol: "SCCP",
+      symbol: "ZQWX",
       display_name: "Standard chess",
       decimals: 8,
       subsidy: 1,
@@ -44,9 +44,9 @@ const params = {
 } as unknown as NetworkParams;
 
 describe("tokens", () => {
-  it("puts native SCCP first and keeps C960 addressable by id, variant and symbol", () => {
+  it("puts native ZQWX first and keeps C960 addressable by id, variant and symbol", () => {
     const tokens = tokensFor(params);
-    expect(tokens.map((token) => token.symbol)).toStrictEqual(["SCCP", "C960"]);
+    expect(tokens.map((token) => token.symbol)).toStrictEqual(["ZQWX", "C960"]);
     expect(tokenForAsset(tokens, "a".repeat(64))?.symbol).toBe("C960");
     expect(tokenForVariant(tokens, "chess960")?.symbol).toBe("C960");
     expect(tokenForAsset(tokens, null)?.native).toBe(true);
@@ -67,7 +67,7 @@ describe("tokens", () => {
   it("labels variants for tables before the node has answered", () => {
     expect(variantLabel("standard")).toBe("Standard");
     expect(variantLabel("chess960")).toBe("Chess960");
-    expect(variantShort("standard")).toBe("SCCP");
+    expect(variantShort("standard")).toBe("ZQWX");
     expect(variantShort("chess960")).toBe("C960");
     expect(variantLabel(undefined)).toBe("Unknown");
   });

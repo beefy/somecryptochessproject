@@ -8,7 +8,7 @@ import { tokenForAsset, type Token } from "../../lib/assets";
 import { parseTokenAmount, shortHash } from "../../lib/format";
 import type { PoolView } from "../../types";
 
-/** `SCCP / C960`, using symbols once params have named the assets. */
+/** `ZQWX / C960`, using symbols once params have named the assets. */
 export function pairLabel(pool: PoolView, tokens: readonly Token[]): string {
   const left = tokenForAsset(tokens, pool.asset_a)?.symbol ?? shortHash(pool.asset_a, 6);
   const right = tokenForAsset(tokens, pool.asset_b)?.symbol ?? shortHash(pool.asset_b, 6);

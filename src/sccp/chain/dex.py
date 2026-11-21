@@ -5,7 +5,7 @@ pair of assets, two reserves and a share ledger; a swap is one signed transactio
 that moves both assets in the same state transition. That makes the price and the
 LP claim as auditable as a transfer, and it means a client cannot fake a fill.
 
-The native SCCP side is the empty string in state and protocol payloads. It is
+The native ZQWX side is the empty string in state and protocol payloads. It is
 the same convention a native ``transfer`` uses by omitting ``asset``: only the
 other side of a pair ever needs an asset id. Pools are ordered by asset key, so
 ``pool_id`` is a pure function of the pair and both nodes derive the same id.
@@ -28,7 +28,7 @@ from sccp.errors import StateError
 from sccp.serialization import Domain, domain_hex
 
 NATIVE_ASSET: Final = ""
-"""The native SCCP side of a pair; any 64-hex asset id names a variant token."""
+"""The native ZQWX side of a pair; any 64-hex asset id names a variant token."""
 
 BPS_DENOMINATOR: Final = 10_000
 

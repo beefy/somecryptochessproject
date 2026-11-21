@@ -1,11 +1,11 @@
 /**
- * ETH<->SCCP bridge helpers: hashlocks, signed orders and the tiny slice of
+ * ETH<->ZQWX bridge helpers: hashlocks, signed orders and the tiny slice of
  * Ethereum ABI the `EthHtlc` contract needs.
  *
  * ETH amounts are `bigint`/decimal strings throughout. One wei is 10^-18 ETH,
  * so a useful amount crosses JavaScript's safe-integer boundary immediately;
  * parsing it into a `number` would sign a different amount than the user saw.
- * SCCP amounts stay integers in base units because 21M SCCP is comfortably
+ * ZQWX amounts stay integers in base units because 21M ZQWX is comfortably
  * inside the safe range.
  */
 
@@ -64,7 +64,7 @@ export function weiToHex(value: bigint): string {
   return `0x${value.toString(16)}`;
 }
 
-/** ETH per SCCP, from an order, as a display string with eight decimals. */
+/** ETH per ZQWX, from an order, as a display string with eight decimals. */
 export function orderPrice(order: Pick<OrderView, "give_amount" | "want_amount">): string {
   if (order.give_amount <= 0) return "-";
   const scaled = (BigInt(order.want_amount) * 100_000_000n) / BigInt(order.give_amount);
@@ -82,11 +82,11 @@ export function isTxHash(value: string): boolean {
 /**
  * The SCCP height a taker should name when the ETH leg unlocks in `ethSeconds`.
  *
- * The second leg (SCCP) must expire *before* the first leg (ETH), leaving the
- * maker `margin` blocks to claim ETH after a last-moment SCCP claim. If it
+ * The second leg (ZQWX) must expire *before* the first leg (ETH), leaving the
+ * maker `margin` blocks to claim ETH after a last-moment ZQWX claim. If it
  * expired after the ETH leg, a taker could wait until the ETH timelock passed,
- * claim SCCP at its last valid height, and then refund the ETH: the maker would
- * lose the SCCP. The same rule in reverse protects the taker if the maker stalls.
+ * claim ZQWX at its last valid height, and then refund the ETH: the maker would
+ * lose the ZQWX. The same rule in reverse protects the taker if the maker stalls.
  */
 export function sccpTimelockHeight(
   currentHeight: number,
@@ -117,7 +117,7 @@ interface OrderBody {
   network: string;
   maker_sccp: string;
   maker_eth: string;
-  give_asset: "SCCP";
+  give_asset: "ZQWX";
   give_amount: number;
   want_asset: "ETH";
   want_amount: string;
@@ -152,7 +152,7 @@ export interface OrderFields {
   nonce: number;
 }
 
-/** A sell-SCCP order signed over `H("sccp/v1/order", body)`. */
+/** A sell-ZQWX order signed over `H("sccp/v1/order", body)`. */
 export function signBridgeOrder(
   keypair: HybridKeypair,
   fields: OrderFields,
@@ -165,7 +165,7 @@ export function signBridgeOrder(
     network: fields.network,
     maker_sccp: fields.makerSccp,
     maker_eth: fields.makerEth,
-    give_asset: "SCCP",
+    give_asset: "ZQWX",
     give_amount: fields.giveAmount,
     want_asset: "ETH",
     want_amount: fields.wantAmount,

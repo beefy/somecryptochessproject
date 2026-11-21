@@ -231,7 +231,7 @@ def test_a_coinbase_cannot_claim_variant_rewards_without_a_variant_proof(
         [],
         {CHESS960_ASSET_ID: 0},
         {CHESS960_ASSET_ID: True},
-        {"SCCP": 1},
+        {"ZQWX": 1},
         {"aa" * 32: 1},
     ],
 )

@@ -103,7 +103,7 @@ export function LiquidityPanel({
     const nativeNeeded =
       (tokenA.native ? addAmountA : 0) + (tokenB.native ? addAmountB : 0) + fee;
     if (nativeNeeded > account.balance) {
-      return `the deposit needs ${formatTokenAmount(nativeNeeded, "SCCP")} including the fee`;
+      return `the deposit needs ${formatTokenAmount(nativeNeeded, "ZQWX")} including the fee`;
     }
     if (!tokenA.native && addAmountA > tokenBalance(account, tokenA)) {
       return `${tokenA.symbol} balance is too small`;
@@ -120,7 +120,7 @@ export function LiquidityPanel({
     if (removal.amountA <= 0 || removal.amountB <= 0) {
       return "the redemption is too small to pay both sides";
     }
-    if (account.balance < fee) return "the wallet needs SCCP for the network fee";
+    if (account.balance < fee) return "the wallet needs ZQWX for the network fee";
     return null;
   })();
 
@@ -145,7 +145,7 @@ export function LiquidityPanel({
             `${formatTokenAmount(addAmountA, tokenA.symbol, tokenA.decimals)} + ${formatTokenAmount(addAmountB, tokenB.symbol, tokenB.decimals)}`,
           ],
           ["LP shares", formatInteger(newShares)],
-          ["Fee", formatTokenAmount(fee, "SCCP")],
+          ["Fee", formatTokenAmount(fee, "ZQWX")],
           ["Nonce", formatInteger(nonce)],
         ],
       });
@@ -169,7 +169,7 @@ export function LiquidityPanel({
           "Receive",
           `${formatTokenAmount(removal.amountA, tokenA.symbol, tokenA.decimals)} + ${formatTokenAmount(removal.amountB, tokenB.symbol, tokenB.decimals)}`,
         ],
-        ["Fee", formatTokenAmount(fee, "SCCP")],
+        ["Fee", formatTokenAmount(fee, "ZQWX")],
         ["Nonce", formatInteger(nonce)],
       ],
     });

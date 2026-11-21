@@ -60,7 +60,7 @@ export function FaucetPanel({
         {address}
       </KeyValue>
       {account !== null && (
-        <KeyValue label="SCCP spendable now" mono>
+        <KeyValue label="ZQWX spendable now" mono>
           {formatAmount(account.balance)}
         </KeyValue>
       )}
@@ -73,8 +73,8 @@ export function FaucetPanel({
       ) : (
         <>
           <Text variant="bodyMedium">
-            Ask the node to fund this address with SCCP. The amount is the node&apos;s choice, not
-            this page&apos;s. SCCP pays every transaction fee; C960 is a separate proof-of-work
+            Ask the node to fund this address with ZQWX. The amount is the node&apos;s choice, not
+            this page&apos;s. ZQWX pays every transaction fee; C960 is a separate proof-of-work
             asset created when a block settles a Chess960 proof, or received by transfer, so the
             faucet does not mint it.
           </Text>

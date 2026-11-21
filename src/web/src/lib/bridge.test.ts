@@ -31,7 +31,7 @@ describe("bridge order vectors", () => {
       nonce: 0,
     });
     expect(orderId(order)).toBe(
-      "268e40d0a6dc80539dfe6a243339aac46bb33ba981c0a229df0df694cb6b0bed",
+      "f9077f6fd8c0b0c6a734d9573d129305a9d07473618e9f1a0a9b171001ba28ef",
     );
     expect(hybridVerify(order.public_key, fromHex(orderId(order)), order.signature)).toBe(true);
   });
@@ -40,7 +40,7 @@ describe("bridge order vectors", () => {
     const keypair = hybridKeypairFromSeed(new Uint8Array(32).fill(2));
     const take = signBridgeTake(keypair, {
       network: "devnet",
-      orderId: "268e40d0a6dc80539dfe6a243339aac46bb33ba981c0a229df0df694cb6b0bed",
+      orderId: "f9077f6fd8c0b0c6a734d9573d129305a9d07473618e9f1a0a9b171001ba28ef",
       takerSccp: "sccpt1q8c97qs6ehcm6c6aw6pwlqjt9jlmqgdjxfsvq4vu7k6jsysfkwme79lm4gn",
       takerEth: `0x${"34".repeat(20)}`,
       hashlock: HASHLOCK,
@@ -50,7 +50,7 @@ describe("bridge order vectors", () => {
       nonce: 0,
     });
     expect(takeId(take)).toBe(
-      "f720843c31e3d7d4d51955ea74547f8958e344a8d4fe39e0d30c575ffbc3fb67",
+      "ba1e30c43e2abc77a2e5d99f2d81059d54afa1e82162fca62bbb3c7d5822ce1f",
     );
     expect(hybridVerify(take.public_key, fromHex(takeId(take)), take.signature)).toBe(true);
   });

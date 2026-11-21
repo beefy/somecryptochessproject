@@ -1,7 +1,7 @@
 """The small Ethereum JSON-RPC surface the CLI bridge needs.
 
 The browser bridge signs the Ethereum leg with an EIP-1193 wallet. The CLI has
-no browser, so this module speaks JSON-RPC to the node named by the SCCP
+no browser, so this module speaks JSON-RPC to the node named by the ZQWX
 network's bridge environment and sends from an account the node has unlocked.
 That is exactly the devnet case: Anvil prefunds and unlocks its test accounts.
 For Sepolia or mainnet the wallet path is the supported one, because a

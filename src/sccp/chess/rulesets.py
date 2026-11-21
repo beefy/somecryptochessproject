@@ -44,7 +44,7 @@ import chess
 from sccp.errors import ConfigError
 
 STANDARD_VARIANT: Final = "standard"
-"""The native SCCP variant. It is first in every network's variant list."""
+"""The native ZQWX variant. It is first in every network's variant list."""
 
 CHESS960_VARIANT: Final = "chess960"
 """Fischer Random: the same pieces, a shuffled back rank and 960 start positions."""

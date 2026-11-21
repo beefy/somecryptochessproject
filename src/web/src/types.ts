@@ -18,7 +18,7 @@ export type VariantName = string;
 export interface VariantParams {
   name: VariantName;
   rules: string;
-  /** `null` for standard chess: its proofs mint native SCCP. */
+  /** `null` for standard chess: its proofs mint native ZQWX. */
   asset: string | null;
   symbol: string;
   display_name: string;
@@ -45,9 +45,9 @@ export interface NodeStatus {
   peers: number;
   syncing: boolean;
   mempool: MempoolStatus;
-  /** Native SCCP minted so far, in base units. */
+  /** Native ZQWX minted so far, in base units. */
   minted: number;
-  /** Native SCCP destroyed by timeout and witness slashes, when the node reports it. */
+  /** Native ZQWX destroyed by timeout and witness slashes, when the node reports it. */
   burned?: number;
   /** Asset id -> minted base units for every non-native variant token. */
   minted_assets: Record<string, number>;
@@ -345,7 +345,7 @@ export interface HtlcView {
   timelock_height: number;
   amount: number;
   created_at_height: number;
-  /** `null` for native SCCP; a 64-hex asset id otherwise. */
+  /** `null` for native ZQWX; a 64-hex asset id otherwise. */
   asset: string | null;
   status: "locked" | "claimed" | "refunded";
   closed_at_height: number | null;
@@ -371,13 +371,13 @@ export interface BridgeView {
   configured: boolean;
 }
 
-/** One open sell-SCCP order; fields are signed by the maker's hybrid key. */
+/** One open sell-ZQWX order; fields are signed by the maker's hybrid key. */
 export interface OrderView {
   order_id: string;
   network: string;
   maker_sccp: string;
   maker_eth: string;
-  give_asset: "SCCP";
+  give_asset: "ZQWX";
   give_amount: number;
   want_asset: "ETH";
   /** Wei as a decimal string: 18 decimals exceed JavaScript's safe integers. */
@@ -432,7 +432,7 @@ export interface TakeAccepted {
 export interface PoolView {
   pool_id: string;
   network: string;
-  /** `null` for native SCCP; a 64-hex asset id otherwise. */
+  /** `null` for native ZQWX; a 64-hex asset id otherwise. */
   asset_a: string | null;
   asset_b: string | null;
   reserve_a: number;
@@ -470,7 +470,7 @@ export interface DifficultyView {
 export interface FaucetView {
   network: string;
   address: string;
-  /** Whole coins, not base units: a grant of 1,000 is 1,000 SCCP. */
+  /** Whole coins, not base units: a grant of 1,000 is 1,000 ZQWX. */
   amount: number;
   txid: string;
 }

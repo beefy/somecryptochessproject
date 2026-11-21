@@ -17,7 +17,7 @@ export interface PendingTransaction {
   to: string;
   /** Base units of the transferred token. */
   amount: number;
-  /** Asset id for a C960-style transfer; `null`/absent means native SCCP. */
+  /** Asset id for a C960-style transfer; `null`/absent means native ZQWX. */
   asset?: string | null;
   /** Printable symbol captured when signed, so history still reads without params. */
   symbol?: string;

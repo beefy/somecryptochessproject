@@ -63,11 +63,11 @@ so all of a cycle's nonces are numbered in one place. They are one flag away fro
 off: ``--extra-miners 0`` leaves exactly the wallet traffic.
 
 The bridge and DEX traffic is best-effort and reports what it did on the cycle
-line. A bridge leg only needs native SCCP: the lock pays one wallet, the claim
+line. A bridge leg only needs native ZQWX: the lock pays one wallet, the claim
 reveals the hash preimage from another, and an alternate cycle waits out the
 timelock and refunds instead. The DEX needs a pool or a variant token to seed one
 with. Traffic wallets are funded from the native faucet, so a fresh chain with no
-C960 holder has nothing to pair SCCP with: the generator reads ``GET /v1/pools``,
+C960 holder has nothing to pair ZQWX with: the generator reads ``GET /v1/pools``,
 uses a pool another client created, and otherwise logs the skip rather than
 failing the cycle. Tests seed the variant asset directly.
 
@@ -304,7 +304,7 @@ def nonce(client: httpx.Client, address: str) -> int:
 def account_asset_balance(view: Mapping[str, object], asset: str) -> int:
     """The committed balance of one trade asset in an account view.
 
-    Native SCCP is the empty asset id and lives in ``balance``. A variant token
+    Native ZQWX is the empty asset id and lives in ``balance``. A variant token
     lives in ``assets``; a view that omits the map (an older node) simply holds
     none of it.
     """
@@ -393,7 +393,7 @@ def create_pool_transaction(
     nonce: int,
     params: NetworkParams = TESTNET,
 ) -> Transaction:
-    """Build and sign a pool creation pairing native SCCP with ``asset``."""
+    """Build and sign a pool creation pairing native ZQWX with ``asset``."""
     tx = Transaction(
         network=params.network_id,
         type=TxType.CREATE_POOL,
@@ -472,7 +472,7 @@ def swap_transaction(
 ) -> Transaction:
     """Build and sign an exact-input swap against ``pool_id``.
 
-    Native SCCP is the empty asset id, and the node's schema distinguishes it by
+    Native ZQWX is the empty asset id, and the node's schema distinguishes it by
     *omitting* ``asset_in``; an empty string is not an asset id.
     """
     payload: dict[str, object] = {
@@ -819,7 +819,7 @@ class Options:
     bridge_refund_blocks: int = BRIDGE_REFUND_BLOCKS
     dex_coins: int = DEX_COINS
     dex_asset: str | None = None
-    """The variant token to pair with SCCP; ``None`` uses the network's first variant."""
+    """The variant token to pair with ZQWX; ``None`` uses the network's first variant."""
     burst_every: int = BURST_EVERY
     burst_rounds: int = BURST_ROUNDS
     burst_transfers: int = BURST_TRANSFERS
@@ -1004,7 +1004,7 @@ def _send_transfers(
 def _asset_label(asset: str, params: NetworkParams) -> str:
     """A pool side's ticker, falling back to a short asset id for unknown tokens."""
     if asset == dex.NATIVE_ASSET:
-        return "SCCP"
+        return "ZQWX"
     for variant in params.variants:
         if variant.asset == asset:
             return variant.symbol
@@ -1012,7 +1012,7 @@ def _asset_label(asset: str, params: NetworkParams) -> str:
 
 
 def _dex_asset_id(params: NetworkParams, override: str | None) -> str | None:
-    """The variant token to pair with SCCP, or ``None`` when the network has none."""
+    """The variant token to pair with ZQWX, or ``None`` when the network has none."""
     if override is not None:
         return override
     for variant in params.variants:
@@ -1027,7 +1027,7 @@ def _short(digest: str) -> str:
 
 
 def _pool_side(row: Mapping[str, object], field: str) -> str:
-    """One pool side from a ``GET /v1/pools`` row; an absent side is native SCCP."""
+    """One pool side from a ``GET /v1/pools`` row; an absent side is native ZQWX."""
     value = row.get(field)
     if value is None or value == "":
         return dex.NATIVE_ASSET
@@ -1097,7 +1097,7 @@ def _create_pool_action(
         label = _asset_label(asset, params)
         return SideTraffic(
             line=(
-                f"dex: created SCCP/{label} pool {_short(pool_id)} ({format_coins(amount)} each)"
+                f"dex: created ZQWX/{label} pool {_short(pool_id)} ({format_coins(amount)} each)"
             ),
             txids=(digest,),
             spenders=(wallet.address,),
@@ -1291,7 +1291,7 @@ def _dex_activity(
     rows = pool_views(client)
     if not rows:
         if asset is None:
-            return SideTraffic("dex: skipped (the network has no variant asset to pair with SCCP)")
+            return SideTraffic("dex: skipped (the network has no variant asset to pair with ZQWX)")
         created = _create_pool_action(
             client,
             candidates=candidates,
@@ -1302,7 +1302,7 @@ def _dex_activity(
         if created is not None:
             return created
         return SideTraffic(
-            f"dex: skipped (no wallet held SCCP fees and {_asset_label(asset, params)})"
+            f"dex: skipped (no wallet held ZQWX fees and {_asset_label(asset, params)})"
         )
     row = rng.choice(rows)
     offset = (cycle - 1) % len(DEX_ACTIONS)
@@ -1457,7 +1457,7 @@ def _bridge_activity(
     verb = "claimed" if mode == "claim" else "refunded"
     suffix = "" if close_digest in close_confirmed else " (close unconfirmed)"
     return SideTraffic(
-        line=(f"bridge: locked {format_coins(amount)} SCCP and {verb} htlc {_short(htlc)}{suffix}"),
+        line=(f"bridge: locked {format_coins(amount)} ZQWX and {verb} htlc {_short(htlc)}{suffix}"),
         txids=(lock_digest, close_digest),
         confirmed=confirmed,
         spenders=(sender.address, beneficiary.address),
@@ -1956,7 +1956,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--dex-asset",
         default=None,
-        help="variant asset id to pair with SCCP (default: the network's first variant)",
+        help="variant asset id to pair with ZQWX (default: the network's first variant)",
     )
     parser.add_argument(
         "--cycles",

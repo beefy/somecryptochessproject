@@ -39,7 +39,7 @@ export function Dashboard(): ReactNode {
           A chess chain
         </Text>
         <Text variant="bodyLarge" style={styles.heroBody}>
-          In SCCP the work that seals a block is a chess game. Two seated miners play an opening from the
+          In ZQWX the work that seals a block is a chess game. Two seated miners play an opening from the
           epoch&apos;s book, both sign every move, and the winner signs the result. The proof they produce is
           what a block commits to.
         </Text>
@@ -96,11 +96,11 @@ export function Dashboard(): ReactNode {
       {variantTokens.length > 0 && status.data !== undefined && (
         <Section
           title="Variant tokens"
-          subtitle="every variant mints its own token; native SCCP remains the fee currency"
+          subtitle="every variant mints its own token; native ZQWX remains the fee currency"
         >
           {/* `minted` starts at the genesis premine and grows by each block's
               subsidy plus its transaction fees. */}
-          <KeyValue label="SCCP minted + fees" mono>
+          <KeyValue label="ZQWX minted + fees" mono>
             {formatAmount(status.data.minted)}
           </KeyValue>
           {variantTokens.map((token) => (

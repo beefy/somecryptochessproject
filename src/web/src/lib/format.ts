@@ -60,19 +60,19 @@ export function formatTokenAmount(
   return `${base < 0 ? "-" : ""}${text} ${symbol}`;
 }
 
-/** Base units as a native SCCP amount, e.g. `50 SCCP` or `0.0005 SCCP`. */
+/** Base units as a native ZQWX amount, e.g. `50 ZQWX` or `0.0005 ZQWX`. */
 export function formatAmount(base: number | null | undefined): string {
-  return formatTokenAmount(base, "SCCP");
+  return formatTokenAmount(base, "ZQWX");
 }
 
 /**
  * Whole coins, not base units: what `POST /v1/faucet` reports.
  *
- * The faucet's `amount` is already in coins (1,000 means one thousand SCCP), so
+ * The faucet's `amount` is already in coins (1,000 means one thousand ZQWX), so
  * running it through {@link formatAmount} would print a hundred-millionth of the
  * grant.
  */
-export function formatCoins(coins: number | null | undefined, symbol = "SCCP"): string {
+export function formatCoins(coins: number | null | undefined, symbol = "ZQWX"): string {
   if (coins === null || coins === undefined || !Number.isFinite(coins)) return "-";
   return `${formatInteger(Math.trunc(coins))} ${symbol}`;
 }
@@ -93,7 +93,8 @@ export function parseTokenAmount(text: string, symbol: string, decimals = 8): nu
     places === 0 ? /^[0-9]+$/ : new RegExp(`^([0-9]+)(?:[.]([0-9]{1,${places}}))?$`);
   const match = pattern.exec(trimmed);
   if (match === null) {
-    const article = symbol === "SCCP" ? "an" : "a";
+    // Spoken letter names decide the article: "an SCCP amount", "a ZQWX amount".
+    const article = /^[AEFHILMNORSX]/i.test(symbol) ? "an" : "a";
     throw new Error(
       `"${text.trim()}" is not ${article} ${symbol} amount (up to ${places} decimals)`,
     );
@@ -108,9 +109,9 @@ export function parseTokenAmount(text: string, symbol: string, decimals = 8): nu
   return units;
 }
 
-/** Parse a native SCCP amount; kept for existing callers. */
+/** Parse a native ZQWX amount; kept for existing callers. */
 export function parseAmount(text: string): number {
-  return parseTokenAmount(text, "SCCP", 8);
+  return parseTokenAmount(text, "ZQWX", 8);
 }
 
 /** Render a byte count with a binary unit. */

@@ -246,8 +246,8 @@ hash and signature, so testnet transactions and proofs are invalid on mainnet.
 | Wins per claim (`k`) | 1 | 3 (retargeted 1..10) |
 | Header seal difficulty | 0 bits | 16 bits (retargeted) |
 | Block subsidy | 50 coins | 50 coins, halves every 210,000 blocks |
-| Max supply | none (test coins) | 21,000,000 SCCP + 21,000,000 per variant |
-| Genesis allocation | 1,000,000 SCCP faucet, a 5 SCCP/5 C960 demo pool and a completed 1-SCCP HTLC | 1 bps SCCP (2,100) bootstrap grant; no variant allocation |
+| Max supply | none (test coins) | 21,000,000 ZQWX + 21,000,000 per variant |
+| Genesis allocation | 1,000,000 ZQWX faucet, a 5 ZQWX/5 C960 demo pool and a completed 1-ZQWX HTLC | 1 bps ZQWX (2,100) bootstrap grant; no variant allocation |
 | Coinbase maturity | 20 blocks | 100 blocks |
 | Registration bond | 10 coins | 500 coins |
 | Claim window | 64 blocks | 144 blocks |

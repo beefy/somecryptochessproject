@@ -219,8 +219,8 @@ class WalletService:
         """Build and sign a transfer, raising if the sender cannot afford it.
 
         ``asset`` accepts an asset id, a variant name or its symbol. Omitting it
-        (or naming SCCP) transfers the native coin and keeps the protocol-v1
-        payload byte-identical. A variant transfer still pays its fee in SCCP.
+        (or naming ZQWX) transfers the native coin and keeps the protocol-v1
+        payload byte-identical. A variant transfer still pays its fee in ZQWX.
         """
         sender = self.address_for(keypair)
         self._require_address(to)
@@ -250,7 +250,7 @@ class WalletService:
                 )
             if self.state.spendable(sender) < resolved_fee:
                 raise WalletServiceError(
-                    f"{sender} cannot pay the {format_coins(resolved_fee)} SCCP fee"
+                    f"{sender} cannot pay the {format_coins(resolved_fee)} ZQWX fee"
                 )
         else:
             total = amount + resolved_fee
@@ -279,7 +279,7 @@ class WalletService:
         return sign_transaction(keypair, tx)
 
     def _trade_asset(self, asset: str | None) -> str:
-        """Resolve a pool side to an asset id; native SCCP is the empty string."""
+        """Resolve a pool side to an asset id; native ZQWX is the empty string."""
         resolved = self._resolve_asset_name(asset)
         return dex.NATIVE_ASSET if resolved is None else resolved
 
@@ -291,10 +291,10 @@ class WalletService:
         fee: int,
         what: str,
     ) -> None:
-        """Require ``amount`` of ``asset`` and the SCCP fee for one pool side."""
+        """Require ``amount`` of ``asset`` and the ZQWX fee for one pool side."""
         spendable = self.state.spendable(address)
         if spendable < fee:
-            raise WalletServiceError(f"{address} cannot pay the {format_coins(fee)} SCCP fee")
+            raise WalletServiceError(f"{address} cannot pay the {format_coins(fee)} ZQWX fee")
         if asset == dex.NATIVE_ASSET:
             if spendable < amount + fee:
                 raise WalletServiceError(
@@ -330,7 +330,7 @@ class WalletService:
     ) -> Transaction:
         """Build and sign a ``create_pool`` with an initial two-sided deposit.
 
-        Omit a side (or name native ``SCCP``) to pair the native coin with a
+        Omit a side (or name native ``ZQWX``) to pair the native coin with a
         variant asset. Amounts are base units. The chain orders the pair by
         asset id, and this builder does the same so the payload names the sides
         in the order the pool will store them.
@@ -392,7 +392,7 @@ class WalletService:
         if pool is None:
             if self.state.spendable(sender) < resolved_fee:
                 raise WalletServiceError(
-                    f"{sender} cannot pay the {format_coins(resolved_fee)} SCCP fee"
+                    f"{sender} cannot pay the {format_coins(resolved_fee)} ZQWX fee"
                 )
         else:
             shares = dex.added_shares(
@@ -450,7 +450,7 @@ class WalletService:
         resolved_fee = self.required_fee(fee)
         if self.state.spendable(sender) < resolved_fee:
             raise WalletServiceError(
-                f"{sender} cannot pay the {format_coins(resolved_fee)} SCCP fee"
+                f"{sender} cannot pay the {format_coins(resolved_fee)} ZQWX fee"
             )
         tx = Transaction(
             network=self.params.network_id,
@@ -503,7 +503,7 @@ class WalletService:
         resolved_fee = self.required_fee(fee)
         if self.state.spendable(sender) < resolved_fee:
             raise WalletServiceError(
-                f"{sender} cannot pay the {format_coins(resolved_fee)} SCCP fee"
+                f"{sender} cannot pay the {format_coins(resolved_fee)} ZQWX fee"
             )
         payload: dict[str, object] = {
             "pool_id": pool_id,
@@ -574,7 +574,7 @@ class WalletService:
             if self.state.asset_balance(sender, selected) < amount:
                 raise WalletServiceError(f"{sender} does not hold {amount} of {selected}")
             if self.state.spendable(sender) < resolved_fee:
-                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} SCCP fee")
+                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} ZQWX fee")
         payload: dict[str, object] = {
             "public_key": keypair.public_key_hex,
             "hashlock": hashlock,
@@ -634,7 +634,7 @@ class WalletService:
         spendable = self.state.spendable(sender)
         if stored.asset:
             if spendable < resolved_fee:
-                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} SCCP fee")
+                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} ZQWX fee")
         elif spendable + stored.amount < resolved_fee:
             raise WalletServiceError("the htlc amount cannot cover the network fee")
         tx = Transaction(
@@ -674,7 +674,7 @@ class WalletService:
         spendable = self.state.spendable(sender)
         if stored.asset:
             if spendable < resolved_fee:
-                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} SCCP fee")
+                raise WalletServiceError(f"{sender} cannot pay the {resolved_fee} ZQWX fee")
         elif spendable + stored.amount < resolved_fee:
             raise WalletServiceError("the htlc amount cannot cover the network fee")
         tx = Transaction(

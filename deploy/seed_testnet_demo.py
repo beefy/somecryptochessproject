@@ -1,6 +1,6 @@
-"""Verify (or create) the testnet demo bridge leg and SCCP/C960 pool.
+"""Verify (or create) the testnet demo bridge leg and ZQWX/C960 pool.
 
-Testnet genesis now seeds both records at height 0: the pool is backed by 5 SCCP
+Testnet genesis now seeds both records at height 0: the pool is backed by 5 ZQWX
 and 5 C960 allocations and the HTLC was locked and claimed with the published
 demo preimage. On a normal deployment this helper therefore finds the existing
 records and reports them without sending a transaction.
@@ -9,11 +9,11 @@ It remains a fallback for a custom chain whose genesis does not seed them. In
 that case it:
 
 1. funds two deterministic demo wallets from the published testnet faucet;
-2. locks one SCCP in an HTLC and claims it, leaving a completed bridge leg in
+2. locks one ZQWX in an HTLC and claims it, leaving a completed bridge leg in
    ``GET /v1/htlcs``;
 3. waits for the first mature C960 coinbase on one of the stack's Chess960
    miners, transfers enough C960 to the demo liquidity wallet, and creates the
-   SCCP/C960 pool with equal sides.
+   ZQWX/C960 pool with equal sides.
 
 Every step is an ordinary signed transaction submitted through ``POST /v1/tx``
 and validated by the node. Only the key sources are special: the two demo
@@ -66,13 +66,13 @@ from sccp.errors import ConfigError
 from sccp.protocol.models import Transaction, TxType
 
 GRANT_COINS: Final = 20
-"""SCCP granted to each demo wallet; enough for the bridge and the pool deposit."""
+"""ZQWX granted to each demo wallet; enough for the bridge and the pool deposit."""
 
 DEX_COINS: Final = 5
-"""Size of each side of the SCCP/C960 pool, in whole coins."""
+"""Size of each side of the ZQWX/C960 pool, in whole coins."""
 
 BRIDGE_COINS: Final = 1
-"""Native SCCP locked in the demo HTLC."""
+"""Native ZQWX locked in the demo HTLC."""
 
 BRIDGE_CLAIM_BLOCKS: Final = 12
 """Blocks between the lock and its timelock; the claim lands well inside it."""
@@ -134,7 +134,7 @@ def variant_transfer_transaction(
     nonce: int,
     params: NetworkParams = TESTNET,
 ) -> Transaction:
-    """Build and sign a transfer of a variant token; the fee is still SCCP."""
+    """Build and sign a transfer of a variant token; the fee is still ZQWX."""
     tx = Transaction(
         network=params.network_id,
         type=TxType.TRANSFER,
@@ -338,11 +338,11 @@ def seed_bridge(
     )
     _wait(client, (claim_digest,), options)
     short = htlc_id(sender.address, lock_tx.nonce)[:12]
-    return f"bridge: locked {options.bridge_coins} SCCP and claimed htlc {short}"
+    return f"bridge: locked {options.bridge_coins} ZQWX and claimed htlc {short}"
 
 
 def _pool_exists(client: httpx.Client, pool_id: str) -> bool:
-    """Whether the node already serves the SCCP/C960 pool."""
+    """Whether the node already serves the ZQWX/C960 pool."""
     payload = _get_object(client, "/v1/pools")
     pools = payload.get("pools")
     if pools is None:
@@ -408,10 +408,10 @@ def seed_dex(
     options: SeedOptions,
     params: NetworkParams = TESTNET,
 ) -> str:
-    """Create the SCCP/C960 pool, funding it from the first mature C960 coinbase."""
+    """Create the ZQWX/C960 pool, funding it from the first mature C960 coinbase."""
     pool_id = dex.pool_id(dex.NATIVE_ASSET, CHESS960_ASSET_ID)
     if _pool_exists(client, pool_id):
-        return f"dex: SCCP/C960 pool {pool_id[:12]} already exists"
+        return f"dex: ZQWX/C960 pool {pool_id[:12]} already exists"
 
     target = coins_to_units(options.dex_coins)
     view = _account(client, liquidity.address)
@@ -468,7 +468,7 @@ def seed_dex(
         poll_seconds=options.poll_seconds,
     )
     _wait(client, (digest,), options)
-    return f"dex: created SCCP/C960 pool {pool_id[:12]} with {format_coins(amount)} each"
+    return f"dex: created ZQWX/C960 pool {pool_id[:12]} with {format_coins(amount)} each"
 
 
 def seed_once(
@@ -486,7 +486,7 @@ def seed_once(
     if _has_bridge_lock(client, liquidity.address) and _pool_exists(client, pool_id):
         return SeedReport(
             bridge="bridge: demo leg already on chain",
-            dex=f"dex: SCCP/C960 pool {pool_id[:12]} already exists",
+            dex=f"dex: ZQWX/C960 pool {pool_id[:12]} already exists",
         )
     _fund_demo_wallets(client, (liquidity, beneficiary), options, params)
     bridge = seed_bridge(

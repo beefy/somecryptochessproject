@@ -37,7 +37,7 @@ an external system with its own threat model.
 8. **DEX integrity.** Reserves and LP shares are consensus state: no swap may pay
    out more than the curve allows, no deposit may mint shares out of proportion,
    and no transaction may redeem more than it owns (`chain/dex.py`).
-9. **Bridge atomicity.** An ETH<->SCCP swap either settles both legs or refunds
+9. **Bridge atomicity.** An ETH<->ZQWX swap either settles both legs or refunds
    both, without any party holding the other's asset (`chain/tx.py` HTLC types,
    `contracts/EthHtlc.sol`).
 

@@ -2,7 +2,7 @@
 
 This is an end-to-end devnet runbook for the three newest pieces of the stack:
 
-- the trustless **ETH ↔ SCCP bridge** (`EthHtlc`, signed orders, SCCP HTLCs);
+- the trustless **ETH ↔ ZQWX bridge** (`EthHtlc`, signed orders, SCCP HTLCs);
 - the on-chain **DEX** (constant-product pools, LP shares, swaps);
 - the **Chess960 / C960** path (variant registration, a relay match, a settled
   C960 proof, and C960 balances and transfers).
@@ -17,11 +17,11 @@ two (or four) miners.
 
 > **Two facts that explain the shape of this guide.**
 >
-> 1. The devnet SCCP faucet funds **SCCP only**. C960 is not minted by the
+> 1. The devnet ZQWX faucet funds **ZQWX only**. C960 is not minted by the
 >    faucet: consensus creates C960 when a block settles a Chess960 proof, plus
 >    the fixed testnet/mainnet genesis allocation. This guide uses devnet, so it
 >    starts two Chess960 miners once, lets Alice's node miner collect the C960
->    coinbase, and only then creates the SCCP/C960 pool. The hosted testnet needs
+>    coinbase, and only then creates the ZQWX/C960 pool. The hosted testnet needs
 >    none of that: its genesis already seeds the pool and a bridge example.
 > 2. In this build the C960 coinbase is credited to the **block miner**
 >    (`header.miner`, the node's `--miner-address`), not directly to the game
@@ -417,9 +417,9 @@ exported. `/v1/pools` is empty until the first pool is created.
 
 ## 4. Fund the wallets, then make C960
 
-### 4.1 The SCCP faucet
+### 4.1 The ZQWX faucet
 
-The devnet genesis funds one public faucet key with 1,000,000 SCCP. The HTTP
+The devnet genesis funds one public faucet key with 1,000,000 ZQWX. The HTTP
 faucet is rate-limited; the operator CLI spends the same key without the HTTP
 cap. Use the CLI for a repeatable test:
 
@@ -448,7 +448,7 @@ sccp --network devnet wallet balance --key "$BOB_KEY"   --node "$NODE"
 curl -s "$NODE/v1/mempool" | python -m json.tool
 ```
 
-`wallet balance` now prints native SCCP and every non-native asset the account
+`wallet balance` now prints native ZQWX and every non-native asset the account
 holds, including immature balances.
 
 ### 4.2 Why the faucet does not mint C960
@@ -460,7 +460,7 @@ faucet transfer cannot create it.
 
 So the phrase "both tokens on a single account" means:
 
-- **SCCP** comes from the faucet;
+- **ZQWX** comes from the faucet;
 - **C960** comes from a settled Chess960 proof (or from a transfer/swap after
   someone else has some).
 
@@ -491,7 +491,7 @@ sccp --network devnet wallet balance --key "$C960_A_KEY" --node "$NODE"
 sccp --network devnet wallet balance --key "$C960_B_KEY" --node "$NODE"
 ```
 
-Wait until each shows 50 SCCP spendable, then register both for the variant. The engine fingerprint must be the one the miner
+Wait until each shows 50 ZQWX spendable, then register both for the variant. The engine fingerprint must be the one the miner
 will later claim; get the mock fingerprint once:
 
 ```bash
@@ -581,7 +581,7 @@ sccpt1... 250.00000000 (spendable ..., bonded ..., immature ...)
   C960 spendable 0.00000000, immature 50.00000000
 ```
 
-The C960 subsidy is 50 C960 (the variant's subsidy), not 50 SCCP; read the exact
+The C960 subsidy is 50 C960 (the variant's subsidy), not 50 ZQWX; read the exact
 number from the output. While it is immature, keep blocks coming. One simple
 way is a short faucet loop; each grant is one transaction and therefore one
 heartbeat block:
@@ -617,15 +617,15 @@ What this path is checking:
   certificate;
 - a Chess960 PGN is valid only with `Rules "chess960"`, `SetUp`, `Variant` and
   the certified start FEN; a standard PGN cannot be replayed as Chess960;
-- the settled proof mints C960 instead of SCCP, and the token appears in the
+- the settled proof mints C960 instead of ZQWX, and the token appears in the
   account, explorer, wallet, DEX picker and transfer asset picker.
 
 In a fresh browser profile (or Alice's profile if she has not registered yet):
 
 1. Open `#/play`.
 2. In the token/variant picker choose **C960 / chess960**. The helper text says
-   winning Chess960 proofs mint C960 while the bond and fees stay in SCCP.
-3. Press **Faucet** if the account has no SCCP, then **Register**.
+   winning Chess960 proofs mint C960 while the bond and fees stay in ZQWX.
+3. Press **Faucet** if the account has no ZQWX, then **Register**.
 4. Press **Commit availability** when the page reaches that stage. The page
    stores the secret in `sessionStorage`; keep the tab open.
 5. When the chain reaches the reveal window, press **Reveal**.
@@ -641,7 +641,7 @@ The UI check is not only the board:
 
 - **Explorer → Games**: the game row names `Chess960`, and the game detail shows
   the variant and start FEN.
-- **Wallet → Overview**: C960 appears beside SCCP, with immature and spendable
+- **Wallet → Overview**: C960 appears beside ZQWX, with immature and spendable
   amounts separated.
 - **DEX**: the token picker includes C960.
 - **Play**: the proof panel names the variant and the C960 reward token.
@@ -655,13 +655,13 @@ are the reliable opponents for this test.
 
 ## 5. Set up the maker's bridge position
 
-An order is a maker's signed promise to sell SCCP for ETH. It binds the maker's
+An order is a maker's signed promise to sell ZQWX for ETH. It binds the maker's
 SCCP address, ETH address, amount, price, minimum SCCP timelock and expiry into
 one signature. Nothing is escrowed when the order is published.
 
 Use:
 
-- 20 SCCP for 0.05 ETH (`50_000_000_000_000_000` wei);
+- 20 ZQWX for 0.05 ETH (`50_000_000_000_000_000` wei);
 - a 24-hour order;
 - Alice's SCCP key and Anvil account 0 as `ETH_MAKER`.
 
@@ -692,13 +692,13 @@ take.
 In browser profile A:
 
 1. Open `#/bridge`.
-2. Select the **Sell SCCP** tab.
+2. Select the **Sell ZQWX** tab.
 3. Press **Connect Ethereum** and choose the Anvil network and account 0. If the
    network is missing, the page asks to add it with chain id `31337` and RPC
    `http://127.0.0.1:8545`.
-4. Enter **SCCP to sell** `20`, **ETH to receive** `0.05`, and an expiry of
+4. Enter **ZQWX to sell** `20`, **ETH to receive** `0.05`, and an expiry of
    `24` hours.
-5. Press **Publish sell order**. The order is signed with the SCCP wallet key;
+5. Press **Publish sell order**. The order is signed with the wallet's hybrid key;
    the ETH address is bound into that signature.
 6. The order appears under **My orders** on the same tab.
 
@@ -708,10 +708,10 @@ configured`, the node was started without `SCCP_ETH_HTLC_CONTRACT`; fix section
 
 ---
 
-## 6. Take the order and move ETH → SCCP
+## 6. Take the order and move ETH → ZQWX
 
 The taker locks ETH first. The maker verifies that lock on Ethereum, then locks
-SCCP under the same SHA-256 hashlock. The taker claims SCCP and reveals the
+ZQWX under the same SHA-256 hashlock. The taker claims ZQWX and reveals the
 preimage; the maker claims ETH with the now-public preimage.
 
 The second leg must expire *before* the first by `sccp_margin` blocks (24 on
@@ -773,7 +773,7 @@ sccp --json bridge take \
   --node "$NODE"
 ```
 
-The node enforces the SCCP/ETH timelock rule at admission. Without
+The node enforces the ZQWX/ETH timelock rule at admission. Without
 `--sccp-timelock-height`, the CLI chooses the largest safe height below the ETH
 lock, respecting the order's minimum. The output prints the height it chose.
 
@@ -783,7 +783,7 @@ Now the maker can read the take:
 sccp bridge order --order-id "$ORDER_ID" --node "$NODE"
 ```
 
-### 6.3 CLI: maker locks SCCP
+### 6.3 CLI: maker locks ZQWX
 
 ```bash
 TAKE_HEIGHT=$(curl -s "$NODE/v1/orders/$ORDER_ID" \
@@ -810,7 +810,7 @@ The taker must wait for `reorg_depth + 1` confirmations (11 on devnet) before
 claiming. The web page shows the count explicitly; the CLI check is
 `GET /v1/status` and the lock's `created_at_height`.
 
-### 6.4 CLI: taker claims SCCP
+### 6.4 CLI: taker claims ZQWX
 
 ```bash
 sccp --json bridge claim \
@@ -820,8 +820,8 @@ sccp --json bridge claim \
   --node "$NODE"
 ```
 
-Bob's SCCP balance increases by 20; the claim's fee is paid in SCCP, and a native
-claim may pay that fee out of the locked amount if the account has no SCCP. The
+Bob's ZQWX balance increases by 20; the claim's fee is paid in ZQWX, and a native
+claim may pay that fee out of the locked amount if the account has no ZQWX. The
 HTLC now records the preimage on chain:
 
 ```bash
@@ -852,18 +852,18 @@ curl -s "$NODE/v1/accounts/$ALICE" | python -m json.tool
 curl -s "$NODE/v1/accounts/$BOB"   | python -m json.tool
 ```
 
-The ETH lock reports `claimed=true`; Alice's SCCP balance falls by 20 plus the
+The ETH lock reports `claimed=true`; Alice's ZQWX balance falls by 20 plus the
 lock fee, and Bob's rises by 20.
 
 ### 6.6 Refund paths
 
-If the maker never locks SCCP, the taker waits until `ETH_TIMELOCK` and runs:
+If the maker never locks ZQWX, the taker waits until `ETH_TIMELOCK` and runs:
 
 ```bash
 sccp --json bridge eth-refund --from "$ETH_TAKER" --lock-id "$ETH_LOCK" --node "$NODE"
 ```
 
-If the taker never claims SCCP, the maker waits until the SCCP height in the
+If the taker never claims ZQWX, the maker waits until the SCCP height in the
 take and runs:
 
 ```bash
@@ -881,28 +881,28 @@ SCCP wallet and its own MetaMask account.
 
 **Maker (profile A)**
 
-1. Open `#/bridge → Sell SCCP` and publish the order as in section 5.2.
+1. Open `#/bridge → Sell ZQWX` and publish the order as in section 5.2.
 2. After the taker acts, the order under **My orders** shows the taker, the ETH
    transaction and both timelocks.
-3. Press **Verify ETH lock and lock SCCP**. The page reads the lock through the
+3. Press **Verify ETH lock and lock ZQWX**. The page reads the lock through the
    Ethereum provider, checks the depositor, hashlock, timelock, beneficiary and
    value, and then signs the SCCP `htlc_lock`.
-4. Wait for **SCCP status: claimed**. The page shows when the claim has reached
+4. Wait for **ZQWX status: claimed**. The page shows when the claim has reached
    `reorg_depth` confirmations.
-5. Press **Claim ETH with preimage**. The preimage comes from the on-chain SCCP
+5. Press **Claim ETH with preimage**. The preimage comes from the on-chain ZQWX
    record, so no secret is typed or copied.
 
 **Taker (profile B)**
 
-1. Open `#/bridge → Buy SCCP`.
-2. Select the 20 SCCP order. The page shows the ETH price, the maker, the expiry
+1. Open `#/bridge → Buy ZQWX`.
+2. Select the 20 ZQWX order. The page shows the ETH price, the maker, the expiry
    and the order id.
 3. Press **Connect Ethereum** and choose Anvil account 1.
 4. Keep the 6-hour ETH lock (or choose 12/24 hours), then press **Lock ETH and
    take order**. MetaMask signs the `lock` call. The page stores the preimage in
    the browser's local swap store before publishing the take.
-5. Wait for the maker's SCCP lock. When it has the required confirmations, press
-   **Claim SCCP and reveal secret**.
+5. Wait for the maker's ZQWX lock. When it has the required confirmations, press
+   **Claim ZQWX and reveal secret**.
 6. If the maker stalls, wait for the ETH timelock and press **Refund expired
    ETH**.
 
@@ -917,11 +917,11 @@ wallet, their timelocks and the revealed preimage after the claim.
 
 The DEX is on-chain state, not a browser order book. The first deposit sets the
 price, later deposits follow the current reserve ratio, and every swap pays a
-0.30% fee to the LP shares. Fees are paid in SCCP even when the input token is
+0.30% fee to the LP shares. Fees are paid in ZQWX even when the input token is
 C960.
 
-Use a **50 SCCP / 50 C960** initial pool. That is one C960 proof subsidy at a
-1:1 starting price, and it leaves Alice SCCP for the transaction fee. If Alice
+Use a **50 ZQWX / 50 C960** initial pool. That is one C960 proof subsidy at a
+1:1 starting price, and it leaves Alice ZQWX for the transaction fee. If Alice
 has more C960, she can deposit more; use no more than `wallet balance` reports as
 spendable C960.
 
@@ -930,14 +930,14 @@ spendable C960.
 ```bash
 POOL_JSON=$(sccp --json dex create-pool \
   --key "$ALICE_KEY" \
-  --asset-a SCCP --amount-a 50 \
+  --asset-a ZQWX --amount-a 50 \
   --asset-b C960 --amount-b 50 \
   --node "$NODE")
 POOL_ID=$(printf '%s' "$POOL_JSON" | python -c 'import json,sys; print(json.load(sys.stdin)["pool_id"])')
 echo "$POOL_ID"
 ```
 
-The builder sorts the pair by asset id, so the pool is stored as SCCP/C960 no
+The builder sorts the pair by asset id, so the pool is stored as ZQWX/C960 no
 matter which side you typed. The command prints the pool id and the transaction
 id.
 
@@ -975,14 +975,14 @@ shares deletes the pool once both reserves are paid.
 ---
 
 
-### 7.3 CLI: Bob swaps SCCP for C960
+### 7.3 CLI: Bob swaps ZQWX for C960
 
-Bob needs SCCP from the faucet (section 4.1) and no C960 initially. Quote first:
+Bob needs ZQWX from the faucet (section 4.1) and no C960 initially. Quote first:
 
 ```bash
 sccp --json dex quote \
   --pool "$POOL_ID" \
-  --asset-in SCCP --amount-in 10 --slippage-bps 50 \
+  --asset-in ZQWX --amount-in 10 --slippage-bps 50 \
   --node "$NODE"
 ```
 
@@ -993,7 +993,7 @@ a minimum output derived from that quote:
 sccp --json dex swap \
   --key "$BOB_KEY" \
   --pool "$POOL_ID" \
-  --asset-in SCCP \
+  --asset-in ZQWX \
   --amount-in 10 \
   --slippage-bps 50 \
   --node "$NODE"
@@ -1009,8 +1009,8 @@ Check Bob's balances:
 sccp --network devnet wallet balance --key "$BOB_KEY" --node "$NODE"
 ```
 
-Bob's SCCP falls by 10 plus the fee; a C960 line appears with the swap output.
-The pool's SCCP reserve rises and its C960 reserve falls by the same output.
+Bob's ZQWX falls by 10 plus the fee; a C960 line appears with the swap output.
+The pool's ZQWX reserve rises and its C960 reserve falls by the same output.
 
 ### 7.4 Web UI: create the pool and swap
 
@@ -1018,8 +1018,8 @@ The pool's SCCP reserve rises and its C960 reserve falls by the same output.
 
 1. Open `#/dex`.
 2. Select the **Create pool** tab.
-3. Token A: `SCCP`; Token B: `C960`.
-4. Enter `50` SCCP and `50` C960.
+3. Token A: `ZQWX`; Token B: `C960`.
+4. Enter `50` ZQWX and `50` C960.
 5. Review the pool screen: pair, initial reserves, LP shares, initial price.
 6. Press **Review pool**, then **Sign and send**.
 
@@ -1030,35 +1030,35 @@ kinds of transaction as the CLI.
 **Swapper (profile B)**
 
 1. Open `#/dex → Swap`.
-2. Choose the SCCP/C960 pool.
-3. Choose direction `SCCP → C960`.
+2. Choose the ZQWX/C960 pool.
+3. Choose direction `ZQWX → C960`.
 4. Enter `10`.
 5. Pick a slippage tolerance (0.5% is the default) and review the estimated and
    minimum receive.
 6. Press **Review swap**, then **Sign and send**.
 
 The review screen shows the pool, pay amount, estimated receive, minimum
-receive, slippage, SCCP fee and nonce. The minimum output is signed; a pool that
+receive, slippage, ZQWX fee and nonce. The minimum output is signed; a pool that
 moves past it rejects the transaction.
 
 The swap is one row in `#/wallet/history`, marked `swap`: the exact input, the
 asset the pool paid out and the minimum that was signed, as in
-`10 SCCP → ≥… C960`, with the pool id and the txid each behind a copy button. The
+`10 ZQWX → ≥… C960`, with the pool id and the txid each behind a copy button. The
 received side is a floor and not the fill, because a block records the bound the
 chain enforced rather than what the pool actually paid.
 
 ---
 
 
-## 8. Send SCCP and C960 wallet to wallet
+## 8. Send ZQWX and C960 wallet to wallet
 
-A transfer is signed locally and submitted to a node. SCCP and C960 share one
+A transfer is signed locally and submitted to a node. ZQWX and C960 share one
 account and one nonce, but the amount and asset are separate fields. Every
-transfer pays its fee in SCCP.
+transfer pays its fee in ZQWX.
 
 ### 8.1 CLI
 
-Send SCCP from Bob to Alice:
+Send ZQWX from Bob to Alice:
 
 ```bash
 sccp --json wallet send \
@@ -1089,7 +1089,7 @@ keyed by the 64-hex C960 asset id; the human form prints the `C960` symbol.
 In browser profile B:
 
 1. Open `#/wallet/send`.
-2. Choose the **SCCP** token, paste Alice's address, enter `5`, leave the
+2. Choose the **ZQWX** token, paste Alice's address, enter `5`, leave the
    network minimum fee, and press **Review transfer**.
 3. Press **Sign and send**.
 4. Wait for the transaction to appear in History as `included`.
@@ -1140,8 +1140,8 @@ What a passing run shows:
 | `bridge order` | the take names Bob's SCCP address, the hashlock, both timelocks and the ETH tx |
 | `bridge htlcs` | one lock created by Alice for Bob, then `status: claimed` with a preimage |
 | `eth-lock-info` | the taker as depositor, Alice's Anvil address as beneficiary, `claimed: true` |
-| `dex pool` | SCCP/C960 reserves and Alice's LP shares |
-| `wallet balance` | Alice has SCCP and C960; Bob has the swap output and the remaining SCCP |
+| `dex pool` | ZQWX/C960 reserves and Alice's LP shares |
+| `wallet balance` | Alice has ZQWX and C960; Bob has the swap output and the remaining ZQWX |
 | `/v1/games` | at least one `Chess960` game with a settled proof |
 
 ### 9.2 The web UI checklist
@@ -1149,13 +1149,13 @@ What a passing run shows:
 | Feature | Where | What to see |
 | --- | --- | --- |
 | Wallet creation/unlock | `#/wallet` | address, network, passphrase prompt; refresh keeps the encrypted keyfile in IndexedDB |
-| SCCP faucet | `#/wallet/faucet` | grant txid and a balance that settles in a later block |
-| SCCP/C960 balances | `#/wallet` | separate token rows, immature amounts called out |
-| SCCP/C960 send | `#/wallet/send` | token picker, review screen, accepted txid, History row |
-| Bridge maker | `#/bridge → Sell SCCP` | published order under **My orders**; `Anvil devnet ready` |
-| Bridge taker | `#/bridge → Buy SCCP` | ETH lock and take; SCCP lock appears; claim button |
-| Bridge maker claim | `#/bridge → Sell SCCP → My orders` | **Verify ETH lock and lock SCCP**, then **Claim ETH with preimage** |
-| DEX pool | `#/dex → Create pool` | SCCP/C960 pool, LP shares, review and accepted tx |
+| ZQWX faucet | `#/wallet/faucet` | grant txid and a balance that settles in a later block |
+| ZQWX/C960 balances | `#/wallet` | separate token rows, immature amounts called out |
+| ZQWX/C960 send | `#/wallet/send` | token picker, review screen, accepted txid, History row |
+| Bridge maker | `#/bridge → Sell ZQWX` | published order under **My orders**; `Anvil devnet ready` |
+| Bridge taker | `#/bridge → Buy ZQWX` | ETH lock and take; ZQWX lock appears; claim button |
+| Bridge maker claim | `#/bridge → Sell ZQWX → My orders` | **Verify ETH lock and lock ZQWX**, then **Claim ETH with preimage** |
+| DEX pool | `#/dex → Create pool` | ZQWX/C960 pool, LP shares, review and accepted tx |
 | DEX LP | `#/dex → Liquidity` | share percentage, underlying amounts, add/remove |
 | DEX swap | `#/dex → Swap` | quote, minimum, slippage, accepted tx |
 | Chess960 play | `#/play` | C960 variant picker, certified FEN, moves, result, proof |
@@ -1173,7 +1173,7 @@ What a passing run shows:
 | `SCCP timelock ... not before the ETH timelock` | ETH lock is too short for the 24-block margin | choose a longer ETH lock; the web page offers 6/12/24 hours |
 | `the htlc cannot be refunded before height ...` | SCCP timelock has not passed | wait for the height, then retry |
 | `the preimage does not open this htlc` | wrong secret or wrong lock | use the preimage from the same swap; the claimed HTLC shows it |
-| `pool ... does not trade ...` | wrong asset id/name for that pool | read `dex pool` and use `SCCP` or `C960` |
+| `pool ... does not trade ...` | wrong asset id/name for that pool | read `dex pool` and use `ZQWX` or `C960` |
 | `the deposit is too small to mint a share` | rounding at tiny amounts | deposit larger amounts on both sides |
 | `C960` line is missing | no Chess960 proof has settled, or the reward is immature | run the section 4.3 pair; mine 20 more blocks |
 | faucet `429` | HTTP one-grant-per-address/hour | use `sccp faucet send` or wait |
@@ -1218,36 +1218,36 @@ sccp --network devnet --passphrase-file .devnet-stack/passphrase miner run \
 | Action | CLI | Web |
 | --- | --- | --- |
 | Create wallet | `sccp --network devnet wallet new --out alice.key` | `#/wallet → Create a wallet` |
-| SCCP faucet | `sccp --network devnet faucet send --to ...` | `#/wallet/faucet → Request testnet funds` |
-| Bridge order | `sccp bridge sell ...` | `#/bridge → Sell SCCP → Publish sell order` |
-| Lock ETH | `sccp bridge eth-lock ...` | `#/bridge → Buy SCCP → Lock ETH and take order` |
+| ZQWX faucet | `sccp --network devnet faucet send --to ...` | `#/wallet/faucet → Request testnet funds` |
+| Bridge order | `sccp bridge sell ...` | `#/bridge → Sell ZQWX → Publish sell order` |
+| Lock ETH | `sccp bridge eth-lock ...` | `#/bridge → Buy ZQWX → Lock ETH and take order` |
 | Take order | `sccp bridge take ...` | same Buy screen (the lock publishes the take) |
-| Lock SCCP | `sccp bridge lock ...` | `#/bridge → Sell SCCP → My orders → Verify ETH lock and lock SCCP` |
-| Claim SCCP | `sccp bridge claim ...` | `#/bridge → Buy SCCP → Claim SCCP and reveal secret` |
-| Claim ETH | `sccp bridge eth-claim ...` | `#/bridge → Sell SCCP → My orders → Claim ETH with preimage` |
-| Refund ETH | `sccp bridge eth-refund ...` | `#/bridge → Buy SCCP → Refund expired ETH` |
-| Refund SCCP | `sccp bridge refund ...` | `#/bridge → Sell SCCP → My orders → Refund SCCP` |
+| Lock ZQWX | `sccp bridge lock ...` | `#/bridge → Sell ZQWX → My orders → Verify ETH lock and lock ZQWX` |
+| Claim ZQWX | `sccp bridge claim ...` | `#/bridge → Buy ZQWX → Claim ZQWX and reveal secret` |
+| Claim ETH | `sccp bridge eth-claim ...` | `#/bridge → Sell ZQWX → My orders → Claim ETH with preimage` |
+| Refund ETH | `sccp bridge eth-refund ...` | `#/bridge → Buy ZQWX → Refund expired ETH` |
+| Refund ZQWX | `sccp bridge refund ...` | `#/bridge → Sell ZQWX → My orders → Refund ZQWX` |
 | Create pool | `sccp dex create-pool ...` | `#/dex → Create pool` |
 | Add/remove LP | `sccp dex add-liquidity` / `remove-liquidity` | `#/dex → Liquidity` |
 | Swap | `sccp dex swap ...` | `#/dex → Swap` |
-| Send SCCP | `sccp wallet send --amount N --to ...` | `#/wallet/send`, choose SCCP |
+| Send ZQWX | `sccp wallet send --amount N --to ...` | `#/wallet/send`, choose ZQWX |
 | Send C960 | `sccp wallet send --asset C960 --amount N --to ...` | `#/wallet/send`, choose C960 |
 | Play Chess960 | `sccp miner run --variant chess960 ...` | `#/play`, choose C960 |
 | Inspect | `sccp bridge ...`, `sccp dex ...`, `curl` | `#/bridge`, `#/dex`, explorer |
 
 ### 10.3 The properties this run proves
 
-- an ETH lock and an SCCP lock are opened under one SHA-256 hashlock;
+- an ETH lock and a ZQWX lock are opened under one SHA-256 hashlock;
 - the SCCP leg is not claimable by the taker until it is final, and the maker
-  cannot lock SCCP before verifying the ETH leg;
+  cannot lock ZQWX before verifying the ETH leg;
 - the SCCP timelock is strictly before the ETH timelock by the node-enforced
   margin, so a last-moment claim cannot strand the maker;
-- the preimage is public only after the SCCP claim, and that is what lets the
+- the preimage is public only after the ZQWX claim, and that is what lets the
   maker claim ETH;
 - pool creation, LP shares, swaps and both tokens are consensus state, not
   browser state;
 - Chess960 proofs settle a C960 coinbase, and C960 transfers pay their fee in
-  SCCP.
+  ZQWX.
 
 ---
 

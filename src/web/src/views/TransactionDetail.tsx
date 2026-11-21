@@ -150,7 +150,7 @@ export function TransactionDetail({ txid }: { txid: string }): ReactNode {
                   const token = tokenForAsset(tokens, asset);
                   return formatTokenAmount(
                     amount,
-                    token?.symbol ?? (asset === null ? "SCCP" : "asset"),
+                    token?.symbol ?? (asset === null ? "ZQWX" : "asset"),
                     token?.decimals ?? 8,
                   );
                 })()}
@@ -164,7 +164,7 @@ export function TransactionDetail({ txid }: { txid: string }): ReactNode {
                   const assetB = typeof payload.asset_b === "string" ? payload.asset_b : null;
                   const tokenA = tokenForAsset(tokens, assetA);
                   const tokenB = tokenForAsset(tokens, assetB);
-                  return `${formatTokenAmount(Number(payload.amount_a), tokenA?.symbol ?? "SCCP", tokenA?.decimals ?? 8)} + ${formatTokenAmount(Number(payload.amount_b), tokenB?.symbol ?? "asset", tokenB?.decimals ?? 8)}`;
+                  return `${formatTokenAmount(Number(payload.amount_a), tokenA?.symbol ?? "ZQWX", tokenA?.decimals ?? 8)} + ${formatTokenAmount(Number(payload.amount_b), tokenB?.symbol ?? "asset", tokenB?.decimals ?? 8)}`;
                 })()}
               </KeyValue>
             )}
@@ -189,7 +189,7 @@ export function TransactionDetail({ txid }: { txid: string }): ReactNode {
                   const payload = body.data.payload;
                   const assetIn = typeof payload.asset_in === "string" ? payload.asset_in : null;
                   const token = tokenForAsset(tokens, assetIn);
-                  return `${formatTokenAmount(Number(payload.amount_in), token?.symbol ?? "SCCP", token?.decimals ?? 8)} in pool ${shortHash(String(payload.pool_id), 8)}`;
+                  return `${formatTokenAmount(Number(payload.amount_in), token?.symbol ?? "ZQWX", token?.decimals ?? 8)} in pool ${shortHash(String(payload.pool_id), 8)}`;
                 })()}
               </KeyValue>
             )}
@@ -201,7 +201,7 @@ export function TransactionDetail({ txid }: { txid: string }): ReactNode {
                   const token = tokenForAsset(tokens, asset);
                   return `${formatTokenAmount(
                     Number(payload.amount),
-                    token?.symbol ?? "SCCP",
+                    token?.symbol ?? "ZQWX",
                     token?.decimals ?? 8,
                   )} until height ${formatInteger(Number(payload.timelock_height))} for ${String(payload.beneficiary)}`;
                 })()}

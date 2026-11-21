@@ -270,7 +270,7 @@ def test_a_genesis_pool_cannot_spend_funds_that_were_not_allocated() -> None:
         asset_b=CHESS960_ASSET_ID,
         amount_b=10 * COINS,
     )
-    with pytest.raises(GenesisError, match="holds 500000000 SCCP"):
+    with pytest.raises(GenesisError, match="holds 500000000 ZQWX"):
         build_genesis(
             TESTNET,
             timestamp=1_700_000_000,

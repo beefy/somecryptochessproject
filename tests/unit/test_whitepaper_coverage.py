@@ -229,13 +229,13 @@ def test_the_stall_slash_and_its_split_are_the_documented_ones(
     assert "comes out of the seat's bond first and its balance after that" in acceptance
 
     economics = " ".join(_section(whitepaper, "16.1").split())
-    assert f"{slash}% of the protocol's miner bond ({bond} SCCP on mainnet)" in economics
+    assert f"{slash}% of the protocol's miner bond ({bond} ZQWX on mainnet)" in economics
     assert f"Half goes to the claimant, {witnesses}% is split between the witnesses" in economics
     assert f"and {burned}% is burned" in economics
 
     settlement = " ".join(_section(protocol, "10.4").split())
     assert f"`min_bond * {STALL_SLASH_BPS} / 10000`" in settlement
-    assert f"{slash}% of the protocol's miner bond, {bond} SCCP on mainnet" in settlement
+    assert f"{slash}% of the protocol's miner bond, {bond} ZQWX on mainnet" in settlement
     assert (
         f"split {claimant}/{witnesses}/{burned} "
         "(`STALL_CLAIMANT_BPS`, `STALL_QUORUM_BPS`, `STALL_BURN_BPS`)"

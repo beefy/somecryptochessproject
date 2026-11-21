@@ -1,6 +1,6 @@
 # The big picture: a wallet, a bridge and a DEX
 
-> **Status (tree at 0.35.0).** Implemented except for the optional `wETH`
+> **Status (tree at 0.36.0).** Implemented except for the optional `wETH`
 > federation and the items marked **not built**. The browser wallet (section 4),
 > variant assets (section 5), the native DEX (section 6) and the trustless
 > ETH<->SCCP HTLC bridge (section 7) are in the tree; the bridge contract is
@@ -22,9 +22,9 @@
 
 ## 1. The goal
 
-An Ethereum holder should be able to turn ETH into SCCP -- the native token of
+An Ethereum holder should be able to turn ETH into ZQWX -- the native token of
 the standard-chess chain, this repository -- without handing custody to anyone,
-and a miner should be able to turn mined SCCP into ETH the same way. Every other
+and a miner should be able to turn mined ZQWX into ETH the same way. Every other
 token on the network is a **chess variant** token (Chess960, Crazyhouse, ...),
 minted only by settled games of that variant, so the supply of each asset tracks
 a corpus of computer chess games rather than a promise. Every key, signature and
@@ -39,9 +39,9 @@ That gives four deliverables, in dependency order:
 | Web wallet | creates, holds and signs in the browser | none | 0.22.0, shipped |
 | Multi-asset ledger + variants | variant tokens mined by variant games | add `asset`/`variant` to payloads, per-asset balances and maturity queues | 0.24.0, shipped |
 | Native DEX | pools, LP positions and swaps between on-chain assets | new transaction types, `pools` in state | 0.24.0, shipped |
-| ETH<->SCCP bridge | HTLC atomic swaps; no custodian, no wrapped peg | new transaction types, `htlcs` in state, one Ethereum contract | 0.24.0, shipped |
+| ETH<->ZQWX bridge | HTLC atomic swaps; no custodian, no wrapped peg | new transaction types, `htlcs` in state, one Ethereum contract | 0.24.0, shipped |
 
-All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.35.0. The
+All four shipped between 0.22.0 and 0.24.0, and the tree is at 0.36.0. The
 `sccp/v2` fork this document assumed did not happen: `PROTOCOL_VERSION` is still
 1, the domains stayed `sccp/v1/...`, and `PROTOCOL.md` documents the new
 transaction types as part of v1 (section 5.1).
@@ -78,7 +78,7 @@ What this document set out to add, and where it landed:
 
 ### 3.1 One native asset, N variant assets
 
-- **SCCP** is the native asset and the chain's fee and subsidy unit. It is mined
+- **ZQWX** is the native asset and the chain's fee and subsidy unit. It is mined
   by standard chess exactly as today: `max_supply` 21,000,000, halving every
   210,000 blocks, 8 decimals (`UNITS_PER_COIN = 100_000_000`). None of this
   changes; standard chess is not one variant among many but the chain's own
@@ -118,18 +118,18 @@ Shipped and proposed parameters (decisions 1 and 3 in section 12):
 
 | Asset | Symbol | Minted by | `max_supply` | Decimals | Status |
 | --- | --- | --- | --- | --- | --- |
-| SCCP | SCCP | standard-chess proofs | 21,000,000 | 8 | shipped |
+| ZQWX | ZQWX | standard-chess proofs | 21,000,000 | 8 | shipped |
 | Chess960 | C960 | chess960 proofs | 21,000,000 | 8 | shipped (0.24.0) |
 | Crazyhouse | CZH | crazyhouse proofs | 21,000,000 | 8 | **not built** |
 
-Each variant carries its own cap so SCCP's schedule is untouched. Giving every
+Each variant carries its own cap so ZQWX's schedule is untouched. Giving every
 variant the same cap and halving interval makes "one variant is one chain's worth
 of scarcity" legible at launch; `max_supply`, `halving_interval` and the subsidy
 curve are `VariantParams` fields, so they can diverge later only by a fork. Adding
 a third variant is a protocol release plus its own genesis tranche, not a config
 edit.
 
-Mainnet genesis pre-allocates 1 basis point of the SCCP cap (2,100 SCCP) as a
+Mainnet genesis pre-allocates 1 basis point of the ZQWX cap (2,100 ZQWX) as a
 bootstrap grant and no variant supply: C960 is mined, and only testnet seeds
 demo liquidity. The grant is public in `genesis/mainnet-premine.json`; see
 [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
@@ -220,7 +220,7 @@ signs today.
 
 Each payload carries `public_key` -- the hybrid key the chain checks against the
 signature, exactly as `ALLOWED[TxType.TRANSFER]` requires -- and `asset` when the
-transaction moves a variant token rather than native SCCP. `_check_unknown_keys`
+transaction moves a variant token rather than native ZQWX. `_check_unknown_keys`
 means adding a field is a strict change, so a new field needs a `PROTOCOL_VERSION`
 bump; the fields above were all added inside v1 because they arrived with the
 transaction types that consume them.
@@ -239,7 +239,7 @@ projection -- the same trap the runbook documents for two transfers in a row. Th
 wallet therefore keeps a per-account local counter, seeds it from the committed
 nonce on unlock, increments pessimistically on submit, re-reads it on rejection
 and reconciles against `GET /v1/mempool` when a transaction is not mined within
-a few blocks. Fees are shown in SCCP with the `UNITS_PER_COIN` scale and a hard
+a few blocks. Fees are shown in ZQWX with the `UNITS_PER_COIN` scale and a hard
 ceiling in the review screen.
 
 Confirmations are counted from the block that includes the transaction, and the
@@ -253,7 +253,7 @@ keyed by account and height.
 | View | Contents | Status |
 | --- | --- | --- |
 | Receive | bech32 address with checksum, QR, hybrid public-key fingerprint, network badge | shipped without the QR code |
-| Send | asset picker (native SCCP and each variant token, e.g. C960), amount, fee, recipient; a review screen showing the canonical payload digest and every field that will be signed | shipped |
+| Send | asset picker (native ZQWX and each variant token, e.g. C960), amount, fee, recipient; a review screen showing the canonical payload digest and every field that will be signed | shipped |
 | Assets | per-asset balances, pending transactions, confirmed history, mining rewards | shipped as the overview's per-asset balances plus the history rows, not as its own tab |
 | Swap | quote, slippage, `min_out`, review, submit (workstream C) | shipped (`views/dex`): swap, liquidity and create-pool panels |
 | Bridge | orders, lock/claim/refund state machine with block heights (workstream D) | shipped (`views/bridge`): buy, sell and activity panels |
@@ -290,7 +290,7 @@ Still open:
 
 ### 4.6 Done when
 
-A fresh browser profile can create a wallet, receive from the faucet, send SCCP,
+A fresh browser profile can create a wallet, receive from the faucet, send ZQWX,
 and export a keyfile that the CLI opens and signs with -- with vector parity and
 the devnet e2e green, and no unencrypted seed written anywhere.
 
@@ -329,7 +329,7 @@ The map beside the native balance is what shipped:
 @dataclass
 class Account:
     ...
-    balance: int                        # native SCCP, unchanged
+    balance: int                        # native ZQWX, unchanged
     immature: int                       # native coinbase not yet mature
     assets: dict[str, int]              # asset id (hex) -> units
     immature_assets: dict[str, int]     # variant coinbase not yet mature
@@ -364,7 +364,7 @@ as zero; a fresh replay from genesis counts every historical slash.
 
 | Type | Change | Payload |
 | --- | --- | --- |
-| `transfer` | extended | `{to, amount, public_key, asset?}`; the omitted `asset` means native SCCP. No `memo` field was added -- the payload is strict, so a memo would be a protocol release |
+| `transfer` | extended | `{to, amount, public_key, asset?}`; the omitted `asset` means native ZQWX. No `memo` field was added -- the payload is strict, so a memo would be a protocol release |
 | `create_pool` | new | `{asset_a?, amount_a, asset_b?, amount_b, public_key}`; the pair is ordered by asset id, and the fee is the network's `dex_fee_bps`, not a pool field |
 | `add_liquidity` | new | `{pool_id, amount_a, amount_b, public_key}` |
 | `remove_liquidity` | new | `{pool_id, shares, public_key}` |
@@ -390,7 +390,7 @@ first and unchanged. As shipped (`config.py`), a variant is:
 class VariantParams:
     name: str                 # "standard", "chess960"
     rules: str                # "chess" | "chess960" -- validated
-    asset: str | None         # asset id hex; None for standard, which mints SCCP
+    asset: str | None         # asset id hex; None for standard, which mints ZQWX
     symbol: str               # "C960"
     display_name: str
     decimals: int
@@ -418,7 +418,7 @@ Rules that follow from it:
   variant subsidy is minted (`minted_variant_rewards`) and declared in the
   coinbase payload's `variant_rewards` map, paid to the block miner exactly as
   the native subsidy is; a block that settles only variant games mints that asset
-  and no SCCP. Standard's output is unchanged from v1.
+  and no ZQWX. Standard's output is unchanged from v1.
 - **Block capacity is `wins_required`, not per variant.** A block must carry
   exactly the scheduled number of proofs (or be an allowed proofless block that
   carries exactly one transaction), so how much of a variant reaches the chain is
@@ -428,7 +428,7 @@ Rules that follow from it:
   [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md).
 - **Endowments were not built.** No variant parameter pays a founding account
   over `endowment_drain_epochs`; issuance is the subsidy schedule alone.
-- **Fees stay in SCCP.** A variant asset is a reward and a store of the corpus,
+- **Fees stay in ZQWX.** A variant asset is a reward and a store of the corpus,
   not a fee unit; one fee market keeps mempool policy and miner economics
   unchanged.
 
@@ -454,7 +454,7 @@ Rules that follow from it:
 ### 5.6 Done when
 
 A two-variant devnet (standard + chess960) settles proofs of both kinds in the
-same blocks, `GET /v1/accounts/{address}` reports SCCP and the variant asset,
+same blocks, `GET /v1/accounts/{address}` reports ZQWX and the variant asset,
 coinbase amounts match the per-variant schedule, a standard game is rejected when
 submitted as Chess960, and the full suite plus the regenerated golden chain is
 green.
@@ -465,7 +465,7 @@ no book, and `VariantParams.rules` accepts only `chess` and `chess960`.
 
 ## 6. Workstream C -- native DEX (shipped in 0.24.0)
 
-The DEX trades the assets the chain mints: SCCP against variant assets, and
+The DEX trades the assets the chain mints: ZQWX against variant assets, and
 variant assets against each other. It has no admin key, no pause, no fee switch
 and no upgrade path; changing any of those is a fork, exactly like a consensus
 rule. What shipped is a sequential constant-product AMM with a floor; the batch
@@ -478,7 +478,7 @@ As shipped (`chain/dex.py`, `State.pools`):
 - **Constant product** with reserves `(r_a, r_b)`. The fee is **not** a pool
   parameter: it is the network's `dex_fee_bps` (30 on every shipped network), so
   the pool id is `H("sccp/v1/pool", {asset_a, asset_b})`, computed with the pair
-  in lexicographic asset-id order and `""` for native SCCP. A pair therefore
+  in lexicographic asset-id order and `""` for native ZQWX. A pair therefore
   identifies exactly one pool, and there is no way to create a second one at a
   different fee level -- a fee change is a network parameter change, not a pool
   choice.
@@ -600,7 +600,7 @@ exactly what the current state says.
 
 ### 6.6 Done when
 
-On devnet a wallet swaps SCCP <-> C960 through the UI, quotes match execution to
+On devnet a wallet swaps ZQWX <-> C960 through the UI, quotes match execution to
 the unit at the quoted reserves, `k` never decreases across a randomised property
 test, and removing all liquidity after fee accrual returns the expected amounts to
 the unit.
@@ -611,12 +611,12 @@ in-block sandwich, tested with a deliberately front-run order -- does not apply,
 because sequential execution is what shipped (section 6.2). CZH is replaced by
 C960 throughout: Crazyhouse is not a variant the chain settles.
 
-## 7. Workstream D -- ETH<->SCCP bridge (shipped in 0.24.0)
+## 7. Workstream D -- ETH<->ZQWX bridge (shipped in 0.24.0)
 
 ### 7.1 Principle: no custody, one secret
 
 The bridge is a pair of hash time-locked contracts, one on each chain, sharing a
-single random secret. Nobody holds the ETH, nobody holds the SCCP, and there is no
+single random secret. Nobody holds the ETH, nobody holds the ZQWX, and there is no
 mint, peg, federation or exchange account. The trade is atomic: either both legs
 settle or both refund. That is what makes "someone with ETH can buy this token in
 a decentralized way" true without introducing a party to trust.
@@ -651,7 +651,7 @@ Shipped in 0.24.0 and exercised end to end on the hosted testnet
 (`docs/guides/TEST_DEVNET_BRIDGE_DEX.md`): a lock, a claim with the preimage and a
 refund after the timelock each have a unit test, a wallet flow and a row in the
 bridge activity panel. Both close paths charge the network fee, and a native claim
-or refund may pay it out of the amount being released, so a taker holding no SCCP
+or refund may pay it out of the amount being released, so a taker holding no ZQWX
 at all can still complete a buy (section 7.6).
 
 ### 7.3 The Ethereum side: `contracts/EthHtlc.sol`
@@ -691,7 +691,7 @@ live.
 Let `T_eth` be the Ethereum unlock time and `T_sccp` the SCCP timelock height. The
 rule is always: **the second leg expires first, leaving the party that locked it
 time to claim the first leg.** A second leg that outlives the first lets the
-first party wait out the ETH timelock, claim SCCP at its last valid height and
+first party wait out the ETH timelock, claim ZQWX at its last valid height and
 then refund the ETH.
 
 ```text
@@ -703,27 +703,27 @@ T_sccp <= T_eth - margin      margin = 20 blocks on mainnet (~200 min)
 `target_block_seconds`; the taker picks the height and the maker refuses a take
 whose height leaves less than the margin.
 
-Direction A -- an ETH holder buys SCCP from a miner:
+Direction A -- an ETH holder buys ZQWX from a miner:
 
 1. The maker (miner) publishes a signed sell order (section 7.5).
 2. The taker locks ETH in `EthHtlc` with hashlock `H = sha256(s)`,
    timelock `T_eth`, beneficiary = maker's ETH address.
-3. The maker verifies the Ethereum lock, then locks SCCP with the same `H`,
+3. The maker verifies the Ethereum lock, then locks ZQWX with the same `H`,
    timelock `T_sccp <= T_eth - margin`, beneficiary = taker's SCCP address.
-4. The taker claims SCCP, revealing `s` in the SCCP transaction; the maker reads
+4. The taker claims ZQWX, revealing `s` in the SCCP transaction; the maker reads
    `s` from the chain and claims the ETH with it.
 
-Direction B -- a miner sells SCCP for ETH -- is the same protocol with the legs
-swapped: the taker locks SCCP first (long timelock), the maker locks ETH second
-(short timelock), the maker claims SCCP and the taker claims ETH.
+Direction B -- a miner sells ZQWX for ETH -- is the same protocol with the legs
+swapped: the taker locks ZQWX first (long timelock), the maker locks ETH second
+(short timelock), the maker claims ZQWX and the taker claims ETH.
 
 Failure paths, all of which are tested rather than assumed:
 
 | Stall | Outcome |
 | --- | --- |
-| taker locks ETH, maker never locks SCCP | taker refunds ETH at `T_eth` |
-| maker locks SCCP, taker never claims | maker refunds SCCP at `T_sccp` |
-| maker locks SCCP, taker claims but maker does not claim ETH | maker claims ETH later with the published preimage; the secret is public by then |
+| taker locks ETH, maker never locks ZQWX | taker refunds ETH at `T_eth` |
+| maker locks ZQWX, taker never claims | maker refunds ZQWX at `T_sccp` |
+| maker locks ZQWX, taker claims but maker does not claim ETH | maker claims ETH later with the published preimage; the secret is public by then |
 | either party submits a wrong preimage, claims twice, or claims after refund | reverted by the contract / invalid transaction |
 
 Operational rules that keep it safe:
@@ -732,7 +732,7 @@ Operational rules that keep it safe:
   confirmations (`reorg_depth` is 10 on mainnet);
 - never reveal `s` before the counter-leg is final;
 - every order is single-use (`nonce`), expiring (`expiry`), and binds both the
-  maker's SCCP and ETH addresses, so a signature cannot be replayed on another
+  maker's ZQWX and ETH addresses, so a signature cannot be replayed on another
   order or redirected to another beneficiary.
 
 ### 7.5 Orders: signed, off-consensus
@@ -741,7 +741,7 @@ Operational rules that keep it safe:
 {
   "network": "mainnet",
   "maker_sccp": "sccpt1...", "maker_eth": "0x...",
-  "give_asset": "SCCP", "give_amount": 2500000000,
+  "give_asset": "ZQWX", "give_amount": 2500000000,
   "want_asset": "ETH",  "want_amount": "1000000000000000",
   "min_sccp_timelock": 3620, "expiry": 1790000000,
   "nonce": 7, "public_key": "01...", "signature": "01..."
@@ -759,10 +759,10 @@ stops advertising it and lets it lapse. The order book is **not consensus**: it
 holds no funds, it can be mirrored by anyone, and losing it costs nothing but a
 re-post. A restart loses the in-memory book and every maker re-posts.
 
-Amounts are integers in each chain's smallest unit -- 8 decimals on SCCP, 18 on
+Amounts are integers in each chain's smallest unit -- 8 decimals on ZQWX, 18 on
 Ethereum -- and the price is implicit in the pair, so there is no oracle and no
 rounding rule to argue about. The ETH amount is carried as a decimal string
-because 18 decimals exceed JavaScript's safe integer range; SCCP amounts stay
+because 18 decimals exceed JavaScript's safe integer range; ZQWX amounts stay
 JSON integers. `expiry` is Unix seconds and `min_sccp_timelock` is an SCCP block
 height, because the two chains share no clock: `sccp_timelock_height` turns the ETH
 timestamp into the latest safe height using `target_block_seconds` and
@@ -773,19 +773,19 @@ matching engine.
 
 ### 7.6 User and miner flows
 
-**Buying SCCP with ETH.** The wallet's bridge view (`views/bridge/BuyPanel.tsx`)
-lists open sell orders with the price in ETH per SCCP and the maker; choosing one
+**Buying ZQWX with ETH.** The wallet's bridge view (`views/bridge/BuyPanel.tsx`)
+lists open sell orders with the price in ETH per ZQWX and the maker; choosing one
 runs the flow of section 7.4 with every step signed locally: lock ETH in `EthHtlc`
-through the browser wallet and post the take, wait for the maker's SCCP lock, then
-claim SCCP with the preimage -- or refund the ETH once the lock has expired. Both
+through the browser wallet and post the take, wait for the maker's ZQWX lock, then
+claim ZQWX with the preimage -- or refund the ETH once the lock has expired. Both
 close buttons are always visible with the condition that enables them, and the
-taker never needs SCCP in advance (section 7.2).
+taker never needs ZQWX in advance (section 7.2).
 
-**Selling mined SCCP.** `views/bridge/SellPanel.tsx` publishes a signed order from
+**Selling mined ZQWX.** `views/bridge/SellPanel.tsx` publishes a signed order from
 an unlocked account, lists the account's orders with their take and both legs, and
-drives the maker side: verify the taker's ETH lock on chain, lock SCCP with a
+drives the maker side: verify the taker's ETH lock on chain, lock ZQWX with a
 timelock at most `sccp_margin` blocks before the ETH expiry, then claim the ETH
-with the preimage once the taker reveals it -- or refund the SCCP if the take never
+with the preimage once the taker reveals it -- or refund the ZQWX if the take never
 arrives.
 
 `views/bridge/ActivityPanel.tsx` shows every lock the account is party to, its
@@ -875,7 +875,7 @@ being quietly assumed.
 ```
 
 Data flow for a trade, end to end: a miner's engine plays a game, the relay
-pairs seats and co-signs the certificate, a block settles it and mints SCCP (or a
+pairs seats and co-signs the certificate, a block settles it and mints ZQWX (or a
 variant asset) to the winner. The winner's wallet can swap that asset for another
 on the native DEX, or publish a sell order and swap it for ETH against anyone
 holding ETH. The games stay on chain and readable throughout; the assets are
@@ -912,7 +912,7 @@ receipts for producing them.
   public genesis allocation described in
   [`PROTOCOL.md` §13](PROTOCOL.md#13-genesis-documents).
 - **A custodial bridge or deposit addresses.** The HTLC path needs neither. An
-  exchange that wants to list SCCP integrates against the same transactions.
+  exchange that wants to list ZQWX integrates against the same transactions.
 - **An AMM over external assets before `wETH`.** No oracle, and no wrapped asset
   in the shipped DEX: pools hold only the tokens the chain mints.
 - **Bughouse and Go in 1.x.** Bughouse is four seats across two boards and needs
@@ -928,9 +928,9 @@ column says otherwise.
 
 | # | Decision | Options | Recommendation | Settled? |
 | --- | --- | --- | --- | --- |
-| 1 | Variant supply | own cap per variant / share of SCCP's 21M | own cap; leave SCCP untouched | yes, per-variant `VariantParams` |
-| 2 | Are variant assets fee units? | yes / no | no: one fee market, in SCCP | yes, every fee is native |
-| 3 | Chess960 | separate asset / a parameter on SCCP | separate asset `C960`, Stockfish with `UCI_Chess960` | yes, shipped |
+| 1 | Variant supply | own cap per variant / share of ZQWX's 21M | own cap; leave ZQWX untouched | yes, per-variant `VariantParams` |
+| 2 | Are variant assets fee units? | yes / no | no: one fee market, in ZQWX | yes, every fee is native |
+| 3 | Chess960 | separate asset / a parameter on ZQWX | separate asset `C960`, Stockfish with `UCI_Chess960` | yes, shipped |
 | 4 | Endowment payout | linear per block / per epoch / manual | per epoch, `endowment_drain_epochs`, off by default | **no -- not built** |
 | 5 | LP positions | non-transferable shares / an LP token asset | non-transferable | yes, `Pool.shares` |
 | 6 | Swap privacy | batch only / batch plus commit-reveal | batch default, commit-reveal above a size threshold | **no -- neither built** |

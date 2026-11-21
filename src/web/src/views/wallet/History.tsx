@@ -125,14 +125,14 @@ function amountText(
   const token = tokenForAsset(tokens, entry.asset);
   const spent = formatTokenAmount(
     entry.amount,
-    token?.symbol ?? (entry.asset === null ? "SCCP" : "asset"),
+    token?.symbol ?? (entry.asset === null ? "ZQWX" : "asset"),
     token?.decimals ?? 8,
   );
   if (entry.swap === null) return spent;
   const outAsset = swappedAsset(entry, pools);
   if (outAsset === undefined) return spent;
   const outToken = tokenForAsset(tokens, outAsset);
-  const symbol = outToken?.symbol ?? (outAsset === null ? "SCCP" : "asset");
+  const symbol = outToken?.symbol ?? (outAsset === null ? "ZQWX" : "asset");
   const floor = entry.swap.minAmountOut;
   if (floor === null || floor <= 0) return `${spent} → ${symbol}`;
   return `${spent} → ≥${formatTokenAmount(floor, symbol, outToken?.decimals ?? 8)}`;
@@ -325,7 +325,7 @@ export function HistoryPanel({
                 tone={committedNonce > entry.nonce ? "info" : "warn"}
               />
               <Text variant="bodyMedium" style={styles.amount}>
-                {formatTokenAmount(entry.amount, entry.symbol ?? "SCCP")}
+                {formatTokenAmount(entry.amount, entry.symbol ?? "ZQWX")}
               </Text>
               <Text variant="bodySmall" style={styles.muted}>
                 to {labelFor(contacts, entry.to) ?? shortAddress(entry.to)} · nonce{" "}

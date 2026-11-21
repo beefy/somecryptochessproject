@@ -129,7 +129,7 @@ def test_the_builders_refuse_obvious_mistakes(protocol_accounts: Mapping[str, An
             alice.keypair,
             asset_a=None,
             amount_a=COINS,
-            asset_b="SCCP",
+            asset_b="ZQWX",
             amount_b=COINS,
         )
     with pytest.raises(WalletServiceError, match=r"does not hold|units of"):

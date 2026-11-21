@@ -225,8 +225,8 @@ def test_play_game_uses_the_token_time_control() -> None:
     standard = VariantParams(
         name="standard",
         rules="chess",
-        symbol="SCCP",
-        display_name="SCCP",
+        symbol="ZQWX",
+        display_name="ZQWX",
         subsidy=DEVNET.subsidy,
         min_plies=DEVNET.min_plies,
         time_control_initial_ms=180_000,

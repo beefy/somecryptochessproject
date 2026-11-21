@@ -64,11 +64,13 @@ export function SellPanel(context: BridgeContext): ReactNode {
       if (!bridge.configured || bridge.eth_htlc_contract === null) {
         throw new Error(`this node has no ${bridge.eth_chain_name} HTLC contract configured`);
       }
-      const sccp = parseTokenAmount(amount, "SCCP", 8);
-      if (!Number.isSafeInteger(sccp) || sccp <= 0) throw new Error("enter a positive SCCP amount");
-      if (sccp + params.min_fee > account.balance) {
+      const lockAmount = parseTokenAmount(amount, "ZQWX", 8);
+      if (!Number.isSafeInteger(lockAmount) || lockAmount <= 0) {
+        throw new Error("enter a positive ZQWX amount");
+      }
+      if (lockAmount + params.min_fee > account.balance) {
         throw new Error(
-          `the wallet holds ${formatTokenAmount(account.balance, "SCCP")}; the order needs the amount plus a fee`,
+          `the wallet holds ${formatTokenAmount(account.balance, "ZQWX")}; the order needs the amount plus a fee`,
         );
       }
       const want = parseEthToWei(price);
@@ -86,7 +88,7 @@ export function SellPanel(context: BridgeContext): ReactNode {
         network,
         makerSccp: address,
         makerEth: eth,
-        giveAmount: sccp,
+        giveAmount: lockAmount,
         wantAmount: want.toString(),
         minSccpTimelock: status.height + 1,
         expiry: Math.floor(Date.now() / 1000) + Math.ceil(hours * 3600),
@@ -107,17 +109,17 @@ export function SellPanel(context: BridgeContext): ReactNode {
   return (
     <View style={styles.root}>
       <Section
-        title="Sell SCCP for ETH"
+        title="Sell ZQWX for ETH"
         subtitle="publish a signed order; the taker locks ETH first"
         action={<StatusPill label={bridge.eth_chain_name} tone="info" />}
       >
         <TextInput
-          label="SCCP to sell"
+          label="ZQWX to sell"
           mode="outlined"
           value={amount}
           onChangeText={setAmount}
           keyboardType="decimal-pad"
-          right={<TextInput.Affix text="SCCP" />}
+          right={<TextInput.Affix text="ZQWX" />}
         />
         <TextInput
           label="ETH to receive"
@@ -137,7 +139,7 @@ export function SellPanel(context: BridgeContext): ReactNode {
         <EthLine bridge={bridge} account={ethAccount} onConnect={connectEth} />
         <ConfigNotice bridge={bridge} />
         <HelperText type="info" visible>
-          The order is whole-order and signed with the SCCP wallet key. Your ETH address is bound
+          The order is whole-order and signed with the wallet's hybrid key. Your ETH address is bound
           into the signature, so nobody can redirect the ETH leg. Nothing is escrowed until a taker
           locks ETH and you verify that lock.
         </HelperText>
@@ -244,7 +246,7 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
       }
       if (account.balance < order.give_amount + params.min_fee) {
         throw new Error(
-          `the wallet holds ${formatTokenAmount(account.balance, "SCCP")}; locking needs the amount plus a fee`,
+          `the wallet holds ${formatTokenAmount(account.balance, "ZQWX")}; locking needs the amount plus a fee`,
         );
       }
       const signed = signTransaction(
@@ -263,7 +265,7 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
       );
       await submitTransaction(toWireTransaction(signed));
       context.setPendingNonce(signed.nonce + 1);
-      notify("SCCP locked for the taker");
+      notify("ZQWX locked for the taker");
       context.reload();
       htlcs.reload();
       detail.reload();
@@ -281,7 +283,7 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
     setError(null);
     try {
       if (!claimFinal) {
-        throw new Error("the SCCP claim is not final yet; wait for more confirmations");
+        throw new Error("the ZQWX claim is not final yet; wait for more confirmations");
       }
       const id = ethLockId ?? (await verify());
       await claimEth(contract, id, record.preimage, bridge.eth_confirmations);
@@ -317,7 +319,7 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
       );
       await submitTransaction(toWireTransaction(signed));
       context.setPendingNonce(signed.nonce + 1);
-      notify("SCCP refunded");
+      notify("ZQWX refunded");
       context.reload();
       htlcs.reload();
     } catch (failure) {
@@ -330,10 +332,10 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
   return (
     <View style={styles.block}>
       <Text variant="titleSmall">
-        {formatTokenAmount(order.give_amount, "SCCP")} for {formatWei(order.want_amount, 6)} ETH
+        {formatTokenAmount(order.give_amount, "ZQWX")} for {formatWei(order.want_amount, 6)} ETH
       </Text>
       <Text variant="bodySmall" style={styles.muted}>
-        {orderPrice(order)} ETH / SCCP · {take === null ? "waiting for a taker" : "taken"} ·{" "}
+        {orderPrice(order)} ETH / ZQWX · {take === null ? "waiting for a taker" : "taken"} ·{" "}
         {shortHash(order.order_id, 8)}
       </Text>
       {take !== null && (
@@ -352,10 +354,10 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
       )}
       {record !== undefined && (
         <>
-          <KeyValue label="SCCP lock" mono>
+          <KeyValue label="ZQWX lock" mono>
             {shortHash(record.htlc_id, 12)}
           </KeyValue>
-          <KeyValue label="SCCP status">{record.status}</KeyValue>
+          <KeyValue label="ZQWX status">{record.status}</KeyValue>
         </>
       )}
       {claimSent && (
@@ -367,12 +369,12 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
         <HelperText type="info" visible>
           {claimFinal
             ? "The taker revealed the preimage. Claim the ETH leg with it."
-            : `The taker's SCCP claim needs ${params.reorg_depth} more block(s) before the preimage is final.`}
+            : `The taker's ZQWX claim needs ${params.reorg_depth} more block(s) before the preimage is final.`}
         </HelperText>
       )}
       {record?.status === "refunded" && (
         <HelperText type="error" visible>
-          SCCP was refunded after the timelock; this order is finished.
+          ZQWX was refunded after the timelock; this order is finished.
         </HelperText>
       )}
       {error !== null && (
@@ -383,7 +385,7 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
       <View style={styles.actions}>
         {take !== null && record === undefined && (
           <Button mode="contained" loading={busy} disabled={busy} onPress={() => void lockSccp()}>
-            Verify ETH lock and lock SCCP
+            Verify ETH lock and lock ZQWX
           </Button>
         )}
         {record?.status === "claimed" && (
@@ -398,7 +400,7 @@ function MakerOrder({ context, orderId }: { context: BridgeContext; orderId: str
         )}
         {record?.status === "locked" && status.height >= record.timelock_height && (
           <Button mode="outlined" loading={busy} disabled={busy} onPress={() => void refundSccp()}>
-            Refund SCCP
+            Refund ZQWX
           </Button>
         )}
       </View>
